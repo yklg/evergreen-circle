@@ -24,6 +24,7 @@ import { createTask } from '../lib/api'
 import { useSettingsStore } from '../store/settingsStore'
 import { useProfileStore } from '../store/profileStore'
 import { findProviderByBaseUrl } from '../lib/llmProviders'
+import { candidatesFor } from '../lib/modelResolution'
 
 const MODE_OPTIONS = [
   { key: 'quick', icon: Zap, label: '快速', desc: '5 章 · 约 2 分钟 · 速览' },
@@ -73,7 +74,7 @@ function ModelPicker() {
       .map((k) => resp.values[k])
       .filter((v): v is string => typeof v === 'string' && v !== '')
     const preset = findProviderByBaseUrl(String(resp.values.llm_base_url ?? ''))
-    const fromPreset = preset?.models ?? []
+    const fromPreset = preset ? candidatesFor(preset, []) : []
     return ['Auto', ...Array.from(new Set([...fromValues, ...fromPreset]))]
   }, [resp])
 

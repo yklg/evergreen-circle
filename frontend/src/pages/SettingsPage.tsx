@@ -12,7 +12,7 @@ import {
   SlidersHorizontal,
   TriangleAlert,
 } from 'lucide-react'
-import { VButton, VCard, VModal } from '../components/ui'
+import { VButton, VCard, VCombobox, VModal } from '../components/ui'
 import { fetchSettings, pingLLM, saveSettings } from '../lib/api'
 import { useSettingsStore } from '../store/settingsStore'
 import {
@@ -20,7 +20,12 @@ import {
   findProviderByBaseUrl,
   type LLMProviderPreset,
 } from '../lib/llmProviders'
-import { presetModels, dedupe, resolveRecommended } from '../lib/modelResolution'
+import {
+  presetModels,
+  resolveRecommended,
+  candidatesFor,
+  normalizeLive,
+} from '../lib/modelResolution'
 import type { SettingsResp, SettingsValues } from '../types'
 
 /* 分组渲染顺序与文案（编辑弹窗左导航按此序渲染）。 */
@@ -72,7 +77,6 @@ const FIELD_LABEL: Record<string, string> = {
   llm_model_fast: '杂务快速',
   llm_timeout: '超时（秒）',
   llm_max_retries: '重试次数',
-  enable_demo_fallback: '无 Key 时启用演示兜底',
   bocha_api_key: '博查 API Key',
   bocha_base_url: '博查 Base URL',
   search_timeout: '搜索超时（秒）',
@@ -297,7 +301,7 @@ export default function SettingsPage() {
   }, [resp])
 
   /* 当前命中的厂商预设（草稿态）：由 form.llm_base_url 归一化后反查。
-     供弹窗 chips 高亮 / datalist 候选 / 模型联动 / 置顶提示条使用。 */
+     供弹窗 chips 高亮 / 候选集 / 模型联动 / 置顶提示条使用。 */
   const activePreset = useMemo(() => {
     const url = form.llm_base_url ?? ''
     return url ? findProviderByBaseUrl(url) : null
@@ -311,12 +315,12 @@ export default function SettingsPage() {
   }, [resp])
 
   /* 匹配用的「厂商有效模型集」：live 优先 + curated 兜底（去重合并）。
-     仅当草稿厂商 == 已保存厂商时才并入 live（与 datalist 同口径，防草稿态跨厂商污染）。
+     仅当草稿厂商 == 已保存厂商时才并入 live（与 VCombobox 候选同口径，防草稿态跨厂商污染）。
      即使 curated 再次忘了更新，只要 live 含该模型就不误报——结构性消除本类 bug。 */
   const candidateModels = useMemo(() => {
     if (!activePreset) return []
     const liveUsable = activePreset.id === savedPreset?.id ? liveModels : []
-    return dedupe([...activePreset.models, ...liveUsable])
+    return candidatesFor(activePreset, liveUsable)
   }, [activePreset, savedPreset, liveModels])
 
   /* 模型与端点错配检测（草稿态）：命中厂商且厂商有推荐模型，但当前默认模型不在其推荐内
@@ -332,7 +336,7 @@ export default function SettingsPage() {
 
   /* 运行时从厂商拉取实时模型列表（enrichment layer）：
      仅对「已保存且命中的厂商」生效——服务端读已存 key+baseUrl 拉 /models，
-     成功则与 curated 合并去重 enrich datalist；失败/无 key/厂商不支持 → 静默回退 preset，不阻断。
+     成功则与 curated 合并去重 enrich 候选集；失败/无 key/厂商不支持 → 静默回退 preset，不阻断。
      按 saved baseUrl 会话缓存，避免重复请求。 */
   const fetchLiveModels = useCallback(async () => {
     const base = String(resp?.values.llm_base_url ?? '')
@@ -361,7 +365,28 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resp, savedPreset])
 
-  /* 字段行渲染：bool checkbox / 模型 datalist / password+text 三分支，弹窗各 tab 复用 */
+  /* C4：刷新实时模型列表 —— 清 liveCache 会话缓存后复用 fetchLiveModels 重拉（只绕缓存，不加请求路径）。
+     仅当草稿厂商 == 已保存厂商且厂商支持 live（/models）时展示：
+     否则 live 候选本来就不并入候选集，刷新无意义（火山方舟 ep-xxx 场景自然排除）。 */
+  const [refreshingLive, setRefreshingLive] = useState(false)
+  const refreshLive = useCallback(async () => {
+    const base = String(resp?.values.llm_base_url ?? '')
+    if (base) delete liveCache.current[base]
+    setRefreshingLive(true)
+    try {
+      await fetchLiveModels()
+    } finally {
+      setRefreshingLive(false)
+    }
+  }, [resp, fetchLiveModels])
+  const canRefreshLive = !!(
+    savedPreset &&
+    savedPreset.liveModels !== false &&
+    savedPreset.models.length > 0 &&
+    activePreset?.id === savedPreset?.id
+  )
+
+  /* 字段行渲染：bool checkbox / 模型 VCombobox / password+text 三分支，弹窗各 tab 复用 */
   const renderFields = (fields: string[]) =>
     fields.map((f) => {
       if (!resp) return null
@@ -387,13 +412,16 @@ export default function SettingsPage() {
                 {value === 'true' ? '开启' : '关闭'}
               </label>
             ) : MODEL_FIELDS.has(f) ? (
-              <input
-                type="text"
-                list="verda-provider-models"
+              <VCombobox
                 value={value}
-                onChange={(e) => setField(f, e.target.value)}
+                onChange={(v) => setField(f, v)}
+                candidates={candidateModels}
+                liveCandidates={
+                  activePreset?.id === savedPreset?.id ? normalizeLive(liveModels) : []
+                }
                 placeholder="选择或直接输入模型 ID"
-                className="h-10 w-full rounded-btn border border-line bg-card px-3.5 font-mono text-tag text-ink outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/15"
+                onRefresh={canRefreshLive ? refreshLive : undefined}
+                refreshing={refreshingLive}
               />
             ) : (
               <input
@@ -592,16 +620,7 @@ export default function SettingsPage() {
         配置优先级：界面设置 &gt; .env 默认值 · 密钥仅存服务端，不会明文回传 · 分组表单已收纳到「编辑配置」弹窗
       </p>
 
-      {/* 模型建议候选：单例 datalist，候选随服务商联动；输入框始终可手输任意 ID（弹窗输入框按 id 跨 DOM 引用合法）。
-          实时拉取的厂商模型（liveModels）仅在草稿厂商 == 已保存厂商时合并，避免切 chip 草稿态跨厂商污染。 */}
-      <datalist id="verda-provider-models">
-        {dedupe([
-          ...(activePreset?.models ?? []),
-          ...(activePreset?.id === savedPreset?.id ? liveModels : []),
-        ]).map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
+      {/* C3：原单例 datalist 候选块已删除 —— 候选统一由 VCombobox 的 candidates 注入，无双轨 */}
 
       {/* 编辑配置弹窗 */}
       <VModal

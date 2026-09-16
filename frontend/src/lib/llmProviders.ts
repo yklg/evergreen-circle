@@ -10,7 +10,7 @@
     需走 OpenAI 兼容网关 → 归入「自定义 URL」场景。
   - OpenRouter：OpenAI 兼容但要求自定义 header（HTTP-Referer/X-Title），
     本项目单连接 SDK 不支持 → 同上。
-  - 各厂商 models 是「切厂商时的自动同步值 + datalist 候选」（厂商会更新），
+  - 各厂商 models 是「切厂商时的自动同步值 + VCombobox 候选」（厂商会更新），
     输入框始终可手输任意 ID 覆盖，「连接测试」按钮做即时验证，双保险。
 
   注：配置键已泛化为厂商无关的 llm_*（llm_api_key/llm_base_url/llm_model*），
@@ -55,7 +55,7 @@ export const LLM_PROVIDER_PRESETS: LLMProviderPreset[] = [
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
     keyUrl: 'https://platform.deepseek.com/api_keys',
-    models: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    models: ['deepseek-v4-pro', 'deepseek-flash'],
   },
   {
     id: 'moonshot',
