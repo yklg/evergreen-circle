@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from app.core import db
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
 import logging
-from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task
+from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task
 from app.core import runner
 from app.core.runtime_config import (
     GROUP_FIELDS,
@@ -35,6 +35,11 @@ from app.core.runtime_config import (
     migrate_model_values,
 )
 from app.core.search import search
+from app.core.user_prefs import (
+    PrefsValidationError,
+    apply_prefs,
+    prefs_doc,
+)
 from app.data import expert_by_id, load_experts
 
 _logger = logging.getLogger(__name__)
@@ -206,6 +211,37 @@ def put_settings_api(body: SettingsPatch):
     }
 
 
+# ── 用户级偏好（昵称 / 公司 / 界面选择）────────────────────
+# 与 /api/settings 的边界：settings 是系统级运行时配置（脱敏、受 CONFIG_SCHEMA 约束）；
+# prefs 是用户级偏好（明文、无密钥、原样返回）。分表分域，见 core/user_prefs.py。
+class PrefsPatch(BaseModel):
+    patch: Dict[str, Any] = {}
+
+
+@app.get("/api/prefs")
+def get_prefs_api():
+    """返回用户偏好全量（**仅库中实际存在的键**）+ 分组元信息。
+
+    刻意不合成默认值：前端首次启动需要靠 `stored` 区分「远端为空（新库）→
+    保留本地并上推」与「远端有值 → 以远端为准」，否则会误清用户已有资料。
+    """
+    return {"ok": True, **prefs_doc()}
+
+
+@app.put("/api/prefs")
+def put_prefs_api(body: PrefsPatch):
+    """保存用户偏好：校验 → 落库（单事务）→ 回全量。
+
+    - 未知键被忽略（跨版本兼容）。
+    - 类型错误 / 超长：整包 422，附字段级错误，任何键都不落库（不做半写）。
+    """
+    try:
+        values = apply_prefs(body.patch or {})
+    except PrefsValidationError as e:
+        raise HTTPException(status_code=422, detail={"errors": e.errors})
+    return {"ok": True, "values": values, "stored": sorted(values.keys())}
+
+
 @app.get("/api/search")
 def search_endpoint(q: str, num: int = 10, site: Optional[str] = None):
     try:
@@ -257,10 +293,30 @@ class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"  # quick | deep | expert
     model: Optional[str] = None  # 用户选择的分析模型；空/'Auto'/None 表示按 settings 编排
+    # 生活圈体检入参（type=living_circle，A1 独立流水线）
+    type: str = "research"
+    center: Optional[List[float]] = None  # [lng, lat] BD-09
+    city: str = ""
+    address: str = ""
+    data_mode: str = ""  # ''=auto（live 无 AK 自动降级 fixture） | 'live' | 'fixture'
 
 
 @app.post("/api/tasks")
 def post_task(body: CreateTaskBody):
+    if body.type == "living_circle":
+        from app.core.pipeline.living_circle import create_living_circle_task
+
+        # M3：允许 center 缺省（纯地名输入）——流水线内 live 地理编码 / fixture 样例匹配兜底
+        task_id = create_living_circle_task({
+            "scene_name": body.query,
+            "city": body.city,
+            "address": body.address,
+            "center": body.center,
+            "study_radius_m": 2500.0,
+            "mode": body.mode if body.mode in ("quick", "standard", "precise") else "standard",
+            "data_mode": body.data_mode,
+        })
+        return {"taskId": task_id}
     return create_task(body.query, mode=body.mode, model=body.model)
 
 
@@ -364,6 +420,9 @@ def list_reports():
 @app.get("/api/reports/{report_id}")
 def get_report(report_id: str):
     rep = db.get_report(report_id)
+    if not rep and report_id.startswith("lc-"):
+        # 生活圈体检报告（A1 独立文档）：渲染适配器统一读取路径
+        rep = db.get_living_circle_report(report_id)
     if not rep:
         return {"ok": False, "message": "report not ready"}
     return rep
@@ -374,6 +433,58 @@ def delete_report(report_id: str):
     """删除调研报告（级联清理证据/链路/反馈/任务）。"""
     db.delete_report(report_id)
     return {"ok": True}
+
+
+# ── 生活圈体检报告（A1 独立端点 / 独立文档）───────────────
+@app.get("/api/life-circle")
+def list_life_circle_reports():
+    """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。"""
+    return db.list_living_circle_reports()
+
+
+@app.get("/api/life-circle/compare")
+def compare_life_circle(ids: str = ""):
+    """双样例对比（对齐前端 LifeCircleCompare 契约）。"""
+    parts = [p.strip() for p in ids.split(",") if p.strip()]
+    if len(parts) < 2:
+        raise HTTPException(status_code=422, detail="compare 需要至少两个 report id（逗号分隔）")
+    reps = []
+    for pid in parts:
+        rep = db.get_living_circle_report(pid)
+        if not rep:
+            raise HTTPException(status_code=404, detail=f"体检报告不存在: {pid}")
+        reps.append(rep)
+    return {
+        "reports": [rep.get("living_circle") for rep in reps[:2]],
+        "diff": _lc_diff(reps[0].get("living_circle") or {}, reps[1].get("living_circle") or {}),
+    }
+
+
+@app.get("/api/life-circle/{report_id}")
+def get_life_circle_report(report_id: str):
+    """完整体检报告（report_type='living_circle' + living_circle 挂载）。"""
+    rep = db.get_living_circle_report(report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="体检报告不存在")
+    return rep
+
+
+def _lc_diff(a: dict, b: dict) -> List[dict]:
+    """双样例指标差异表（对齐前端 diff 字段：metric / a_value / b_value / desc）。"""
+    a15 = next((z["area_km2"] for z in a.get("isochrones", []) if z["minutes"] == 15), 0)
+    b15 = next((z["area_km2"] for z in b.get("isochrones", []) if z["minutes"] == 15), 0)
+    pa, pb = a.get("poi", {}), b.get("poi", {})
+    sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
+    ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
+    rows: List[dict] = [
+        {"metric": "15min 等时圈面积 (km²)", "a_value": round(a15, 2), "b_value": round(b15, 2),
+         "desc": ("A 更大" if a15 > b15 else "B 更大") if a15 != b15 else "相当"},
+        {"metric": "POI 采集", "a_value": pa.get("total", 0), "b_value": pb.get("total", 0), "desc": "设施密度"},
+        {"metric": "圈内 POI", "a_value": pa.get("in_circle", 0), "b_value": pb.get("in_circle", 0), "desc": "可达覆盖"},
+        {"metric": "综合评分", "a_value": sa, "b_value": sb, "desc": ("A 更优" if sa > sb else "B 更优") if sa != sb else "持平"},
+        {"metric": "服务盲区", "a_value": ba, "b_value": bb, "desc": ("A 更多" if ba > bb else "B 更多") if ba != bb else "持平"},
+    ]
+    return rows
 
 
 # ── 可观测性 Trace（决策链路 / 决策回放）──────────────────
@@ -414,24 +525,18 @@ def post_feedback(report_id: str, body: FeedbackBody):
     return {"ok": True}
 
 
-# ── 简报一页纸精炼（派生数据，懒生成落库）──────────────────
+# ── 简报一页纸精炼（派生数据，kind='brief' 后台任务 + SSE 订阅）──
 @app.post("/api/reports/{report_id}/brief")
 def post_brief(report_id: str):
-    """生成（或复用）报告的"一页纸精炼"简报。
+    """创建「生成一页纸精炼」的后台任务（G7，已从同步端点迁移）。
 
-    幂等：库中已有 brief 直接返回；LLM 未配置 → 503；报告不存在 → 404。
-    同步端点（线程池执行）：单次 LLM 调用 5-20s，前端 loading + 30s 失败冷却兜底。
+    不再同步阻塞 HTTP：返回 {taskId}，前端订阅 GET /api/tasks/{taskId}/stream
+    消费 progress→done（幂等：已有 brief 走 done 快路径）/ error 事件。
+    报告不存在 → 404；LLM 未配置由 brief_report_pipeline 转为 error 事件。
     """
     if not db.get_report(report_id):
         raise HTTPException(status_code=404, detail="报告不存在或未就绪")
-    from app.core.orchestrator import generate_brief  # 内联：与端点同批落地，避免 import 行被并发覆盖丢失
-    try:
-        brief = generate_brief(report_id)
-    except LLMNotConfigured as e:
-        raise HTTPException(status_code=503, detail=f"LLM 未配置：{e}") from e
-    if not brief:
-        return {"ok": False, "brief": None, "message": "生成失败，请稍后重试"}
-    return {"ok": True, "brief": brief}
+    return create_brief_task(report_id)
 
 
 # ── 按批注深化章节（人工介入二次调研）────────────────────

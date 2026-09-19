@@ -12,7 +12,8 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8010',
+        // 本地默认直达后端；docker-compose 预览用 VITE_PROXY_TARGET 注入服务名
+        target: process.env.VITE_PROXY_TARGET ?? 'http://127.0.0.1:8010',
         changeOrigin: true,
       },
     },

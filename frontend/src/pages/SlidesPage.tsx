@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Printer } from 'lucide-react'
 import { fetchReport } from '../lib/api'
 import MetricsStrip from '../components/MetricsStrip'
 import { VChart } from '../components/VChart'
+import { BRAND } from '../lib/brand'
 import type { Report } from '../types'
 
 /**
@@ -265,7 +266,7 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
 function Slide({ title, subtitle, center }: { title: string; subtitle?: string; center: ReactNode }) {
   return (
     <div className="flex h-full flex-col px-14 py-12">
-      <div className="text-xs uppercase tracking-[0.25em] text-[#2f9d6e]">Verda · 竞品调研汇报</div>
+      <div className="text-xs uppercase tracking-[0.25em] text-[#2f9d6e]">{BRAND.en} · 竞品调研汇报</div>
       <h1 className="mt-2 font-serif text-[30px] font-bold leading-snug text-[#16211b]">{title}</h1>
       {subtitle && <p className="mt-1 text-sm text-[#5b6560]">{subtitle}</p>}
       <div className="mt-6 flex-1 overflow-hidden">{center}</div>
@@ -312,8 +313,8 @@ function SectionKeys({
           ))}
         </ul>
       )}
-      {inlineCharts && (s as { charts?: { chart_id: string }[] })?.charts?.slice(0, 1).map((c: any) => (
-        <VChart key={(c as { chart_id: string }).chart_id} spec={c as never} height={190} />
+      {inlineCharts && (s as { charts?: { chart_id: string }[] })?.charts?.slice(0, 1).map((c: { chart_id: string }) => (
+        <VChart key={c.chart_id} spec={c as never} height={190} />
       ))}
       {isSummary && (
         <p className="pt-1 text-xs text-[#8aa094]">（供 30 秒扫读，详细论证见完整报告）</p>

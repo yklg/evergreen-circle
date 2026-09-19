@@ -1,0 +1,583 @@
+/**
+ * F3 · 生活圈体检「完整 Report」mock 构造器。
+ *
+ * 从 F0 fixture（LivingCircleReport）用规则化模板生成一张**完整的 Report**：
+ *  - 挂载 `report_type: 'living_circle'` + `living_circle` 原始数据（A1 渲染适配器的判据）
+ *  - 章节报告（医疗/教育/购物/养老/可达性/盲区/结论）——逐章由规划专家署名（D4 专家当诊断主角）
+ *  - evidence/claims/charts 全链路齐全（延续「每个结论都有出处」卖点，出处=POI/测时/判定记录）
+ *
+ * M 阶段后端按同一契约产出（pipeline/living_circle.py + diagnosis_templates.py），
+ * 前端零改动；本文件只在 VITE_USE_MOCK=1 时被消费。
+ */
+import type {
+  ChartSpec,
+  Claim,
+  Evidence,
+  FacilityCategoryStat,
+  LifeCircleRecord,
+  LivingCircleReport,
+  Report,
+  ReportSection,
+} from '../types'
+import { SAMPLE_COMMUNITIES } from './livingCircleMock'
+import { scoreGrade } from '../lib/livingCircle'
+
+/** D4 · 专家署名表（与 backend/app/data/experts.json 及 api 副本的 id 对齐；M2 换血后仅文案微调） */
+export const LC_EXPERT: Record<string, { name: string; role: string }> = {
+  'L3-001': { name: '温叙白', role: '社区体检总检' },
+  'L3-002': { name: '许映川', role: '首席规划分析师' },
+  'L3-003': { name: '裴砚秋', role: '质检总监' },
+  'L2-001': { name: '谷穗安', role: '基层医疗配置顾问' },
+  'L2-002': { name: '郑启才', role: '基础教育设施规划师' },
+  'L2-003': { name: '叶知暖', role: '养老托育关怀顾问' },
+  'L2-004': { name: '苏堤春', role: '菜市与商业配套分析师' },
+  'L2-005': { name: '路遥川', role: '慢行可达性分析师' },
+  'L2-008': { name: '方守正', role: '生活圈标准专家' },
+  'L1-001': { name: '车满仓', role: '农贸市场顾问' },
+  'L1-004': { name: '秦济世', role: '社区药房规划师' },
+  'L1-005': { name: '周启蒙', role: '小学校区规划师' },
+  'L1-008': { name: '温鹤年', role: '机构养老顾问' },
+}
+const EXP = LC_EXPERT
+
+/** 历史快照别名：早期轮次的记录页复用最近一期体检报告阅读器 */
+const LC_ALIAS: Record<string, string> = {
+  'lc-kaili-r1': 'lc-kaili',
+  'lc-beijing-jinsong-r1': 'lc-beijing-jinsong',
+}
+
+/** 报告 id：「lc-」+ 样例 id（与 LifeCirclePage 入口一致） */
+export const LC_REPORT_ID = (sceneId: string) => `lc-${sceneId}`
+
+function cat(report: LivingCircleReport, key: string): FacilityCategoryStat | undefined {
+  return report.poi.categories.find((c) => c.category === key)
+}
+
+function fmtMin(m: number | null): string {
+  return m == null ? '—' : `${m}min`
+}
+
+function pct(v: number): string {
+  return `${Math.round(v * 100)}%`
+}
+
+/** 依评分档位给一句话总评（规则模板 → M 阶段 LLM 解读的降级同构） */
+function overviewNote(r: LivingCircleReport): string {
+  const grade = scoreGrade(r.scores.total)
+  const reachable = r.sampling.points.filter((p) => p.reachable).length
+  const area = r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0
+  const miss = r.scores.triads.filter((t) => !t.covered)
+  const triadNote = miss.length
+    ? `三要素中「${miss.map((t) => t.facility).join('、')}」存在 1km 覆盖缺口`
+    : '菜市场/药店/小学三要素 1km 内均可达'
+  return `本样区综合评分 ${r.scores.total}（${grade.label}），15 分钟步行可达圈约 ${area.toFixed(2)} km²，${reachable}/${r.sampling.points.length} 个采样点可达；设施总量 ${r.poi.total} 处（圈内 ${r.poi.in_circle}）。${triadNote}，共识别 ${r.blindspots.length} 处服务盲区。`
+}
+
+function charter(ids: string[]): { id: string; reason: string }[] {
+  return ids.map((id) => ({
+    id,
+    reason: `${EXP[id]?.role ?? '规划专家'}负责本节评审与结论签发（D4 专家出诊断）`,
+  }))
+}
+
+/* ── 章节构造（每组数据 → 段落/结论/图表均可从 fixture 数据推出，保证双样例一致口径） ── */
+
+function secMedical(r: LivingCircleReport): ReportSection {
+  const m = cat(r, 'medical')
+  const ph = cat(r, 'pharmacy') ?? m
+  const triad = r.scores.triads.find((t) => t.facility === '药店')
+  const claims: Claim[] = [
+    {
+      claim_id: `c-${r.scene.name}-medical-1`,
+      text: `医疗设施圈内覆盖 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近药房 ${fmtMin(triad?.nearest_minutes ?? ph?.min_minutes ?? null)}，${m && m.coverage >= 0.75 ? '基本满足 15 分钟就医购药需求' : '存在明显配置缺口'}`,
+      field: 'coverage',
+      evidence_ids: [`ev-${r.scene.name}-poi-medical`],
+      confidence: m && m.coverage >= 0.75 ? 'high' : 'medium',
+      cross_validated: true,
+      author: EXP['L2-001'].name,
+    },
+  ]
+  return {
+    id: 'medical',
+    title: '医疗配置',
+    level: 2,
+    key_takeaway: `圈内医疗设施 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近 ${fmtMin(m?.min_minutes ?? null)}；社区医院/诊所/药店三类中${(ph?.nearest_name || m?.nearest_name) ? `最近为「${ph?.nearest_name ?? m?.nearest_name}」` : '尚无近端设施'}`,
+    paragraphs: [
+      `对研究范围内医疗类 POI（社区医院/诊所/药店）按 ${m?.total ?? 0} 处做名称归一与 50m 聚簇去重，15 分钟步行圈内保留 ${m?.in_circle ?? 0} 处，覆盖度 ${pct(m?.coverage ?? 0)}。`,
+      `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一，圈内可达性为「${triad?.covered ? '可达' : '不可达'}」${triad?.nearest_minutes != null ? `（最近 ${triad.nearest_minutes}min）` : ''}。`,
+    ],
+    claims,
+    charts: [
+      {
+        chart_id: `chart-${r.scene.name}-medical`,
+        type: 'bar',
+        title: '医疗类设施圈内/圈外分布',
+        option: medicalBarChart(m),
+      },
+    ],
+    source_evidence_ids: [`ev-${r.scene.name}-poi-medical`],
+  }
+}
+
+function secEducation(r: LivingCircleReport): ReportSection {
+  const e = cat(r, 'education')
+  const triad = r.scores.triads.find((t) => t.facility === '小学')
+  return {
+    id: 'education',
+    title: '教育设施',
+    level: 2,
+    key_takeaway: `教育类圈内 ${e ? `${e.in_circle}/${e.total}` : '—'} 处；小学为盲区三要素之一，${triad?.covered ? `圈内可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'} `,
+    paragraphs: [
+      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，15 分钟圈内 ${e?.in_circle ?? 0} 处，覆盖度 ${pct(e?.coverage ?? 0)}，最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
+      `就学通勤视角：小学接送是生活圈体检的高频痛点，本样区${triad?.covered ? `最近小学步行 ${triad.nearest_minutes}min，处于可接受范围` : '1km 内无小学，需重点关注跨区就学问题'}。`,
+    ],
+    claims: [
+      {
+        claim_id: `c-${r.scene.name}-education-1`,
+        text: `教育设施${triad?.covered ? '覆盖达标' : '覆盖不足'}：小学${triad?.covered ? `最快 ${fmtMin(triad.nearest_minutes)} 可达` : '1km 内缺失'}，幼儿园/中学密度 ${e?.coverage ? pct(e.coverage) : '—'}`,
+        field: 'coverage',
+        evidence_ids: [`ev-${r.scene.name}-poi-education`],
+        confidence: (e?.coverage ?? 0) >= 0.75 ? 'high' : 'medium',
+        cross_validated: true,
+        author: EXP['L2-002'].name,
+      },
+    ],
+    source_evidence_ids: [`ev-${r.scene.name}-poi-education`],
+  }
+}
+
+function secMarket(r: LivingCircleReport): ReportSection {
+  const mk = cat(r, 'market')
+  const sp = cat(r, 'shopping')
+  const triad = r.scores.triads.find((t) => t.facility === '菜市场')
+  return {
+    id: 'market',
+    title: '菜市与购物',
+    level: 2,
+    key_takeaway: `菜市场 ${mk ? `${mk.in_circle}/${mk.total}` : '—'} 处圈内；购物(超市/便利店/商场) ${sp ? `${sp.in_circle}/${sp.total}` : '—'} 处圈内；菜市场三要素${triad?.covered ? `可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'}`,
+    paragraphs: [
+      `以「菜市场/生鲜」与「超市/便利店/综合商场」两组关键词独立检索并聚簇去重：菜市场 ${mk?.total ?? 0} 处（圈内 ${mk?.in_circle ?? 0}，覆盖 ${pct(mk?.coverage ?? 0)}），购物 ${sp?.total ?? 0} 处（圈内 ${sp?.in_circle ?? 0}，覆盖 ${pct(sp?.coverage ?? 0)}）。`,
+      `每日采买的便利度是居民感知最强的民生指标，本样区最近菜市场「${mk?.nearest_name ?? '—'}」${fmtMin(mk?.min_minutes ?? null)}${triad?.covered ? '' : '，缺席于三要素盲区视角'}`,
+    ],
+    claims: [
+      {
+        claim_id: `c-${r.scene.name}-market-1`,
+        text: `菜市场三要素${triad?.covered ? `覆盖达标（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内覆盖缺位'}；购物配套覆盖 ${sp?.coverage != null ? pct(sp.coverage) : '—'}`,
+        field: 'coverage',
+        evidence_ids: [`ev-${r.scene.name}-poi-market`],
+        confidence: (mk?.coverage ?? 0) >= 0.75 ? 'high' : 'medium',
+        cross_validated: true,
+        author: EXP['L2-004'].name,
+      },
+    ],
+    source_evidence_ids: [`ev-${r.scene.name}-poi-market`],
+  }
+}
+
+function secElderly(r: LivingCircleReport): ReportSection {
+  const el = cat(r, 'elderly')
+  const rec = cat(r, 'recreation')
+  const missing = !el || el.in_circle === 0
+  return {
+    id: 'elderly',
+    title: '养老配置',
+    level: 2,
+    key_takeaway: `养老(养老院/日间照料)圈内 ${el ? `${el.in_circle}/${el.total}` : '0/0'} 处${missing ? '，属于显著缺口（适老化改造优先级最高）' : ''}；文体类 ${rec ? `${rec.in_circle}/${rec.total}` : '—'} 处`,
+    paragraphs: [
+      `养老托育类设施（养老院/日间照料中心）共 ${el?.total ?? 0} 处，15 分钟圈内 ${el?.in_circle ?? 0} 处，覆盖度 ${pct(el?.coverage ?? 0)}。${missing ? '该样区老年群体步行可达范围内缺少机构养老资源，需在整改建议中列为 P0 项。' : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}`,
+      `文体(公园/健身) ${rec?.total ?? 0} 处（圈内 ${rec?.in_circle ?? 0}），作为全龄友好配套的补充观测项${rec?.min_minutes != null ? `，最近「${rec.nearest_name}」${fmtMin(rec.min_minutes)}` : ''}。`,
+    ],
+    claims: [
+      {
+        claim_id: `c-${r.scene.name}-elderly-1`,
+        text: `养老配置${missing ? '严重不足（圈内 0 处）' : `覆盖 ${pct(el?.coverage ?? 0)}`}，适老化优先整改`,
+        field: 'coverage',
+        evidence_ids: [`ev-${r.scene.name}-poi-elderly`],
+        confidence: missing ? 'high' : 'medium',
+        cross_validated: false,
+        author: EXP['L2-003'].name,
+      },
+    ],
+    source_evidence_ids: [`ev-${r.scene.name}-poi-elderly`],
+  }
+}
+
+function secIsochrone(r: LivingCircleReport): ReportSection {
+  const areas = r.isochrones.map((z) => ({ minutes: z.minutes, area: z.area_km2 }))
+  const reachable = r.sampling.points.filter((p) => p.reachable).length
+  return {
+    id: 'isochrone',
+    title: '可达性与等时圈',
+    level: 2,
+    key_takeaway: `5/10/15/20 分钟步行等时圈面积 ${areas.map((a) => a.area.toFixed(2)).join(' / ')} km²；采样 ${reachable}/${r.sampling.points.length} 点可达；方式：${r.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值' : '圆形近似（演示数据）'}`,
+    paragraphs: [
+      `以中心点为原点按 400m 粗网格 + 15min 边界带 150m 加密采样（共 ${r.sampling.points.length} 个点），调用步行测时接口后对耗时场做${r.sampling.interpolation === 'idw' ? ' IDW 反距离加权插值，提取 5/10/15/20 分钟等值线族' : ' 圆形近似（fixture 演示阶段；M5 覆写为真实路网等时圈）'}。`,
+      `「不取底层路网、仅基于分布点位测时推导连通区域」是赛题鼓励的 30% 评分项：本流程${r.sampling.is_scattered ? '采用散点扇形双层采样，' : ''}全程未获取路网数据，并通过抽样回验控制误差。`,
+    ],
+    claims: [
+      {
+        claim_id: `c-${r.scene.name}-isochrone-1`,
+        text: `15 分钟步行可达圈约 ${(r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²，${r.blindspots.length} 处盲区均位于圈内设施覆盖空洞`,
+        field: 'reachability',
+        evidence_ids: [`ev-${r.scene.name}-measure`],
+        confidence: 'high',
+        cross_validated: true,
+        author: EXP['L2-005'].name,
+      },
+    ],
+    charts: [isochroneChart(areas)],
+    source_evidence_ids: [`ev-${r.scene.name}-measure`],
+  }
+}
+
+function secBlindspot(r: LivingCircleReport): ReportSection {
+  const rows = r.blindspots.map((b) => ({
+    盲区编号: b.id.replace(/^bs-/, ''),
+    中心点: `${b.center[0].toFixed(4)}, ${b.center[1].toFixed(4)}`,
+    缺失设施: b.missing_facilities.join(' / '),
+    最近设施: b.nearest[0]?.name ?? '—',
+    最近距离: b.nearest[0] ? `${Math.round(b.nearest[0].distance_m)}m·${b.nearest[0].direction}` : '—',
+  }))
+  const claims: Claim[] = r.blindspots.map((b) => ({
+    claim_id: `c-${r.scene.name}-bs-${b.id}`,
+    text: `${b.id.replace(/^bs-/, '盲区 ')}：1km 内无 ${b.missing_facilities.join('、')}；最近「${b.nearest[0]?.name ?? '—'}」${b.nearest[0] ? `${Math.round(b.nearest[0].distance_m)}m（${b.nearest[0].direction}）` : ''}`,
+    field: 'blindspot',
+    evidence_ids: [`ev-${r.scene.name}-bs-${b.id}`],
+    confidence: 'high',
+    cross_validated: true,
+    author: EXP['L3-002'].name,
+  }))
+  return {
+    id: 'blindspot',
+    title: '服务盲区诊断',
+    level: 2,
+    key_takeaway: r.blindspots.length ? `识别 ${r.blindspots.length} 处 1km 服务盲区${r.blindspots.some((b) => b.missing_facilities.includes('小学')) ? '，含小学缺口' : ''}；三要素缺位处列出最近设施的距离与方位供整改` : '未发现 1km 服务盲区，三要素齐备',
+    paragraphs: [
+      `按赛题口径（1km 内无菜市场/药店/小学即判盲），以 ${
+        r.blindspots.length ? `${r.blindspots.length} 处` : '网格扫描'
+      } 盲区点位聚合为灰色区域多边形。`,
+      ...(r.blindspots.length
+        ? [
+            '下表为各盲区的缺失要素与最近设施方位（供「最近距补点/加设流动服务」式整改参考）。',
+          ]
+        : []),
+    ],
+    claims,
+    data_grid: {
+      columns: ['盲区编号', '中心点', '缺失设施', '最近设施', '最近距离'],
+      rows: rows.map((x) => ({ name: x['盲区编号'], value: x['最近设施'], metric: x['缺失设施'], source: `${x['中心点']} · ${x['最近距离']}`, source_url: 'fixture://blindspot' })),
+    },
+    source_evidence_ids: r.blindspots.map((b) => `ev-${r.scene.name}-bs-${b.id}`),
+  }
+}
+
+function secConclusion(r: LivingCircleReport): ReportSection {
+  const weak = [...r.scores.bars].sort((a, b) => a.value - b.value).slice(0, 2)
+  const hints = buildSuggestions(r)
+  return {
+    id: 'conclusion',
+    title: '体检结论与整改建议',
+    level: 2,
+    key_takeaway: `综合 ${r.scores.total} 分；短板项：${weak.map((w) => `${w.label}(${w.value})`).join('、') || '无明显短板'}`,
+    paragraphs: [
+      `本样区${r.blindspots.length ? '存在多处服务盲区，整改优先级如下：' : '设施覆盖整体均衡，建议保持既有配置并动态复检。'}`,
+      ...hints,
+      '提醒：以上结论基于演示数据（fixture · 圆形近似等时圈），正式结论以 M5 阶段真实路网测时为准。',
+    ],
+    claims: [
+      {
+        claim_id: `c-${r.scene.name}-conclusion-1`,
+        text: `样区综合 ${r.scores.total} 分（${scoreGrade(r.scores.total).label}），首要整改方向：${hints[0]?.replace(/^·\s*/, '') ?? '持续监测'}`,
+        field: 'conclusion',
+        evidence_ids: r.blindspots.map((b) => `ev-${r.scene.name}-bs-${b.id}`),
+        confidence: 'high',
+        cross_validated: true,
+        author: EXP['L3-001'].name,
+      },
+    ],
+    source_evidence_ids: r.blindspots.map((b) => `ev-${r.scene.name}-bs-${b.id}`),
+  }
+}
+
+/** 规则化整改建议（盲区/养老缺口兜底） */
+function buildSuggestions(r: LivingCircleReport): string[] {
+  const out: string[] = []
+  const missingFac = new Set<string>()
+  for (const b of r.blindspots) b.missing_facilities.forEach((f) => missingFac.add(f))
+  const byCategory: Record<string, string> = { '菜市场': '蔬菜便民车/移动菜市点位', '药店': '社区药柜+线上配送', '小学': '校车线路/学区统筹' }
+  for (const f of missingFac) out.push(`· 盲区缺位「${f}」：建议${byCategory[f] ?? '补建/补充供给'}（参考最近设施 ${(r.blindspots[0]?.nearest.find((n) => n.facility)?.name ?? '—')} 方位）。`)
+  const el = cat(r, 'elderly')
+  if (el && el.in_circle === 0) out.push('· 养老配置 0 覆盖：建议引入日间照料中心或助老驿站，优先级 P0。')
+  if (out.length === 0) out.push('· 无显著整改项。')
+  return out
+}
+
+/* ── 图表构造（ECharts option，契约内自由形态） ── */
+
+function radarChart(r: LivingCircleReport): ChartSpec {
+  const dims = r.scores.radar
+  return {
+    chart_id: `chart-${r.scene.name}-radar`,
+    type: 'radar',
+    title: '生活圈维度评分雷达',
+    option: {
+      tooltip: {},
+      radar: {
+        indicator: dims.map((d) => ({ name: d.dimension, max: 100 })),
+        radius: '62%',
+        splitArea: { areaStyle: { color: ['#f7faf7', '#eef3ee'] } },
+      },
+      series: [
+        {
+          type: 'radar',
+          data: [
+            {
+              name: '评分',
+              value: dims.map((d) => d.score),
+              areaStyle: { opacity: 0.25, color: '#5F7B69' },
+              lineStyle: { color: '#5F7B69' },
+              itemStyle: { color: '#5F7B69' },
+            },
+          ],
+        },
+      ],
+    },
+  }
+}
+
+function coverageBarChart(r: LivingCircleReport): ChartSpec {
+  return {
+    chart_id: `chart-${r.scene.name}-coverage`,
+    type: 'bar',
+    title: '各设施类别覆盖度（%）',
+    option: {
+      tooltip: {},
+      xAxis: { type: 'category', data: r.scores.bars.map((b) => b.label) },
+      yAxis: { type: 'value', max: 100 },
+      series: [
+        {
+          type: 'bar',
+          data: r.scores.bars.map((b) => b.value),
+          itemStyle: { color: '#5F7B69', borderRadius: [2, 2, 0, 0] },
+          barWidth: '52%',
+        },
+      ],
+    },
+  }
+}
+
+function medicalBarChart(m: FacilityCategoryStat | undefined): Record<string, unknown> {
+  return {
+    tooltip: {},
+    legend: { data: ['圈内', '圈外'] },
+    xAxis: { type: 'category', data: ['社区医院/诊所/药店'] },
+    yAxis: { type: 'value' },
+    series: [
+      { name: '圈内', type: 'bar', data: [m?.in_circle ?? 0], itemStyle: { color: '#5F7B69' }, barWidth: 30 },
+      { name: '圈外', type: 'bar', data: [(m?.total ?? 0) - (m?.in_circle ?? 0)], itemStyle: { color: '#cad3cd' }, barWidth: 30 },
+    ],
+  }
+}
+
+function isochroneChart(areas: { minutes: number; area: number }[]): ChartSpec {
+  return {
+    chart_id: 'chart-isochrone-area',
+    type: 'bar',
+    title: '分级步行等时圈面积（km²）',
+    option: {
+      tooltip: {},
+      xAxis: { type: 'category', data: areas.map((a) => `${a.minutes}min`) },
+      yAxis: { type: 'value', name: 'km²' },
+      series: [
+        {
+          type: 'bar',
+          data: areas.map((a) => Number(a.area.toFixed(2))),
+          itemStyle: { color: '#8a9c8f' },
+          barWidth: '48%',
+        },
+      ],
+    },
+  }
+}
+
+/* ── 证据构造（出处=POI/测时/判定，延续可溯源叙事） ── */
+
+function buildEvidence(r: LivingCircleReport): Evidence[] {
+  const prefix = `ev-${r.scene.name}`
+  const at = r.generated_at
+  const ev: Evidence[] = [
+    {
+      evidence_id: `${prefix}-measure`,
+      source_url: `fixture://living-circle/${r.scene.name}/sampling`,
+      source_type: 'api_measure',
+      title: `采样点测时记录（${r.sampling.points.length} 点）`,
+      excerpt: `批量算路 walking 返回 ${r.sampling.points.filter((p) => p.reachable).length} 条可达耗时，15min 圈面积约 ${(r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`,
+      credibility: 0.95,
+      collected_by: 'L2-005',
+      captured_at: at,
+      domain: 'walkability',
+    },
+    ...r.poi.categories.map((c) => ({
+      evidence_id: `${prefix}-poi-${c.category}`,
+      source_url: `fixture://living-circle/${r.scene.name}/poi/${c.category}`,
+      source_type: 'poi_search' as const,
+      title: `${c.label} POI 检索（2km）`,
+      excerpt: `命中 ${c.total} 处，圈内 ${c.in_circle} 处${c.nearest_name ? `，最近「${c.nearest_name}」${fmtMin(c.min_minutes)}` : '，圈内空缺'}`,
+      credibility: 0.92,
+      collected_by: 'L2-004',
+      captured_at: at,
+      domain: c.category,
+    })),
+    ...r.blindspots.map((b) => ({
+      evidence_id: `${prefix}-bs-${b.id}`,
+      source_url: `fixture://living-circle/${r.scene.name}/blindspot/${b.id}`,
+      source_type: 'grid_scan' as const,
+      title: `盲区点位 ${b.id.replace(/^bs-/, '')}`,
+      excerpt: `1km 内无 ${b.missing_facilities.join('、')}；最近「${b.nearest[0]?.name ?? '—'}」${b.nearest[0] ? `${Math.round(b.nearest[0].distance_m)}m（${b.nearest[0].direction}）` : ''}`,
+      credibility: 0.98,
+      collected_by: 'L3-002',
+      captured_at: at,
+      domain: 'coverage',
+    })),
+  ]
+  return ev
+}
+
+/* ── 主构造器 ── */
+
+function buildSections(r: LivingCircleReport): ReportSection[] {
+  return [
+    {
+      id: 'overview',
+      title: '体检概览',
+      level: 2,
+      key_takeaway: overviewNote(r),
+      paragraphs: [
+        `本次体检由常青圈规划专家队按「intake→plan→measure→collect→diagnose→report→audit」流水线完成，中心点「${r.scene.name}」（${r.scene.city} · ${r.scene.address}），研究范围 ${(r.scene.study_radius_m / 1000).toFixed(1)}km。`,
+        `数据口径：${r.data_origin === 'fixture_sample' ? '演示数据（fixture_sample）· 等时圈圆形近似' : '真实百度 API（live）· IDW 插值等时圈'}。图例与章节图表均可溯源至采样点 / POI / 判定等确定性动作。`,
+      ],
+      charts: [radarChart(r), coverageBarChart(r)],
+      source_evidence_ids: [`ev-${r.scene.name}-measure`],
+    },
+    secMedical(r),
+    secEducation(r),
+    secMarket(r),
+    secElderly(r),
+    secIsochrone(r),
+    secBlindspot(r),
+    secConclusion(r),
+  ]
+}
+
+/** 从样例 fixture 构造一张完整的体检 Report（多次调用返回稳定结果，供缓存复用） */
+export function buildLivingCircleReport(sceneId: string): Report | null {
+  const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
+  if (!sample) return null
+  const lc = sample.report
+  const experts = [
+    'L3-001',
+    'L3-002',
+    'L3-003',
+    'L2-001',
+    'L2-002',
+    'L2-003',
+    'L2-004',
+    'L2-005',
+    'L2-008',
+    'L1-001',
+    'L1-004',
+    'L1-005',
+    'L1-008',
+  ]
+  const sections = buildSections(lc)
+  const report: Report = {
+    id: LC_REPORT_ID(sceneId),
+    report_type: 'living_circle',
+    title: `${lc.scene.name} · 生活圈体检报告`,
+    subtitle: `${lc.scene.city} · ${lc.scene.address}｜综合 ${lc.scores.total} 分（${scoreGrade(lc.scores.total).label}）· ${lc.blindspots.length} 处服务盲区 · 共 ${lc.poi.total} 处设施`,
+    query: lc.scene.name,
+    brands: [],
+    mode: 'standard',
+    created_at: lc.generated_at,
+    experts,
+    dispatch: charter(experts),
+    toc: sections.map((s) => ({ id: s.id, title: s.title, level: s.level })),
+    sections,
+    charts: sections.flatMap((s) => s.charts ?? []),
+    evidence: buildEvidence(lc),
+    claims: sections.flatMap((s) => s.claims ?? []),
+    glossary: [
+      { term: '等时圈', definition: '以中心点为原点、步行耗时相同的等值线族（5/10/15/20 min），对应不同可达范围', source: 'methodology' },
+      { term: '服务盲区', definition: '1km 范围内缺少菜市场/药店/小学任一必备设施的区域', source: '赛题口径' },
+      { term: 'IDW 插值', definition: '反距离加权：以采样点耗时推演连续耗时场，不依赖底层路网', source: 'methodology' },
+      { term: 'BD-09', definition: '百度坐标系，本项目地图全域统一使用', source: 'contract' },
+    ],
+    methodology: {
+      window: '单次体检',
+      note: `data_origin=${lc.data_origin} · interpolation=${lc.sampling.interpolation} · study_radius=${lc.scene.study_radius_m}m`,
+    },
+    quality_before: undefined,
+    quality_after: undefined,
+    audit_review: undefined,
+    trace: undefined,
+    living_circle: lc,
+  }
+  return report
+}
+
+/** 按报告 id 取 mock 报告（支持历史快照别名） */
+export function getLivingCircleReportMock(id: string): Report | null {
+  const base = LC_ALIAS[id] ?? id
+  const prefix = 'lc-'
+  if (!base.startsWith(prefix)) return null
+  return buildLivingCircleReport(base.slice(prefix.length))
+}
+
+/** 历史页 / 报告中心共用：历次体检记录（首批 = 两样区实检 + 早期轮次快照） */
+export function getLifeCircleRecords(): LifeCircleRecord[] {
+  const two: LifeCircleRecord[] = ['kaili', 'beijing-jinsong']
+    .map((sceneId) => {
+      const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
+      if (!sample) return null
+      const lc = sample.report
+      return {
+        id: LC_REPORT_ID(sceneId),
+        title: `${lc.scene.name} · 生活圈体检报告`,
+        scene_name: lc.scene.name,
+        city: lc.scene.city,
+        checked_at: lc.generated_at,
+        total_score: lc.scores.total,
+        blindspot_count: lc.blindspots.length,
+        data_origin: lc.data_origin,
+        interpolation: lc.sampling.interpolation,
+      }
+    })
+    .filter((x): x is LifeCircleRecord => x !== null)
+
+  // 早期轮次快照（fixture 演示历史时间线；复用阅读器，见 LC_ALIAS）
+  const snapshots: LifeCircleRecord[] = [
+    {
+      id: 'lc-kaili-r1',
+      title: '凯里老街 · 首轮体检快照',
+      scene_name: '凯里老街',
+      city: '贵州·凯里',
+      checked_at: '2026-09-02T03:18:00.000Z',
+      total_score: 62,
+      blindspot_count: 4,
+      data_origin: 'fixture_sample',
+      interpolation: 'circular_approx',
+    },
+    {
+      id: 'lc-beijing-jinsong-r1',
+      title: '北京劲松 · 首轮体检快照',
+      scene_name: '北京劲松',
+      city: '北京·朝阳',
+      checked_at: '2026-08-29T11:42:00.000Z',
+      total_score: 84,
+      blindspot_count: 2,
+      data_origin: 'fixture_sample',
+      interpolation: 'circular_approx',
+    },
+  ]
+  return [...two, ...snapshots].sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1))
+}

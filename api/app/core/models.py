@@ -38,6 +38,7 @@ class Claim:
     confidence: str  # high|medium|low|unverified
     cross_validated: bool
     author: str
+    claim_type: str = "mixed"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -72,16 +73,20 @@ def make_claim(
     field_name: str,
     evidence_ids: List[str],
     author: str,
-    independent_domains: int = 0,
+    independent_groups: int = 0,
+    claim_type: str = "mixed",
 ) -> Claim:
-    """按四铁律计算置信度：无证据→unverified；≥2 独立来源→high。"""
+    """按四铁律计算置信度：无证据→unverified；≥2 个独立信源组→high。
+
+    独立信源以「信源组（Evidence.source_group）」计，杜绝转载冒充多源。
+    """
     if not evidence_ids:
-        return Claim(claim_id, text, field_name, [], "unverified", False, author)
-    cross = independent_domains >= 2
+        return Claim(claim_id, text, field_name, [], "unverified", False, author, claim_type)
+    cross = independent_groups >= 2
     if cross:
         conf = "high"
     elif len(evidence_ids) >= 2:
         conf = "medium"
     else:
         conf = "low"
-    return Claim(claim_id, text, field_name, evidence_ids, conf, cross, author)
+    return Claim(claim_id, text, field_name, evidence_ids, conf, cross, author, claim_type)

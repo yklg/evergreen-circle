@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>品牌图标验收预览 · 青野 Verda</title>
+<style>
+  :root {
+    --primary: #7c9885; --primary-deep: #5e7a66; --ink: #3a413c; --ink-2: #6b746c;
+    --ink-3: #9aa39c; --line: #e3e8e3; --bg: #fafbf9; --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px; background: var(--bg); color: var(--ink);
+         font-family: 'Inter','Noto Sans SC','PingFang SC',system-ui,sans-serif; font-size: 14px; }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 32px 0 12px; color: var(--ink-2); font-weight: 600; }
+  .sub { color: var(--ink-3); margin-bottom: 8px; }
+  .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .row { display: flex; gap: 28px; align-items: flex-end; flex-wrap: wrap; }
+  figure { margin: 0; text-align: center; }
+  figcaption { margin-top: 8px; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .slot { display: grid; place-items: center; padding: 6px; }
+  .stage-dark { background: #1f2421; border-radius: 12px; padding: 20px; margin-top: 12px; }
+  .stage-dark figcaption { color: #8e9a92; }
+  .tabs { display: flex; gap: 6px; padding: 10px 10px 0; background: #dee1de; border-radius: 12px 12px 0 0; }
+  .tabs.dark { background: #2b302d; }
+  .tab { display: flex; align-items: center; gap: 8px; max-width: 260px; padding: 7px 12px;
+          background: #f1f3f0; border-radius: 9px 9px 0 0; color: var(--ink-2); font-size: 12px;
+          white-space: nowrap; overflow: hidden; }
+  .tab.active { background: #fff; color: var(--ink); }
+  .tabs.dark .tab { background: #383e3a; color: #9aa39c; }
+  .tabs.dark .tab.active { background: #464d48; color: #e6eae7; }
+  .cmp { display: flex; gap: 28px; align-items: flex-end; }
+  .bad { outline: 2px solid #ce9a92; outline-offset: 6px; border-radius: 4px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+            background: #ce9a9222; color: #a8625a; margin-bottom: 6px; }
+  .good { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+           background: #8ab58a22; color: #4f7a4f; margin-bottom: 6px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+          background: #7c988518; padding: 1px 6px; border-radius: 5px; color: var(--primary-deep); }
+</style>
+</head>
+<body>
+  <h1>品牌图标验收预览</h1>
+  <p class="sub">源：<code>frontend/public/favicon.svg</code> · 取色 <code>#7c9885</code>（与侧边栏 logo 片同源）· 造型取自 <code>public/assets/brand/logo.png</code> 的嫩芽</p>
+
+  <h2>1 · 多尺寸清晰度（浅底）</h2>
+  <div class="box"><div class="row"><figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>16px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>32px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>48px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>64px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>180px</figcaption></figure></div></div>
+
+  <h2>2 · 深底适配（暗色主题浏览器）</h2>
+  <div class="box"><div class="stage-dark"><div class="row"><figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>16px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>32px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>48px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>64px</figcaption></figure>
+<figure><div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div><figcaption>180px</figcaption></figure></div></div></div>
+
+  <h2>3 · 浏览器标签模拟</h2>
+  <div class="box">
+    <div class="tabs"><div class="tab"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div><div class="tab active"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div><div class="tab"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div><div class="tab"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div></div>
+    <div style="height:14px;background:#f1f3f0"></div>
+    <div class="tabs dark" style="margin-top:18px"><div class="tab"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div><div class="tab active"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div><div class="tab"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div><div class="tab"><svg style="" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div></div>
+    <div style="height:14px;background:#383e3a"></div>
+  </div>
+
+  <h2>4 · 改动前后对比</h2>
+  <div class="box">
+    <div class="cmp">
+      <figure>
+        <div class="badge">改动前</div>
+        <div class="slot bad">
+          <svg width="64" height="64" viewBox="0 0 48 46"><path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/></svg>
+        </div>
+        <figcaption>紫色 #863bff 默认占位图<br>与品牌毫无关系</figcaption>
+      </figure>
+      <figure>
+        <div class="good">改动后</div>
+        <div class="slot"><svg style="" xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 48 48" role="img" aria-label="青野 Verda">
+  <!-- 青野 Verda 品牌图标
+       造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
+       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
+       任意明暗主题都能保持对比度，不会糊成一团。 -->
+  <defs>
+    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8daa97"/>
+      <stop offset="1" stop-color="#6b8875"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 品牌色圆角片 -->
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+
+  <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
+  <g fill="#f7faf5">
+    <circle cx="20.6" cy="35.4" r="2.7"/>
+    <path d="M23.4 22.8 C26.2 13.2 32.6 9.2 38 9.6 C37.8 15.8 33 21.6 23.4 22.8 Z"/>
+    <path d="M20.6 27.6 C17 23.4 12.6 22.2 9.8 23.4 C10.8 27.2 15.4 29.4 20.6 27.6 Z"/>
+  </g>
+  <!-- 茎画在叶片之上，形成「叶从茎生」的层次 -->
+  <path d="M20.8 33.4 C19.2 29.2 20 25.2 23.4 22.4"
+        stroke="#f7faf5" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>
+</div>
+        <figcaption>品牌色嫩芽<br>与 logo / 侧边栏一致</figcaption>
+      </figure>
+      <figure>
+        <div class="good">源品牌资源</div>
+        <div class="slot"><img src="frontend/public/assets/brand/logo.png" width="64" height="64" alt="logo"></div>
+        <figcaption>public/assets/brand/logo.png<br>（造型来源）</figcaption>
+      </figure>
+    </div>
+  </div>
+</body>
+</html>

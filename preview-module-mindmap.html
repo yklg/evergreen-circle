@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>预览 · 模块思维导图</title>
+  <style>
+    :root {
+      --line: #e4e9e5;
+      --primary: #4e8d6e;
+      --primary-deep: #3a6f54;
+      --tint: #eaf3ee;
+      --card: #fff;
+      --bg: #fafbfa;
+      --ink: #2c3437;
+      --ink-2: #5d686b;
+      --ink-3: #8c9698;
+      --shadow-card: 0 2px 12px rgba(31, 45, 36, 0.08);
+    }
+    body.dark {
+      --line: #2c3437;
+      --primary: #5da582;
+      --primary-deep: #79bd99;
+      --tint: #24332c;
+      --card: #1a2220;
+      --bg: #121615;
+      --ink: #e8eceb;
+      --ink-2: #bcc3c1;
+      --ink-3: #8b9593;
+      --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.4);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      transition: background .3s, color .3s;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+    
+    /* 顶部切换按钮 */
+    .mode-switch { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+    .mode-switch button {
+      padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line);
+      background: var(--card); color: var(--ink-2); cursor: pointer;
+      font-size: 13px; font-weight: 500; transition: all .2s;
+    }
+    .mode-switch button.active {
+      background: var(--primary); color: white; border-color: var(--primary);
+    }
+    .mode-switch button:hover:not(.active) { background: var(--tint); }
+
+    /* 卡片容器 */
+    .mindmap-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: var(--shadow-card);
+      margin-bottom: 20px;
+    }
+
+    /* 模式 A：层级树 (Tree Style) */
+    .tree-container { display: flex; align-items: center; gap: 12px; }
+    .tree-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      padding: 8px 12px;
+    }
+    .tree-node-label {
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: var(--tint);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary-deep);
+      z-index: 1;
+    }
+    .tree-node.current .tree-node-label {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+    .tree-connector {
+      position: absolute;
+      background: var(--line);
+      z-index: 0;
+    }
+    /* 垂直连接线 */
+    .tree-node.vertical .tree-connector.vert {
+      width: 1px;
+      height: 24px;
+      left: 50%;
+      top: 100%;
+      transform: translateX(-50%);
+    }
+    /* 水平连接线 */
+    .tree-node.horizontal .tree-connector.horz {
+      height: 1px;
+      width: 24px;
+      top: 50%;
+      left: 100%;
+      transform: translateY(-50%);
+    }
+
+    /* 模式 B：关系网格 (Grid Style) */
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 16px;
+      align-items: start;
+    }
+    .grid-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      position: relative;
+      padding: 12px;
+      background: var(--bg);
+      border-radius: 10px;
+      border: 1px dashed var(--line);
+    }
+    .grid-node.current {
+      background: var(--tint);
+      border-style: solid;
+      border-color: var(--primary);
+    }
+    .grid-node-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 6px;
+    }
+    .grid-node-desc {
+      font-size: 11px;
+      color: var(--ink-3);
+      line-height: 1.4;
+    }
+    .grid-conn-line {
+      position: absolute;
+      background: var(--line);
+      height: 1px;
+      top: 50%;
+      z-index: 0;
+    }
+    .grid-conn-line.v { width: 1px; }
+    .grid-conn-line.h { width: 100%; height: 1px; }
+
+    /* 图例说明 */
+    .legend {
+      margin-top: 24px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .legend h5 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 12px;
+    }
+    .legend-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .legend-dot.primary { background: var(--primary); }
+    .legend-dot.tint { background: var(--tint); border: 1px solid var(--primary); }
+    .legend-dot.line { background: transparent; border: 1px dashed var(--line); }
+
+    /* 高亮标记 */
+    .badge {
+      position: absolute;
+      top: -10px;
+      right: -10px;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: var(--primary);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+      z-index: 2;
+    }
+    .changed-region {
+      outline: 2px solid var(--primary);
+      outline-offset: 6px;
+    }
+
+    .note {
+      margin-top: 16px;
+      padding: 12px;
+      background: var(--tint);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--ink-2);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="font-size:20px;font-weight:600;margin-bottom:8px;">模块思维导图 · 渲染预览</h1>
+    <p style="color:var(--ink-2);margin-bottom:20px;">在报告每个章节的<strong>核心判断 (key_takeaway)</strong>后展示该模块与整体报告的关系</p>
+
+    <!-- 模式切换 -->
+    <div class="mode-switch">
+      <button class="active" data-mode="tree">模式 A：层级缩进树</button>
+      <button data-mode="grid">模式 B：关系网格卡</button>
+      <button data-mode="both">同时预览两种模式</button>
+    </div>
+
+    <!-- 模式 A：层级树 -->
+    <div id="treeContainer" class="mindmap-card changed-region">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M12 9V5M12 19v-3M9 12H5M19 12h-4"></path>
+          <path d="M8 8l3 3M16 16l-3-3M16 8l-3 3M8 16l3-3"></path>
+        </svg>
+        <span style="font-size:14px;font-weight:600;color:var(--ink);">模式 A：层级缩进树</span>
+        <span class="badge">推荐</span>
+      </div>
+      <p style="color:var(--ink-2);font-size:13px;margin-bottom:16px;">
+        适合章节层次清晰、有明确父子关系的场景。展示当前章节在整个报告中的层级位置。
+      </p>
+
+      <div class="tree-container">
+        <div class="tree-node vertical">
+          <div class="tree-connector vert"></div>
+          <div class="tree-node-label">封面与概述</div>
+        </div>
+        <div class="tree-node vertical">
+          <div class="tree-connector vert"></div>
+          <div class="tree-node-label">市场现状</div>
+        </div>
+        <div class="tree-node horizontal">
+          <div class="tree-connector horz"></div>
+          <div class="tree-node-label">技术架构</div>
+        </div>
+        <div class="tree-node current vertical">
+          <div class="tree-connector vert"></div>
+          <div class="tree-node-label">竞品对比</div>
+          <div class="badge">当前章节</div>
+        </div>
+        <div class="tree-node horizontal">
+          <div class="tree-connector horz"></div>
+          <div class="tree-node-label">用户画像</div>
+        </div>
+        <div class="tree-node vertical">
+          <div class="tree-connector vert"></div>
+          <div class="tree-node-label">发展趋势</div>
+        </div>
+        <div class="tree-node">
+          <div class="tree-node-label">总结与建议</div>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>使用说明：</b>在章节的 <code>key_takeaway</code> 后面插入这个思维导图组件，显示当前章节在整个报告目录中的位置。
+        支持折叠/展开所有节点，点击节点可快速跳转。
+      </div>
+    </div>
+
+    <!-- 模式 B：关系网格 -->
+    <div id="gridContainer" class="mindmap-card changed-region">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+        </svg>
+        <span style="font-size:14px;font-weight:600;color:var(--ink);">模式 B：关系网格卡</span>
+      </div>
+      <p style="color:var(--ink-2);font-size:13px;margin-bottom:16px;">
+        适合扁平化展示，强调各章节之间的平行关系。每个卡片包含章节标题和简短描述。
+      </p>
+
+      <div class="grid-container">
+        <div class="grid-node">
+          <div class="grid-node-title">封面与概述</div>
+          <div class="grid-node-desc">报告背景与目标</div>
+        </div>
+        <div class="grid-node">
+          <div class="grid-node-title">市场现状</div>
+          <div class="grid-node-desc">行业规模与增速</div>
+        </div>
+        <div class="grid-node">
+          <div class="grid-node-title">技术架构</div>
+          <div class="grid-node-desc">核心技术栈分析</div>
+        </div>
+        <div class="grid-node current">
+          <div class="grid-node-title">竞品对比</div>
+          <div class="grid-node-desc">功能性能对标</div>
+          <div class="badge">当前</div>
+        </div>
+        <div class="grid-node">
+          <div class="grid-node-title">用户画像</div>
+          <div class="grid-node-desc">典型用户特征</div>
+        </div>
+        <div class="grid-node">
+          <div class="grid-node-title">发展趋势</div>
+          <div class="grid-node-desc">未来走向预测</div>
+        </div>
+        <div class="grid-node">
+          <div class="grid-node-title">总结建议</div>
+          <div class="grid-node-desc">战略行动项</div>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>使用说明：</b>以扁平网格形式展示所有章节，突出当前章节的高亮状态。适合移动端友好展示。
+      </div>
+    </div>
+
+    <!-- 图例 -->
+    <div class="legend">
+      <h5>改动区图例</h5>
+      <div class="legend-row">
+        <div class="legend-dot primary"></div>
+        <div><b>实心绿色圆点</b>：当前选中章节（高亮）</div>
+      </div>
+      <div class="legend-row">
+        <div class="legend-dot tint"></div>
+        <div><b>浅绿背景</b>：普通章节节点</div>
+      </div>
+      <div class="legend-row">
+        <div class="legend-dot line"></div>
+        <div><b>虚线框/线条</b>：章节间的连接关系</div>
+      </div>
+      <div class="legend-row">
+        <div style="width:12px;height:12px;border-radius:0;background:rgba(78,141,110,0.1);border:2px solid var(--primary);"></div>
+        <div><b>橙色描边区域</b>：<b>改动区</b>——将在章节的<code>key_takeaway</code>后新增此组件</div>
+      </div>
+      <div class="note" style="margin-top:12px;">
+        <b>技术实现：</b>将新建 <code>ModuleMindMap.tsx</code> 组件，接收报告 TOC 数据和当前章节 ID，根据模式渲染对应的视图。
+        支持交互：点击跳转、折叠/展开。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 简单的模式切换逻辑
+    const buttons = document.querySelectorAll('.mode-switch button');
+    const treeContainer = document.getElementById('treeContainer');
+    const gridContainer = document.getElementById('gridContainer');
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        buttons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        const mode = btn.dataset.mode;
+        if (mode === 'tree') {
+          treeContainer.style.display = 'block';
+          gridContainer.style.display = 'none';
+        } else if (mode === 'grid') {
+          treeContainer.style.display = 'none';
+          gridContainer.style.display = 'block';
+        } else {
+          treeContainer.style.display = 'block';
+          gridContainer.style.display = 'block';
+        }
+      });
+    });
+  </script>
+</body>
+</html>

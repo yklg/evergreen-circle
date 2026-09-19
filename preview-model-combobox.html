@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>预览 · VCombobox 模型下拉根修（C1–C4）</title>
+<style>
+  :root {
+    --bg: #f4f6f4; --card: #ffffff; --ink: #1f2d24; --ink2: #52605a; --ink3: #8a968f;
+    --line: #e4e9e5; --primary: #4e8d6e; --primary-deep: #3a6f54; --tint: #eaf3ee;
+    --bad: #c2554d; --badbg: #fdf1f0; --good: #3a6f54; --goodbg: #eef7f1;
+    --shadow: 0 8px 30px rgba(31,45,36,.10);
+  }
+  body.dark {
+    --bg: #14181a; --card: #1d2326; --ink: #e8ede9; --ink2: #aeb8b1; --ink3: #79837c;
+    --line: #2c3437; --primary: #5da582; --primary-deep: #79bd99; --tint: #24332c;
+    --bad: #e08a83; --badbg: #332524; --good: #79bd99; --goodbg: #1f2e27;
+    --shadow: 0 8px 30px rgba(0,0,0,.45);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; transition: background .3s, color .3s; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  .top { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  .top h1 { font-size: 19px; font-weight: 700; }
+  .top .spacer { flex: 1; }
+  .btn-ghost { border: 1px solid var(--line); background: var(--card); color: var(--ink2); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  .btn-ghost:hover { color: var(--primary-deep); border-color: var(--primary); }
+  .cause { background: var(--badbg); border: 1px solid var(--bad); border-radius: 10px; padding: 10px 14px; margin: 10px 0 22px; font-size: 13px; color: var(--ink); }
+  .cause b { color: var(--bad); }
+
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  @media (max-width: 980px) { .panes { grid-template-columns: 1fr; } }
+  .pane { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+  .pane-head { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  .tag { font-size: 12px; padding: 2px 10px; border-radius: 999px; font-weight: 600; }
+  .tag.bad { background: var(--badbg); color: var(--bad); border: 1px solid var(--bad); }
+  .tag.good { background: var(--goodbg); color: var(--good); border: 1px solid var(--good); }
+  .pane-body { padding: 22px 26px 26px; }
+
+  .mm-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+  .mm-sub { font-size: 12px; color: var(--ink3); margin: 2px 0 16px; }
+  .frow { display: flex; align-items: center; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .frow:last-child { border-bottom: 0; }
+  .flabel { width: 88px; flex-shrink: 0; color: var(--ink2); font-size: 13px; }
+
+  .inp { height: 38px; width: 100%; border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--ink); padding: 0 12px; font: 12px/1 ui-monospace, "SF Mono", Menlo, monospace; outline: none; }
+  .inp:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+
+  .region { position: relative; border-radius: 10px; }
+  .region.bad-fix { outline: 2px dashed var(--bad); outline-offset: 6px; }
+  .region.fix { outline: 2px solid var(--good); outline-offset: 6px; }
+  .region.opt { outline: 2px dashed var(--primary); outline-offset: 6px; }
+  .badge { position: absolute; top: -13px; left: -13px; z-index: 5; min-width: 22px; height: 22px; border-radius: 999px; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 6px; }
+  .badge.b { background: var(--bad); } .badge.g { background: var(--good); } .badge.o { background: var(--primary); }
+
+  .cb { position: relative; }
+  .cb-arrow { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--ink3); pointer-events: none; font-size: 11px; }
+  .dd { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 6px); background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 5px; display: none; }
+  .dd.open { display: block; }
+  .dd-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; font-size: 11px; color: var(--ink3); }
+  .opt-item { padding: 8px 10px; border-radius: 7px; font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--ink); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .opt-item:hover { background: var(--tint); }
+  .opt-item.active { background: var(--tint); }
+  .opt-item .check { margin-left: auto; color: var(--primary-deep); font-weight: 700; visibility: hidden; }
+  .opt-item.selected .check { visibility: visible; }
+  .opt-item mark { background: transparent; color: var(--primary-deep); font-weight: 700; }
+  .live-tag { font-size: 10px; color: var(--primary-deep); background: var(--tint); border-radius: 4px; padding: 1px 5px; font-family: sans-serif; }
+  .dd-tip { padding: 6px 8px 2px; font-size: 11px; color: var(--ink3); }
+  .refresh { border: 1px dashed var(--primary); background: transparent; color: var(--primary-deep); border-radius: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+  .refresh.spinning i { display: inline-block; animation: spin .8s linear infinite; font-style: normal; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .toast { font-size: 11px; color: var(--good); margin-left: 8px; }
+
+  .note { margin-top: 18px; font-size: 12px; color: var(--ink2); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+  .note b.w { color: var(--bad); } .note b.r { color: var(--good); }
+  .kbd { display: inline-block; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; font: 11px ui-monospace, Menlo; background: var(--card); }
+  .hint { font-size: 11px; color: var(--ink3); margin-top: 4px; }
+
+  .legend { margin-top: 26px; background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 18px 22px; }
+  .legend h2 { font-size: 15px; margin-bottom: 12px; }
+  .legend table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .legend th, .legend td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .legend th { color: var(--ink3); font-weight: 600; white-space: nowrap; }
+  .legend td:first-child { white-space: nowrap; }
+  .pill { display: inline-block; min-width: 30px; text-align: center; border-radius: 999px; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 8px; }
+  .code { font: 12px ui-monospace, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <h1>模型下拉根修 · 改动预览</h1>
+    <div class="spacer"></div>
+    <button class="btn-ghost" onclick="document.body.classList.toggle('dark')">🌗 明暗切换</button>
+  </div>
+  <div class="cause">
+    <b>根因</b>：4 个模型字段（默认/核心/辅助/杂务）共用同一渲染分支（SettingsPage.tsx:388-396）——原生
+    <span class="code">&lt;input list&gt; + &lt;datalist&gt;</span>，浏览器规则是「输入框有值时候选按值过滤、不可关闭」。
+    框里已有完整模型 ID 时其它候选被滤掉，<b>4 个字段全都“看似不能换”</b>。左边 4 个字段都可亲手复现，右边 4 个全是修复后交互。
+  </div>
+
+  <div class="panes">
+    <!-- ═══════════ 改动前 ═══════════ -->
+    <div class="pane">
+      <div class="pane-head"><span class="tag bad">改动前 · 现状</span> 编辑配置 → 模型矩阵</div>
+      <div class="pane-body">
+        <div class="mm-title">▤ 模型矩阵</div>
+        <div class="mm-sub">按报告环节分配模型 · 4 个字段同为 MODEL_FIELDS 分支，行为完全一致</div>
+
+        <div class="region bad-fix">
+          <span class="badge b">C2</span>
+          <div class="frow">
+            <span class="flabel">默认模型</span>
+            <div class="cb" data-kind="old" data-value="deepseek-v4-pro"></div>
+          </div>
+          <div class="frow">
+            <span class="flabel">核心章</span>
+            <div class="cb" data-kind="old" data-value="deepseek-v4-pro"></div>
+          </div>
+          <div class="frow">
+            <span class="flabel">辅助章</span>
+            <div class="cb" data-kind="old" data-value="deepseek-v4-flash"></div>
+          </div>
+          <div class="frow">
+            <span class="flabel">杂务快速</span>
+            <div class="cb" data-kind="old" data-value="deepseek-v4-flash"></div>
+          </div>
+        </div>
+
+        <div class="note">
+          <b class="w">亲手试试（4 个字段都一样）</b>：点任意输入框或 ▾ —— 只弹出 <b>1 个</b>候选（就是当前值）。
+          把内容删成 <span class="kbd">deepseek</span>，候选才回来。<b>输入越完整，候选越少</b>，这就是“不能换模型”的真相。
+          候选源其实一直有 2+ 个（llmProviders.ts:58 + 实时 /models 合并去重）。
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ 改动后 ═══════════ -->
+    <div class="pane">
+      <div class="pane-head"><span class="tag good">改动后 · VCombobox（C1+C2+C3）</span> 同一弹窗</div>
+      <div class="pane-body">
+        <div class="mm-title">▤ 模型矩阵</div>
+        <div class="mm-sub">4 个字段全部替换为 VCombobox（一处组件，处处生效） · C3：原单例 datalist 已删，无死代码</div>
+
+        <div class="region fix">
+          <span class="badge g">C2</span>
+          <div class="frow">
+            <span class="flabel">默认模型</span>
+            <div class="cb" data-kind="new" data-value="deepseek-v4-pro"></div>
+          </div>
+          <div class="frow">
+            <span class="flabel">核心章</span>
+            <div class="cb" data-kind="new" data-value="deepseek-v4-pro"></div>
+          </div>
+          <div class="frow">
+            <span class="flabel">辅助章</span>
+            <div class="cb" data-kind="new" data-value="deepseek-v4-flash"></div>
+          </div>
+          <div class="frow">
+            <span class="flabel">杂务快速</span>
+            <div class="cb" data-kind="new" data-value="deepseek-v4-flash"></div>
+          </div>
+        </div>
+
+        <div class="region opt" style="margin-top:20px">
+          <span class="badge o">C4</span>
+          <div class="note" style="margin-top:0">
+            <b class="r">C4（可选）</b>：每个候选下拉头部带「↻ 刷新实时列表」——绕过会话缓存重拉
+            <span class="code">/api/llm/models</span>，官方刚发布的模型<b>当场进候选</b>，不用整页刷新。
+            不选 C4 则维持现状：刷新设置页时自动拉取（已有 enrichment 层）。
+          </div>
+        </div>
+
+        <div class="note">
+          <b class="r">亲手试试（4 个字段都一样）</b>：点任意输入框/▾ —— <b>无论框里有什么，全部候选恒显</b>；继续输入也不过滤，
+          命中片段高亮；<span class="kbd">↑</span><span class="kbd">↓</span> 移动、<span class="kbd">Enter</span> 选中、
+          <span class="kbd">Esc</span> 关闭；随手输 <span class="kbd">my-model-01</span> 也接受（自由输入保留）。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 图例 ═══════════ -->
+  <div class="legend">
+    <h2>图例 · 改动区 → 位置与预期效果</h2>
+    <table>
+      <tr><th>区</th><th>位置</th><th>当前态 → 目标态</th><th>预期效果</th></tr>
+      <tr><td><span class="pill" style="background:var(--good)">C1</span></td>
+        <td><span class="code">components/ui/index.tsx</span> 新增</td>
+        <td>无 → <span class="code">VCombobox</span> 组件</td>
+        <td>恒显全部候选、可手输、↑↓/Enter/Esc 键盘导航、点外关闭；行为可单测，不再依赖浏览器隐式行为</td></tr>
+      <tr><td><span class="pill" style="background:var(--good)">C2</span></td>
+        <td><span class="code">SettingsPage.tsx:388-396</span> MODEL_FIELDS 分支</td>
+        <td><span class="code">&lt;input list&gt;</span>（有值即过滤） → <span class="code">&lt;VCombobox candidates={candidateModels}&gt;</span></td>
+        <td>默认/核心/辅助/杂务 <b>4 个字段一处生效</b>，全部恢复“可选择+可手输”；点开即见全部候选</td></tr>
+      <tr><td><span class="pill" style="background:var(--good)">C3</span></td>
+        <td><span class="code">SettingsPage.tsx:594-603</span> 单例 datalist</td>
+        <td>候选 datalist 块 → 整块删除</td>
+        <td>清除死代码，无双轨残留</td></tr>
+      <tr><td><span class="pill" style="background:var(--primary)">C4 可选</span></td>
+        <td>VCombobox 候选头部</td>
+        <td>无 → 「↻ 刷新实时列表」按钮</td>
+        <td>绕过 liveCache 会话缓存重拉 /api/llm/models；官方上新当场可见（不选则维持“刷新页面时自动拉取”）</td></tr>
+    </table>
+  </div>
+</div>
+
+<script>
+/* ── 演示数据：curated 2 个（llmProviders.ts:58）+ 实时 /models 合并去重后 3 个 ── */
+const CANDIDATES = [
+  { id: 'deepseek-v4-pro', live: false },
+  { id: 'deepseek-v4-flash', live: false },
+  { id: 'deepseek-v4-pro-0918', live: true },
+]
+const esc = s => s.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]))
+
+/* ── 改动前：模拟原生 datalist「按输入值过滤」——4 个字段都能复现 ── */
+function mountOld(root) {
+  const value = root.dataset.value
+  root.innerHTML =
+    '<input class="inp" value="' + value + '" autocomplete="off">' +
+    '<span class="cb-arrow">▾</span><div class="dd"></div>'
+  const inp = root.querySelector('input')
+  const dd = root.querySelector('.dd')
+  function render() {
+    const q = inp.value.trim().toLowerCase()
+    const hit = CANDIDATES.filter(c => c.id.toLowerCase().includes(q))  /* Chrome 的过滤规则 */
+    dd.innerHTML = '<div class="dd-tip">原生 datalist：候选 = 包含「' + esc(q || '空') + '」的项（浏览器行为，不可配置）</div>' +
+      (hit.length ? hit.map(c => '<div class="opt-item">' + c.id + '</div>').join('')
+                  : '<div class="dd-tip">（无匹配候选）</div>')
+  }
+  inp.addEventListener('focus', () => { render(); dd.classList.add('open') })
+  inp.addEventListener('input', () => { render(); dd.classList.add('open') })
+  inp.addEventListener('blur', () => setTimeout(() => dd.classList.remove('open'), 150))
+}
+
+/* ── 改动后：VCombobox——恒显全部候选 + 键盘导航 + 可选刷新（C4）── */
+function mountNew(root, withRefresh) {
+  const value = root.dataset.value
+  root.innerHTML =
+    '<input class="inp" value="' + value + '" autocomplete="off" placeholder="选择或直接输入模型 ID">' +
+    '<span class="cb-arrow" style="pointer-events:auto;cursor:pointer">▾</span><div class="dd"></div>'
+  const inp = root.querySelector('input')
+  const arrow = root.querySelector('.cb-arrow')
+  const dd = root.querySelector('.dd')
+  let active = -1
+
+  function render() {
+    const q = inp.value.trim().toLowerCase()
+    const hl = id => {  /* 不过滤，只高亮命中片段 */
+      if (!q) return esc(id)
+      const i = id.toLowerCase().indexOf(q)
+      return i < 0 ? esc(id)
+        : esc(id.slice(0, i)) + '<mark>' + esc(id.slice(i, i + q.length)) + '</mark>' + esc(id.slice(i + q.length))
+    }
+    const head = '<div class="dd-head"><span>全部候选 · 不随输入过滤（C1 行为）</span>' +
+      (withRefresh
+        ? '<span><button class="refresh"><i>↻</i> 刷新实时列表</button><span class="toast"></span></span>'
+        : '<span></span>') + '</div>'
+    dd.innerHTML = head + CANDIDATES.map((c, i) =>
+      '<div class="opt-item' + (i === active ? ' active' : '') + (c.id === inp.value ? ' selected' : '') + '" data-i="' + i + '">' +
+      hl(c.id) + (c.live ? '<span class="live-tag">实时</span>' : '') +
+      '<span class="check">✓</span></div>').join('') +
+      '<div class="dd-tip">↑↓ 选择 · Enter 选中 · Esc 关闭 · 可直接输入任意 ID</div>'
+    const rf = dd.querySelector('.refresh')
+    if (rf) rf.onclick = e => {
+      e.preventDefault(); rf.classList.add('spinning')
+      setTimeout(() => { rf.classList.remove('spinning'); dd.querySelector('.toast').textContent = '已刷新 · 3 个实时模型' }, 700)
+    }
+    dd.querySelectorAll('.opt-item').forEach(el => {
+      el.onclick = () => { inp.value = CANDIDATES[+el.dataset.i].id; close() }
+    })
+  }
+  function open() { active = Math.max(0, CANDIDATES.findIndex(c => c.id === inp.value)); render(); dd.classList.add('open') }
+  function close() { dd.classList.remove('open'); active = -1 }
+  inp.addEventListener('focus', open)
+  inp.addEventListener('input', () => { active = -1; render(); dd.classList.add('open') })
+  arrow.addEventListener('click', () => dd.classList.contains('open') ? close() : open())
+  inp.addEventListener('keydown', e => {
+    if (!dd.classList.contains('open')) { if (e.key === 'ArrowDown') open(); return }
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % CANDIDATES.length; render() }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + CANDIDATES.length) % CANDIDATES.length; render() }
+    else if (e.key === 'Enter') { e.preventDefault(); if (active >= 0) inp.value = CANDIDATES[active].id; close() }
+    else if (e.key === 'Escape') close()
+  })
+  root._close = close
+}
+
+/* C4 开关：预览里两个都演示 —— 右栏全部带刷新按钮（选 C4 后的实际形态） */
+document.querySelectorAll('[data-kind="old"]').forEach(mountOld)
+document.querySelectorAll('[data-kind="new"]').forEach(el => mountNew(el, true))
+document.addEventListener('click', e => {
+  document.querySelectorAll('[data-kind="new"]').forEach(el => {
+    if (!el.contains(e.target) && el._close) el._close()
+  })
+})
+</script>
+</body>
+</html>

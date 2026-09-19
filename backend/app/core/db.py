@@ -1,10 +1,18 @@
 """SQLite 持久化层（真实落盘，切页面/刷新/重启都在）。
 
-存储：调研任务 / 报告 / 证据溯源 / 竞品监控订阅 / 专家工作量。
+存储：调研任务 / 报告 / 证据溯源 / 竞品监控订阅 / 专家工作量
+      + 系统级运行时配置覆盖（settings 表）/ 用户级偏好（prefs 表）。
 所有读写都走这里，绝不再用内存 dict 当真相源。
+
+`settings` 与 `prefs` 是**两张表、两套语义**，不可互换：
+- `settings`：系统级运行时配置（env 默认 + 运维覆盖），键为 CONFIG_SCHEMA 白名单，
+  对外 GET 必须经 `runtime_config.mask_effective()` 脱敏（含密钥）。
+- `prefs`：用户级偏好（昵称/公司/界面选择），明文无密钥，原样返回。
+  两表合并会让脱敏判断与启动迁移（migrate_legacy_settings）互相误伤，故刻意分表。
 """
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import json
 import os
@@ -171,6 +179,21 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             expires_at TEXT,
             created_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS prefs (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS living_circle_reports (
+            report_id TEXT PRIMARY KEY,
+            scene_key TEXT,
+            scene_name TEXT,
+            data TEXT,
+            data_origin TEXT,
+            total_score REAL,
+            blindspot_count INTEGER,
+            created_at TEXT
+        );
         """
     )
     conn.commit()
@@ -295,6 +318,52 @@ def migrate_settings(mapping: Dict[str, str]) -> int:
             c.rollback()
             raise
     return moved
+
+
+# ── 用户级偏好（prefs 表）───────────────────────────────
+# 与 settings 表刻意分离（见模块 docstring）。域层白名单/校验见 core/user_prefs.py；
+# 本层只做「键值裸存取」，不含业务语义（与 settings 的分层一致）。
+def get_prefs_all() -> Dict[str, str]:
+    """一次性取出全部用户偏好（避免逐键 N 次往返）。"""
+    c = _connect()
+    return {r["key"]: r["value"] for r in c.execute("SELECT key,value FROM prefs")}
+
+
+def set_prefs(patch: Dict[str, str]) -> None:
+    """批量写入用户偏好：**单事务**，任一键失败整体回滚（不做半写）。
+
+    value 一律以字符串落库；类型还原由 core/user_prefs.py 依据 PREF_SCHEMA 负责。
+    """
+    if not patch:
+        return
+    with _LOCK:
+        c = _connect()
+        try:
+            for k, v in patch.items():
+                c.execute(
+                    "INSERT OR REPLACE INTO prefs(key,value,updated_at) VALUES(?,?,?)",
+                    (k, str(v), _now()),
+                )
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
+
+
+def delete_pref(key: str) -> None:
+    """删除单个偏好键（回落前端默认值）。"""
+    with _LOCK:
+        c = _connect()
+        c.execute("DELETE FROM prefs WHERE key=?", (key,))
+        c.commit()
+
+
+def clear_prefs() -> None:
+    """清空全部用户偏好（供测试隔离 / 显式重置使用；业务读路径不得调用）。"""
+    with _LOCK:
+        c = _connect()
+        c.execute("DELETE FROM prefs")
+        c.commit()
 
 
 # ── 任务 ────────────────────────────────────────────────
@@ -544,6 +613,8 @@ def save_report(report: Dict[str, Any], task_id: str = "") -> None:
                 ),
             )
         c.commit()
+        # G5 失效钩子：报告/证据写路径 → 聚合缓存淘汰
+        invalidate_aggregates()
 
 
 # --------------------------------------------------------------------------- #
@@ -588,6 +659,7 @@ def backfill_evidences_from_reports() -> None:
                     ),
                 )
         c.commit()
+        invalidate_aggregates()
 
 
 def get_report(report_id: str) -> Optional[Dict[str, Any]]:
@@ -650,6 +722,8 @@ def delete_report(report_id: str) -> bool:
         c.execute("DELETE FROM tasks WHERE report_id=?", (report_id,))
         c.execute("DELETE FROM reports WHERE report_id=?", (report_id,))
         c.commit()
+        # G5 失效钩子：级联删除改变聚合口径
+        invalidate_aggregates()
     return True
 
 
@@ -692,6 +766,8 @@ def invalidate_report_brief(report_id: str) -> None:
             ),
         )
         c.commit()
+        # G5 失效钩子：data 已变（brief 淘汰），聚合口径可能变化
+        invalidate_aggregates()
 
 
 # ── 全局证据溯源库 ──────────────────────────────────────
@@ -746,7 +822,28 @@ def evidence_facets() -> Dict[str, Any]:
 
 
 # ── 调研统计（真实仪表盘）─────────────────────────────────
-def dashboard_stats() -> Dict[str, Any]:
+# G5：只读聚合缓存。dashboard_stats/intel_overview 每次调用都做全表 COUNT +
+# 全量 intel 概览（读取全部报告 data 反序列化），高频读会放大 SQLite 读写放大。
+# 加进程级只读缓存：写路径（save_report/delete_report/invalidate_report_brief/backfill）
+# 经失效钩子 invalidate_aggregates() 淘汰，读命中直接返回深拷贝。缓存与库文件路径
+# 无耦合——测试隔离库切换由 conftest autouse 夹具显式失效（B-06 契约守护）。
+_AGG_CACHE: Optional[Dict[str, Any]] = None
+_AGG_LOCK = threading.RLock()
+
+
+def invalidate_aggregates() -> None:
+    """聚合读缓存失效（幂等：无缓存时 no-op）。
+
+    报告/证据写路径成功后必须调用，保证 dashboard_stats / intel_overview
+    永远反映最新库状态；测试隔离夹具亦调用，防跨用例串库脏缓存。
+    """
+    global _AGG_CACHE
+    with _AGG_LOCK:
+        _AGG_CACHE = None
+
+
+def _agg_compute() -> Dict[str, Any]:
+    """一次算齐 dashboard + intel 聚合（缓存缺失时重建；返回新结构，不耦合缓存本体）。"""
     c = _connect()
     reports = c.execute("SELECT COUNT(*) n FROM reports").fetchone()["n"]
     ev_total = c.execute("SELECT COUNT(*) n FROM evidences").fetchone()["n"]
@@ -756,32 +853,8 @@ def dashboard_stats() -> Dict[str, Any]:
     # 真实事实准确率 = 高置信结论占比
     fact_rate = round(high_total / claim_total * 100) if claim_total else 0
     facets = evidence_facets()
-    intel = intel_overview()
-    return {
-        "reports": reports,
-        "evidence_total": ev_total,
-        "claim_total": claim_total,
-        "high_conf_total": high_total,
-        "avg_evidence_per_report": avg_ev,
-        "fact_accuracy": fact_rate,
-        "platform_distribution": facets["by_type"],
-        "brand_distribution": facets["by_brand"],
-        # 业务闭环聚合（真实，来自各报告 metrics）
-        "minutes_saved": intel["minutes_saved"],
-        "avg_efficiency": intel["avg_efficiency"],
-        "avg_coverage": intel["avg_coverage"],
-        "total_tokens": intel["total_tokens"],
-        "research_cards": intel["cards"],
-    }
 
-
-def intel_overview() -> Dict[str, Any]:
-    """跨报告聚合真实业务指标 + 每次调研的概览卡（供情报中心）。
-
-    从每份报告存储的 data.metrics 里抽取效率/覆盖/耗时/token，聚合出
-    「累计节省人力（分钟）」「平均效率倍数」等可向评委解释的真实数字。
-    """
-    c = _connect()
+    # intel_overview：跨报告聚合真实业务指标 + 每次调研的概览卡（供情报中心）
     rows = c.execute(
         "SELECT report_id,title,query,brands,evidence_count,claim_count,"
         "high_conf_count,created_at,data FROM reports ORDER BY created_at DESC LIMIT 60"
@@ -823,13 +896,47 @@ def intel_overview() -> Dict[str, Any]:
             "minutes_saved": round(saved, 1),
             "tokens_used": eff.get("tokens_used"),
         })
-    return {
+    intel = {
         "minutes_saved": round(minutes_saved, 1),
         "avg_efficiency": round(sum(eff_list) / len(eff_list), 1) if eff_list else 0,
         "avg_coverage": round(sum(cov_list) / len(cov_list), 1) if cov_list else 0,
         "total_tokens": total_tokens,
         "cards": cards,
     }
+    return {
+        "dashboard": {
+            "reports": reports,
+            "evidence_total": ev_total,
+            "claim_total": claim_total,
+            "high_conf_total": high_total,
+            "avg_evidence_per_report": avg_ev,
+            "fact_accuracy": fact_rate,
+            "platform_distribution": facets["by_type"],
+            "brand_distribution": facets["by_brand"],
+            "minutes_saved": intel["minutes_saved"],
+            "avg_efficiency": intel["avg_efficiency"],
+            "avg_coverage": intel["avg_coverage"],
+            "total_tokens": intel["total_tokens"],
+            "research_cards": intel["cards"],
+        },
+        "intel": intel,
+    }
+
+
+def dashboard_stats() -> Dict[str, Any]:
+    global _AGG_CACHE
+    with _AGG_LOCK:
+        if _AGG_CACHE is None:
+            _AGG_CACHE = _agg_compute()
+        return copy.deepcopy(_AGG_CACHE["dashboard"])
+
+
+def intel_overview() -> Dict[str, Any]:
+    global _AGG_CACHE
+    with _AGG_LOCK:
+        if _AGG_CACHE is None:
+            _AGG_CACHE = _agg_compute()
+        return copy.deepcopy(_AGG_CACHE["intel"])
 
 
 
@@ -993,3 +1100,80 @@ def get_report_feedback(report_id: str) -> Optional[Dict[str, Any]]:
     d = dict(row)
     d["data"] = json.loads(d.get("data") or "{}")
     return d
+
+
+# ── 生活圈体检报告（A1 独立文档，report_type 弱关联回 Report）───────────
+# 与 reports 表刻意分离：体检报告 body 整体序列化进本表 data 列；
+# 前端 ReportPage 用渲染适配器（report_type）分发，不出现在旧 reports 列表。
+def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> None:
+    """落库一份生活圈体检报告（幂等：按 report_id INSERT OR REPLACE）。"""
+    lc = report.get("living_circle") or {}
+    scene = lc.get("scene") or {}
+    scores = lc.get("scores") or {}
+    with _LOCK:
+        c = _connect()
+        c.execute(
+            "INSERT OR REPLACE INTO living_circle_reports(report_id,scene_key,scene_name,data,"
+            "data_origin,total_score,blindspot_count,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (
+                report["id"],
+                scene_key,
+                scene.get("name", ""),
+                json.dumps(report, ensure_ascii=False),
+                lc.get("data_origin", ""),
+                float(scores.get("total", 0) or 0),
+                len(lc.get("blindspots") or []),
+                report.get("created_at", _now()),
+            ),
+        )
+        c.commit()
+
+
+def get_living_circle_report(report_id: str) -> Optional[Dict[str, Any]]:
+    """读取完整体检报告（含 living_circle 挂载的 Report 结构）。"""
+    c = _connect()
+    row = c.execute("SELECT data FROM living_circle_reports WHERE report_id=?", (report_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row["data"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def list_living_circle_reports(limit: int = 50) -> List[Dict[str, Any]]:
+    """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。"""
+    c = _connect()
+    rows = c.execute(
+        "SELECT report_id, scene_key, scene_name, data_origin, total_score, blindspot_count, created_at"
+        " FROM living_circle_reports ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        data = get_living_circle_report(d["report_id"]) or {}
+        lc = data.get("living_circle") or {}
+        scene = lc.get("scene") or {}
+        out.append({
+            "id": d["report_id"],
+            "title": data.get("title", f"{d['scene_name']} · 生活圈体检报告"),
+            "scene_name": d["scene_name"] or scene.get("name", ""),
+            "city": scene.get("city", ""),
+            "checked_at": d["created_at"],
+            "total_score": int(d["total_score"] or 0),
+            "blindspot_count": int(d["blindspot_count"] or 0),
+            "data_origin": d["data_origin"] or lc.get("data_origin", ""),
+            "interpolation": (lc.get("sampling") or {}).get("interpolation", "circular_approx"),
+        })
+    return out
+
+
+def delete_living_circle_report(report_id: str) -> bool:
+    """删除体检报告并级联清理关联任务（report_id 弱关联）。"""
+    with _LOCK:
+        c = _connect()
+        c.execute("DELETE FROM tasks WHERE report_id=?", (report_id,))
+        cur = c.execute("DELETE FROM living_circle_reports WHERE report_id=?", (report_id,))
+        c.commit()
+        return cur.rowcount > 0

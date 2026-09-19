@@ -118,11 +118,12 @@ def get_expert(eid: str):
 class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"
+    model: Optional[str] = None
 
 
 @app.post("/api/tasks")
 def post_task(body: CreateTaskBody):
-    return create_task(body.query, mode=body.mode)
+    return create_task(body.query, mode=body.mode, model=body.model)
 
 
 class ClarifyBody(BaseModel):

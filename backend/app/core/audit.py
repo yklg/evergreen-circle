@@ -21,6 +21,11 @@ class QualityReport:
     schema_completeness: float = 0.0
     dimension_coverage_rate: float = 0.0
     brand_coverage_rate: float = 0.0
+    # v2.1 客观性指标（只读 Evidence.source_group / viral / claim_type，不重算相似度）
+    single_source_ratio: float = 0.0
+    viral_evidence_count: int = 0
+    viral_evidence_ratio: float = 0.0
+    opinion_ratio: float = 0.0
     issues: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -31,6 +36,10 @@ class QualityReport:
             "schema_completeness": self.schema_completeness,
             "dimension_coverage_rate": self.dimension_coverage_rate,
             "brand_coverage_rate": self.brand_coverage_rate,
+            "single_source_ratio": self.single_source_ratio,
+            "viral_evidence_count": self.viral_evidence_count,
+            "viral_evidence_ratio": self.viral_evidence_ratio,
+            "opinion_ratio": self.opinion_ratio,
             "issues": self.issues,
         }
 
@@ -52,6 +61,9 @@ _FIELD_KEYWORDS = {
     "trend": ("趋势", "发展", "增长"),
     "swot": ("swot", "优势", "劣势"),
 }
+
+# v2.1 单源占比触发返工补采的阈值
+SINGLE_SOURCE_REWORK_RATIO = 0.5
 
 
 def evaluate_quality(
@@ -129,6 +141,40 @@ def evaluate_quality(
             "raised_by": "L3-003",
         })
 
+    # 6. 客观性指标（v2.1）：单源占比 / 过热证据 / 观点密度
+    #    只读 Evidence.source_group / viral / claim_type，不重算相似度。
+    def _claim_group_count(c: Dict[str, Any]) -> int:
+        ids = set(c.get("evidence_ids") or [])
+        grp = {getattr(e, "source_group", "") or getattr(e, "evidence_id", "")
+               for e in evidences if getattr(e, "evidence_id", None) in ids}
+        return len(grp)
+
+    single_sourced = [c for c in claims if _claim_group_count(c) < 2]
+    qr.single_source_ratio = round(len(single_sourced) / (len(claims) or 1), 3)
+    for c in single_sourced[:8]:
+        qr.issues.append({
+            "issue_id": "is_" + uuid.uuid4().hex[:8],
+            "target": f"claim:{c.get('claim_id') or c.get('id', '')}",
+            "severity": "medium",
+            "reason": "结论仅单一信源组支撑，建议补充采集以完成交叉验证。",
+            "raised_by": "L3-003",
+        })
+
+    viral_evs = [e for e in evidences if getattr(e, "viral", False)]
+    qr.viral_evidence_count = len(viral_evs)
+    qr.viral_evidence_ratio = round(len(viral_evs) / (len(evidences) or 1), 3)
+    if viral_evs:
+        qr.issues.append({
+            "issue_id": "is_" + uuid.uuid4().hex[:8],
+            "target": "task",
+            "severity": "low",
+            "reason": f"存在 {len(viral_evs)} 条舆论过热来源，结论易受情绪引导，已如实披露（不阻塞）。",
+            "raised_by": "L3-003",
+        })
+
+    op_n = sum(1 for c in claims if c.get("claim_type", "mixed") in ("opinion", "mixed"))
+    qr.opinion_ratio = round(op_n / (len(claims) or 1), 3)
+
     return qr
 
 
@@ -163,6 +209,7 @@ def llm_quality_review(
             "维度完整性": round(qr.dimension_coverage_rate * 100),
             "结论置信度": round(qr.confidence_ratio * 100),
             "结构化完整度": round(qr.schema_completeness * 100),
+            "客观性与多源互证": round((1 - qr.single_source_ratio) * 100),
         },
         "review": f"基于规则指标：维度覆盖 {round(qr.dimension_coverage_rate*100)}%、"
                   f"品牌覆盖 {round(qr.brand_coverage_rate*100)}%、"
@@ -178,7 +225,7 @@ def llm_quality_review(
                     "像券商内核/主编终审一样，逐维度打分（0-100 整数，要有真实差异、不要清一色整十），"
                     "指出具体问题，并给出可执行的改进建议。最后给整体结论 pass（达标）或 rework（需返工）。"
                     '只输出 JSON：{"verdict":"pass|rework",'
-                    '"scores":{"证据充分性":int,"维度完整性":int,"结论置信度":int,"结构化完整度":int,"交叉验证":int},'
+                    '"scores":{"证据充分性":int,"维度完整性":int,"结论置信度":int,"结构化完整度":int,"交叉验证":int,"客观性与多源互证":int},'
                     '"review":"一段总体评审意见（点明亮点与短板）",'
                     '"issues":["具体问题1","具体问题2"],'
                     '"suggestions":["可执行改进建议1","改进建议2"]}。只输出 JSON。'
@@ -214,8 +261,13 @@ def _clamp_score(v) -> int:
         return 0
 
 
-def decide_rework(qr: QualityReport) -> List[Envelope]:
-    """根据质量报告决定返工动作，产出结构化 Envelope 消息。"""
+def decide_rework(qr: QualityReport,
+                  evidences: Optional[List[Any]] = None) -> List[Envelope]:
+    """根据质量报告决定返工动作，产出结构化 Envelope 消息。
+
+    evidences（v2.1，可选）：用于「单源占比过高 → 按品牌补采独立信源组」判定；
+    不传则跳过该判定（兼容旧调用）。
+    """
     envelopes: List[Envelope] = []
 
     # 证据不足 → 打回 collect 补采
@@ -243,5 +295,25 @@ def decide_rework(qr: QualityReport) -> List[Envelope]:
             payload={"reason": "维度/结构覆盖不足，重新分析补全"},
             issues=analyze_targets,
         ))
+
+    # v2.1 单源占比过高 → 按品牌补采独立信源组（避免死循环：viral_heavy 不触发返工）
+    if qr.single_source_ratio > SINGLE_SOURCE_REWORK_RATIO and evidences is not None:
+        single_group_brands = []
+        for b in {getattr(e, "brand", "") for e in evidences if getattr(e, "brand", "")}:
+            groups_b = {getattr(e, "source_group", "") or getattr(e, "evidence_id", "")
+                        for e in evidences if getattr(e, "brand", "") == b}
+            if len(groups_b) < 2:
+                single_group_brands.append(b)
+        if single_group_brands:
+            envelopes.append(Envelope(
+                msg_id="env_" + uuid.uuid4().hex[:8],
+                sender="L3-003",
+                receiver="collect",
+                task_type="REWORK",
+                payload={"brands": single_group_brands[:3], "reason": "单源占比过高，补充独立信源组"},
+                issues=[{"target": f"brand:{b}", "severity": "medium",
+                         "reason": f"「{b}」有效信源组 < 2，单源占比过高。", "raised_by": "L3-003"}
+                        for b in single_group_brands[:3]],
+            ))
 
     return envelopes

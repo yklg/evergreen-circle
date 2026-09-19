@@ -164,13 +164,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
 
 # ── 任务 ────────────────────────────────────────────────
-def save_task(task_id: str, query: str, clarifications: Dict[str, Any]) -> None:
+def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research") -> None:
+    # api（只读镜像）tasks 表无 kind 列：kind 随 clarifications 落库，保持老 schema 兼容
+    store = dict(clarifications) if clarifications else {}
+    if kind != "research":
+        store["_kind"] = kind
     with _LOCK:
         c = _connect()
         c.execute(
             "INSERT OR REPLACE INTO tasks(task_id,query,clarifications,status,created_at,report_id)"
             " VALUES(?,?,?,?,?,COALESCE((SELECT report_id FROM tasks WHERE task_id=?),NULL))",
-            (task_id, query, json.dumps(clarifications, ensure_ascii=False), "created", _now(), task_id),
+            (task_id, query, json.dumps(store, ensure_ascii=False), "created", _now(), task_id),
         )
         c.commit()
 
@@ -271,6 +275,7 @@ def query_evidences(
     source_type: Optional[str] = None,
     min_cred: float = 0.0,
     limit: int = 200,
+    report_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     c = _connect()
     sql = "SELECT * FROM evidences WHERE credibility>=?"
@@ -281,6 +286,9 @@ def query_evidences(
     if source_type:
         sql += " AND source_type=?"
         args.append(source_type)
+    if report_id:
+        sql += " AND report_id=?"
+        args.append(report_id)
     sql += " ORDER BY credibility DESC, captured_at DESC LIMIT ?"
     args.append(limit)
     return [dict(r) for r in c.execute(sql, args).fetchall()]

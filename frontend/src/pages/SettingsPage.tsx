@@ -163,6 +163,8 @@ export default function SettingsPage() {
   }, [resetFormFromResp])
 
   useEffect(() => {
+    // 拉取运行时配置（首帧同步 setState 由 load 内统一处理，属有意为之）
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load()
   }, [load])
 
@@ -361,6 +363,8 @@ export default function SettingsPage() {
   }, [resp, savedPreset])
 
   useEffect(() => {
+    // 配置变化刷新实时模型列表（首帧同步 setState，属有意为之）
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchLiveModels()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resp, savedPreset])

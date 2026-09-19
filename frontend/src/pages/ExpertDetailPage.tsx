@@ -6,9 +6,9 @@ import { DomainIcon } from '../components/DomainIcon'
 import { VCard } from '../components/ui'
 
 const LEVEL_LABEL: Record<string, string> = {
-  L1: '执行层 · 行业 / 职能专家',
-  L2: '策略层 · 方法顾问',
-  L3: '决策层 · 统筹终审',
+  L1: '执行层 · 设施场景 / 方法执行',
+  L2: '策略层 · 规划顾问',
+  L3: '决策层 · 统筹签发',
 }
 
 export default function ExpertDetailPage() {
@@ -23,7 +23,7 @@ export default function ExpertDetailPage() {
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-ink-2">
         <p>未找到该专家</p>
         <button onClick={() => navigate('/experts')} className="rounded-btn bg-primary px-5 h-10 text-aux font-medium text-white">
-          返回公会
+          返回专家团
         </button>
       </div>
     )
@@ -37,7 +37,7 @@ export default function ExpertDetailPage() {
         onClick={() => navigate('/experts')}
         className="inline-flex items-center gap-1.5 text-aux text-ink-2 transition-colors hover:text-primary-deep"
       >
-        <ChevronLeft size={16} /> 返回专家公会
+        <ChevronLeft size={16} /> 返回专家团
       </button>
 
       {/* 头部 */}
@@ -107,11 +107,11 @@ export default function ExpertDetailPage() {
           <div className="mt-3 flex gap-8">
             <div>
               <div className="font-serif text-h2 text-primary-deep">{expert.stats.missions}</div>
-              <div className="text-tag text-ink-3">累计参与调研</div>
+              <div className="text-tag text-ink-3">累计参与体检</div>
             </div>
             <div>
               <div className="font-serif text-h2 text-primary-deep">{expert.stats.avg_evidence || '—'}</div>
-              <div className="text-tag text-ink-3">平均证据引用</div>
+              <div className="text-tag text-ink-3">平均点位溯源</div>
             </div>
           </div>
         </VCard>

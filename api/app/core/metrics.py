@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.fetcher import domain_of
 
@@ -26,6 +26,7 @@ def compute_report_metrics(
     tokens_used: int,
     rework_rounds: int = 0,
     issues_resolved: int = 0,
+    objective_stats: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     indep_domains = len({domain_of(getattr(e, "source_url", "")) for e in evidences
                          if getattr(e, "source_url", "")} - {""})

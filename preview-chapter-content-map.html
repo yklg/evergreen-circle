@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>预览 · 章节内容思维导图</title>
+  <style>
+    :root {
+      --line: #e4e9e5;
+      --primary: #4e8d6e;
+      --primary-deep: #3a6f54;
+      --tint: #eaf3ee;
+      --card: #fff;
+      --bg: #fafbfa;
+      --ink: #2c3437;
+      --ink-2: #5d686b;
+      --ink-3: #8c9698;
+      --shadow-card: 0 2px 12px rgba(31, 45, 36, 0.08);
+      --sun: #ffb703;
+      --ok: #4caf50;
+      --risk: #ef5350;
+      --info: #2196f3;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 20px; }
+
+    h1 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+    .desc { color: var(--ink-2); margin-bottom: 24px; font-size: 13px; }
+
+    /* 卡片样式 */
+    .mindmap-container {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-card);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .card-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--primary-tint);
+      display: grid;
+      place-items: center;
+      color: var(--primary-deep);
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    /* 内容树结构 */
+    .content-tree {
+      padding-left: 20px;
+    }
+
+    .tree-root {
+      position: relative;
+      padding-left: 16px;
+    }
+
+    .tree-root::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--line);
+    }
+
+    .tree-node {
+      position: relative;
+      margin-bottom: 16px;
+    }
+
+    .tree-node::before {
+      content: '';
+      position: absolute;
+      left: -14px;
+      top: 16px;
+      width: 12px;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .node-content {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 8px;
+      background: var(--bg);
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .node-content:hover {
+      background: var(--tint);
+    }
+
+    .node-icon {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+    }
+
+    .node-icon.primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .node-icon.ok {
+      background: var(--ok);
+      color: white;
+    }
+
+    .node-icon.risk {
+      background: var(--risk);
+      color: white;
+    }
+
+    .node-icon.info {
+      background: var(--info);
+      color: white;
+    }
+
+    .node-icon.warn {
+      background: var(--sun);
+      color: white;
+    }
+
+    .node-icon.chart {
+      background: var(--tint);
+      color: var(--primary-deep);
+      border: 1px solid var(--line);
+    }
+
+    .node-icon.text {
+      background: transparent;
+      color: var(--ink-3);
+    }
+
+    .node-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .node-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .node-preview {
+      font-size: 12px;
+      color: var(--ink-3);
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .node-meta {
+      display: flex;
+      gap: 8px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--line);
+      color: var(--ink-3);
+    }
+
+    /* 折叠/展开按钮 */
+    .toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: none;
+      border: none;
+      color: var(--primary-deep);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      margin-top: 4px;
+    }
+
+    .toggle-btn:hover {
+      background: var(--tint);
+    }
+
+    /* 内容摘要模式 */
+    .summary-mode {
+      border: 1px solid var(--primary);
+      background: linear-gradient(135deg, var(--tint) 0%, var(--card) 100%);
+    }
+
+    /* 高亮标记 */
+    .changed-badge {
+      position: absolute;
+      top: -10px;
+      right: -10px;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: var(--primary);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+    }
+
+    .legend {
+      margin-top: 24px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+
+    .legend h5 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 12px;
+    }
+
+    .legend-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--ink-2);
+    }
+
+    .legend-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .note {
+      margin-top: 16px;
+      padding: 12px;
+      background: var(--tint);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--ink-2);
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>章节内容思维导图 · 渲染预览</h1>
+    <p class="desc">展示每个章节内部的内容结构：核心判断 → 段落/亮点/图表 → 证据/引用等</p>
+
+    <!-- 模式 1：完整详情模式 -->
+    <div class="mindmap-container">
+      <div style="position:relative;">
+        <div class="card-header">
+          <div class="card-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <path d="M14 2v6h6"></path>
+              <path d="M9 15l2 2 4-4"></path>
+            </svg>
+          </div>
+          <div>
+            <div class="card-title">完整详情模式</div>
+            <div style="font-size:11px;color:var(--ink-3)">适用于：移动端或紧凑布局</div>
+          </div>
+          <div class="changed-badge">默认</div>
+        </div>
+
+        <div class="content-tree">
+          <!-- 核心判断节点 -->
+          <div class="tree-node">
+            <div class="node-content">
+              <div class="node-icon primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </div>
+              <div class="node-body">
+                <div class="node-title">核心判断 (Key Takeaway)</div>
+                <div class="node-preview">竞品 A 在定价策略上采用分层订阅模式，基础版免费但功能受限，专业版$29/月...</div>
+                <div class="node-meta">
+                  <span class="badge">结论先行</span>
+                  <span class="badge">可编辑</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 正文段落节点 -->
+          <div class="tree-node">
+            <div class="node-content">
+              <div class="node-icon text">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="17" y1="10" x2="3" y2="10"></line>
+                  <line x1="21" y1="6" x2="3" y2="6"></line>
+                  <line x1="21" y1="14" x2="3" y2="14"></line>
+                  <line x1="17" y1="18" x2="3" y2="18"></line>
+                </svg>
+              </div>
+              <div class="node-body">
+                <div class="node-title">正文段落 (4 段)</div>
+                <div class="node-preview">第一段详细分析了市场现状...第二段介绍了技术架构...</div>
+                <div class="node-meta">
+                  <span class="badge">可高亮</span>
+                  <span class="badge">可批注</span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 子节点：亮点 -->
+            <div class="content-tree">
+              <div class="tree-node">
+                <div class="node-content">
+                  <div class="node-icon warn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="12 2 15 0 22 5 20 12 18 19 12 17 6 19 4 12 2 5 12 2 15 0"></polygon>
+                    </svg>
+                  </div>
+                  <div class="node-body">
+                    <div class="node-title">亮点洞察 (3 条)</div>
+                    <div class="node-preview">• 独特的 AI 驱动分析引擎<br>• 实时协作功能领先行业<br>• 开放 API 生态系统完善</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 子节点：图表 -->
+            <div class="tree-node">
+              <div class="node-content">
+                <div class="node-icon chart">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                  </svg>
+                </div>
+                <div class="node-body">
+                  <div class="node-title">数据图表 (2 个)</div>
+                  <div class="node-preview">柱状图：市场份额对比 | 折线图：用户增长趋势</div>
+                  <div class="node-meta">
+                    <span class="badge">可溯源</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模式 2：简洁摘要模式 -->
+    <div class="mindmap-container summary-mode">
+      <div style="position:relative;">
+        <div class="card-header">
+          <div class="card-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <path d="M14 2v6h6"></path>
+            </svg>
+          </div>
+          <div>
+            <div class="card-title">简洁摘要模式</div>
+            <div style="font-size:11px;color:var(--ink-3)">适用于：桌面端或宽屏显示</div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px;background:rgba(234,243,238,0.5);border-radius:8px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="width:28px;height:28px;border-radius:6px;background:var(--primary);display:grid;place-items:center;color:white;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+              </svg>
+            </div>
+            <span style="font-size:13px;font-weight:600;color:var(--primary-deep);">核心判断</span>
+          </div>
+          
+          <div style="color:var(--line);">→</div>
+          
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="width:28px;height:28px;border-radius:6px;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-3);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="17" y1="10" x2="3" y2="10"></line>
+                <line x1="21" y1="6" x2="3" y2="6"></line>
+              </svg>
+            </div>
+            <span style="font-size:13px;color:var(--ink-2);">正文段落 ×4</span>
+          </div>
+          
+          <div style="color:var(--line);">+</div>
+          
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="width:28px;height:28px;border-radius:6px;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;color:var(--sun);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 15 0 22 5 20 12 18 19 12 17 6 19 4 12 2 15 0"></polygon>
+              </svg>
+            </div>
+            <span style="font-size:13px;color:var(--ink-2);">亮点 ×3</span>
+          </div>
+          
+          <div style="color:var(--line);">+</div>
+          
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="width:28px;height:28px;border-radius:6px;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;color:var(--primary-deep);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="20" x2="18" y2="10"></line>
+                <line x1="12" y1="20" x2="12" y2="4"></line>
+              </svg>
+            </div>
+            <span style="font-size:13px;color:var(--ink-2);">图表 ×2</span>
+          </div>
+
+          <button class="toggle-btn" style="margin-left:auto;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+            查看详细结构
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图例 -->
+    <div class="legend">
+      <h5>改动区图例</h5>
+      <div class="legend-grid">
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--primary);"></div>
+          <span><b>核心判断</b>：key_takeaway 字段</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--bg);border:1px solid var(--line);"></div>
+          <span><b>正文段落</b>：paragraphs 数组</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--sun);"></div>
+          <span><b>亮点洞察</b>：highlights 数组</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--bg);border:1px solid var(--line);color:var(--primary);"></div>
+          <span><b>数据图表</b>：charts 数组</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--ok);"></div>
+          <span><b>论点卡片</b>：claims 数组</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--risk);"></div>
+          <span><b>结构化数据</b>：structured/data_grid</span>
+        </div>
+      </div>
+
+      <div class="note" style="margin-top:16px;">
+        <b>实现方案：</b>新建 <code>ChapterContentMap.tsx</code> 组件，接收单个 ReportSection 对象，递归渲染其内部所有内容结构。<br>
+        <b>集成位置：</b>替换原有的 <code>ModuleMindMap</code>，在每个章节的 <code>key_takeaway</code> 后展示。<br>
+        <b>交互特性：</b>支持折叠/展开、点击定位到具体内容、显示元素数量统计。
+      </div>
+    </div>
+  </div>
+</body>
+</html>

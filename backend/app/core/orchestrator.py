@@ -32,7 +32,8 @@ from app.core import db
 from app.core import trace
 from app.core.audit import evaluate_quality, decide_rework, llm_quality_review
 from app.core.runtime_config import get_effective_settings
-from app.core.credibility import score_evidence, freshness_days
+from app.core.credibility import score_evidence, freshness_days, assess_viral
+from app.core.dedup import content_fingerprint, group_new_text, tokenize
 from app.core.fetcher import domain_of, fetch_page
 from app.core.platforms import classify_platform
 from app.core.llm import chat, chat_json, LLMNotConfigured, TOKEN_USAGE
@@ -309,7 +310,7 @@ def _rewrite_section(section: Dict[str, Any], extra_context: Dict[str, Any],
             [
                 {"role": "system", "content": (
                     system_prompt or
-                    "你是资深竞品分析师。请基于已有证据与补充材料，把该章节重写得更深、更厚、更有针对性——"
+                    "你是资深生活圈体检分析师。请基于已有证据与补充材料，把该章节重写得更深、更厚、更有针对性——"
                     "补充论证、数据、对比与独立判断。"
                     '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
                 )},
@@ -450,7 +451,7 @@ def refine_section(report_id: str, section_id: str, annotations: List[str]) -> D
     digest = "\n".join(digest_lines)
     note_text = "\n".join(f"- {a}" for a in annotations if a)
     system_prompt = (
-        "你是资深竞品分析师。用户对报告某章节提出了批注/进一步调研诉求，"
+        "你是资深生活圈体检分析师。用户对报告某章节提出了批注/进一步调研诉求，"
         "请基于已有证据与批注，把该章节重写得更深、更厚、更有针对性——补充论证、数据、对比与独立判断。"
         '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
     )
@@ -492,6 +493,60 @@ def create_refine_task(report_id: str, evidence_ids: Optional[List[str]] = None,
     return {"taskId": tid}
 
 
+def create_brief_task(report_id: str) -> Dict[str, Any]:
+    """创建「生成一页纸精炼」的后台任务（kind='brief'，G7）。
+
+    复用 runner 的「任务即一等实体」机制：前端拿返回 taskId 订阅
+    GET /api/tasks/{taskId}/stream，消解旧同步端点的 30s 冷却 hack。
+    """
+    tid = _sid("bt")
+    db.save_task(
+        tid,
+        query=report_id,
+        clarifications={"report_id": report_id},
+        kind="brief",
+    )
+    return {"taskId": tid}
+
+
+async def brief_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]":
+    """异步生成器：生成/复用报告的一页纸精炼。
+
+    幂等：data.brief 已存在 → progress(100) + done 快路径，不再调 LLM；
+    失败 → DB failed 终态 + error 事件（前端显式展示、可随时重试）。
+    阻塞 LLM 调用经 asyncio.to_thread 包裹，不冻结事件循环（与 refine 同策略）。
+    """
+    full = db.get_task_full(task_id) or {}
+    clar = full.get("clarifications", {}) or {}
+    report_id = clar.get("report_id") or full.get("query")
+    try:
+        rep = db.get_report(report_id)
+        if not rep:
+            msg = "报告不存在或未就绪"
+            db.set_task_failed(task_id, msg)
+            yield _ev("error", {"message": msg})
+            return
+        if rep.get("brief"):
+            yield _ev("progress", {"percent": 100, "stage": "brief", "evidence_count": 0})
+            yield _ev("done", {"reportId": report_id})
+            return
+        yield _ev("progress", {"percent": 10, "stage": "brief", "evidence_count": 0})
+        brief = await asyncio.to_thread(generate_brief, report_id)
+        if brief:
+            yield _ev("done", {"reportId": report_id})
+        else:
+            msg = "生成失败，请稍后重试"
+            db.set_task_failed(task_id, msg)
+            yield _ev("error", {"message": msg})
+    except LLMNotConfigured as e:
+        msg = f"LLM 未配置：{e}"
+        db.set_task_failed(task_id, msg)
+        yield _ev("error", {"message": msg})
+    except Exception as e:  # noqa: BLE001
+        db.set_task_failed(task_id, str(e))
+        yield _ev("error", {"message": str(e)})
+
+
 async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]":
     """异步生成器：基于新补充的高可信度证据，逐章重写报告正文。
 
@@ -527,7 +582,7 @@ async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]
         )
     digest = "\n".join(digest_lines)[:3000]
     system_prompt = (
-        "你是资深竞品分析师。报告已归属了一批新的高可信度证据，请基于这些证据把章节重写得更深、更厚、"
+        "你是资深生活圈体检分析师。报告已归属了一批新的高可信度证据，请基于这些证据把章节重写得更深、更厚、"
         "更有针对性——补充论证、数据、对比与独立判断。"
         '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
     )
@@ -592,7 +647,7 @@ def _discover_scope(query: str) -> Dict[str, Any]:
     """
     msgs = [
         {"role": "system", "content": (
-            "你是竞品分析调研总监，负责开题前的『领域识别 + 竞品发现』。"
+            "你是社区体检总检，负责开题前的『中心点定格 + 设施范围识别』。"
             "根据用户一句话需求，判断：①真正的调研对象是什么（产品/公司/品类全称）；"
             "②它属于什么细分领域/赛道；③在该赛道里，尽可能多地列出与之直接竞争的真实竞品（8-12 个，"
             "必须是真实存在、可搜索的产品/公司名，按知名度从高到低排列，不要编造）。"
@@ -668,7 +723,7 @@ def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7) -> Dic
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是竞品分析调研总监。拆解用户的调研需求，输出 JSON："
+                    "你是社区体检总检。拆解用户的生活圈体检需求，输出 JSON："
                     '{"subject":"本次调研的核心对象全称",'
                     '"category":"该对象所属的细分品类/领域（用于消歧，如 AI编程工具、知识管理软件、新能源汽车）",'
                     '"brands":["竞品全称1","竞品全称2"],'
@@ -774,12 +829,12 @@ def _dispatch_experts(query: str, brands: List[str], focus: List[str]) -> Dict[s
     except Exception:
         pass
     fallback = [
-        {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-        {"id": "L2-001", "reason": "战略顾问负责竞争格局判断"},
-        {"id": "L2-002", "reason": "定价顾问负责价格策略拆解"},
-        {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
-        {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
-        {"id": "L3-003", "reason": "质检负责四铁律审裁"},
+        {"id": "L3-001", "reason": "决策层统筹体检全流程与终审签发"},
+        {"id": "L2-001", "reason": "基层医疗配置顾问负责就医可达判断"},
+        {"id": "L2-002", "reason": "教育设施规划师负责学位覆盖判断"},
+        {"id": "L1-025", "reason": "空间定位师负责中心点定位与坐标解析"},
+        {"id": "L1-030", "reason": "POI 核验官负责设施点位检索核验"},
+        {"id": "L3-003", "reason": "质检负责点位溯源与盲区复核审裁"},
     ]
     return {"lead": "L3-001", "members": fallback}
 
@@ -879,16 +934,22 @@ def _sentiment_relevant(brand: str, cat_keywords: List[str], title: str, text: s
 # ── 采集单品牌（抽出供补采复用）─────────────────────────────
 def _collect_brand(brand: str, angles: List[str], collector: str,
                    fetch_limit: int, freshness: str,
-                   existing_urls: set) -> Dict[str, Any]:
-    """采集单个品牌：搜索 + 抓取 + 构造 Evidence。返回 {evidences, images, figures_events}。
+                   existing_urls: set,
+                   groups: Optional[List[Dict]] = None) -> Dict[str, Any]:
+    """采集单个品牌：搜索 + 抓取 + 构造 Evidence。返回 {evidences, images, found, dup_skipped, groups}。
 
-    纯同步函数，供 asyncio.to_thread 调用；existing_urls 用于跨轮去重。
+    纯同步函数，供 asyncio.to_thread 调用；existing_urls 用于跨轮 URL 去重；
+    groups 用于内容级信源组归一化（v2.1：同质转载归并为一组，杜绝转载冒充多源），
+    由 run_pipeline 跨品牌/跨轮维护（docstring 注明：groups 池由 run_pipeline 主线程独占维护）。
     """
     queries = [f"{brand} {a}" for a in angles]
     results = multi_search(queries, num=10, freshness=freshness)
     out_ev: List[Evidence] = []
     out_img: List[Dict[str, Any]] = []
     fetched = 0
+    dup_skipped = 0
+    groups = groups or []
+    seen_gids = {g["id"] for g in groups if g.get("id")}
     for r in results:
         if fetched >= fetch_limit:
             break
@@ -903,6 +964,15 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
         # 正文二次相关性校验（剔除题不对版）
         if not is_relevant_content(text, [brand], brand):
             continue
+        # 内容级信源组归一化：同质转载 → 归并既有组、跳过取证（不冒充独立信源）
+        gid, _rep = group_new_text(text, groups)
+        if gid:
+            dup_skipped += 1
+            for g in groups:
+                if g.get("id") == gid:
+                    g.setdefault("urls", []).append(url)
+                    break
+            continue
         existing_urls.add(url)
         stype = _source_type(url)
         captured = page.get("captured_at", _now())
@@ -913,6 +983,12 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
             has_publish_date=bool(pub_date), ok_fetch=bool(ok), excerpt=text[:280],
         )
         fdays = freshness_days(pub_date or captured)
+        # 开新信源组（指纹为空/短文本也独立成组）
+        gid2 = _sid("g")
+        while gid2 in seen_gids:
+            gid2 = _sid("g")
+        seen_gids.add(gid2)
+        groups.append({"id": gid2, "tokens": tokenize(text), "urls": [url]})
         ev = Evidence(
             evidence_id=_sid("e"),
             source_url=url,
@@ -926,6 +1002,8 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
             brand=brand,
             domain=domain_of(url),
             freshness_days=fdays,
+            content_hash=content_fingerprint(text),
+            source_group=gid2,
         )
         ev._full_text = text[:1500]  # type: ignore[attr-defined]
         out_ev.append(ev)
@@ -941,7 +1019,8 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
                 "source_type": stype, "brand": brand, "evidence_id": ev.evidence_id,
             })
         fetched += 1
-    return {"evidences": out_ev, "images": out_img, "found": len(results)}
+    return {"evidences": out_ev, "images": out_img, "found": len(results),
+            "dup_skipped": dup_skipped, "groups": groups}
 
 
 # ── 主流程 ───────────────────────────────────────────────
@@ -1031,7 +1110,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
 
     collector = next((m["id"] for m in dispatch["members"] if m["id"].startswith("L1")), "L1-025")
     sentiment_expert = next((m["id"] for m in dispatch["members"]
-                             if (expert_by_id(m["id"]) or {}).get("group") == "function"), collector)
+                             if (expert_by_id(m["id"]) or {}).get("group") in ("method", "function")), collector)
 
     # ---- 3. collect：深度多角度真实搜索 + 抓取 ----
     yield _ev("node_update", {"node": "collect", "status": "working", "expert": collector})
@@ -1040,13 +1119,23 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     ev_by_collector: Counter = Counter()
     collect_notes: List[str] = []
     seen_urls: set = set()
+    # v2.1 客观性：信源组池（内容级去重唯一生产点）与客观性统计
+    groups: List[Dict] = []  # [{"id","fingerprint","urls":[...]}]，主线程独占维护
+    stats = {"dup_skipped": 0, "viral_count": 0, "viral_checked": 0}
+
+    def _to_int(v) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
 
     for brand in brands:
         yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": collector,
                               "text": f"开始深度检索「{brand}」：{'、'.join(angles)}。", "ts": _now()})
         trace.set_context(task_id, collector, "collect", f"采集竞品「{brand}」证据")
         res = await asyncio.to_thread(_collect_brand, brand, angles, collector,
-                                      cfg["fetch_per_brand"], cfg["freshness"], seen_urls)
+                                      cfg["fetch_per_brand"], cfg["freshness"], seen_urls, groups)
+        stats["dup_skipped"] += res.get("dup_skipped", 0)
         for e in _drain_trace():
             yield e
         if not res["evidences"]:
@@ -1145,14 +1234,20 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                                            "title": title, "brand": sb})
                 plat_counts[plat_final] += 1
                 pub = r.get("captured_at", "")
+                # 舆论过热单点判定（有信号才判；当前博查 snippet 无互动字段 → checked=False 如实标注）
+                vv = assess_viral({"likes": _to_int(r.get("likes")),
+                                   "comments": _to_int(r.get("comments"))})
+                stats["viral_checked"] += 1 if vv["checked"] else 0
+                stats["viral_count"] += 1 if vv["viral"] else 0
                 cred = score_evidence(url, detected, captured_at=pub, has_publish_date=bool(pub),
                                       ok_fetch=False, excerpt=text[:280],
-                                      signals={"platform": plat_final})
+                                      signals={"platform": plat_final}, viral=vv["viral"])
                 ev = Evidence(
                     evidence_id=_sid("e"), source_url=url, source_type=detected,
                     title=title or f"{sb} 口碑", excerpt=text[:280],
                     captured_at=pub or _now(), credibility=cred, collected_by=sentiment_expert,
                     brand=sb, domain=domain_of(url),
+                    viral=vv["viral"], viral_reason=vv["reason"],
                 )
                 evidences.append(ev)
                 ev_by_collector[sentiment_expert] += 1
@@ -1202,7 +1297,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     analysis["structured"] = structured
 
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
-                          "text": "舆情专家对真实评论做情感分类与观点阵营聚类（占比归一化）……", "ts": _now()})
+                          "text": "生活圈体检分析师对真实评论做情感分类与观点阵营聚类（占比归一化）……", "ts": _now()})
     trace.set_context(task_id, sentiment_expert, "analyze", "舆情情感分类与阵营聚类")
     sentiment = await asyncio.to_thread(analyze_sentiment, primary_brand, sentiment_comments)
     for e in _drain_trace():
@@ -1232,7 +1327,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     rework_rounds_done = 0
     issues_resolved = 0
     if cfg["rework_rounds"] > 0:
-        envelopes = decide_rework(quality_before)
+        envelopes = decide_rework(quality_before, evidences)
         # 规则未触发但质检官 LLM 判定需返工 → 合成一个 analyze 返工信封，
         # 让反馈闭环真实可触发（且复审后能看到改善），对齐评分维度。
         if not envelopes and review_before.get("verdict") == "rework":
@@ -1261,7 +1356,9 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                     for b in recollect_brands[:3]:
                         trace.set_context(task_id, collector, "collect", f"返工补采「{b}」")
                         res = await asyncio.to_thread(_collect_brand, b, extra_angles[:cfg["max_angles"]],
-                                                      collector, cfg["fetch_per_brand"], cfg["freshness"], seen_urls)
+                                                      collector, cfg["fetch_per_brand"], cfg["freshness"],
+                                                      seen_urls, groups)
+                        stats["dup_skipped"] += res.get("dup_skipped", 0)
                         for e in _drain_trace():
                             yield e
                         for ev in res["evidences"]:
@@ -1303,7 +1400,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
             rework_rounds_done += 1
             quality_after_round = evaluate_quality(brands, focus, claims, evidences, structured)
             issues_resolved = max(0, len(quality_before.issues) - len(quality_after_round.issues))
-            envelopes = decide_rework(quality_after_round)
+            envelopes = decide_rework(quality_after_round, evidences)
         quality_after = evaluate_quality(brands, focus, claims, evidences, structured)
     else:
         quality_after = quality_before
@@ -1407,15 +1504,30 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         brands=brands, focus=focus, claims=claims, evidences=evidences,
         structured=structured, elapsed_seconds=elapsed, tokens_used=tokens_used,
         rework_rounds=rework_rounds_done, issues_resolved=issues_resolved,
+        objective_stats=stats,
     )
     metrics = merge_quality_into_metrics(metrics, quality_after.to_dict())
 
     trace_spans = trace.get_trace(task_id)
+
+    # v2.1 客观性：把组内转载地址回填到代表证据（供溯源/披露），并组装 methodology 数据
+    groups_by_id = {g["id"]: g for g in groups}
+    for ev in evidences:
+        g = groups_by_id.get(ev.source_group or "")
+        if g:
+            ev.republished_from = [u for u in g.get("urls", []) if u != ev.source_url]
+    objective_meta = {
+        "stats": stats,
+        "unique_groups": len({ev.source_group for ev in evidences if ev.source_group}),
+        "sentiment_samples": sentiment.get("sample_size", 0),
+        "freshness": cfg["freshness"],
+    }
+
     report = _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
                               sentiment, chart_specs, sections_text, collect_notes,
                               analysis, metrics, quality_before.to_dict(),
                               quality_after.to_dict(), trace_spans, mode, section_ids,
-                              sentiment_text)
+                              sentiment_text, objective_meta)
     # 质检审阅意见（before/after）随报告下发，供报告页「质检审裁」展示
     report["audit_review"] = {"before": review_before, "after": review_after,
                               "rework_rounds": rework_rounds_done,
@@ -1450,6 +1562,8 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
     digest = _evidence_digest(evidences)
     ev_ids = [e.evidence_id for e in evidences]
     domains_by_id = {e.evidence_id: domain_of(e.source_url) for e in evidences}
+    # v2.1 客观性：独立信源以「信源组」计（同质转载归并为一组，杜绝冒充多源）
+    _sg_of = {e.evidence_id: (e.source_group or e.evidence_id) for e in evidences}
     authors = [m for m in members if m.startswith(("L1", "L2"))] or ["L2-001"]
     # 返工时把质检官的具体意见注入提示，让重分析真正针对短板调优（而非重抽一遍）
     rework_directive = ""
@@ -1462,28 +1576,30 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
         )
 
     fallback = {
-        "claims": _fallback_claims(brands, ev_ids, domains_by_id, authors),
+        "claims": _fallback_claims(brands, ev_ids, _sg_of, authors),
         "comparison": {"dimensions": ["功能完整度", "易用性", "性价比", "生态", "口碑"],
                        "scores": [{"brand": b, "values": []} for b in brands[:4]]},
         "pricing": [{"brand": b, "entry_price": None} for b in brands[:4]],
         "market_share": [],
         "five_forces": {},
         "trends": {},
+        "contradictions": [],
     }
     try:
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖投行/券商行研级别的资深竞品分析师，对标高盛、麦肯锡、字节战略部的分析深度。"
+                    "你是资深城市体检分析师，对标城市规划研究院与住建部门研究机构的分析深度。"
                     "基于给定证据（每条带 evidence_id），提炼结构化、有锋芒、敢下判断的竞争洞察。"
                     "严格要求：每条结论的 evidence_ids 必须来自给定证据的真实 id；无证据支撑的结论不要输出；数字尽量带来源。"
                     "输出 JSON：{"
-                    '"claims":[{"text":"一句话锐利结论（要有判断不要套话）","field":"overview|feature_tree|pricing_model|user_persona|swot|trend","evidence_ids":["真实id"],"author":"专家id"}],'
+                    '"claims":[{"text":"一句话锐利结论（要有判断不要套话）","field":"overview|feature_tree|pricing_model|user_persona|swot|trend","evidence_ids":["真实id"],"author":"专家id","claim_type":"fact|opinion|mixed"}],'
                     '"comparison":{"dimensions":["能力维度,5-6个"],"scores":[{"brand":"竞品","values":[0-100整数,与dimensions等长]}]},'
                     '"pricing":[{"brand":"竞品","entry_price":数字或null,"note":"定价模式与策略解读"}],'
                     '"market_share":[{"name":"竞品","value":百分比整数}],'
                     '"five_forces":{"rivalry":0-100,"new_entrants":0-100,"substitutes":0-100,"buyer_power":0-100,"supplier_power":0-100,"note":"波特五力总体研判一句话"},'
-                    '"trends":{"x":["时间点,如2021/2022/H1等"],"unit":"指标单位,如 版本数/月活(百万)/营收增速(%)","series":[{"name":"竞品","values":[数字,与x等长]}],"note":"趋势研判一句话"}}。'
+                    '"trends":{"x":["时间点,如2021/2022/H1等"],"unit":"指标单位,如 版本数/月活(百万)/营收增速(%)","series":[{"name":"竞品","values":[数字,与x等长]}],"note":"趋势研判一句话"},'
+                    '"contradictions":[{"claim_text":"来源间存在分歧的陈述","evidence_ids":["真实id"],"note":"为什么存疑/尚未证实"}],"claim_type 定义与客观性铁律：fact=证据可直接支撑的客观事实；opinion=分析判断（用词体现观点）；mixed=事实与推断混合。每条 claim 必须明确 claim_type；不得把单一信源或存在矛盾的资讯写成定论；当不同证据对同一事实说法不一致时，如实输出到 contradictions 而非掩盖。".'
                     "five_forces 用 0-100 量化各方向竞争压力（越高压力越大），基于证据合理研判。"
                     "trends 给出可比的时间序列（产品迭代节奏/用户规模/营收增速等任一可由证据支撑的维度），无依据则留空对象 {}，不要编造。"
                     "comparison/pricing/market_share 必须基于证据合理推断，无依据则留空数组或 null。"
@@ -1508,15 +1624,31 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
                 if not isinstance(c, dict) or not c.get("text"):
                     continue
                 eids = [i for i in c.get("evidence_ids", []) if i in valid_ids]
-                indep = len({domains_by_id.get(i, "") for i in eids if domains_by_id.get(i)})
+                # v2.1 独立信源 = 所属「信源组」去重计数（同质转载只算一组）
+                indep = len({_sg_of.get(i, i) for i in eids}) if eids else 0
                 author = c.get("author") if c.get("author") in members else authors[0]
+                ct = c.get("claim_type", "mixed") if c.get("claim_type") in ("fact", "opinion", "mixed") else "mixed"
                 claims.append(make_claim(_sid("c"), c["text"], c.get("field", "overview"),
-                                         eids, author, indep).to_dict())
+                                         eids, author, indep, ct).to_dict())
             if claims:
                 comp = data.get("comparison") or fallback["comparison"]
                 ff = data.get("five_forces") if isinstance(data.get("five_forces"), dict) else {}
                 tr = data.get("trends") if isinstance(data.get("trends"), dict) else {}
                 share = _sanitize_share(data.get("market_share") or [])
+                # 矛盾检测容错：非 list 置空，防单条坏输出拖垮整章
+                contrad = data.get("contradictions")
+                if not isinstance(contrad, list):
+                    contrad = []
+                contrad_clean = []
+                for ct0 in contrad[:8]:
+                    if not isinstance(ct0, dict) or not ct0.get("claim_text"):
+                        continue
+                    eids2 = [i for i in ct0.get("evidence_ids", []) if i in valid_ids]
+                    contrad_clean.append({
+                        "claim_text": str(ct0["claim_text"])[:200],
+                        "evidence_ids": eids2,
+                        "note": str(ct0.get("note", ""))[:200],
+                    })
                 return {
                     "claims": claims,
                     "comparison": comp,
@@ -1524,6 +1656,7 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
                     "market_share": share,
                     "five_forces": ff,
                     "trends": tr,
+                    "contradictions": contrad_clean,
                 }
     except Exception:
         pass
@@ -1576,12 +1709,16 @@ def _sanitize_share(share: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return clean
 
 
-def _fallback_claims(brands, ev_ids, domains_by_id, authors) -> List[Dict[str, Any]]:
-    """LLM 不可用时，仍只输出挂真实证据的结论（不编造内容主张，仅做归纳陈述）。"""
-    indep = len({domains_by_id.get(i, "") for i in ev_ids[:3] if domains_by_id.get(i)})
+def _fallback_claims(brands, ev_ids, groups_by_id, authors) -> List[Dict[str, Any]]:
+    """LLM 不可用时，仍只输出挂真实证据的结论（不编造内容主张，仅做归纳陈述）。
+
+    groups_by_id（v2.1）：evidence_id → source_group（空组按证据自身），
+    用于独立信源组数判定。
+    """
+    indep = len({groups_by_id.get(i, i) for i in ev_ids[:3]})
     out = [make_claim(_sid("c"),
                       f"已就 {'、'.join(brands)} 采集到多源公开证据，下列结论均挂载真实来源以供溯源。",
-                      "overview", ev_ids[:3], authors[0], indep).to_dict()]
+                      "overview", ev_ids[:3], authors[0], indep, "mixed").to_dict()]
     return out
 
 
@@ -1721,7 +1858,7 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
             [
                 {"role": "system", "content": (
                     "你是顶尖券商首席分析师 + MBB 咨询合伙人级别的报告撰稿人。"
-                    "你正在写一份有锋芒、有独到观点、敢于下判断的竞争分析报告，对标高盛行研、麦肯锡战略报告。\n"
+                    "你正在写一份观点鲜明、敢于下判断的社区生活圈体检报告，对标城市规划院的体检评估报告。\n"
                     f"本章定位：{section_role}\n"
                     "写作要求（务必做到）：\n"
                     "1) 结论先行：先给一句最锐利、最有信息量的『核心判断』（key_takeaway），可以是反共识的、大胆的判断；\n"
@@ -1730,7 +1867,10 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
                     f"4) 有深度：正文不少于 {min_paragraphs} 段，每段 {para_words} 字，要有层次、有递进的论证链、有洞察，"
                     "段落之间要有逻辑推进（现象→机理→影响→判断），不要并列堆砌；\n"
                     "5) 有亮点：给 2-3 条 highlights（最有冲击力的发现/反差/独特洞察，每条一句话）；\n"
-                    "6) 溯源：在正文关键结论后用方括号标注支撑它的 evidence_id，形如 [e_xxxx]（必须来自给定证据/论点的真实 id）。\n"
+                    "6) 溯源：在正文关键结论后用方括号标注支撑它的 evidence_id，形如 [e_xxxx]（必须来自给定证据/论点的真实 id）；\n"
+                    "7) 客观性铁律：区分事实陈述与观点研判——事实须有可溯源证据；观点用『我们判断/有待验证』等措辞，"
+                    "不得写成定论；单一信源组或存在矛盾的结论须标注『据报道/单方说法/存在争议』，禁止直接断言；"
+                    "情绪化社媒证据只能作『口碑感知』描述，不得转述为产品客观属性。\n"
                     '输出 JSON：{"paragraphs":["第一段","第二段",...],"key_takeaway":"核心判断一句话","highlights":["亮点1","亮点2","亮点3"]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
@@ -1761,7 +1901,7 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
         retry = chat(
             [
                 {"role": "system", "content": (
-                    f"你是资深竞品分析师，针对给定章节写不少于 {min_paragraphs} 段深度分析，"
+                    f"你是资深生活圈体检分析师，针对给定章节写不少于 {min_paragraphs} 段深度分析，"
                     f"每段约 {para_words} 字，论证层层递进，直接输出正文（不要 JSON、不要标题）。"
                 )},
                 {"role": "user", "content": f"章节：{title}\n主题：{query}\n竞品：{'、'.join(brands)}\n证据：\n{digest[:2000]}"},
@@ -1811,7 +1951,7 @@ def _write_sentiment_narrative(query, brands, sentiment: Dict[str, Any], model: 
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖社媒舆情分析师 + 品牌战略顾问。基于给定的【真实舆情统计与原声】，"
+                    "你是社区治理顾问 + 生活圈体检分析师。基于给定的【真实舆情统计与原声】，"
                     "写一段有锋芒、有洞察的全网口碑深度解读。\n"
                     "硬性要求：\n"
                     "1) 只能基于给定的真实数据与原声做解读，严禁编造任何不存在的数字、平台或评论；\n"
@@ -1819,7 +1959,10 @@ def _write_sentiment_narrative(query, brands, sentiment: Dict[str, Any], model: 
                     "逐层递进：整体情感盘面→平台差异→观点阵营博弈→真实原声印证→对品牌的战略启示；\n"
                     "3) 要解读『为什么』——不同平台/人群为何呈现这种口碑差异，背后的产品与定位原因；\n"
                     "4) 给 2-3 条 highlights（最有冲击力的口碑发现或反差，每条一句话）；\n"
-                    "5) 若样本量偏小，需在解读中如实点明『样本有限、结论为方向性参考』，不得掩盖。\n"
+                    "4.5) 全程区分『舆情感知』与『客观事实』：社媒评论/热度隶属口碑感知，不得转述为产品客观属性，"
+                    "避免把少数/高热声音写成共识；\n"
+                    "5) 开头必须交代真实样本规模与平台分布（来自给定统计，不得编造）；样本量偏小时如实在解读中点明"
+                    "『样本有限、结论为方向性参考』，不得掩盖。\n"
                     '输出 JSON：{"paragraphs":["段1","段2",...],"key_takeaway":"一句话核心口碑判断","highlights":["亮点1","亮点2"]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
@@ -2019,7 +2162,8 @@ def _make_cover_svg(title: str, brands: List[str]) -> str:
 def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
                      sentiment, charts, sections_text, collect_notes,
                      analysis, metrics, quality_before, quality_after,
-                     trace_spans, mode, section_ids, sentiment_text=None) -> Dict[str, Any]:
+                     trace_spans, mode, section_ids, sentiment_text=None,
+                     objective_meta: Optional[Dict] = None) -> Dict[str, Any]:
     rid = _sid("r")
     members = [m["id"] for m in dispatch["members"]]
     title = f"{'、'.join(brands)} 竞争格局深度分析报告"
@@ -2142,8 +2286,10 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
 
     toc = [{"id": s["id"], "title": s["title"], "level": 1} for s in sections]
     glossary = [
-        {"term": "交叉验证", "definition": "同一结论由 ≥2 个独立来源支撑，判为高置信。", "source": "Verda 四铁律"},
+        {"term": "交叉验证", "definition": "同一结论由 ≥2 个独立信源组支撑，判为高置信。", "source": "Verda 四铁律"},
         {"term": "无证据不立论", "definition": "任何数据型结论必须挂载 evidence_ids，否则标记待验证。", "source": "Verda 四铁律"},
+        {"term": "同质内容去重（信源组）", "definition": "同一内容被多站转载时归并为一个信源组，转载不冒充独立来源。", "source": "客观性加固 v2.1"},
+        {"term": "舆论过热", "definition": "互动量超阈值的高热社媒内容，可信度扣分并如实标注，不代表普遍共识。", "source": "客观性加固 v2.1"},
         {"term": "观点阵营", "definition": "将相同立场的真实用户观点聚类，输出归一化占比与代表评论。", "source": "舆情管线"},
         {"term": "SCP 框架", "definition": "结构(Structure)-行为(Conduct)-绩效(Performance)，产业经济学经典分析范式。", "source": "Bain/Scherer"},
         {"term": "波特五力", "definition": "从现有竞争、新进入者、替代品、买方与供应商议价五个方向量化行业竞争压力。", "source": "Michael Porter"},
@@ -2194,6 +2340,29 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
         "quality_before": quality_before,
         "quality_after": quality_after,
         "trace": trace_lite,
+        # v2.1 方法论与局限（正式契约字段；标准合规声明）
+        "methodology": _build_methodology(objective_meta, evidences),
+        "contradictions": [c for c in (analysis.get("contradictions") or []) if isinstance(c, dict)],
+    }
+
+
+def _build_methodology(objective_meta: Optional[Dict], evidences: List[Evidence]) -> Dict[str, Any]:
+    """组装方法论与局限披露（v2.1）。objective_meta 缺失时返回空结构（兼容旧调用）。"""
+    om = objective_meta or {}
+    ost = om.get("stats") or {}
+    total_ev = len(evidences) or 1
+    checked_ratio = round((ost.get("viral_checked", 0) or 0) / total_ev, 4)
+    return {
+        "window": om.get("freshness", "noLimit"),
+        "evidence_count": len(evidences),
+        "unique_groups": int(om.get("unique_groups", 0)),
+        "dup_skipped": int(ost.get("dup_skipped", 0)),
+        "viral_evidence": int(ost.get("viral_count", 0)),
+        "viral_checked_ratio": checked_ratio,
+        "sentiment_samples": int(om.get("sentiment_samples", 0)),
+        "note": ("信息来源于公开网络搜索，已做内容级去重（同质转载归并为信源组）与舆论过热标注；"
+                 f"过热判定覆盖率 {round(checked_ratio * 100)}%（低覆盖率即多数证据无互动信号、未做过度推断）；"
+                 "报告可能存在舆论偏好与时效局限，仅供参考，不作事实认证。"),
     }
 
 

@@ -1,15 +1,25 @@
 import { create } from 'zustand'
+import { createPersister } from '../lib/persist'
 
-/* 当前用户展示资料（前端本地偏好，无登录鉴权）。
+/* 当前用户展示资料（昵称 / 公司）。
 
-把原先写死在「侧边栏左下角」与「首页问候语」两处的「林研究员 / 青野科技」
-收拢为单一数据源：
-- localStorage 持久化（verda.profile.v1），刷新/重开浏览器不丢；
-- 侧边栏、首页问候语、右上角头像统一消费此处，消除硬编码漂移；
-- 纯前端展示偏好，不触达任何后端接口。
+## 持久化：服务端为真相源，localStorage 只是秒开缓存
 
-持久化写法与 taskRegistry 一致：load() 在模块初始化时读取，save() 在每次
-mutation 后写回（store 动作内部调用）。 */
+修复前本 store 把 localStorage 当作**唯一**真相源，而 localStorage 按 origin 隔离、
+可被浏览器/宿主随时清空、不跨设备 —— 于是出现「重启就重置」（见
+《用户设置持久化架构修复计划》根因 K1/K2/K4）。
+
+修复后走 `lib/persist.ts` 统一适配层：
+- 同步读 localStorage → 首屏无闪屏、离线可用（`initial`）；
+- 启动后 `hydrateAllPrefs()`（见 App.tsx）异步拉 `GET /api/prefs`：
+  远端有值 → 远端为准；远端没有（新库 / 首次）→ 保留本地并**自动上推**
+  （存量本地资料迁移到服务端，不丢）；
+- 每次 mutation：本地即时落盘 + debounce 上推 `PUT /api/prefs`。
+
+## 消费方（改动本文件须一并回归，见修复计划 §5）
+- `layout/VSidebar.tsx`：左下角资料卡（昵称/公司/首字头像）+ 编辑弹窗
+- `pages/HomePage.tsx`：首页问候语 + 右上角头像
+*/
 
 const LS_KEY = 'verda.profile.v1'
 
@@ -27,46 +37,36 @@ export interface ProfileState extends ProfileData {
   setProfile: (p: Partial<ProfileData>) => void
 }
 
-/** 从 localStorage 读取；缺失/损坏时回退默认值。 */
-export function loadProfile(): ProfileData {
-  try {
-    const raw = localStorage.getItem(LS_KEY)
-    if (raw) {
-      const p = JSON.parse(raw) as Partial<ProfileData>
-      return {
-        name: typeof p.name === 'string' && p.name.trim() ? p.name : DEFAULT_NAME,
-        company:
-          typeof p.company === 'string' && p.company.trim() ? p.company : DEFAULT_COMPANY,
-      }
-    }
-  } catch {
-    /* 解析失败 → 回退默认 */
-  }
-  return { name: DEFAULT_NAME, company: DEFAULT_COMPANY }
-}
-
-/** 落盘当前资料（仅写数据字段，忽略 store 动作函数）。 */
-export function saveProfile(value: ProfileData): void {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ name: value.name, company: value.company }))
-  } catch {
-    /* 忽略配额 / 隐私模式异常 */
+/** 语义规整：空白名回落默认值。
+ *
+ * 刻意放在 spec.normalize 而不是散落在 store 动作里 —— 这样「本地读」与
+ * 「远端水合」两条来源共用同一口径，不会出现"本地读会回落、远端读不会"的漂移。
+ */
+function normalizeProfile(p: ProfileData): ProfileData {
+  return {
+    name: p.name.trim() ? p.name : DEFAULT_NAME,
+    company: p.company.trim() ? p.company : DEFAULT_COMPANY,
   }
 }
 
-const initial = loadProfile()
+const persister = createPersister<{ name: string; company: string }>({
+  localKey: LS_KEY,
+  prefs: { name: 'profile.name', company: 'profile.company' },
+  defaults: { name: DEFAULT_NAME, company: DEFAULT_COMPANY },
+  normalize: normalizeProfile,
+})
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
-  ...initial,
+  ...persister.readLocal(),
 
   setName: (name) => {
     set({ name })
-    saveProfile(get())
+    persister.persist(get())
   },
 
   setCompany: (company) => {
     set({ company })
-    saveProfile(get())
+    persister.persist(get())
   },
 
   setProfile: (p) => {
@@ -74,6 +74,11 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       name: typeof p.name === 'string' ? p.name : s.name,
       company: typeof p.company === 'string' ? p.company : s.company,
     }))
-    saveProfile(get())
+    persister.persist(get())
   },
 }))
+
+// 登记到全局水合编排：App.tsx 启动时调用 hydrateAllPrefs() 统一拉取远端真相。
+persister.register((remote) => {
+  useProfileStore.setState((s) => ({ ...s, ...remote }))
+})

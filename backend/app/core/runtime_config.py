@@ -53,7 +53,6 @@ CONFIG_SCHEMA: Dict[str, Dict[str, str]] = {
     # 强行统一会破坏现有精细化设计。）
     "llm_timeout":        {"type": "float", "group": "params"},
     "llm_max_retries":    {"type": "int",   "group": "params"},
-    "enable_demo_fallback": {"type": "bool", "group": "params"},
     # 搜索提供方
     "bocha_api_key":      {"type": "str",  "group": "search"},
     "bocha_base_url":     {"type": "str",  "group": "search"},

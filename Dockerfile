@@ -20,7 +20,9 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# 先装依赖，利用层缓存（requirements.txt 变更频率远低于业务代码）
+# 先装依赖，利用层缓存（requirements.txt 变更频率远低于业务代码）。
+# 常青圈 living_circle 域（M1）：空间插值/等值线走 numpy 自实现 IDW + marching-squares，
+# 不引入 scipy/shapely 重依赖（AK 演示与镜像体积双赢）——numpy 已随 requirements.txt 锁定。
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 

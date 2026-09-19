@@ -9,9 +9,9 @@ import type { Expert, ExpertLevel } from '../types'
 
 const LEVEL_TABS: { key: ExpertLevel | 'all'; label: string; desc: string }[] = [
   { key: 'all', label: '全部', desc: '48 位专家' },
-  { key: 'L3', label: '决策层', desc: '3 位 · 统筹终审' },
-  { key: 'L2', label: '策略层', desc: '9 位 · 方法顾问' },
-  { key: 'L1', label: '执行层', desc: '36 位 · 行业职能' },
+  { key: 'L3', label: '决策层', desc: '3 位 · 统筹签发' },
+  { key: 'L2', label: '策略层', desc: '9 位 · 规划顾问' },
+  { key: 'L1', label: '执行层', desc: '36 位 · 设施与执行' },
 ]
 
 const LEVEL_BG: Record<ExpertLevel, string> = {
@@ -69,8 +69,8 @@ export default function ExpertsPage() {
   return (
     <div className="mx-auto max-w-content px-8 py-8">
       <header className="flex flex-col gap-1">
-        <h1 className="font-serif text-h1 text-ink">专家公会</h1>
-        <p className="text-aux text-ink-2">48 位 AI 竞品分析专家 · 三层协作架构 · 决策 / 策略 / 执行</p>
+        <h1 className="font-serif text-h1 text-ink">专家团</h1>
+        <p className="text-aux text-ink-2">48 位生活圈体检专家 · 决策 / 策略 / 设施 / 方法 · 每项结论都有点位溯源</p>
       </header>
 
       {/* 搜索 + tab */}
@@ -80,7 +80,7 @@ export default function ExpertsPage() {
           <input
             value={kw}
             onChange={(e) => setKw(e.target.value)}
-            placeholder="搜索专家、技能或知识标签"
+            placeholder="搜索专家、技能或设施类别"
             className="w-56 bg-transparent text-aux text-ink outline-none placeholder:text-ink-3"
           />
         </div>

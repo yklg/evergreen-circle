@@ -35,13 +35,15 @@ import { VMetricsPanel } from '../components/VMetricsPanel'
 import { VQualityGate } from '../components/VQualityGate'
 import { VAuditReview } from '../components/VAuditReview'
 import { VDecisionReplay } from '../components/VDecisionReplay'
-import { coverFor } from '../lib/cover'
 import { VDataGrid } from '../components/VDataGrid'
 import { VFeatureMatrix, VPricingTable, VPersonaCards } from '../components/VStructured'
+import { ChapterContentMap } from '../components/ChapterContentMap'
 import { refineSection, submitFeedback, refineReportEvidence, openTaskStream } from '../lib/api'
 import { VSkeleton } from '../components/ui'
 import MetricsStrip from '../components/MetricsStrip'
 import ReportBriefView from '../components/ReportBriefView'
+import MethodologyNote from '../components/MethodologyNote'
+import LifeCircleReportView from '../components/lifecircle/LifeCircleReportView'
 
 const HL_DOT: Record<HighlightColor, string> = {
   sun: 'bg-sun',
@@ -110,7 +112,15 @@ export default function ReportPage() {
 
   function jumpTo(id: string) {
     setActiveSection(id)
-    document.getElementById(`sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const section = document.getElementById(`sec-${id}`)
+    if (section && mainRef.current) {
+      const container = mainRef.current
+      const sectionTop = section.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      container.scrollTo({
+        top: sectionTop - 80, // 减去顶部进度条高度
+        behavior: 'smooth'
+      })
+    }
   }
   function jumpToEvidence(ids: string[]) {
     if (ids[0]) document.getElementById(`ev-${ids[0]}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -155,9 +165,10 @@ export default function ReportPage() {
       return
     }
     const close = openTaskStream(res.taskId, {
-      onEvent: (type, data: any) => {
+      onEvent: (type, data: unknown) => {
+        const d = data as { percent?: number; stage?: string; message?: string }
         if (type === 'progress') {
-          setRefineProgress({ percent: data?.percent ?? 0, stage: data?.stage ?? '' })
+          setRefineProgress({ percent: d?.percent ?? 0, stage: d?.stage ?? '' })
         } else if (type === 'done') {
           setRefiningAll(false)
           setRefineProgress(null)
@@ -167,7 +178,7 @@ export default function ReportPage() {
         } else if (type === 'error') {
           setRefiningAll(false)
           setRefineProgress(null)
-          flash((data?.message as string) || '精修失败，请重试')
+          flash(d?.message || '精修失败，请重试')
           close()
         }
       },
@@ -262,6 +273,10 @@ export default function ReportPage() {
   }
 
   const r = current
+  // A1 渲染适配器：living_circle（生活圈体检）报告走专属双层视图；research 报告沿用既有链路。
+  if (r.report_type === 'living_circle' || r.living_circle) {
+    return <LifeCircleReportView report={r} />
+  }
   // 证据 id → 序号（用于章节级溯源 chips）
   const evIndex = new Map(r.evidence.map((e, i) => [e.evidence_id, i + 1]))
 
@@ -324,31 +339,15 @@ export default function ReportPage() {
         <div className="sticky top-0 z-20 h-0.5 w-full bg-transparent">
           <div className="h-full bg-primary transition-all duration-150" style={{ width: `${readProgress}%` }} />
         </div>
-        {/* 杂志封面 */}
-        <div className="relative overflow-hidden">
-          <img
-            src={coverFor(r)}
-            alt="cover"
-            className="h-60 w-full object-cover"
-            onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-ink/70 via-ink/20 to-transparent" />
-          <div className="absolute bottom-0 left-0 right-0 p-8">
-            <motion.h1
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="font-serif text-[32px] leading-tight text-white"
-            >
-              {r.title}
-            </motion.h1>
-            <p className="mt-2 max-w-2xl text-aux text-white/85">{r.subtitle}</p>
-            <div className="mt-3 flex flex-wrap items-center gap-4 text-tag text-white/75">
-              <span className="inline-flex items-center gap-1"><Calendar size={13} /> {r.created_at}</span>
-              <span className="inline-flex items-center gap-1"><Users size={13} /> {r.experts.length} 位专家</span>
-              <span className="inline-flex items-center gap-1"><Quote size={13} /> {r.claims.length} 条结论 · {r.evidence.length} 条证据</span>
-            </div>
-          </div>
-          <div className="absolute right-6 top-6 flex items-center gap-2">
+        {/* 英雄区：纯 CSS 渐变底 + 自然流布局。
+            旧版渲染 coverFor(r) 封面图，图内烘死「标题 / 品牌行 / 标语」三段文字，
+            与 DOM 标题前后重叠；且标题块 absolute bottom-0 向上生长，长标题会被
+            overflow-hidden 裁剪。改为渐变底 + 自然流后高度随内容自适应，
+            结构上不再可能重叠或裁剪。渐变色沿用原封面图配色，故白字对比度不变。
+            打印留底见 index.css @media print 的 .report-hero。 */}
+        <div className="report-hero bg-gradient-to-br from-[#0f766e] to-[#134e4a] px-8 pb-10 pt-6">
+          {/* 操作行：原 absolute right-6 top-6，改为自然流 + 折行，窄列宽不再溢出右缘 */}
+          <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
             <button
               onClick={() => navigate('/knowledge')}
               className="inline-flex items-center gap-1.5 rounded-btn bg-card/90 px-3 h-9 text-aux font-medium text-ink-2 backdrop-blur hover:text-primary-deep"
@@ -392,6 +391,19 @@ export default function ReportPage() {
               <Download size={15} /> 导出
             </button>
           </div>
+          <motion.h1
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-3xl font-serif text-[32px] leading-tight text-white"
+          >
+            {r.title}
+          </motion.h1>
+          <p className="mt-2 max-w-2xl text-aux text-white/85">{r.subtitle}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-4 text-tag text-white/75">
+            <span className="inline-flex items-center gap-1"><Calendar size={13} /> {r.created_at}</span>
+            <span className="inline-flex items-center gap-1"><Users size={13} /> {r.experts.length} 位专家</span>
+            <span className="inline-flex items-center gap-1"><Quote size={13} /> {r.claims.length} 条结论 · {r.evidence.length} 条证据</span>
+          </div>
         </div>
 
         {/* 关键指标速览数据带（指标定义单一来源，见 components/MetricsStrip.tsx） */}
@@ -401,7 +413,7 @@ export default function ReportPage() {
 
         {/* 正文章节（简报模式替换为简报视图） */}
         {briefMode ? (
-          <ReportBriefView report={r} />
+          <ReportBriefView report={r} onBriefDone={() => load(rid)} />
         ) : (
         <article ref={articleRef} className="relative mx-auto max-w-3xl px-6 py-10">
           <VSelectionToolbar
@@ -437,6 +449,9 @@ export default function ReportPage() {
                   />
                 </div>
               )}
+
+              {/* 本章内容结构图 */}
+              <ChapterContentMap section={sec} mode="detail" collapsed={true} />
 
               <div className="mt-4 space-y-3">
                 {sec.paragraphs?.map((p, i) => (
@@ -720,6 +735,9 @@ export default function ReportPage() {
               </div>
             </>
           )}
+
+          {/* 方法论与局限（v2.1 客观性披露：页首摘要 + 附录键值 + 矛盾陈述）*/}
+          <MethodologyNote methodology={r.methodology} contradictions={r.contradictions} />
         </div>
       </aside>
 

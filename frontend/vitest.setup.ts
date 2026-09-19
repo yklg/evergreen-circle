@@ -32,6 +32,7 @@ function createMemoryStorage(): Storage {
       store.set(key, String(value))
     },
     // Storage 接口要求的未用项
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     [Symbol.toStringTag]: 'Storage' as any,
   } as Storage
 }

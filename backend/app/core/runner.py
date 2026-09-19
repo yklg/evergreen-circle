@@ -93,8 +93,17 @@ async def _drive(task_id: str, r: _Run) -> None:
         # 按 tasks.kind 分发到不同的执行引擎（共享 progress/done/error 处理）
         full = db.get_task_full(task_id) or {}
         kind = (full.get("kind") or "research")
-        gen = (orchestrator.refine_report_pipeline(task_id)
-               if kind == "refine" else orchestrator.run_pipeline(task_id))
+        if kind == "refine":
+            gen = orchestrator.refine_report_pipeline(task_id)
+        elif kind == "brief":
+            gen = orchestrator.brief_report_pipeline(task_id)
+        elif kind == "living_circle":
+            # 生活圈体检流水线（独立域，A2 解耦；延迟导入防循环）
+            from app.core.pipeline.living_circle import living_circle_pipeline
+
+            gen = living_circle_pipeline(task_id)
+        else:
+            gen = orchestrator.run_pipeline(task_id)
         async for ev in gen:
             r.buffer.append(ev)          # 历史缓冲（重连补帧）
             for q in list(r.subs):       # 广播给各订阅者专属队列

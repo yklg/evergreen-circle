@@ -151,4 +151,66 @@ describe('SlidesPage', () => {
     await screen.findByTestId('report-landing')
     expect(screen.getByTestId('report-landing')).toBeTruthy()
   })
+
+  it('键盘边界键：Home→首页、End→末页、PageDown/PageUp/空格', async () => {
+    mockedFetchReport.mockResolvedValue(makeReport())
+    renderSlides('r1')
+    await screen.findByText('测试报告')
+    // makeReport 默认产出 5 页：封面/summary/速览/结论/证据
+    fireEvent.keyDown(window, { key: 'PageDown' })
+    expect(await screen.findByText(/2 \/ 5/)).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'PageUp' })
+    expect(await screen.findByText(/1 \/ 5/)).toBeTruthy()
+    fireEvent.keyDown(window, { key: ' ' }) // 空格 = 下一张
+    expect(await screen.findByText(/2 \/ 5/)).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'End' })
+    expect(await screen.findByText(/5 \/ 5/)).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Home' })
+    expect(await screen.findByText(/1 \/ 5/)).toBeTruthy()
+  })
+
+  it('越界保护：末页再按 End/下一张 页码不涨', async () => {
+    mockedFetchReport.mockResolvedValue(makeReport())
+    renderSlides('r1')
+    await screen.findByText('测试报告')
+    fireEvent.keyDown(window, { key: 'End' })
+    expect(await screen.findByText(/5 \/ 5/)).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'End' })
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(await screen.findByText(/5 \/ 5/)).toBeTruthy()
+    const nextBtn = screen.getByRole('button', { name: /下一张/ })
+    expect((nextBtn as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('加载失败：显示错误与「返回报告」（不空白崩溃）', async () => {
+    mockedFetchReport.mockRejectedValue(new Error('network'))
+    renderSlides('r1', true)
+    expect(await screen.findByText('报告加载失败')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /返回报告/ }))
+    await screen.findByTestId('report-landing')
+  })
+
+  it('XSS 防护：标题/亮点含注入串时按纯文本渲染（不产生 img/script 标签）', async () => {
+    const evilTitle = '<img src=x onerror=alert(1)>标题<script>alert(2)</script>'
+    const evilHigh = '<img src=y onerror=alert(3)>亮点'
+    const injected = makeReport({
+      title: evilTitle,
+      sections: [
+        { ...makeReport().sections[0], key_takeaway: evilTitle, highlights: [evilHigh] },
+        ...makeReport().sections.slice(1),
+      ],
+    })
+    mockedFetchReport.mockResolvedValue(injected)
+    const { container } = renderSlides('r1')
+    // 注入标题以纯文本渲染（React 转义），不解析成 img/script
+    await screen.findByText(/alert\(1\)/)
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.textContent).toContain('alert(1)')
+    fireEvent.click(screen.getByRole('button', { name: /下一张|下一页|Next/ }))
+    // 摘要页：key_takeaway=evilTitle、highlights[0]=evilHigh 均以纯文本呈现
+    expect((await screen.findByText(/alert\(1\)/)).textContent).toContain('alert(1)')
+    expect(screen.getByText(/alert\(3\)/)).toBeTruthy()
+    expect(container.querySelector('img')).toBeNull()
+  })
 })

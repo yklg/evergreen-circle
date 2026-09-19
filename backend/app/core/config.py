@@ -83,7 +83,11 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     frontend_origin: str = "http://localhost:5173"
-    enable_demo_fallback: bool = True
+
+    # 百度地图（常青圈·生活圈体检，M2）：从 backend/.env 读取 BAIDU_SERVER_AK / BAIDU_BROWSER_AK。
+    # 服务端 AK 用于 geocoding/place/测时等请求；浏览器 AK 仅前端 JS API 使用（Referer 白名单）。
+    baidu_server_ak: str = ""
+    baidu_browser_ak: str = ""
 
     # 澄清问卷：竞品发现超时（秒）与发现结果缓存 TTL（天）。
     # 发现走 LLM（_discover_scope），设短超时 + 正则兜底，确保基础题不被阻塞（P0-①/②）。

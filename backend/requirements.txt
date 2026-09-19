@@ -18,3 +18,9 @@ trafilatura==1.12.2
 # 可视化 skill
 matplotlib==3.9.4
 networkx==3.2.1
+
+# 常青圈 · living_circle 域（M1）：
+# 空间插值/等值线用 numpy 自实现 IDW + marching-squares 轮廓，
+# **不引入 scipy/shapely 重依赖**（个人 AK 演示与 CI 镜像体积双赢，见计划 §M1 追踪）。
+# 显式锁定 numpy 主版本，避免上游 matplotlib 更新破坏向量化实现（numpy 亦为 matplotlib 传递依赖）。
+numpy>=2.0,<3

@@ -1,0 +1,139 @@
+"""几何工具（living_circle 域单一实现来源，A1）。
+
+约定：全域使用百度坐标系 BD-09，坐标一律 (lat, lng)。渲染/插值所需的
+「米制平面」由本模块统一提供：
+  - to_local_xy / xy_to_lnglat：以中心点为原点的本地等距近似投影（渲染用，非测地结算）
+  - haversine_m：球面大圆米制距离（盲区判定/近邻距离）
+  - ring_area_km2：多边形面积（等距平面近似，鞋带公式）
+M 阶段所有换算只准走这里，禁止各模块自行 COPY 换算逻辑。
+"""
+from __future__ import annotations
+
+import math
+from typing import List, Sequence, Tuple
+
+LngLat = Tuple[float, float]  # (lng, lat)
+
+# 每度纬度对应米（WGS-84 平均）
+M_PER_DEG_LAT = 111_320.0
+
+# 方位词（盲区"最近设施"的方向描述，16 方位）
+_DIRECTIONS = [
+    "正北", "东北", "正东", "东南",
+    "正南", "西南", "正西", "西北",
+]
+
+
+def to_local_xy(center: LngLat, lng: float, lat: float) -> Tuple[float, float]:
+    """中心点局部平面投影 → (x 米, y 米)。x 向东、y 向北。"""
+    d_lng = lng - center[0]
+    d_lat = lat - center[1]
+    x = d_lng * M_PER_DEG_LAT * math.cos(math.radians(center[1]))
+    y = d_lat * M_PER_DEG_LAT
+    return float(x), float(y)
+
+
+def xy_to_lnglat(center: LngLat, x: float, y: float) -> LngLat:
+    """局部平面投影逆变换 → (lng, lat)。"""
+    lng = center[0] + x / (M_PER_DEG_LAT * math.cos(math.radians(center[1])))
+    lat = center[1] + y / M_PER_DEG_LAT
+    return (float(lng), float(lat))
+
+
+def haversine_m(a: LngLat, b: LngLat) -> float:
+    """球面大圆距离（米）。a/b 均为 (lng, lat)。"""
+    r = 6_371_000.0
+    d_lat = math.radians(b[1] - a[1])
+    d_lng = math.radians(b[0] - a[0])
+    h = (
+        math.sin(d_lat / 2) ** 2
+        + math.cos(math.radians(a[1])) * math.cos(math.radians(b[1])) * math.sin(d_lng / 2) ** 2
+    )
+    return float(2 * r * math.asin(min(1.0, math.sqrt(h))))
+
+
+def ring_area_km2(ring: Sequence[LngLat], center: LngLat) -> float:
+    """多边形面积（km²）：先把环投影到中心点局部平面，再用鞋带公式。
+
+    注意：环必须闭合（首尾同点）——契约与前端一致；不闭合时自动补齐。
+    """
+    pts = [to_local_xy(center, lng, lat) for (lng, lat) in ring]
+    if pts and (pts[0][0] != pts[-1][0] or pts[0][1] != pts[-1][1]):
+        pts = pts + [pts[0]]
+    s = 0.0
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0 / 1_000_000.0
+
+
+def bearing(a: LngLat, b: LngLat) -> float:
+    """a→b 的方位角（度，0=正北，顺时针）。"""
+    d_lng = math.radians(b[0] - a[0])
+    lat1 = math.radians(a[1])
+    lat2 = math.radians(b[1])
+    y = math.sin(d_lng) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(d_lng)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
+def direction_word(a: LngLat, b: LngLat) -> str:
+    """a→b 的 8 方位词（正北/东北/…）。"""
+    deg = bearing(a, b)
+    idx = int(((deg + 22.5) % 360) // 45)
+    return _DIRECTIONS[idx % 8]
+
+
+def polygon_centroid(ring: Sequence[LngLat], center: LngLat) -> LngLat:
+    """多边形质心（平面近似，逆投影回球面）。"""
+    pts = [(to_local_xy(center, lng, lat)) for (lng, lat) in ring]
+    if pts and (pts[0][0] != pts[-1][0] or pts[0][1] != pts[-1][1]):
+        pts = pts + [pts[0]]
+    a = 0.0
+    cx = 0.0
+    cy = 0.0
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        cross = x1 * y2 - x2 * y1
+        a += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(a) < 1e-12:
+        return ring[0]
+    a2 = a * 3.0
+    return xy_to_lnglat(center, cx / a2, cy / a2)
+
+
+def round_lnglat(lng: float, lat: float, digits: int = 6) -> LngLat:
+    return (round(lng, digits), round(lat, digits))
+
+
+def is_closed(ring: Sequence[LngLat]) -> bool:
+    return len(ring) >= 4 and ring[0][0] == ring[-1][0] and ring[0][1] == ring[-1][1]
+
+
+def ensure_closed(ring: List[LngLat]) -> List[LngLat]:
+    """保证闭环（首尾同点），不闭合则自动追加首点。"""
+    if ring and (ring[0][0] != ring[-1][0] or ring[0][1] != ring[-1][1]):
+        return ring + [ring[0]]
+    return ring
+
+
+def envelope_minmax(points: Sequence[LngLat]) -> Tuple[float, float, float, float]:
+    """最小外接矩形 (lng_min, lat_min, lng_max, lat_max)。"""
+    lngs = [p[0] for p in points]
+    lats = [p[1] for p in points]
+    return (min(lngs), min(lats), max(lngs), max(lats))
+
+
+def point_in_ring(pt: LngLat, ring: Sequence[LngLat]) -> bool:
+    """射线法点在多边形内判定（闭包容忍：无需人为闭合）。"""
+    x, y = pt
+    inside = False
+    n = len(ring)
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i]
+        xj, yj = ring[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside

@@ -1,0 +1,37 @@
+# 常青圈 · 一键预览（docker compose up --build）
+# 后端(worker 镜像, :8010) + 前端(vite preview 代理 /api → backend)
+# 全 fixture 演示模式：不配 BAIDU_* AK 也能跑（自动降级演示数据），配齐即真实实跑。
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8010:8010"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8010"
+      # CI 全 mock：不在此注入任何真实 AK；本地实跑请取消注释或用 .env
+      # BAIDU_SERVER_AK: ${BAIDU_SERVER_AK:-}
+      # BAIDU_BROWSER_AK: ${BAIDU_BROWSER_AK:-}
+    volumes:
+      - verda_data:/app/backend/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8010/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    image: node:22-slim
+    working_dir: /app/frontend
+    command: sh -c "npm ci && npm run build && VITE_PROXY_TARGET=http://backend:8010 npx vite preview --port 3400 --host --strictPort"
+    ports:
+      - "3400:3400"
+    depends_on:
+      - backend
+    volumes:
+      - .:/app:ro
+
+volumes:
+  verda_data:

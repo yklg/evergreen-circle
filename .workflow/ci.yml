@@ -1,0 +1,44 @@
+# Gitee Go 同义流水线 —— 与 .github/workflows/ci.yml 保持一致的镜像（GitHub Actions 为唯一真源）。
+# 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
+# 配置入口：Gitee 仓库 → 流水线（Gitee Go）→ 新建流水线 → 选择本文件。
+version: '1.0'
+name: ci
+displayName: 常青圈 CI
+triggers:
+  trigger: auto
+  push:
+    branches:
+      include:
+        - master
+        - main
+  pr:
+    branches:
+      include:
+        - master
+        - main
+stages:
+  - stage:
+      name: backend-test
+      displayName: 后端 pytest（含 A6 镜像守卫）
+      failFast: true
+      steps:
+        - step: pythonbuild@1
+          name: backend-pytest
+          displayName: 安装依赖并跑全量 pytest
+          inputs:
+            pythonVersion: '3.12'
+            goals: |
+              pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+              cd backend && python -m pytest -q
+  - stage:
+      name: frontend-check
+      displayName: 前端 lint/typecheck/test/build
+      failFast: true
+      steps:
+        - step: npmbuild@1
+          name: frontend-ci
+          displayName: npm ci + lint + typecheck + test + build
+          inputs:
+            nodeVersion: '22'
+            goals: |
+              cd frontend && npm ci && npm run lint && npm run typecheck && npm run test && npm run build

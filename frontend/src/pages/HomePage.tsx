@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -7,56 +7,38 @@ import {
   ChevronDown,
   Cpu,
   Sparkles,
-  Car,
-  ShieldCheck,
-  Layers,
-  TrendingUp,
-  Sprout,
+  MapPin,
+  Building2,
+  Crosshair,
   Zap,
   Gem,
   Crown,
+  Sprout,
 } from 'lucide-react'
 import { VSunGlow } from '../components/ui'
 import { fadeUp, stagger } from '../lib/motion'
 import { useUIStore } from '../store/uiStore'
-import { useExpertStore } from '../store/expertStore'
-import { createTask } from '../lib/api'
+import { createLivingCircleTask } from '../lib/api'
 import { useSettingsStore } from '../store/settingsStore'
-import { useProfileStore } from '../store/profileStore'
 import { findProviderByBaseUrl } from '../lib/llmProviders'
 import { candidatesFor } from '../lib/modelResolution'
+import { BRAND } from '../lib/brand'
+import { SAMPLE_COMMUNITIES, USE_MOCK } from '../mocks/livingCircleMock'
+import type { LifeCircleMode, LngLat } from '../types'
 
 const MODE_OPTIONS = [
-  { key: 'quick', icon: Zap, label: '快速', desc: '5 章 · 约 2 分钟 · 速览' },
-  { key: 'deep', icon: Gem, label: '深度', desc: '9 章 · 约 4 分钟 · 含返工闭环' },
-  { key: 'expert', icon: Crown, label: '专家级', desc: '12+ 章 · 约 6-8 分钟 · 创新板块+最深' },
+  { key: 'quick', icon: Zap, label: '速览', desc: '粗扫采样 · 约 1 分钟出圈' },
+  { key: 'standard', icon: Gem, label: '标准', desc: '分级采样 · 约 2 分钟出圈' },
+  { key: 'precise', icon: Crown, label: '精细', desc: '边界加密 · 约 3 分钟出圈' },
 ]
 
-const EXAMPLES = [
-  {
-    icon: Car,
-    title: '新能源车竞争格局',
-    desc: '分析特斯拉、比亚迪、理想的产品与定价竞争定位',
-    q: '分析特斯拉、比亚迪、理想在新能源车市场的产品力与定价竞争格局',
-  },
-  {
-    icon: ShieldCheck,
-    title: '竞品 SWOT 分析',
-    desc: '为飞书、钉钉、企业微信生成结构化 SWOT 对比',
-    q: '为飞书、钉钉、企业微信做一份结构化 SWOT 竞争分析',
-  },
-  {
-    icon: Layers,
-    title: '功能对标基准',
-    desc: '横向对比 Notion / 飞书 / Obsidian 的核心功能',
-    q: '横向对比 Notion、飞书文档、Obsidian 的核心功能与定价',
-  },
-  {
-    icon: TrendingUp,
-    title: '市场趋势报告',
-    desc: '梳理 2026 年 AI 笔记赛道的关键趋势',
-    q: '梳理 2026 年 AI 笔记 / 知识管理赛道的关键趋势与代表玩家',
-  },
+const FEATURES = [
+  '5/10/15/20 分钟等时圈',
+  '民生设施覆盖体检',
+  '1km 服务盲区识别',
+  '双社区对比',
+  'AI 诊断解读',
+  '开源 · AGPL-3.0',
 ]
 
 function ModelPicker() {
@@ -65,7 +47,6 @@ function ModelPicker() {
   const resp = useSettingsStore((s) => s.resp)
 
   // 选项 = Auto + 当前已保存的 4 个模型字段 + 命中厂商预设的候选模型（去重合并）。
-  // 随 SettingsPage 保存实时刷新（store.load 后 resp 更新）。
   const options = useMemo<string[]>(() => {
     if (!resp) return ['Auto']
     const fromValues = (
@@ -91,7 +72,7 @@ function ModelPicker() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        title="切换分析模型"
+        title="切换 AI 解读模型"
         className="inline-flex items-center gap-1.5 px-3 h-9 rounded-chip bg-primary-tint text-primary-deep text-aux font-medium hover:bg-primary-soft/40 transition-colors"
       >
         <Cpu size={15} />
@@ -102,7 +83,7 @@ function ModelPicker() {
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute bottom-11 right-0 z-20 w-56 rounded-btn bg-card shadow-float border border-line p-1">
-            <div className="px-3 pb-1 pt-1.5 text-tag text-ink-3">选择分析模型</div>
+            <div className="px-3 pb-1 pt-1.5 text-tag text-ink-3">选择 AI 解读模型</div>
             {options.map((m) => (
               <button
                 key={m}
@@ -128,28 +109,45 @@ function ModelPicker() {
 export default function HomePage() {
   const navigate = useNavigate()
   const [text, setText] = useState('')
-  const [mode, setMode] = useState('deep')
+  const [mode, setMode] = useState('standard')
   const [submitting, setSubmitting] = useState(false)
+  const [subErr, setSubErr] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
-  const experts = useExpertStore((s) => s.experts)
-  const wall = experts.slice(0, 14)
-  const profile = useProfileStore()
-  const avatarInitial = (profile.name || '研').trim().slice(0, 1) || '研'
 
-  async function submit(q: string) {
-    const query = q.trim()
-    if (!query || submitting) return
-    setSubmitting(true)
-    try {
-      // Auto = 不覆盖（走 settings 编排）；否则把用户选的模型透传后端 override
-      const selectedModel = useUIStore.getState().model
-      const modelOverride = selectedModel !== 'Auto' ? selectedModel : null
-      const resp = await createTask(query, mode, modelOverride)
-      // 永远进 clarify：问卷在 ClarifyPage 内通过 SSE 懒生成（根治「提交后等好久」）
-      navigate(`/clarify/${resp.taskId}`, { state: { query } })
-    } finally {
-      setSubmitting(false)
+  /** 发起体检：F 阶段 mock 直接进生活圈地图页；M 阶段走真实编排（任务 → 工作台 SSE） */
+  function startCheck(target?: string) {
+    if (USE_MOCK) {
+      navigate(target ? `/life-circle/${target}` : '/life-circle/kaili')
+      return
     }
+    if (submitting) return
+    const query = text.trim() || '凯里老街'
+    // 入参解析：样例卡 → 携带样例中心；坐标输入 → center=[lng,lat]；纯地名 → 仅 scene_name（后端地理编码/样例匹配兜底）
+    const sample = SAMPLE_COMMUNITIES.find((c) => c.id === target)
+    const m = /^\s*([\d.]+)\s*,\s*([\d.]+)\s*$/.exec(query)
+    let center: LngLat | undefined
+    let city = ''
+    if (sample) {
+      center = sample.report.scene.center
+      city = sample.city
+    } else if (m) {
+      center = [Number(m[1]), Number(m[2])]
+    }
+    setSubErr('')
+    setSubmitting(true)
+    createLivingCircleTask({
+      query: sample?.title ?? query,
+      mode: mode as LifeCircleMode,
+      center,
+      city,
+    })
+      .then((r) => navigate(`/workspace/${r.taskId}`, { state: { query } }))
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e)
+        setSubErr(msg)
+        setSubmitting(false)
+      })
+      .finally(() => setSubmitting(false))
   }
 
   return (
@@ -170,22 +168,23 @@ export default function HomePage() {
       {/* 顶部右上：what's new + 头像 */}
       <div className="relative z-10 flex items-center justify-between px-8 pt-6">
         <span className="inline-flex items-center gap-1.5 rounded-chip border border-line bg-card/80 px-3 h-9 text-aux text-ink-2 backdrop-blur">
-          <Sparkles size={14} className="text-primary" /> 新功能上线
+          <Sparkles size={14} className="text-primary" /> 1km 菜市场 / 药店 / 小学盲区识别已上线
         </span>
-        <span className="grid h-9 w-9 place-items-center rounded-full bg-primary text-aux font-semibold text-white">
-          {avatarInitial}
+        <span className="inline-flex items-center gap-1.5 rounded-chip border border-line bg-card/80 px-3 h-9 text-aux text-ink-2 backdrop-blur">
+          {BRAND.zh}
         </span>
       </div>
 
       {/* Hero 主体 */}
-      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] max-w-[820px] flex-col items-center justify-center px-6 pb-20">
+      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-80px)] max-w-[840px] flex-col items-center justify-center px-6 pb-14">
         <motion.h1
           variants={fadeUp}
           initial="initial"
           animate="animate"
           className="text-center font-serif text-[44px] leading-tight text-ink"
         >
-          下午好，{profile.name}
+          给社区做一次
+          <span className="mx-1 text-primary">生活圈体检</span>
           <span className="ml-2 inline-block align-middle">
             <Sprout className="inline text-primary" size={34} />
           </span>
@@ -196,10 +195,10 @@ export default function HomePage() {
           animate="animate"
           className="mt-3 text-lg text-ink-2"
         >
-          你的 AI 竞品分析 Agent —— 48 位专家协作，无证据不立论
+          {BRAND.tagline}
         </motion.p>
 
-        {/* 大输入框 */}
+        {/* 中心点输入 */}
         <motion.div
           variants={fadeUp}
           initial="initial"
@@ -208,18 +207,18 @@ export default function HomePage() {
         >
           <textarea
             ref={taRef}
-            rows={3}
+            rows={2}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(text)
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) startCheck()
             }}
-            placeholder="想分析哪个市场、公司或竞争策略？例如：分析 Notion / 飞书 / Obsidian 的产品与定价竞争格局"
+            placeholder="输入社区名、地名或经度,纬度（BD-09）—— 例如：凯里老街 / 107.9758,26.5734"
             className="w-full resize-none bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-3"
           />
-          {/* 调研模式三档 */}
+          {/* 体检模式三档 */}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-tag text-ink-3">调研模式</span>
+            <span className="text-tag text-ink-3">体检模式</span>
             {MODE_OPTIONS.map((m) => {
               const Icon = m.icon
               const active = mode === m.key
@@ -242,70 +241,79 @@ export default function HomePage() {
             </span>
           </div>
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-tag text-ink-3">48 位专家 · 真实联网 · 无证据不立论</span>
+            <span className="text-tag text-ink-3">真实路网测时 · POI 覆盖统计 · 示范数据可离线演示</span>
             <div className="flex items-center gap-2">
               <ModelPicker />
               <button
-                title="上传附件"
+                title="上传附件（M 阶段开放）"
                 className="grid h-9 w-9 place-items-center rounded-full text-ink-3 transition-colors hover:bg-primary-tint hover:text-primary-deep"
               >
                 <Paperclip size={18} />
               </button>
               <button
-                onClick={() => submit(text)}
-                disabled={!text.trim() || submitting}
+                onClick={() => startCheck()}
+                disabled={submitting}
                 className="grid h-11 w-11 place-items-center rounded-full bg-primary text-white shadow-card transition-all hover:scale-105 hover:bg-primary-deep active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+                title="开始生活圈体检"
               >
                 <ArrowUp size={20} />
               </button>
             </div>
           </div>
+          {subErr && (
+            <div className="mt-2 rounded-btn bg-risk/10 px-3 py-1.5 text-tag text-risk" role="alert">
+              体检任务创建失败：{subErr}（请确认后端已启动）
+            </div>
+          )}
         </motion.div>
 
-        {/* 示例卡 */}
-        <p className="mt-9 text-aux text-ink-3">试试这些示例</p>
+        {/* 样例社区 + 自定义中心点 */}
+        <p className="mt-9 text-aux text-ink-3">内置双样例 · 或自定义中心点</p>
         <motion.div
           variants={stagger}
           initial="initial"
           animate="animate"
-          className="mt-4 grid w-full grid-cols-2 gap-4 sm:grid-cols-4"
+          className="mt-4 grid w-full grid-cols-2 gap-4 sm:grid-cols-3"
         >
-          {EXAMPLES.map((ex) => (
+          {SAMPLE_COMMUNITIES.map((ex, i) => (
             <motion.button
-              key={ex.title}
+              key={ex.id}
               variants={fadeUp}
-              onClick={() => submit(ex.q)}
+              onClick={() => startCheck(ex.id)}
               className="group flex flex-col rounded-card border border-line/60 bg-card/80 p-4 text-left shadow-card backdrop-blur transition-all hover:-translate-y-0.5 hover:shadow-float"
             >
               <span className="grid h-9 w-9 place-items-center rounded-btn bg-primary-tint text-primary">
-                <ex.icon size={18} />
+                {i === 0 ? <MapPin size={18} /> : <Building2 size={18} />}
               </span>
               <span className="mt-3 text-aux font-semibold text-ink">{ex.title}</span>
-              <span className="mt-1 text-tag leading-relaxed text-ink-3">{ex.desc}</span>
+              <span className="mt-0.5 text-tag text-ink-3">{ex.city}</span>
+              <span className="mt-1 text-tag leading-relaxed text-ink-3">{ex.blurb}</span>
             </motion.button>
           ))}
+          <motion.button
+            variants={fadeUp}
+            onClick={() => startCheck('custom')}
+            className="group flex flex-col rounded-card border border-dashed border-line bg-card/60 p-4 text-left shadow-card backdrop-blur transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-float"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-btn bg-primary-tint/60 text-primary">
+              <Crosshair size={18} />
+            </span>
+            <span className="mt-3 text-aux font-semibold text-ink">自定义中心点</span>
+            <span className="mt-0.5 text-tag text-ink-3">任意城市 · 任意坐标</span>
+            <span className="mt-1 text-tag leading-relaxed text-ink-3">在地图点选或输入坐标，立即体检</span>
+          </motion.button>
         </motion.div>
 
-        {/* 专家墙 */}
-        <div className="mt-12 flex w-full flex-col items-center">
-          <div className="flex items-center -space-x-2">
-            {wall.map((e, i) => (
-              <img
-                key={e.id}
-                src={e.avatar}
-                alt={e.name}
-                title={`${e.name} · ${e.role_title}`}
-                className="h-9 w-9 rounded-full border-2 border-card object-cover shadow-card"
-                style={{ zIndex: wall.length - i }}
-              />
-            ))}
-            <button
-              onClick={() => navigate('/experts')}
-              className="z-0 ml-1 inline-flex h-9 items-center rounded-chip bg-primary-tint px-3 text-tag font-medium text-primary-deep hover:bg-primary-soft/40"
+        {/* 能力指示条 */}
+        <div className="mt-10 flex flex-wrap items-center justify-center gap-2">
+          {FEATURES.map((f) => (
+            <span
+              key={f}
+              className="rounded-chip border border-line/70 bg-primary-tint/30 px-3 h-7 text-tag font-medium text-ink-2"
             >
-              查看全部 48 位 →
-            </button>
-          </div>
+              {f}
+            </span>
+          ))}
         </div>
       </div>
     </div>

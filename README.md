@@ -1,165 +1,152 @@
-# 青野 Verda · AI 竞品情报工作台
+# 常青圈 · 15 分钟生活圈智能体检
 
-> 让每个结论都有出处，让每次调研都活着。
+> 基于地图开放能力，给社区做一次「15 分钟生活圈」体检：测等时圈、数民生设施、找服务盲区、出诊断报告。
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Built with TRAE](https://img.shields.io/badge/Built%20with-TRAE%20AI-7C5CFF.svg)](https://www.trae.ai/)
+[![CI](https://img.shields.io/badge/CI-GitHub%20Actions%20%2B%20Gitee%20Go-blue)](./.github/workflows/ci.yml)
 
-青野 Verda 是一个**会自己组队、能溯源、看得见思考过程**的「AI 竞品情报工作台」。
-它把一支由 48 位虚拟专家组成的多 Agent 团队封装进一条 Deep Research 流水线：从澄清需求、真实联网采集、交叉验证、结构化分析，到并行撰写一份带证据溯源的竞品研究报告——全程可观测、可回放、可人工介入二次深化。
-
-- **真实，不演示**：真实 LLM（智谱 GLM）+ 真实联网搜索（博查 Bocha）+ 真实网页抓取 + SQLite 持久化。搜不到就如实标注「未采集到」，绝不编造假数据。
-- **每个结论都有出处**：四条铁律——无证据不立论 / 交叉验证 / 返工闭环 / 全程可观测。
-- **看得见的思考**：每个 Agent 的 Prompt、输入输出、Token、决策、引用证据全部落 Trace，可在工作台实时滚动、在报告页「决策回放」。
-
-> 本项目在开发过程中深度使用 [TRAE](https://www.trae.ai/) AI 编程工具协作完成，设计与演进过程见 [docs/系统升级实施方案.md](./docs/系统升级实施方案.md)。
+2026 上海开源软件应用创新大赛 · 百度地图命题一《基于地图开放能力的"15 分钟生活圈"智能体检与规划助手》。本项目 fork 自青野 Verda（AI 竞品情报工作台），保留其多 Agent 编排、全链路可观测与证据溯源内核，重构为**生活圈体检助手**。
 
 ---
 
-## ✨ 核心特性
+## ✨ 核心能力
 
 | 能力 | 说明 |
 |---|---|
-| 🧠 多 Agent 编排 | 48 位分层虚拟专家（决策层 / 策略层 / 执行层），按任务自动组队、指派、终审 |
-| 🔎 Deep Research 流水线 | `intake → orchestrator → collect → analyze → write → audit → done`，带返工闭环 |
-| 🌐 真实联网采集 | 博查 Bocha 多角度多轮搜索 + 真实正文抓取 + 乱码/相关性过滤 |
-| 📊 结构化知识 Schema | 功能树 / 定价模型 / 用户画像三类强结构对象，前端渲染矩阵、定价表、画像卡 |
-| 🔬 可信度真实计算 | 按来源分级 + 域名权威性 + 时效性 + 抓取质量打分（0–100，非写死） |
-| 📈 量化提升 & 业务闭环指标 | 效率提升 / 覆盖度 / 一致性 / 准确率 / 人工修正率，每项可解释 |
-| 👀 全链路可观测 Trace | 每个 Agent 的 Prompt/输出/Token/决策可查、可回放 |
-| ✍️ 批注驱动二次调研 | 对报告正文划线批注 → 触发针对性补充调研并更新章节 |
-| 🎚️ 三档调研模式 | 快速 / 深度 / 专家级，按搜索量 + 章节数 + 模型档位分档 |
+| 🗺️ 等时圈计算 | 渔网采样 + 百度批量算路（routematrix walking）+ IDW 反距离加权插值，产出 5/10/15/20 分钟可达圈 |
+| 🏪 民生设施体检 | 8 类 POI（医疗/教育/菜市/养老/购物/金融/文体/政务）+ 三要素（菜市场/药店/小学）1km 覆盖判定 |
+| 🚨 服务盲区识别 | 1km 网格扫描，聚合相邻盲点到灰区，标注缺失设施与最近可及点 |
+| 📋 综合评分 | 类别覆盖 × 三要素 × 盲区三因子打分（0–100），附差异归因 |
+| 👥 专家队诊断 | 13 位虚拟专家（空间定位师/网格规划师/各域顾问）按 GB50180 生活圈标准出具章节化报告，证据溯源可查 |
+| ⚡ 智能体流水线 | `intake → plan → measure → collect → diagnose → report → audit`，SSE 实时流式展示（`useTaskStream`） |
+| 📊 双社区对比 | 指标差异表 + 双雷达图，同一口径下量化设施覆盖差距 |
+| 🔍 全链路可观测 | 每个专家/阶段的 Prompt、产出、参数、Event 可回放（Trace） |
+
+另保留原 Verda 能力：竞品情报 Deep Research、48 专家编排、可信度计算、批注驱动二次调研、一页纸简报。
 
 ---
 
-## 🏗️ 技术栈
-
-**前端**：React 19 · TypeScript · Vite · TailwindCSS · Zustand · React Router · ReactFlow · ECharts / D3 · Framer Motion
-
-**后端**：FastAPI · LangGraph 风格编排 · SQLite · SSE（Server-Sent Events 思维流）
-
-**LLM**：智谱 GLM（BigModel 开放平台，OpenAI 兼容网关）。核心章 `glm-5.2`、辅助章 `glm-5.1`、杂务 `glm-z1-air`，多模型按章节分配以充分利用并发额度
-
-**搜索**：博查 Bocha Web Search
-
-更完整的架构与数据流见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
-
----
-
-## 📂 目录结构
+## 🏗️ 架构
 
 ```
-.
-├── frontend/              # React + Vite 前端
-│   ├── src/
-│   │   ├── components/    # 通用组件（VTracePanel / VDataGrid / VChart 等）
-│   │   ├── layout/        # AppLayout / VSidebar 全局框架
-│   │   ├── pages/         # 11 个页面（首页/工作台/报告/图谱/Trace/专家…）
-│   │   ├── store/         # Zustand 状态管理
-│   │   ├── lib/           # api.ts 等工具
-│   │   └── hooks/         # useTaskStream（SSE 订阅）
-│   └── tailwind.config.js # 设计 token 主题映射
-│
-├── backend/              # FastAPI + 多 Agent 编排后端（本地开发主目录）
-│   ├── app/
-│   │   ├── core/          # 编排 / LLM / 搜索 / 抓取 / 可信度 / Trace / 指标…
-│   │   ├── data/          # 48 专家定义 experts.json
-│   │   └── main.py        # FastAPI 入口
-│   └── requirements.txt
-│
-├── api/                  # Vercel Serverless 部署入口（后端代码的部署镜像，见下方说明）
-│   └── index.py
-│
-├── docs/                 # 架构 / Agent 协议 / 部署 / 设计方案文档
-├── vercel.json           # Vercel 部署配置
-├── restart.sh / stop.sh  # 本地一键启停脚本
-└── LICENSE               # AGPL-3.0
+前端（React 19 + Vite —— VITE_USE_MOCK 开关）
+ ├─ 工作台：输入社区名/坐标 → 发起体检 → /workspace/:taskId（SSE 思维流）
+ ├─ 生活圈地图：等时圈族 + 彩色 POI + 盲区灰区 + 右侧体检单（SVG 画布，零 AK 零依赖）
+ ├─ 报告双层：指标速览（雷达/评分/盲区清单）+ 章节化诊断报告
+ ├─ 双样例对比：指标差异表 + 双雷达
+ └─ 历史 / 报告中心：/api/life-circle 真实记录归档
+
+后端（FastAPI）
+ ├─ living_circle 域（独立子域，A1）
+ │   ├─ pipeline/living_circle.py   # 体检流水线（A2 独立编排，SSE 事件契约对齐 A4）
+ │   ├─ pipeline/diagnosis_templates.py # D4 专家诊断规则模板（数据驱动，无散乱 if-else）
+ │   ├─ living_circle/isochrone.py  # 渔网采样 + 批量算路 + IDW 等值线（自实现，不引 scipy/shapely）
+ │   ├─ living_circle/poi.py        # 8 类 POI 采集清洗 + 类别统计
+ │   ├─ living_circle/blindspot.py  # 1km 盲区扫描 + 灰区聚合
+ │   ├─ living_circle/scoring.py    # 三因子评分
+ │   ├─ living_circle/data_source.py# 数据源抽象：live(百度 AK) / fixture(内置演示)，无 AK 自动降级
+ │   └─ living_circle/baidu_client.py + request_guard.py  # 真实 API 调用 + 限流/退避（韧性）
+ ├─ core/runner.py                  # 后台常驻任务调度（按 kind 分发，断连续跑，重连补帧）
+ ├─ core/db.py                      # SQLite（含 living_circle_reports 独立文档）
+ └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/compare…）
 ```
 
-> **关于 `backend/` 与 `api/` 的代码重复**：
-> `backend/` 是本地开发与调试的主目录；`api/` 是为 [Vercel Serverless](https://vercel.com/docs/functions) 部署准备的镜像副本（Vercel 约定 Serverless 函数放在 `api/` 目录）。两者业务逻辑一致，部署时只使用 `api/`。详细说明与同步约定见 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)。
+> 数据模式总开关（前端）：`VITE_USE_MOCK=1` 走内置 fixture（离线可演示，等时圈圆形近似）；`VITE_USE_MOCK=0` 连真实编排。任务数据源（后端）：`VITE_LC_DATA_MODE=fixture|live`（`.env.development`），缺百度 AK 时自动降级 fixture，界面横幅标注 `data_origin`。
 
 ---
 
 ## 🚀 快速开始
 
-### 环境要求
-
-- Node.js ≥ 22.12
-- Python ≥ 3.9
-
-### 1. 克隆并配置密钥
+### 方式 A：Docker 一键预览（推荐）
 
 ```bash
-git clone <your-repo-url>
-cd verda
-
-# 配置后端密钥（绝不硬编码，全部走环境变量）
-cp backend/.env.example backend/.env
-# 编辑 backend/.env，填入 ZHIPU_API_KEY 等（见下方「配置密钥」）
+docker compose up --build
+# 前端 http://localhost:3400  后端 http://localhost:8010
 ```
 
-### 2. 启动后端
+无需任何 AK：缺省走内置 fixture 演示（凯里老街 / 北京劲松双样例，等时圈零依赖可跑）。
+
+### 方式 B：本地两命令
 
 ```bash
-cd backend
-python3 -m venv .venv
+# 1) 后端（Python ≥3.9，建议 3.12）
+cd backend && python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m uvicorn app.main:app --reload --port 8010
-# 后端: http://localhost:8010   健康检查: /health   LLM 自检: /api/llm/ping
+
+# 2) 前端（Node ≥22）
+cd frontend && npm install && npm run dev
+# 前端 http://localhost:3400（vite 已代理 /api → :8010）
 ```
 
-### 3. 启动前端
+### 一键脚本（macOS/Linux）
 
 ```bash
-cd frontend
-npm install
-npm run dev
-# 前端: http://localhost:3400
-```
-
-### 一键启停（可选）
-
-项目根目录提供了本地一键脚本（macOS / Linux）：
-
-```bash
-./restart.sh   # 清理旧进程 → 启动后端(:8010) → 等待就绪 → 启动前端(:3400)
-./stop.sh      # 按端口精确关闭本项目前后端
+./restart.sh   # 清理旧进程 → 后端(:8010) → 前端(:3400)
+./stop.sh
 ```
 
 ---
 
-## 🔑 配置密钥
+## 🔑 百度地图 AK 配置（生活圈真实实跑）
 
-复制 `backend/.env.example` 为 `backend/.env`，按需填写：
-
-| 变量 | 说明 | 必填 |
-|---|---|---|
-| `ZHIPU_API_KEY` | 智谱开放平台 API Key（GLM 调用），从 https://open.bigmodel.cn 获取 | 是（真实 LLM 调用） |
-| `ZHIPU_MODEL` / `ZHIPU_MODEL_CORE` / `ZHIPU_MODEL_AUX` / `ZHIPU_MODEL_FAST` | 多模型矩阵（默认 / 核心章 / 辅助章 / 杂务） | 否（有默认值） |
-| `BOCHA_API_KEY` | 博查 Bocha Web Search Key，从 https://open.bocha.cn 获取（形如 `sk-xxxx`） | 真实联网采集时必填 |
-| `DOUYIN_COOKIE` / `BILIBILI_COOKIE` / `XHS_COOKIE` | 各平台舆情采集 cookie | 平台采集时按需 |
-| `APP_PORT` | 后端端口（默认 8000，本地脚本用 8010） | 否 |
-| `FRONTEND_ORIGIN` | 前端地址（CORS 白名单），默认 `http://localhost:3400` | 否 |
-| `ENABLE_DEMO_FALLBACK` | 无 key 时是否启用缓存兜底（演示不崩） | 否 |
-
-验证 LLM 是否打通：
+1. 控制台 [百度地图开放平台](https://lbsyun.baidu.com/) → 应用管理 → 创建**服务端**与**浏览器端**两个应用。
+2. **服务端应用**：启用 Geocoding/逆地理编码、地点检索、路线规划、坐标转换、批量算路 → `BAIDU_SERVER_AK`。
+3. **浏览器端应用**：启用 JS API、地点搜索、地理编码；**Referer 白名单**填写：
+   - `http://localhost:3400/*` `http://127.0.0.1:3400/*`（开发）
+   - 线上域名按实际填写（AK 绑定域名后才生效）。
+4. 复制模板写入：
 
 ```bash
-curl http://localhost:8010/api/llm/ping
+cp backend/.env.example backend/.env
+# backend/.env 填入：BAIDU_SERVER_AK=…  BAIDU_BROWSER_AK=…
+```
+
+缺 AK 时不影响演示（自动降级 fixture）；`BAIDU_BROWSER_AK` 供浏览器端 JS API 后续接入（M5）。
+
+> 其余密钥（LLM / 搜索 / 平台 cookie）见 `backend/.env.example` 注释。所有密钥仅走环境变量，`.env` 已被 .gitignore 屏蔽。
+
+---
+
+## 🧮 算法简述（提交材料背书）
+
+- **等时圈**：中心 2.5km 渔网采样（粗扫 400m → 15min 边界带加密）→ 百度批量算路（一次 N×1 距离矩阵）→ IDW 反距离插值生成步行耗时场 → marching-squares 提取 5/10/15/20 分钟等值线。纯 numpy 自实现，不引 scipy/shapely 重依赖（AK 演示与镜像体积双赢）。
+- **POI 清洗**：多关键词检索 → 去重/过滤 → 类别统计 + IDW 耗时回填最近设施。
+- **盲区**：1km 网格扫描（三要素任一缺失判盲）→ 相邻聚合灰区 → 输出缺失清单与最近可及设施。
+- **评分**：类别覆盖 / 三要素 / 盲区三因子加权（0–100），透明公式可解释。
+- 详见 [docs/地图API调用策略与等时圈算法设计.md]、[docs/多源POI数据清洗与服务盲区识别算法.md]、[docs/真实社区对比测试报告.md]（M5 交付）。
+
+---
+
+## 🧪 fixture 演示模式
+
+- 前端 `VITE_USE_MOCK=1`（`.env.development` 默认）：全部页面由 `src/mocks/fixtures/` 驱动，离线可用、零 AK。
+- 后端 `data_mode=fixture`（默认）：流水线走内置双样例（凯里老街 / 北京劲松），等时圈圆形近似。
+- 两种模式的 SSE 事件契约完全一致（A4），前端 `useTaskStream` 无缝切换真实编排，联调零返工。
+
+```bash
+# 切到真实编排联调
+sed -i '' 's/VITE_USE_MOCK=1/VITE_USE_MOCK=0/' frontend/.env.development
+# 联调完恢复
 ```
 
 ---
 
-## 🔒 安全说明
+## 🧪 测试与 CI
 
-- **所有密钥仅通过环境变量读取，绝不硬编码在代码中**（见 [backend/app/core/config.py](./backend/app/core/config.py)）。
-- `.env` 及各类密钥文件已在 [.gitignore](./.gitignore) 中屏蔽，不会被提交。
-- 本地数据库 `*.db` / WAL / SHM、运行日志 `.run-logs/` 均不入库。
-- 提交代码前请再次确认：**没有任何真实的 API Key / Token / Cookie 被提交**。
+```bash
+# 后端（living_circle 域 + research 回归 + A6 镜像守卫）
+cd backend && .venv/bin/python -m pytest -q
+# 前端（lint/typecheck/vitest/build）
+cd frontend && npm run lint && npm run typecheck && npm run test && npm run build
+```
+
+CI（全 mock，不注入任何真实 AK）：
+- GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端+前端+Docker 构建。
+- Gitee 镜像：仓库推送至 Gitee 后，Gitee Go 同义流水线 `.workflow/ci.yml` 自动触发（两边保持一致）。
 
 ---
 
@@ -167,19 +154,18 @@ curl http://localhost:8010/api/llm/ping
 
 | 文档 | 内容 |
 |---|---|
-| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | 系统架构、模块划分、数据流、Deep Research 流水线 |
-| [docs/AGENTS.md](./docs/AGENTS.md) | 48 专家分层、Agent 角色、消息协议、四条铁律 |
-| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | 本地部署、Vercel 部署、backend/api 同步约定 |
-| [docs/系统升级实施方案.md](./docs/系统升级实施方案.md) | 完整设计与演进方案（含 AI 协作过程） |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | 贡献指南、提交规范、分支管理 |
+| [基于赛题的skip项目改造计划.md](./.trae/documents/基于赛题的skip项目改造计划.md) | 项目总计划、里程碑 F0–M6、验收矩阵 |
+| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | 本地部署、Vercel、backend/api 镜像同步约定 |
+| [docs/AGENTS.md](./docs/AGENTS.md) | 专家分层、角色、消息协议、四条铁律 |
+| [docs/系统升级实施方案.md](./docs/系统升级实施方案.md) | 完整设计演进（含 AI 协作过程） |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | 贡献指南、提交规范 |
 
 ---
 
 ## 🤝 贡献
 
-欢迎 Issue 与 PR。提交前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)，遵循约定式提交（Conventional Commits）与代码风格规范。
+欢迎 Issue 与 PR。提交前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)，遵循约定式提交与代码风格规范（前端 lint 必须 0 error）。
 
-## 📄 许可证
+## ⚖️ 许可
 
-本项目采用 **[AGPL-3.0](./LICENSE)** 开源许可证。
-这意味着：你可以自由使用、修改、分发本项目，但**任何修改后的版本（包括通过网络提供服务的形式）都必须以相同的 AGPL-3.0 许可证开源**。
+[AGPL-3.0](./LICENSE)。

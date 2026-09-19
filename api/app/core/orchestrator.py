@@ -101,10 +101,13 @@ def _model(tier: str) -> str:
 
 
 # ── 任务创建 / 澄清（落库）─────────────────────────────────
-def create_task(query: str, mode: str = "deep") -> Dict[str, Any]:
+def create_task(query: str, mode: str = "deep", model: Optional[str] = None) -> Dict[str, Any]:
     task_id = _sid("t")
     questions = _clarify_questions(query)
-    db.save_task(task_id, query, {"_mode": mode})
+    meta: Dict[str, Any] = {"_mode": mode}
+    if model and model != "Auto":
+        meta["_model"] = model
+    db.save_task(task_id, query, meta)
     return {"taskId": task_id, "needClarify": True, "clarifyQuestions": questions}
 
 
@@ -146,7 +149,7 @@ def refine_section(report_id: str, section_id: str, annotations: List[str]) -> D
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是资深竞品分析师。用户对报告某章节提出了批注/进一步调研诉求，"
+                    "你是资深生活圈体检分析师。用户对报告某章节提出了批注/进一步调研诉求，"
                     "请基于已有证据与批注，把该章节重写得更深、更厚、更有针对性——补充论证、数据、对比与独立判断。"
                     '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
                 )},
@@ -236,7 +239,7 @@ def _discover_scope(query: str) -> Dict[str, Any]:
     """
     msgs = [
         {"role": "system", "content": (
-            "你是竞品分析调研总监，负责开题前的『领域识别 + 竞品发现』。"
+            "你是社区体检总检，负责开题前的『中心点定格 + 设施范围识别』。"
             "根据用户一句话需求，判断：①真正的调研对象是什么（产品/公司/品类全称）；"
             "②它属于什么细分领域/赛道；③在该赛道里，尽可能多地列出与之直接竞争的真实竞品（8-12 个，"
             "必须是真实存在、可搜索的产品/公司名，按知名度从高到低排列，不要编造）。"
@@ -277,7 +280,7 @@ def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7) -> Dic
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是竞品分析调研总监。拆解用户的调研需求，输出 JSON："
+                    "你是社区体检总检。拆解用户的生活圈体检需求，输出 JSON："
                     '{"subject":"本次调研的核心对象全称",'
                     '"category":"该对象所属的细分品类/领域（用于消歧，如 AI编程工具、知识管理软件、新能源汽车）",'
                     '"brands":["竞品全称1","竞品全称2"],'
@@ -383,12 +386,12 @@ def _dispatch_experts(query: str, brands: List[str], focus: List[str]) -> Dict[s
     except Exception:
         pass
     fallback = [
-        {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-        {"id": "L2-001", "reason": "战略顾问负责竞争格局判断"},
-        {"id": "L2-002", "reason": "定价顾问负责价格策略拆解"},
-        {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
-        {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
-        {"id": "L3-003", "reason": "质检负责四铁律审裁"},
+        {"id": "L3-001", "reason": "决策层统筹体检全流程与终审签发"},
+        {"id": "L2-001", "reason": "基层医疗配置顾问负责就医可达判断"},
+        {"id": "L2-002", "reason": "教育设施规划师负责学位覆盖判断"},
+        {"id": "L1-025", "reason": "空间定位师负责中心点定位与坐标解析"},
+        {"id": "L1-030", "reason": "POI 核验官负责设施点位检索核验"},
+        {"id": "L3-003", "reason": "质检负责点位溯源与盲区复核审裁"},
     ]
     return {"lead": "L3-001", "members": fallback}
 
@@ -813,7 +816,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     analysis["structured"] = structured
 
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
-                          "text": "舆情专家对真实评论做情感分类与观点阵营聚类（占比归一化）……", "ts": _now()})
+                          "text": "生活圈体检分析师对真实评论做情感分类与观点阵营聚类（占比归一化）……", "ts": _now()})
     trace.set_context(task_id, sentiment_expert, "analyze", "舆情情感分类与阵营聚类")
     sentiment = await asyncio.to_thread(analyze_sentiment, primary_brand, sentiment_comments)
     for e in _drain_trace():
@@ -1085,7 +1088,7 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖投行/券商行研级别的资深竞品分析师，对标高盛、麦肯锡、字节战略部的分析深度。"
+                    "你是资深城市体检分析师，对标城市规划研究院与住建部门研究机构的分析深度。"
                     "基于给定证据（每条带 evidence_id），提炼结构化、有锋芒、敢下判断的竞争洞察。"
                     "严格要求：每条结论的 evidence_ids 必须来自给定证据的真实 id；无证据支撑的结论不要输出；数字尽量带来源。"
                     "输出 JSON：{"
@@ -1372,7 +1375,7 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
         retry = chat(
             [
                 {"role": "system", "content": (
-                    f"你是资深竞品分析师，针对给定章节写不少于 {min_paragraphs} 段深度分析，"
+                    f"你是资深生活圈体检分析师，针对给定章节写不少于 {min_paragraphs} 段深度分析，"
                     f"每段约 {para_words} 字，论证层层递进，直接输出正文（不要 JSON、不要标题）。"
                 )},
                 {"role": "user", "content": f"章节：{title}\n主题：{query}\n竞品：{'、'.join(brands)}\n证据：\n{digest[:2000]}"},
@@ -1422,7 +1425,7 @@ def _write_sentiment_narrative(query, brands, sentiment: Dict[str, Any], model: 
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖社媒舆情分析师 + 品牌战略顾问。基于给定的【真实舆情统计与原声】，"
+                    "你是社区治理顾问 + 生活圈体检分析师。基于给定的【真实舆情统计与原声】，"
                     "写一段有锋芒、有洞察的全网口碑深度解读。\n"
                     "硬性要求：\n"
                     "1) 只能基于给定的真实数据与原声做解读，严禁编造任何不存在的数字、平台或评论；\n"

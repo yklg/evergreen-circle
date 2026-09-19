@@ -89,6 +89,7 @@ function renderReport(rid: string) {
 describe('ReportPage 精修接线（P1-3）', () => {
   it('点「精修」→ openTaskStream(taskId) 被调；done → load(rid)+关流', async () => {
     mockedRefine.mockResolvedValue({ taskId: 't_refine_1' })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let handlers: any = null
     mockedOpenTaskStream.mockImplementation((_tid, h) => {
       handlers = h

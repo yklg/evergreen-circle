@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.fetcher import domain_of
 from app.core.models import Envelope
@@ -214,8 +214,11 @@ def _clamp_score(v) -> int:
         return 0
 
 
-def decide_rework(qr: QualityReport) -> List[Envelope]:
-    """根据质量报告决定返工动作，产出结构化 Envelope 消息。"""
+def decide_rework(qr: QualityReport, evidences: Optional[List[Any]] = None) -> List[Envelope]:
+    """根据质量报告决定返工动作，产出结构化 Envelope 消息。
+
+    evidences 为后端演进新增入参（ABI 兼容，只读镜像返工判定仍以质量报告为准）。
+    """
     envelopes: List[Envelope] = []
 
     # 证据不足 → 打回 collect 补采

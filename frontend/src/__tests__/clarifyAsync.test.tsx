@@ -26,17 +26,20 @@ vi.mock('react-router-dom', async (importOriginal) => {
 })
 
 vi.mock('../lib/api', () => ({
+  createLivingCircleTask: vi.fn(),
   createTask: vi.fn(),
   openClarifyStream: vi.fn(() => () => {}),
   submitClarify: vi.fn(),
 }))
 
+const mockedCreateLivingCircleTask = api.createLivingCircleTask as unknown as ReturnType<typeof vi.fn>
 const mockedCreateTask = api.createTask as unknown as ReturnType<typeof vi.fn>
 const mockedOpenClarifyStream = api.openClarifyStream as unknown as ReturnType<typeof vi.fn>
 const mockedSubmitClarify = api.submitClarify as unknown as ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   navigateFn.mockClear()
+  mockedCreateLivingCircleTask.mockReset()
   mockedCreateTask.mockReset()
   mockedOpenClarifyStream.mockReset().mockImplementation(() => () => {})
   mockedSubmitClarify.mockReset().mockResolvedValue({ ok: true })
@@ -58,29 +61,48 @@ function renderClarify(taskId: string) {
   )
 }
 
-// ── P0#2：HomePage 永远进 clarify，绝不跳 workspace ──────────
-describe('T-HP1 HomePage 永远进 clarify', () => {
-  it('提交后 navigate 到 /clarify/:taskId，且不跳 /workspace', async () => {
-    mockedCreateTask.mockResolvedValue({ taskId: 't_xyz' })
+// ── P0#2（M3 演进）：HomePage 非 mock → 生活圈体检真实编排 → 工作台 SSE ──
+describe('T-HP1 HomePage 非 mock 发起生活圈体检', () => {
+  it('纯地名提交 → 创建 living_circle 任务（center 缺省）→ /workspace/:taskId', async () => {
+    mockedCreateLivingCircleTask.mockResolvedValue({ taskId: 't_xyz' })
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     )
-    const ta = screen.getByPlaceholderText(/想分析哪个市场/)
-    fireEvent.change(ta, { target: { value: '分析 A 与 B 竞争' } })
-    // 触发提交（textarea Enter+meta）
+    const ta = screen.getByPlaceholderText(/输入社区名、地名或经度,纬度/)
+    fireEvent.change(ta, { target: { value: '凯里老街' } })
     fireEvent.keyDown(ta, { key: 'Enter', metaKey: true })
 
+    await waitFor(() => expect(mockedCreateLivingCircleTask).toHaveBeenCalled())
+    expect(mockedCreateLivingCircleTask).toHaveBeenCalledWith(
+      expect.objectContaining({ query: '凯里老街', center: undefined }),
+    )
     await waitFor(() => expect(navigateFn).toHaveBeenCalled())
     expect(navigateFn).toHaveBeenCalledWith(
-      '/clarify/t_xyz',
-      expect.objectContaining({ state: { query: '分析 A 与 B 竞争' } }),
+      '/workspace/t_xyz',
+      expect.objectContaining({ state: { query: '凯里老街' } }),
     )
-    // 关键回归点：绝不能跳 workspace
-    expect(navigateFn).not.toHaveBeenCalledWith(
-      expect.stringContaining('/workspace/'),
-      expect.anything(),
+  })
+
+  it('坐标输入 → center=[lng,lat] 随请求下发', async () => {
+    mockedCreateLivingCircleTask.mockResolvedValue({ taskId: 't_coord' })
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    )
+    const ta = screen.getByPlaceholderText(/输入社区名、地名或经度,纬度/)
+    fireEvent.change(ta, { target: { value: '107.9758, 26.5734' } })
+    fireEvent.keyDown(ta, { key: 'Enter', metaKey: true })
+
+    await waitFor(() =>
+      expect(mockedCreateLivingCircleTask).toHaveBeenCalledWith(
+        expect.objectContaining({ center: [107.9758, 26.5734] }),
+      ),
+    )
+    await waitFor(() =>
+      expect(navigateFn).toHaveBeenCalledWith('/workspace/t_coord', expect.anything()),
     )
   })
 })
@@ -148,6 +170,7 @@ describe('T-Wizard 分步向导 + 核对屏', () => {
     { id: 'q2', question: '目标市场是？', type: 'single' as const, options: ['国内', '海外'] },
   ]
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function mockReady(questions: any[]) {
     mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
       handlers.onEvent('clarify_ready', { questions })
@@ -225,6 +248,7 @@ describe('T-Wizard 分步向导 + 核对屏', () => {
 // single（350ms 视觉锁定）与 multi（1.2s 停顿，每次勾选重置）均自动前进；
 // multi 另给「完成本题」按钮可立即跳过等待；text/slider 仍需显式确认，不自动跳。
 describe('T-AutoAdvance 自动前进（单选 + 多选）', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function mockReady(questions: any[]) {
     mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
       handlers.onEvent('clarify_ready', { questions })
@@ -383,6 +407,7 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
   it('TC-A3 clarify_ready 后主动 close()', async () => {
     const closeSpy = vi.fn()
     // 捕获 handlers 但不立即派发；真实 SSE 在 openClarifyStream 返回（close 已赋值）后才异步到达。
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let captured: any = null
     mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
       captured = handlers
@@ -400,6 +425,7 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
   })
 
   it('TC-A4 clarify_update(competitors_fallback) → 核对屏温和提示（C6，替代旧 degraded 大警告）', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let handlers: any = null
     mockedOpenClarifyStream.mockImplementation((_tid, h) => { handlers = h; return () => {} })
     renderClarify('t_c6')
@@ -428,6 +454,7 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
   })
 
   it('TC-A8 clarify_update 增量追加竞品题到末尾（C4），且保留当前步不漂移', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let handlers: any = null
     mockedOpenClarifyStream.mockImplementation((_tid, h) => { handlers = h; return () => {} })
     renderClarify('t_c4')

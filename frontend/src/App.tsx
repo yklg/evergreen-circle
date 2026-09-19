@@ -12,11 +12,15 @@ import ExpertDetailPage from './pages/ExpertDetailPage'
 import LibraryPage from './pages/LibraryPage'
 import SlidesPage from './pages/SlidesPage'
 import DashboardPage from './pages/DashboardPage'
+import ReportsPage from './pages/ReportsPage'
 import KnowledgePage from './pages/KnowledgePage'
 import SettingsPage from './pages/SettingsPage'
+import LifeCirclePage from './pages/LifeCirclePage'
+import ComparePage from './pages/ComparePage'
 import TaskFloatBar from './components/TaskFloatBar'
 import { useExpertStore } from './store/expertStore'
 import { useSettingsStore } from './store/settingsStore'
+import { hydrateAllPrefs } from './lib/persist'
 
 export default function App() {
   const load = useExpertStore((s) => s.load)
@@ -27,6 +31,11 @@ export default function App() {
   useEffect(() => {
     loadSettings()
   }, [loadSettings])
+  // 用户偏好（昵称/公司/模型选择）水合：localStorage 已在 store 初始化时同步喂给首屏，
+  // 这里异步拉服务端真相（远端为准；远端空则把本地存量资料上推迁移）。
+  useEffect(() => {
+    void hydrateAllPrefs()
+  }, [])
 
   return (
     <BrowserRouter>
@@ -34,12 +43,18 @@ export default function App() {
         {/* 带侧边栏框架的页面 */}
         <Route element={<AppLayout />}>
           <Route path="/" element={<HomePage />} />
-          <Route path="/library" element={<LibraryPage />} />
-          <Route path="/knowledge" element={<KnowledgePage />} />
+          <Route path="/life-circle" element={<Navigate to="/life-circle/kaili" replace />} />
+          <Route path="/life-circle/:sceneId" element={<LifeCirclePage />} />
+          <Route path="/compare" element={<ComparePage />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="/experts" element={<ExpertsPage />} />
           <Route path="/experts/:id" element={<ExpertDetailPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+
+          {/* 旧页路由保留（移出主导航，不回归既有测试） */}
+          <Route path="/library" element={<LibraryPage />} />
+          <Route path="/knowledge" element={<KnowledgePage />} />
         </Route>
 
         {/* 全屏沉浸页：澄清 / 工作台 / 报告 / 图谱 */}

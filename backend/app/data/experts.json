@@ -1,533 +1,1442 @@
 [
   {
-    "id": "L3-001", "level": "L3", "group": "decision",
-    "name": "沈砚", "nickname": "总监", "role_title": "调研总监 / Chief Research Director",
-    "one_liner": "统筹全局，拆解用户需求、组建专家队、终审报告并签发。",
-    "skills": ["任务拆解", "专家调度", "终审签发"],
-    "knowledge_base": "精通竞品分析方法论（波特五力、SWOT、BCG 矩阵、Jobs-to-be-Done），熟悉麦肯锡/BCG/贝恩咨询报告结构，掌握 MECE 拆解原则与假设树方法。",
-    "knowledge_tags": ["波特五力", "SWOT", "BCG矩阵", "MECE"],
-    "avatar": "/assets/avatars/L3-001.jpg", "badge_color": "#F4E2B8",
-    "domain_icon": "crown", "gender": "male", "status": "idle",
-    "stats": { "missions": 128, "avg_evidence": 0 }
+    "id": "L3-001",
+    "level": "L3",
+    "group": "decision",
+    "name": "温叙白",
+    "nickname": "体检总检",
+    "role_title": "社区体检总检 / Chief Community Health Inspector",
+    "one_liner": "统筹生活圈体检全流程：定格中心点与参数、组建专家队、终审体检报告并签发。",
+    "skills": [
+      "任务统筹",
+      "专家调度",
+      "终审签发"
+    ],
+    "knowledge_base": "熟悉《城市居住区规划设计标准》与 15 分钟社区生活圈规划导则，掌握体检指标口径（等时圈/覆盖度/盲区），统筹采样、POI、诊断到签发全流程。",
+    "knowledge_tags": [
+      "15分钟生活圈",
+      "体检流程",
+      "指标口径",
+      "报告规范"
+    ],
+    "avatar": "/assets/avatars/L3-001.jpg",
+    "badge_color": "#F4E2B8",
+    "domain_icon": "crown",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 128,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L3-002", "level": "L3", "group": "decision",
-    "name": "林清越", "nickname": "首席分析师", "role_title": "首席分析官 / Chief Analyst Officer",
-    "one_liner": "把控分析质量与逻辑严谨性，裁定结论是否成立。",
-    "skills": ["逻辑审裁", "假设验证", "结论裁决"],
-    "knowledge_base": "擅长结构化思维与归因分析，熟悉统计显著性、置信区间、交叉验证方法，精通商业模型与竞争战略理论（蓝海战略、颠覆式创新）。",
-    "knowledge_tags": ["归因分析", "置信区间", "商业画布", "蓝海战略"],
-    "avatar": "/assets/avatars/L3-002.jpg", "badge_color": "#F4E2B8",
-    "domain_icon": "scale", "gender": "female", "status": "idle",
-    "stats": { "missions": 119, "avg_evidence": 0 }
+    "id": "L3-002",
+    "level": "L3",
+    "group": "decision",
+    "name": "许映川",
+    "nickname": "首席分析师",
+    "role_title": "首席规划分析师 / Chief Planning Analyst",
+    "one_liner": "把控设施覆盖与评分建模的逻辑严谨性，裁定体检结论是否成立。",
+    "skills": [
+      "评分建模",
+      "逻辑审裁",
+      "结论裁决"
+    ],
+    "knowledge_base": "深谙设施覆盖度、可达性、多样性、均衡性四维评分建模，熟悉等时圈面积与 POI 密度等指标口径，负责对体检结论的逻辑严谨性裁定。",
+    "knowledge_tags": [
+      "覆盖率",
+      "可达性",
+      "评分模型",
+      "结论裁决"
+    ],
+    "avatar": "/assets/avatars/L3-002.jpg",
+    "badge_color": "#F4E2B8",
+    "domain_icon": "scale",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 119,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L3-003", "level": "L3", "group": "decision",
-    "name": "周翊", "nickname": "质量总检", "role_title": "质检总监 / Chief Quality Officer",
-    "one_liner": "扮演魔鬼代言人，主导事实校验与反馈闭环，决定是否打回。",
-    "skills": ["事实校验", "风险识别", "闭环裁定"],
-    "knowledge_base": "精通事实核查方法论、信息可信度分级、来源交叉验证，熟悉幻觉检测策略（自一致性、引用强制），了解 robots.txt 与数据合规规范。",
-    "knowledge_tags": ["事实核查", "可信度分级", "幻觉检测", "合规"],
-    "avatar": "/assets/avatars/L3-003.jpg", "badge_color": "#F4E2B8",
-    "domain_icon": "shield-check", "gender": "male", "status": "idle",
-    "stats": { "missions": 124, "avg_evidence": 0 }
-  },
-
-  {
-    "id": "L2-001", "level": "L2", "group": "strategy",
-    "name": "苏明哲", "nickname": "战略咨询", "role_title": "战略咨询专家 / Strategy Consultant",
-    "one_liner": "从竞争格局给出战略级判断与建议。",
-    "skills": ["竞争格局分析", "战略推演", "进入策略"],
-    "knowledge_base": "精通波特五力、PEST、价值链分析，熟悉行业生命周期理论与市场进入策略，了解头部咨询公司的战略框架与行研报告结构。",
-    "knowledge_tags": ["波特五力", "PEST", "价值链", "McKinsey"],
-    "avatar": "/assets/avatars/L2-001.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "chess", "gender": "male", "status": "idle",
-    "stats": { "missions": 86, "avg_evidence": 0 }
-  },
-  {
-    "id": "L2-002", "level": "L2", "group": "strategy",
-    "name": "何知微", "nickname": "定价策略", "role_title": "定价策略专家 / Pricing Strategist",
-    "one_liner": "拆解竞品定价模型，识别价格策略与盈利逻辑。",
-    "skills": ["定价模型拆解", "价格带分析", "套餐结构"],
-    "knowledge_base": "精通 SaaS 订阅定价、freemium、阶梯定价、价值定价，熟悉客单价/LTV/CAC 等指标，了解 ProfitWell、Paddle 等定价数据来源与各 SaaS 公开 Pricing 页结构。",
-    "knowledge_tags": ["SaaS定价", "freemium", "LTV/CAC", "ProfitWell"],
-    "avatar": "/assets/avatars/L2-002.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "tag", "gender": "female", "status": "idle",
-    "stats": { "missions": 92, "avg_evidence": 0 }
+    "id": "L3-003",
+    "level": "L3",
+    "group": "decision",
+    "name": "裴砚秋",
+    "nickname": "质检总监",
+    "role_title": "质检总监 / Chief Quality Officer",
+    "one_liner": "扮演魔鬼代言人：对 POI 溯源、测时成功率、盲区判定逐一复核，决定是否打回重算。",
+    "skills": [
+      "溯源复核",
+      "成功率审裁",
+      "闭环裁定"
+    ],
+    "knowledge_base": "精通点位溯源与数据质量核查，掌握测时成功率、POI 去重率等质量指标，对采样点不可达、盲区误判等情况决定返工重算。",
+    "knowledge_tags": [
+      "POI溯源",
+      "测时成功率",
+      "盲区复核",
+      "返工闭环"
+    ],
+    "avatar": "/assets/avatars/L3-003.jpg",
+    "badge_color": "#F4E2B8",
+    "domain_icon": "shield-check",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 124,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-003", "level": "L2", "group": "strategy",
-    "name": "顾晚晴", "nickname": "用户研究", "role_title": "用户研究专家 / User Research Lead",
-    "one_liner": "构建用户画像、设计问卷与访谈、归纳用户口碑。",
-    "skills": ["用户画像", "问卷访谈设计", "口碑归纳"],
-    "knowledge_base": "精通定性/定量用研方法（深访、焦点小组、Likert 量表问卷），熟悉 NPS、CSAT、用户旅程地图，了解 G2、Capterra、App Store、Reddit、知乎等口碑数据源。",
-    "knowledge_tags": ["NPS", "CSAT", "用户旅程", "G2/Capterra"],
-    "avatar": "/assets/avatars/L2-003.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "chat-user", "gender": "female", "status": "idle",
-    "stats": { "missions": 78, "avg_evidence": 0 }
+    "id": "L2-001",
+    "level": "L2",
+    "group": "strategy",
+    "name": "谷穗安",
+    "nickname": "医疗顾问",
+    "role_title": "基层医疗配置顾问 / Primary-care Planning Advisor",
+    "one_liner": "按 15 分钟圈评估社区医院、诊所、药店配置密度与可达性。",
+    "skills": [
+      "医疗密度评估",
+      "可达性分析",
+      "配建测算"
+    ],
+    "knowledge_base": "熟悉基层医疗资源配置标准（社区卫生服务中心/站、诊所、药店），掌握按人口与服务半径测算医疗设施配额的方法，评估就医可达性。",
+    "knowledge_tags": [
+      "社区医院",
+      "诊所",
+      "药店",
+      "就医可达"
+    ],
+    "avatar": "/assets/avatars/L2-001.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "medical-cross",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 86,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-004", "level": "L2", "group": "strategy",
-    "name": "江竞洲", "nickname": "竞争情报", "role_title": "竞争情报专家 / Competitive Intelligence Lead",
-    "one_liner": "系统化追踪竞品动向，构建情报网络。",
-    "skills": ["情报搜集", "动态监控", "信号识别"],
-    "knowledge_base": "熟悉 OSINT 公开情报方法，掌握 Crunchbase、PitchBook、企查查/天眼查、新闻稿与财报追踪，了解专利、招聘信息等弱信号情报源。",
-    "knowledge_tags": ["OSINT", "Crunchbase", "企查查", "弱信号"],
-    "avatar": "/assets/avatars/L2-004.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "radar", "gender": "male", "status": "idle",
-    "stats": { "missions": 81, "avg_evidence": 0 }
+    "id": "L2-002",
+    "level": "L2",
+    "group": "strategy",
+    "name": "郑启才",
+    "nickname": "教育规划师",
+    "role_title": "基础教育设施规划师 / School Provision Advisor",
+    "one_liner": "评估小学、初中、幼儿园布局与学位就近覆盖。",
+    "skills": [
+      "学区评估",
+      "学位测算",
+      "布局优化"
+    ],
+    "knowledge_base": "熟悉中小学与学前教育设施配建标准（千人指标、服务半径），掌握学位供需测算与就近入学可达性评估方法。",
+    "knowledge_tags": [
+      "中小学",
+      "幼儿园",
+      "学位",
+      "就近入学"
+    ],
+    "avatar": "/assets/avatars/L2-002.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "graduation",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 92,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-005", "level": "L2", "group": "strategy",
-    "name": "温叙白", "nickname": "财务分析", "role_title": "财务分析专家 / Financial Analyst",
-    "one_liner": "解读竞品财务健康度与盈利能力。",
-    "skills": ["财报解读", "估值分析", "盈利建模"],
-    "knowledge_base": "精通三大报表分析、估值方法（DCF、可比公司），熟悉 Bloomberg、Wind、同花顺、东方财富、招股书/10-K 年报结构，掌握毛利率、现金流、烧钱率等关键指标。",
-    "knowledge_tags": ["三大报表", "DCF", "Bloomberg", "10-K"],
-    "avatar": "/assets/avatars/L2-005.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "candlestick", "gender": "male", "status": "idle",
-    "stats": { "missions": 74, "avg_evidence": 0 }
+    "id": "L2-003",
+    "level": "L2",
+    "group": "strategy",
+    "name": "叶知暖",
+    "nickname": "照护顾问",
+    "role_title": "养老托育关怀顾问 / Care Provision Advisor",
+    "one_liner": "评估养老机构、日间照料、社区助餐与托育设施覆盖。",
+    "skills": [
+      "养老评估",
+      "托育测算",
+      "助餐覆盖"
+    ],
+    "knowledge_base": "熟悉养老与托育设施配置要求（养老床位、日间照料、社区助餐、婴幼儿托位），掌握老幼设施的可达性与缺口判断方法。",
+    "knowledge_tags": [
+      "养老院",
+      "日间照料",
+      "社区食堂",
+      "托育"
+    ],
+    "avatar": "/assets/avatars/L2-003.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "umbrella-shield",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 78,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-006", "level": "L2", "group": "strategy",
-    "name": "陆则铭", "nickname": "技术架构", "role_title": "技术架构专家 / Tech Architecture Analyst",
-    "one_liner": "评估竞品技术栈、架构先进性与技术壁垒。",
-    "skills": ["技术栈识别", "架构评估", "壁垒分析"],
-    "knowledge_base": "熟悉主流技术栈与云服务（AWS/Azure/GCP），掌握 BuiltWith、Wappalyzer 技术识别，了解 GitHub 开源活跃度、专利布局、API 文档分析等技术情报方法。",
-    "knowledge_tags": ["AWS/GCP", "BuiltWith", "Wappalyzer", "GitHub"],
-    "avatar": "/assets/avatars/L2-006.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "circuit", "gender": "male", "status": "idle",
-    "stats": { "missions": 69, "avg_evidence": 0 }
+    "id": "L2-004",
+    "level": "L2",
+    "group": "strategy",
+    "name": "苏堤春",
+    "nickname": "商业分析师",
+    "role_title": "菜市与商业配套分析师 / Market & Retail Advisor",
+    "one_liner": "评估菜市场、超市、便民商业的日常采买可达性。",
+    "skills": [
+      "菜市评估",
+      "商业密度",
+      "采买可达"
+    ],
+    "knowledge_base": "熟悉菜市场与社区商业配建规范（千人菜市场面积、菜市服务半径），掌握菜篮子工程布局与日常采买可达性评估方法。",
+    "knowledge_tags": [
+      "菜市场",
+      "超市",
+      "便利店",
+      "菜篮子"
+    ],
+    "avatar": "/assets/avatars/L2-004.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "cart",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 81,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-007", "level": "L2", "group": "strategy",
-    "name": "白露", "nickname": "市场营销", "role_title": "市场营销专家 / Marketing Strategist",
-    "one_liner": "分析竞品获客渠道、品牌定位与营销打法。",
-    "skills": ["渠道分析", "品牌定位", "增长策略"],
-    "knowledge_base": "精通 4P/STP、增长黑客（AARRR 漏斗），熟悉 SimilarWeb 流量分析、SEO/SEM（Ahrefs、SEMrush）、社媒投放与内容营销，了解各平台广告库。",
-    "knowledge_tags": ["AARRR", "SimilarWeb", "SEO/SEM", "Ahrefs"],
-    "avatar": "/assets/avatars/L2-007.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "funnel", "gender": "female", "status": "idle",
-    "stats": { "missions": 88, "avg_evidence": 0 }
+    "id": "L2-005",
+    "level": "L2",
+    "group": "strategy",
+    "name": "路遥川",
+    "nickname": "可达性顾问",
+    "role_title": "慢行可达性分析师 / Mobility & Walkability Advisor",
+    "one_liner": "评估步行路网、过街设施对等时圈的约束与改进空间。",
+    "skills": [
+      "路网分析",
+      "过街评估",
+      "步行友好"
+    ],
+    "knowledge_base": "熟悉慢行交通网络与步行友好评估（过街设施、人行道连续性、道路阻隔），掌握路网对等时圈形态的影响分析与改善建议。",
+    "knowledge_tags": [
+      "慢行路网",
+      "过街设施",
+      "天桥",
+      "步行友好"
+    ],
+    "avatar": "/assets/avatars/L2-005.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "plane-pin",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 74,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-008", "level": "L2", "group": "strategy",
-    "name": "裴叙", "nickname": "数据分析", "role_title": "数据分析专家 / Data Analyst",
-    "one_liner": "对采集数据做量化统计、对比建模、可视化指标。",
-    "skills": ["数据建模", "统计分析", "指标可视化"],
-    "knowledge_base": "精通描述性/推断性统计，熟悉 Python(pandas/numpy)、SQL、Tableau，掌握对比矩阵、相关性分析、趋势预测，能把杂乱信息转为结构化指标。",
-    "knowledge_tags": ["pandas", "SQL", "Tableau", "趋势预测"],
-    "avatar": "/assets/avatars/L2-008.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "bar-chart", "gender": "female", "status": "idle",
-    "stats": { "missions": 95, "avg_evidence": 0 }
+    "id": "L2-006",
+    "level": "L2",
+    "group": "strategy",
+    "name": "童启明",
+    "nickname": "人口分析师",
+    "role_title": "人口画像分析师 / Demographics Analyst",
+    "one_liner": "依据人口规模与年龄结构推定各类设施需求阈值。",
+    "skills": [
+      "人口测算",
+      "需求阈值",
+      "结构画像"
+    ],
+    "knowledge_base": "熟悉人口统计与设施需求阈值测算（千人指标、年龄结构加权），掌握按居住密度与人群结构推定设施配额的方法。",
+    "knowledge_tags": [
+      "人口规模",
+      "年龄结构",
+      "千人指标",
+      "需求阈值"
+    ],
+    "avatar": "/assets/avatars/L2-006.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "user-search",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 69,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L2-009", "level": "L2", "group": "strategy",
-    "name": "沈律", "nickname": "合规风控", "role_title": "合规与风险专家 / Compliance & Risk Advisor",
-    "one_liner": "把控数据采集合规、隐私脱敏与风险提示。",
-    "skills": ["合规审查", "隐私脱敏", "风险预警"],
-    "knowledge_base": "熟悉 GDPR、CCPA、中国个人信息保护法，掌握 robots.txt 与网站服务条款解读、数据脱敏方法，了解知识产权与竞品分析法律边界。",
-    "knowledge_tags": ["GDPR", "CCPA", "个保法", "robots.txt"],
-    "avatar": "/assets/avatars/L2-009.jpg", "badge_color": "#FBF6E9",
-    "domain_icon": "shield-scale", "gender": "male", "status": "idle",
-    "stats": { "missions": 63, "avg_evidence": 0 }
-  },
-
-  {
-    "id": "L1-001", "level": "L1", "group": "industry",
-    "name": "金维", "nickname": "金world", "role_title": "金融行业专家",
-    "one_liner": "采集与核查金融行业竞品信息。",
-    "skills": ["金融信息采集", "财报核查", "监管追踪"],
-    "knowledge_base": "精通 Wind、同花顺、Bloomberg、东方财富 Choice、彭博终端，熟悉银保监/证监会披露、招股书、券商研报，懂得 ROE、净息差、AUM 等金融术语。",
-    "knowledge_tags": ["Wind", "同花顺", "Bloomberg", "Choice"],
-    "avatar": "/assets/avatars/L1-001.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "candlestick", "gender": "male", "status": "idle",
-    "stats": { "missions": 41, "avg_evidence": 0 }
-  },
-  {
-    "id": "L1-002", "level": "L1", "group": "industry",
-    "name": "程哲", "nickname": "程序员阿哲", "role_title": "SaaS/软件行业专家",
-    "one_liner": "采集 B 端 SaaS 与企业软件竞品信息。",
-    "skills": ["SaaS信息采集", "功能拆解", "定价页解析"],
-    "knowledge_base": "熟悉 G2、Capterra、ProductHunt、各 SaaS 官网 Pricing/Feature 页结构，了解 ARR/MRR/churn 等 SaaS 指标，掌握 Salesforce、Notion、飞书、钉钉等主流产品矩阵。",
-    "knowledge_tags": ["G2", "Capterra", "ARR/MRR", "Notion/飞书"],
-    "avatar": "/assets/avatars/L1-002.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "cloud-code", "gender": "male", "status": "idle",
-    "stats": { "missions": 57, "avg_evidence": 0 }
+    "id": "L2-007",
+    "level": "L2",
+    "group": "strategy",
+    "name": "华安澜",
+    "nickname": "全龄顾问",
+    "role_title": "全龄友好规划顾问 / Age-friendly & Accessibility Advisor",
+    "one_liner": "以适老化、儿童友好、无障碍视角审校设施空间品质。",
+    "skills": [
+      "适老化",
+      "儿童友好",
+      "无障碍"
+    ],
+    "knowledge_base": "熟悉适老化改造、儿童友好社区与无障碍设计规范，掌握全龄友好视角下的设施空间品质评价要点。",
+    "knowledge_tags": [
+      "适老化",
+      "儿童友好",
+      "无障碍",
+      "全龄友好"
+    ],
+    "avatar": "/assets/avatars/L2-007.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "stars",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 88,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-003", "level": "L1", "group": "industry",
-    "name": "钟璇", "nickname": "铁臂阿璇", "role_title": "机器人/智能制造行业专家",
-    "one_liner": "采集机器人与智能制造竞品信息。",
-    "skills": ["机器人技术采集", "产业链核查", "参数对比"],
-    "knowledge_base": "熟悉工业机器人（发那科、ABB、库卡、埃斯顿）与服务/人形机器人（波士顿动力、宇树、特斯拉 Optimus），了解减速器/伺服/控制器产业链，掌握自由度、负载、重复定位精度等参数。",
-    "knowledge_tags": ["发那科/ABB", "宇树", "Optimus", "伺服"],
-    "avatar": "/assets/avatars/L1-003.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "robot", "gender": "female", "status": "idle",
-    "stats": { "missions": 33, "avg_evidence": 0 }
+    "id": "L2-008",
+    "level": "L2",
+    "group": "strategy",
+    "name": "方守正",
+    "nickname": "标准专家",
+    "role_title": "生活圈标准专家 / Living-circle Standards Advisor",
+    "one_liner": "对齐《城市居住区规划设计标准》、生活圈配建导则与政策口径。",
+    "skills": [
+      "标准解读",
+      "导则对齐",
+      "政策口径"
+    ],
+    "knowledge_base": "深谙《城市居住区规划设计标准》GB50180 与 15 分钟社区生活圈规划导则，掌握公共服务设施分级配建要求与政策口径。",
+    "knowledge_tags": [
+      "GB50180",
+      "生活圈导则",
+      "配建标准",
+      "公共服务设施"
+    ],
+    "avatar": "/assets/avatars/L2-008.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "checklist",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 95,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-004", "level": "L1", "group": "industry",
-    "name": "辛宇", "nickname": "芯语", "role_title": "半导体/芯片行业专家",
-    "one_liner": "采集半导体与芯片竞品信息。",
-    "skills": ["芯片参数采集", "产业链核查", "制程对比"],
-    "knowledge_base": "熟悉 TechInsights、IC Insights、Counterpoint，了解台积电/三星/中芯制程，掌握 EDA（Cadence、Synopsys）、IP（ARM）、制程节点、良率等术语。",
-    "knowledge_tags": ["台积电", "EDA", "ARM", "制程节点"],
-    "avatar": "/assets/avatars/L1-004.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "chip", "gender": "male", "status": "idle",
-    "stats": { "missions": 29, "avg_evidence": 0 }
+    "id": "L2-009",
+    "level": "L2",
+    "group": "strategy",
+    "name": "简一凡",
+    "nickname": "方法顾问",
+    "role_title": "数据方法与合规顾问 / Data Method & Compliance Lead",
+    "one_liner": "审校采样、插值、评分方法学，把关 POI 数据合规与溯源。",
+    "skills": [
+      "方法学审校",
+      "数据合规",
+      "溯源管理"
+    ],
+    "knowledge_base": "熟悉空间采样与插值方法学（渔网采样、IDW 插值、等值线），把关 POI 数据合规、坐标隐私与结果溯源的可复现性。",
+    "knowledge_tags": [
+      "空间插值",
+      "数据合规",
+      "坐标精度",
+      "溯源"
+    ],
+    "avatar": "/assets/avatars/L2-009.jpg",
+    "badge_color": "#FBF6E9",
+    "domain_icon": "brain-chip",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 63,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-005", "level": "L1", "group": "industry",
-    "name": "任馨", "nickname": "妙手仁芯", "role_title": "医疗健康行业专家",
-    "one_liner": "采集医疗、医药、医疗器械竞品信息。",
-    "skills": ["医疗信息采集", "临床数据核查", "注册追踪"],
-    "knowledge_base": "熟悉 PubMed、ClinicalTrials.gov、药智网、Insight 数据库、FDA/NMPA 审批，了解药物管线、临床分期、医疗器械注册证、DRG 等术语。",
-    "knowledge_tags": ["PubMed", "ClinicalTrials", "FDA/NMPA", "药物管线"],
-    "avatar": "/assets/avatars/L1-005.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "medical-cross", "gender": "female", "status": "idle",
-    "stats": { "missions": 36, "avg_evidence": 0 }
+    "id": "L1-001",
+    "level": "L1",
+    "group": "facility",
+    "name": "车满仓",
+    "nickname": "菜市顾问",
+    "role_title": "农贸市场顾问 / Wet-market Advisor",
+    "one_liner": "盘点菜市场点位与经营规模，判定菜市盲区。",
+    "skills": [
+      "菜市盘点",
+      "规模核验",
+      "盲区判定"
+    ],
+    "knowledge_base": "熟悉农贸市场点位与经营规模（摊位数、经营面积），掌握菜市场 1km 服务半径与盲区判定口径。",
+    "knowledge_tags": [
+      "农贸市场",
+      "菜市场",
+      "生鲜",
+      "菜市盲区"
+    ],
+    "avatar": "/assets/avatars/L1-001.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "wheat",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 41,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-006", "level": "L1", "group": "industry",
-    "name": "田驰", "nickname": "电掣", "role_title": "新能源/电动车行业专家",
-    "one_liner": "采集新能源汽车与动力电池竞品信息。",
-    "skills": ["车型参数采集", "电池技术核查", "销量追踪"],
-    "knowledge_base": "熟悉懂车帝、汽车之家、Marklines、乘联会销量数据，了解三元/磷酸铁锂电池、CTP/CTC、续航/能量密度、800V 平台等术语，掌握特斯拉/比亚迪/蔚小理产品线。",
-    "knowledge_tags": ["乘联会", "Marklines", "800V", "比亚迪"],
-    "avatar": "/assets/avatars/L1-006.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "ev-bolt", "gender": "male", "status": "idle",
-    "stats": { "missions": 44, "avg_evidence": 0 }
+    "id": "L1-002",
+    "level": "L1",
+    "group": "facility",
+    "name": "苏盈袖",
+    "nickname": "商超分析",
+    "role_title": "商超零售分析师 / Retail Analyst",
+    "one_liner": "采集超市、便利店、综合商场点位并评估覆盖。",
+    "skills": [
+      "商超采集",
+      "密度评估",
+      "业态覆盖"
+    ],
+    "knowledge_base": "熟悉社区商业业态（超市/便利店/商场）与网点密度评估，掌握日常购物可达性分析。",
+    "knowledge_tags": [
+      "超市",
+      "便利店",
+      "综合商场",
+      "业态"
+    ],
+    "avatar": "/assets/avatars/L1-002.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "cart",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 57,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-007", "level": "L1", "group": "industry",
-    "name": "于飞", "nickname": "云上飞", "role_title": "云计算/基础设施行业专家",
-    "one_liner": "采集云服务与 IT 基础设施竞品信息。",
-    "skills": ["云产品采集", "算力核查", "定价对比"],
-    "knowledge_base": "熟悉 AWS/Azure/GCP/阿里云/腾讯云产品矩阵与定价计算器，了解 IaaS/PaaS/SaaS 分层、EC2/S3、容器/K8s、Gartner 魔力象限。",
-    "knowledge_tags": ["AWS/Azure", "阿里云", "K8s", "Gartner"],
-    "avatar": "/assets/avatars/L1-007.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "cloud", "gender": "male", "status": "idle",
-    "stats": { "missions": 48, "avg_evidence": 0 }
+    "id": "L1-003",
+    "level": "L1",
+    "group": "facility",
+    "name": "白芷菡",
+    "nickname": "门诊顾问",
+    "role_title": "基层门诊顾问 / Clinic Advisor",
+    "one_liner": "核验社区医院、诊所、卫生站的分布与可达。",
+    "skills": [
+      "门诊核验",
+      "分布评估",
+      "就医可达"
+    ],
+    "knowledge_base": "熟悉基层医疗网点（社区卫生服务中心/站、诊所）配置，掌握分布密度与就医步行可达核验方法。",
+    "knowledge_tags": [
+      "社区医院",
+      "诊所",
+      "卫生站",
+      "基层医疗"
+    ],
+    "avatar": "/assets/avatars/L1-003.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "medical-cross",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 33,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-008", "level": "L1", "group": "industry",
-    "name": "凌曦", "nickname": "灵犀", "role_title": "人工智能/大模型行业专家",
-    "one_liner": "采集 AI 与大模型竞品信息。",
-    "skills": ["模型能力采集", "评测核查", "参数对比"],
-    "knowledge_base": "熟悉 Hugging Face、Papers with Code、LMSYS Arena、各模型评测榜（MMLU、GPQA），了解 OpenAI/Anthropic/Google/字节豆包/DeepSeek 产品线与定价，掌握参数量、上下文长度、推理成本术语。",
-    "knowledge_tags": ["HuggingFace", "LMSYS", "MMLU", "豆包/DeepSeek"],
-    "avatar": "/assets/avatars/L1-008.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "brain-chip", "gender": "female", "status": "idle",
-    "stats": { "missions": 62, "avg_evidence": 0 }
+    "id": "L1-004",
+    "level": "L1",
+    "group": "facility",
+    "name": "秦济世",
+    "nickname": "药房规划",
+    "role_title": "社区药房规划师 / Pharmacy Planner",
+    "one_liner": "采集药店网点，识别非处方药 1km 盲区。",
+    "skills": [
+      "药店采集",
+      "盲区识别",
+      "网点规划"
+    ],
+    "knowledge_base": "熟悉社区药店网点与药学服务（门诊统筹、双通道药店），掌握药店 1km 盲区判定与布点建议。",
+    "knowledge_tags": [
+      "药店",
+      "双通道",
+      "药事服务",
+      "1km盲区"
+    ],
+    "avatar": "/assets/avatars/L1-004.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "chain",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 29,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-009", "level": "L1", "group": "industry",
-    "name": "顾染", "nickname": "购物狂小染", "role_title": "电商/零售行业专家",
-    "one_liner": "采集电商平台与零售品牌竞品信息。",
-    "skills": ["电商数据采集", "销量核查", "价格监控"],
-    "knowledge_base": "熟悉魔镜、生意参谋、蝉妈妈、Marketplace Pulse，了解 GMV、转化率、客单价、复购率，掌握淘宝/京东/拼多多/抖音电商/Amazon/Shopee 平台规则。",
-    "knowledge_tags": ["蝉妈妈", "生意参谋", "GMV", "抖音电商"],
-    "avatar": "/assets/avatars/L1-009.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "cart", "gender": "female", "status": "idle",
-    "stats": { "missions": 51, "avg_evidence": 0 }
+    "id": "L1-005",
+    "level": "L1",
+    "group": "facility",
+    "name": "周启蒙",
+    "nickname": "学区规划",
+    "role_title": "小学校区规划师 / Primary School Planner",
+    "one_liner": "核验小学点位与学区覆盖，判定小学盲区。",
+    "skills": [
+      "学区核验",
+      "学位覆盖",
+      "盲区判定"
+    ],
+    "knowledge_base": "熟悉小学布局与学区就近入学原则（服务半径与学位），掌握小学 1km 盲区判定方法。",
+    "knowledge_tags": [
+      "小学",
+      "学区",
+      "就近入学",
+      "学位"
+    ],
+    "avatar": "/assets/avatars/L1-005.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "graduation",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 36,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-010", "level": "L1", "group": "industry",
-    "name": "尤戏", "nickname": "游戏人间", "role_title": "游戏行业专家",
-    "one_liner": "采集游戏产品与厂商竞品信息。",
-    "skills": ["游戏数据采集", "流水核查", "玩法对比"],
-    "knowledge_base": "熟悉 Sensor Tower、data.ai（App Annie）、伽马数据、SteamDB，了解 DAU/MAU/ARPU/留存、买量素材，掌握腾讯/网易/米哈游/Supercell 产品矩阵。",
-    "knowledge_tags": ["SensorTower", "SteamDB", "ARPU", "米哈游"],
-    "avatar": "/assets/avatars/L1-010.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "gamepad", "gender": "male", "status": "idle",
-    "stats": { "missions": 39, "avg_evidence": 0 }
+    "id": "L1-006",
+    "level": "L1",
+    "group": "facility",
+    "name": "文幼然",
+    "nickname": "幼教顾问",
+    "role_title": "学前托育顾问 / Early-education Advisor",
+    "one_liner": "采集幼儿园、托育点，评估接送钟摆可达。",
+    "skills": [
+      "幼托采集",
+      "接送可达",
+      "托位评估"
+    ],
+    "knowledge_base": "熟悉幼儿园与托育点（托位、早晚接送钟摆路径）配置，掌握学龄前设施可达性评估。",
+    "knowledge_tags": [
+      "幼儿园",
+      "托育",
+      "托位",
+      "接送路径"
+    ],
+    "avatar": "/assets/avatars/L1-006.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "stars",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 44,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-011", "level": "L1", "group": "industry",
-    "name": "连观", "nickname": "链上观", "role_title": "区块链/Web3 行业专家",
-    "one_liner": "采集区块链与加密项目竞品信息。",
-    "skills": ["链上数据采集", "项目核查", "代币经济分析"],
-    "knowledge_base": "熟悉 CoinMarketCap、CoinGecko、Dune Analytics、DefiLlama、Etherscan，了解 TVL、市值、代币经济（tokenomics）、公链生态。",
-    "knowledge_tags": ["CoinGecko", "Dune", "DefiLlama", "TVL"],
-    "avatar": "/assets/avatars/L1-011.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "chain", "gender": "male", "status": "idle",
-    "stats": { "missions": 27, "avg_evidence": 0 }
+    "id": "L1-007",
+    "level": "L1",
+    "group": "facility",
+    "name": "席书航",
+    "nickname": "通勤规划",
+    "role_title": "中学通勤规划师 / Secondary Mobility Planner",
+    "one_liner": "评估初中、高中的位置与通勤可达。",
+    "skills": [
+      "中学采集",
+      "通勤评估",
+      "学区配套"
+    ],
+    "knowledge_base": "熟悉中学布局与通勤可达（学区、住宿与校车配套），掌握中学阶段可达性评估。",
+    "knowledge_tags": [
+      "初中",
+      "高中",
+      "通勤",
+      "住宿配套"
+    ],
+    "avatar": "/assets/avatars/L1-007.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "rocket",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 48,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-012", "level": "L1", "group": "industry",
-    "name": "段影", "nickname": "短影君", "role_title": "内容/短视频/媒体行业专家",
-    "one_liner": "采集内容平台与媒体竞品信息。",
-    "skills": ["内容数据采集", "流量核查", "创作者生态分析"],
-    "knowledge_base": "熟悉新榜、飞瓜、卡思数据、Social Blade，了解播放/完播/互动率、创作者分成，掌握抖音/快手/B站/小红书/YouTube/TikTok 平台机制。",
-    "knowledge_tags": ["新榜", "飞瓜", "完播率", "TikTok"],
-    "avatar": "/assets/avatars/L1-012.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "play", "gender": "female", "status": "idle",
-    "stats": { "missions": 46, "avg_evidence": 0 }
+    "id": "L1-008",
+    "level": "L1",
+    "group": "facility",
+    "name": "温鹤年",
+    "nickname": "养老顾问",
+    "role_title": "机构养老顾问 / Elderly-care Advisor",
+    "one_liner": "盘点养老院、日间照料中心，评估失能照护覆盖。",
+    "skills": [
+      "养老盘点",
+      "照护覆盖",
+      "床位评估"
+    ],
+    "knowledge_base": "熟悉机构养老（养老院、日间照料中心）床位与照护配置，掌握失能老人照护覆盖评估。",
+    "knowledge_tags": [
+      "养老院",
+      "日间照料",
+      "床位",
+      "失能照护"
+    ],
+    "avatar": "/assets/avatars/L1-008.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "umbrella-shield",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 62,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-013", "level": "L1", "group": "industry",
-    "name": "邢者", "nickname": "行者无疆", "role_title": "出行/物流行业专家",
-    "one_liner": "采集出行、物流、供应链竞品信息。",
-    "skills": ["运力数据采集", "时效核查", "网络对比"],
-    "knowledge_base": "熟悉运联智库、物流时效数据，了解网约车/共享单车运营指标、快递时效与单量、冷链与跨境物流，掌握滴滴/美团/顺丰/京东物流/菜鸟体系。",
-    "knowledge_tags": ["运联智库", "时效", "顺丰", "菜鸟"],
-    "avatar": "/assets/avatars/L1-013.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "truck", "gender": "male", "status": "idle",
-    "stats": { "missions": 31, "avg_evidence": 0 }
+    "id": "L1-009",
+    "level": "L1",
+    "group": "facility",
+    "name": "谷满香",
+    "nickname": "助餐主理",
+    "role_title": "社区助餐主理 / Community Dining Lead",
+    "one_liner": "采集社区食堂、老年助餐点，评估餐饮民生覆盖。",
+    "skills": [
+      "助餐采集",
+      "供餐能力",
+      "覆盖评估"
+    ],
+    "knowledge_base": "熟悉社区食堂与老年助餐点（中央厨房配送、助餐车）模式，掌握助餐服务可达与供餐能力评估。",
+    "knowledge_tags": [
+      "社区食堂",
+      "老年助餐",
+      "助餐车",
+      "供餐"
+    ],
+    "avatar": "/assets/avatars/L1-009.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "utensils",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 51,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-014", "level": "L1", "group": "industry",
-    "name": "石全", "nickname": "食全食美", "role_title": "餐饮/食品行业专家",
-    "one_liner": "采集餐饮连锁与食品饮料竞品信息。",
-    "skills": ["门店数据采集", "供应链核查", "品类对比"],
-    "knowledge_base": "熟悉窄门餐眼、美团/大众点评数据，了解门店数、坪效、翻台率、加盟模型，掌握瑞幸/星巴克/海底捞/蜜雪冰城等连锁品牌打法。",
-    "knowledge_tags": ["窄门餐眼", "翻台率", "瑞幸", "蜜雪冰城"],
-    "avatar": "/assets/avatars/L1-014.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "utensils", "gender": "male", "status": "idle",
-    "stats": { "missions": 38, "avg_evidence": 0 }
+    "id": "L1-010",
+    "level": "L1",
+    "group": "facility",
+    "name": "金存义",
+    "nickname": "金融顾问",
+    "role_title": "社区金融顾问 / Community Banking Advisor",
+    "one_liner": "核验银行网点与自助服务覆盖率。",
+    "skills": [
+      "网点核验",
+      "自助覆盖",
+      "普惠金融"
+    ],
+    "knowledge_base": "熟悉银行网点与自助设备（ATM、数字银行服务点）布局，掌握社区金融可及性评估（含适老现金服务）。",
+    "knowledge_tags": [
+      "银行网点",
+      "ATM",
+      "社区金融",
+      "普惠"
+    ],
+    "avatar": "/assets/avatars/L1-010.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "shield-scale",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 39,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-015", "level": "L1", "group": "industry",
-    "name": "梅妍", "nickname": "美妆妍", "role_title": "美妆/个护行业专家",
-    "one_liner": "采集美妆个护品牌竞品信息。",
-    "skills": ["品牌数据采集", "成分核查", "渠道对比"],
-    "knowledge_base": "熟悉魔镜、美丽修行（成分）、小红书种草数据，了解成分党趋势、客单价、达人投放 ROI，掌握欧莱雅/珀莱雅/花西子等品牌矩阵。",
-    "knowledge_tags": ["魔镜", "美丽修行", "种草", "珀莱雅"],
-    "avatar": "/assets/avatars/L1-015.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "lipstick", "gender": "female", "status": "idle",
-    "stats": { "missions": 42, "avg_evidence": 0 }
+    "id": "L1-011",
+    "level": "L1",
+    "group": "facility",
+    "name": "柳青芜",
+    "nickname": "公园设计",
+    "role_title": "口袋公园设计师 / Pocket Park Designer",
+    "one_liner": "盘点公园绿地与口袋公园，评估休闲可达。",
+    "skills": [
+      "绿地盘点",
+      "公园评估",
+      "休闲可达"
+    ],
+    "knowledge_base": "熟悉公园绿地分级（综合公园/社区公园/口袋公园）与 300-500m 服务半径，掌握休闲绿地可达性评估。",
+    "knowledge_tags": [
+      "口袋公园",
+      "城市绿地",
+      "服务半径",
+      "休闲"
+    ],
+    "avatar": "/assets/avatars/L1-011.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "recycle-leaf",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 27,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-016", "level": "L1", "group": "industry",
-    "name": "方道", "nickname": "房知道", "role_title": "房地产/家居行业专家",
-    "one_liner": "采集房地产与家居竞品信息。",
-    "skills": ["楼盘数据采集", "价格核查", "区域对比"],
-    "knowledge_base": "熟悉克而瑞、贝壳研究院、安居客数据，了解销售额排行、去化率、土储，掌握家居（宜家、顾家、欧派）渠道与品类。",
-    "knowledge_tags": ["克而瑞", "贝壳", "去化率", "欧派"],
-    "avatar": "/assets/avatars/L1-016.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "house", "gender": "male", "status": "idle",
-    "stats": { "missions": 25, "avg_evidence": 0 }
+    "id": "L1-012",
+    "level": "L1",
+    "group": "facility",
+    "name": "熊奔野",
+    "nickname": "健身顾问",
+    "role_title": "全民健身顾问 / Fitness Advisor",
+    "one_liner": "采集健身路径、场馆、球类场地点位。",
+    "skills": [
+      "健身采集",
+      "场地评估",
+      "健身圈"
+    ],
+    "knowledge_base": "熟悉全民健身设施（健身路径、多功能运动场、体育场馆）与 15 分钟健身圈配置要求，掌握场地可达性评估。",
+    "knowledge_tags": [
+      "健身路径",
+      "体育场馆",
+      "球类场地",
+      "全民健身"
+    ],
+    "avatar": "/assets/avatars/L1-012.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "mood-wave",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 46,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-017", "level": "L1", "group": "industry",
-    "name": "焦书", "nickname": "教书先生", "role_title": "教育/在线学习行业专家",
-    "one_liner": "采集教育与在线学习竞品信息。",
-    "skills": ["课程数据采集", "口碑核查", "模式对比"],
-    "knowledge_base": "熟悉黑板洞察、多鲸数据，了解 K12/职教/留学/素质教育模式，掌握获客成本、续报率、完课率，了解新东方/好未来/猿辅导/Coursera 矩阵。",
-    "knowledge_tags": ["黑板洞察", "续报率", "完课率", "好未来"],
-    "avatar": "/assets/avatars/L1-017.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "graduation", "gender": "female", "status": "idle",
-    "stats": { "missions": 34, "avg_evidence": 0 }
+    "id": "L1-013",
+    "level": "L1",
+    "group": "facility",
+    "name": "钟文渊",
+    "nickname": "文化顾问",
+    "role_title": "社区文化顾问 / Culture Advisor",
+    "one_liner": "核验文化活动中心、图书室、邻里中心。",
+    "skills": [
+      "文化采集",
+      "邻里中心",
+      "设施评估"
+    ],
+    "knowledge_base": "熟悉社区文化设施（文化活动中心、图书室、邻里中心）配建要求，掌握文化服务可达性评估。",
+    "knowledge_tags": [
+      "文化活动中心",
+      "图书室",
+      "邻里中心",
+      "文化圈"
+    ],
+    "avatar": "/assets/avatars/L1-013.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "folder",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 31,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-018", "level": "L1", "group": "industry",
-    "name": "傅尚", "nickname": "服尚", "role_title": "服装/时尚/快消行业专家",
-    "one_liner": "采集服装时尚与快消品竞品信息。",
-    "skills": ["上新数据采集", "库存核查", "风格对比"],
-    "knowledge_base": "熟悉 WGSN 趋势、淘数据，了解 SKU 上新节奏、动销率、快反供应链，掌握 SHEIN/Zara/优衣库/安踏/lululemon 打法。",
-    "knowledge_tags": ["WGSN", "动销率", "SHEIN", "lululemon"],
-    "avatar": "/assets/avatars/L1-018.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "shirt", "gender": "female", "status": "idle",
-    "stats": { "missions": 37, "avg_evidence": 0 }
+    "id": "L1-014",
+    "level": "L1",
+    "group": "facility",
+    "name": "马不停",
+    "nickname": "末端分析",
+    "role_title": "物流末端分析师 / Last-mile Analyst",
+    "one_liner": "盘点快递驿站、末端网点，评估服务覆盖。",
+    "skills": [
+      "末端采集",
+      "驿站评估",
+      "覆盖率"
+    ],
+    "knowledge_base": "熟悉快递末端服务（驿站、智能快件箱、上门收寄）配置，掌握末端网点覆盖与收件便捷度评估。",
+    "knowledge_tags": [
+      "快递驿站",
+      "智能快件箱",
+      "末端物流",
+      "收件"
+    ],
+    "avatar": "/assets/avatars/L1-014.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "truck",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 38,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-019", "level": "L1", "group": "industry",
-    "name": "农稻", "nickname": "农道", "role_title": "农业/食品供应链行业专家",
-    "one_liner": "采集农业与农食供应链竞品信息。",
-    "skills": ["产业链数据采集", "价格核查", "模式对比"],
-    "knowledge_base": "熟悉布瑞克、卓创资讯农产品数据，了解种植/养殖/流通环节，掌握生鲜电商（叮咚、盒马）供应链与冷链模式。",
-    "knowledge_tags": ["布瑞克", "卓创资讯", "叮咚", "冷链"],
-    "avatar": "/assets/avatars/L1-019.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "wheat", "gender": "male", "status": "idle",
-    "stats": { "missions": 22, "avg_evidence": 0 }
+    "id": "L1-015",
+    "level": "L1",
+    "group": "facility",
+    "name": "宋为民",
+    "nickname": "政务顾问",
+    "role_title": "社区政务顾问 / Community Services Advisor",
+    "one_liner": "核验政务服务中心、办事窗口可达情况。",
+    "skills": [
+      "政务核验",
+      "窗口覆盖",
+      "服务可达"
+    ],
+    "knowledge_base": "熟悉社区政务服务（街道/社区服务中心、一网通办自助终端）布局，掌握便民办事可达性评估。",
+    "knowledge_tags": [
+      "政务服务中心",
+      "办事窗口",
+      "便民服务",
+      "自助终端"
+    ],
+    "avatar": "/assets/avatars/L1-015.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "globe-chat",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 42,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-020", "level": "L1", "group": "industry",
-    "name": "温旅", "nickname": "文旅行", "role_title": "文旅/酒店行业专家",
-    "one_liner": "采集文旅、酒店、OTA 竞品信息。",
-    "skills": ["客流数据采集", "价格核查", "体验对比"],
-    "knowledge_base": "熟悉 STR 酒店数据、OTA（携程、美团、Booking）数据，了解 RevPAR、入住率、ADR，掌握景区/酒店集团/在线旅游平台格局。",
-    "knowledge_tags": ["STR", "RevPAR", "携程", "Booking"],
-    "avatar": "/assets/avatars/L1-020.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "plane-pin", "gender": "female", "status": "idle",
-    "stats": { "missions": 28, "avg_evidence": 0 }
+    "id": "L1-016",
+    "level": "L1",
+    "group": "facility",
+    "name": "叶安澜",
+    "nickname": "公卫顾问",
+    "role_title": "公共卫生顾问 / Public Health Advisor",
+    "one_liner": "评估疾控、疫苗接种点与健康服务覆盖。",
+    "skills": [
+      "公卫评估",
+      "接种点",
+      "健康覆盖"
+    ],
+    "knowledge_base": "熟悉基层公共卫生服务（预防接种点、健康教育）配置，掌握公共卫生服务可达性评估。",
+    "knowledge_tags": [
+      "疾控",
+      "疫苗接种",
+      "健康教育",
+      "健康服务"
+    ],
+    "avatar": "/assets/avatars/L1-016.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "cloud-code",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 25,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-021", "level": "L1", "group": "industry",
-    "name": "包安", "nickname": "保安康", "role_title": "保险/财富管理行业专家",
-    "one_liner": "采集保险与财富管理竞品信息。",
-    "skills": ["产品条款采集", "费率核查", "保障对比"],
-    "knowledge_base": "熟悉慧择、保险条款披露，了解寿险/财险/健康险产品结构，掌握费率、保额、赔付率、代理人/经纪渠道，了解平安/友邦/众安打法。",
-    "knowledge_tags": ["慧择", "赔付率", "平安", "众安"],
-    "avatar": "/assets/avatars/L1-021.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "umbrella-shield", "gender": "male", "status": "idle",
-    "stats": { "missions": 24, "avg_evidence": 0 }
+    "id": "L1-017",
+    "level": "L1",
+    "group": "facility",
+    "name": "陈焕新",
+    "nickname": "更新规划",
+    "role_title": "城市更新规划师 / Urban Renewal Planner",
+    "one_liner": "面向老旧小区改造场景解读设施缺口。",
+    "skills": [
+      "更新评估",
+      "缺口识别",
+      "改造建议"
+    ],
+    "knowledge_base": "熟悉老旧小区改造与完整社区建设要求（补短板、嵌入设施），掌握面向更新场景的设施缺口解读。",
+    "knowledge_tags": [
+      "老旧小区",
+      "城市更新",
+      "补短板",
+      "完整社区"
+    ],
+    "avatar": "/assets/avatars/L1-017.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "house",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 34,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-022", "level": "L1", "group": "industry",
-    "name": "靖土", "nickname": "净土", "role_title": "环保/新材料行业专家",
-    "one_liner": "采集环保与新材料竞品信息。",
-    "skills": ["技术数据采集", "标准核查", "工艺对比"],
-    "knowledge_base": "熟悉行业协会与环保标准数据，了解碳中和、储能、光伏/风电材料、固废处理，掌握主流企业技术路线与产能。",
-    "knowledge_tags": ["碳中和", "储能", "光伏", "固废"],
-    "avatar": "/assets/avatars/L1-022.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "recycle-leaf", "gender": "female", "status": "idle",
-    "stats": { "missions": 19, "avg_evidence": 0 }
+    "id": "L1-018",
+    "level": "L1",
+    "group": "facility",
+    "name": "安得广",
+    "nickname": "住房分析",
+    "role_title": "住房配套分析师 / Housing Provision Analyst",
+    "one_liner": "结合居住密度评估设施配额是否匹配。",
+    "skills": [
+      "密度测算",
+      "配额核验",
+      "供需匹配"
+    ],
+    "knowledge_base": "熟悉按居住人口与建筑密度推算设施配额的方法，掌握千人指标校验与供需匹配评估。",
+    "knowledge_tags": [
+      "居住密度",
+      "千人指标",
+      "设施配额",
+      "供需"
+    ],
+    "avatar": "/assets/avatars/L1-018.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "robot",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 37,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-023", "level": "L1", "group": "industry",
-    "name": "杭阔", "nickname": "航天阔", "role_title": "航空航天/军工行业专家",
-    "one_liner": "采集航空航天与高端装备竞品信息（公开信息）。",
-    "skills": ["公开参数采集", "项目核查", "能力对比"],
-    "knowledge_base": "熟悉公开的航空航天产业数据与新闻披露，了解商业航天（SpaceX、星舰、星链）、民航客机、低空经济（eVTOL），掌握公开参数对比。",
-    "knowledge_tags": ["SpaceX", "星链", "eVTOL", "低空经济"],
-    "avatar": "/assets/avatars/L1-023.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "rocket", "gender": "male", "status": "idle",
-    "stats": { "missions": 21, "avg_evidence": 0 }
+    "id": "L1-019",
+    "level": "L1",
+    "group": "facility",
+    "name": "周全行",
+    "nickname": "无障碍顾问",
+    "role_title": "无障碍环境顾问 / Accessibility Advisor",
+    "one_liner": "复核坡道、盲道、无障碍设施配置。",
+    "skills": [
+      "无障碍复核",
+      "坡道盲道",
+      "环境评价"
+    ],
+    "knowledge_base": "熟悉《建筑与市政工程无障碍通用规范》，掌握坡道、盲道、无障碍出入口配置复核要点。",
+    "knowledge_tags": [
+      "无障碍",
+      "坡道",
+      "盲道",
+      "全龄通行"
+    ],
+    "avatar": "/assets/avatars/L1-019.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "lightbulb-shield",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 22,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-024", "level": "L1", "group": "industry",
-    "name": "应创", "nickname": "硬创客", "role_title": "消费电子/智能硬件行业专家",
-    "one_liner": "采集消费电子与智能硬件竞品信息。",
-    "skills": ["硬件参数采集", "拆解核查", "体验对比"],
-    "knowledge_base": "熟悉 GSMArena、Counterpoint、IDC/Canalys 出货数据，了解手机/可穿戴/智能家居参数，掌握苹果/三星/小米/华为产品线与拆解评测（iFixit）。",
-    "knowledge_tags": ["GSMArena", "Canalys", "iFixit", "小米/华为"],
-    "avatar": "/assets/avatars/L1-024.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "phone-chip", "gender": "male", "status": "idle",
-    "stats": { "missions": 49, "avg_evidence": 0 }
-  },
-
-  {
-    "id": "L1-025", "level": "L1", "group": "function",
-    "name": "苏罗", "nickname": "搜罗万象", "role_title": "网络爬虫/数据采集专家",
-    "one_liner": "负责官网、文档、公开网页的合规抓取。",
-    "skills": ["网页抓取", "反爬应对", "结构化提取"],
-    "knowledge_base": "精通 requests/Playwright/BeautifulSoup，熟悉 robots.txt 解析、动态渲染页面抓取、限速与去重，能把网页转为结构化字段。",
-    "knowledge_tags": ["Playwright", "BeautifulSoup", "robots.txt", "去重"],
-    "avatar": "/assets/avatars/L1-025.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "network", "gender": "male", "status": "idle",
-    "stats": { "missions": 73, "avg_evidence": 0 }
-  },
-  {
-    "id": "L1-026", "level": "L1", "group": "function",
-    "name": "甄伪", "nickname": "真伪辨", "role_title": "事实核查专家",
-    "one_liner": "交叉验证信息真伪，标注可信度。",
-    "skills": ["交叉验证", "可信度分级", "来源溯源"],
-    "knowledge_base": "熟悉 fact-checking 方法、来源权威性评估、时效性判断，能识别营销软文与真实数据，对单一来源结论标低置信。",
-    "knowledge_tags": ["fact-check", "权威性评估", "时效性", "软文识别"],
-    "avatar": "/assets/avatars/L1-026.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "shield-check", "gender": "female", "status": "idle",
-    "stats": { "missions": 68, "avg_evidence": 0 }
+    "id": "L1-020",
+    "level": "L1",
+    "group": "facility",
+    "name": "童乐园",
+    "nickname": "儿童规划",
+    "role_title": "儿童友好规划师 / Child-friendly Planner",
+    "one_liner": "评估儿童游乐与出行安全空间覆盖。",
+    "skills": [
+      "游乐评估",
+      "儿童安全",
+      "上学路径"
+    ],
+    "knowledge_base": "熟悉儿童友好社区建设（游乐设施、安全上学路径、一米高度视角），掌握儿童空间覆盖与安全评估。",
+    "knowledge_tags": [
+      "儿童游乐",
+      "儿童友好",
+      "上学路径",
+      "安全空间"
+    ],
+    "avatar": "/assets/avatars/L1-020.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "gamepad",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 28,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-027", "level": "L1", "group": "function",
-    "name": "易通", "nickname": "译通天下", "role_title": "多语言/海外信息专家",
-    "one_liner": "采集与翻译海外竞品信息。",
-    "skills": ["多语言采集", "精准翻译", "跨文化解读"],
-    "knowledge_base": "精通中英日韩等多语种信息检索，熟悉海外信息源（Reddit、Twitter/X、海外媒体、各国官网），能准确翻译专业术语并保留原文链接。",
-    "knowledge_tags": ["多语种", "Reddit", "Twitter/X", "海外媒体"],
-    "avatar": "/assets/avatars/L1-027.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "globe-chat", "gender": "female", "status": "idle",
-    "stats": { "missions": 45, "avg_evidence": 0 }
+    "id": "L1-021",
+    "level": "L1",
+    "group": "facility",
+    "name": "苗致远",
+    "nickname": "镇村专家",
+    "role_title": "镇村生活圈专家 / Rural Living-circle Expert",
+    "one_liner": "面向凯里等欠发达镇村样本判定适用阈值。",
+    "skills": [
+      "镇村评估",
+      "阈值适配",
+      "短板识别"
+    ],
+    "knowledge_base": "熟悉镇村生活圈与乡村公共服务配置特点，掌握欠发达地区指标的阈值适配与短板优先补配思路。",
+    "knowledge_tags": [
+      "镇村生活圈",
+      "乡村公共服务",
+      "阈值适配",
+      "城乡差异"
+    ],
+    "avatar": "/assets/avatars/L1-021.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "wheat",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 24,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-028", "level": "L1", "group": "function",
-    "name": "温卷", "nickname": "问卷匠", "role_title": "问卷设计专家",
-    "one_liner": "设计结构化问卷收集用户反馈。",
-    "skills": ["问卷设计", "量表构建", "偏差规避"],
-    "knowledge_base": "精通 Likert 量表、单选/多选/矩阵题设计，熟悉问卷星/Google Forms/SurveyMonkey，懂得规避诱导性提问与样本偏差。",
-    "knowledge_tags": ["Likert量表", "问卷星", "SurveyMonkey", "样本偏差"],
-    "avatar": "/assets/avatars/L1-028.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "checklist", "gender": "male", "status": "idle",
-    "stats": { "missions": 30, "avg_evidence": 0 }
+    "id": "L1-022",
+    "level": "L1",
+    "group": "facility",
+    "name": "樊市井",
+    "nickname": "商业活力",
+    "role_title": "社区商业活力顾问 / Street-commerce Advisor",
+    "one_liner": "评估社区商业街、夜市的业态丰富度。",
+    "skills": [
+      "业态盘点",
+      "活力评估",
+      "商业街分析"
+    ],
+    "knowledge_base": "熟悉社区商业街与夜市业态（餐饮/便民/生活服务），掌握业态丰富度与社区烟火气评估。",
+    "knowledge_tags": [
+      "社区商业街",
+      "夜市",
+      "业态丰富度",
+      "烟火气"
+    ],
+    "avatar": "/assets/avatars/L1-022.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "chat-bubble",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 19,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-029", "level": "L1", "group": "function",
-    "name": "方谈", "nickname": "访谈录", "role_title": "用户访谈专家",
-    "one_liner": "设计并模拟深度用户访谈。",
-    "skills": ["访谈提纲设计", "追问技巧", "洞察提炼"],
-    "knowledge_base": "精通半结构化深访、5 Why 追问、用户旅程访谈，能从访谈记录提炼真实痛点与未满足需求（unmet needs）。",
-    "knowledge_tags": ["半结构化深访", "5 Why", "用户旅程", "痛点提炼"],
-    "avatar": "/assets/avatars/L1-029.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "chat-bubble", "gender": "female", "status": "idle",
-    "stats": { "missions": 26, "avg_evidence": 0 }
+    "id": "L1-023",
+    "level": "L1",
+    "group": "facility",
+    "name": "郝泊宁",
+    "nickname": "静态交通",
+    "role_title": "静态交通规划师 / Parking & Charging Planner",
+    "one_liner": "核验停车与充换电设施覆盖。",
+    "skills": [
+      "停车盘点",
+      "充电评估",
+      "泊位测算"
+    ],
+    "knowledge_base": "熟悉社区停车场与充换电设施（充电桩、非机动车棚）配置，掌握静态交通供需评估。",
+    "knowledge_tags": [
+      "停车位",
+      "充电桩",
+      "非机动车",
+      "静态交通"
+    ],
+    "avatar": "/assets/avatars/L1-023.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "ev-bolt",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 21,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-030", "level": "L1", "group": "function",
-    "name": "余晴", "nickname": "舆情眼", "role_title": "社媒舆情专家",
-    "one_liner": "采集与分析社交媒体口碑与舆情。",
-    "skills": ["舆情监测", "情感分析", "热点识别"],
-    "knowledge_base": "熟悉知乎、微博、小红书、Reddit、X 舆情，掌握情感分析（正/负/中）、声量统计、热点话题聚类，了解水军/刷评识别。",
-    "knowledge_tags": ["情感分析", "声量统计", "话题聚类", "水军识别"],
-    "avatar": "/assets/avatars/L1-030.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "mood-wave", "gender": "female", "status": "idle",
-    "stats": { "missions": 59, "avg_evidence": 0 }
+    "id": "L1-024",
+    "level": "L1",
+    "group": "facility",
+    "name": "闫可信",
+    "nickname": "韧性顾问",
+    "role_title": "社区韧性顾问 / Community Resilience Advisor",
+    "one_liner": "评估防灾避险与应急服务点位。",
+    "skills": [
+      "防灾评估",
+      "避险场地",
+      "应急服务"
+    ],
+    "knowledge_base": "熟悉社区防灾避险（避难场所、应急物资、疏散通道）配置，掌握社区韧性评估要点。",
+    "knowledge_tags": [
+      "防灾避险",
+      "避难场所",
+      "应急物资",
+      "社区韧性"
+    ],
+    "avatar": "/assets/avatars/L1-024.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "umbrella-shield",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 49,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-031", "level": "L1", "group": "function",
-    "name": "平嘉", "nickname": "评价官", "role_title": "用户评论挖掘专家",
-    "one_liner": "采集结构化产品评论并归类痛点。",
-    "skills": ["评论抓取", "痛点聚类", "优劣提炼"],
-    "knowledge_base": "熟悉 App Store/Google Play、G2、Capterra、亚马逊评论抓取，能对评论做主题聚类（功能/价格/服务/体验）并量化好评差评比。",
-    "knowledge_tags": ["App Store", "G2", "主题聚类", "好差评比"],
-    "avatar": "/assets/avatars/L1-031.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "stars", "gender": "male", "status": "idle",
-    "stats": { "missions": 53, "avg_evidence": 0 }
+    "id": "L1-025",
+    "level": "L1",
+    "group": "method",
+    "name": "方格北",
+    "nickname": "空间定位",
+    "role_title": "空间定位师 / Spatial Locator",
+    "one_liner": "执行地名→坐标解析与逆地理编码，负责中心点定位。",
+    "skills": [
+      "地名解析",
+      "逆地理编码",
+      "坐标定位"
+    ],
+    "knowledge_base": "熟悉地理编码与逆地理编码 API（百度/高德），掌握地名→坐标解析、地址要素校验与中心点定位规范。",
+    "knowledge_tags": [
+      "地理编码",
+      "逆地理编码",
+      "中心点",
+      "BD-09"
+    ],
+    "avatar": "/assets/avatars/L1-025.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "radar",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 73,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-032", "level": "L1", "group": "function",
-    "name": "詹利", "nickname": "专利通", "role_title": "专利与知识产权专家",
-    "one_liner": "检索竞品专利布局，反推技术方向。",
-    "skills": ["专利检索", "布局分析", "技术反推"],
-    "knowledge_base": "熟悉 Google Patents、Espacenet、incoPat、智慧芽，了解专利分类号、引用关系、专利族，能从专利布局反推研发重点。",
-    "knowledge_tags": ["Google Patents", "incoPat", "智慧芽", "专利族"],
-    "avatar": "/assets/avatars/L1-032.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "lightbulb-shield", "gender": "male", "status": "idle",
-    "stats": { "missions": 23, "avg_evidence": 0 }
+    "id": "L1-026",
+    "level": "L1",
+    "group": "method",
+    "name": "李等高",
+    "nickname": "坐标测绘",
+    "role_title": "坐标测绘师 / Coordinate Surveyor",
+    "one_liner": "执行 BD-09/GCJ-02/WGS-84 坐标换算与精度核验。",
+    "skills": [
+      "坐标换算",
+      "精度核验",
+      "坐标系"
+    ],
+    "knowledge_base": "熟悉国内坐标系（BD-09/GCJ-02/WGS-84）与转换算法，掌握坐标精度校验与漂移修正方法。",
+    "knowledge_tags": [
+      "BD-09",
+      "GCJ-02",
+      "WGS-84",
+      "坐标转换"
+    ],
+    "avatar": "/assets/avatars/L1-026.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "network",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 68,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-033", "level": "L1", "group": "function",
-    "name": "赵聘", "nickname": "招聘镜", "role_title": "招聘情报专家",
-    "one_liner": "从招聘信息反推竞品战略与组织动向。",
-    "skills": ["招聘抓取", "岗位分析", "战略反推"],
-    "knowledge_base": "熟悉 LinkedIn、脉脉、Boss直聘、拉勾，能从招聘岗位/JD/扩招方向反推竞品的业务重心、技术栈与扩张计划。",
-    "knowledge_tags": ["LinkedIn", "脉脉", "Boss直聘", "JD分析"],
-    "avatar": "/assets/avatars/L1-033.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "user-search", "gender": "female", "status": "idle",
-    "stats": { "missions": 32, "avg_evidence": 0 }
+    "id": "L1-027",
+    "level": "L1",
+    "group": "method",
+    "name": "时步川",
+    "nickname": "步行测时",
+    "role_title": "可达性测算师 / Reachability Measurer",
+    "one_liner": "批量执行步行耗时测时，产出采样点耗时场。",
+    "skills": [
+      "步行测时",
+      "耗时场",
+      "批量调度"
+    ],
+    "knowledge_base": "熟悉步行路径规划（方向 API）与批量测时调度，掌握采样点步行耗时场构建与不可达判定。",
+    "knowledge_tags": [
+      "步行测时",
+      "方向API",
+      "耗时场",
+      "批量算路"
+    ],
+    "avatar": "/assets/avatars/L1-027.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "chip",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 45,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-034", "level": "L1", "group": "function",
-    "name": "蔡宝", "nickname": "财报译", "role_title": "公开财报采集专家",
-    "one_liner": "采集并结构化提取公开财报数据。",
-    "skills": ["财报抓取", "数据提取", "指标整理"],
-    "knowledge_base": "熟悉巨潮资讯、SEC EDGAR、港交所披露易、招股书，能从 10-K/年报/财报 PPT 提取营收、利润、增速等结构化指标。",
-    "knowledge_tags": ["巨潮资讯", "SEC EDGAR", "披露易", "10-K"],
-    "avatar": "/assets/avatars/L1-034.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "doc-chart", "gender": "male", "status": "idle",
-    "stats": { "missions": 47, "avg_evidence": 0 }
+    "id": "L1-028",
+    "level": "L1",
+    "group": "method",
+    "name": "宋渔田",
+    "nickname": "网格规划",
+    "role_title": "网格规划师 / Fishnet Sampler",
+    "one_liner": "设计渔网、分级采样布点，粗扫加边界加密调度。",
+    "skills": [
+      "渔网布点",
+      "分级采样",
+      "加密调度"
+    ],
+    "knowledge_base": "熟悉渔网采样与两阶段采样（粗扫+边界加密）布点设计，掌握采样密度与测时量控制。",
+    "knowledge_tags": [
+      "渔网采样",
+      "网格",
+      "边界加密",
+      "两阶段采样"
+    ],
+    "avatar": "/assets/avatars/L1-028.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "funnel",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 30,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-035", "level": "L1", "group": "function",
-    "name": "涂硕", "nickname": "图说", "role_title": "数据可视化专家",
-    "one_liner": "把结构化数据转为图表与可视化。",
-    "skills": ["图表生成", "可视化设计", "图谱构建"],
-    "knowledge_base": "精通 ECharts、matplotlib、Plotly、D3，熟悉对比矩阵、雷达图、SWOT 四象限、桑基图、知识图谱布局，注重图表的可读性与美观。",
-    "knowledge_tags": ["ECharts", "matplotlib", "D3", "知识图谱"],
-    "avatar": "/assets/avatars/L1-035.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "line-bar", "gender": "female", "status": "idle",
-    "stats": { "missions": 64, "avg_evidence": 0 }
+    "id": "L1-029",
+    "level": "L1",
+    "group": "method",
+    "name": "洪远岸",
+    "nickname": "插值建模",
+    "role_title": "空间插值分析师 / Interpolation Analyst",
+    "one_liner": "执行 IDW 插值与等时圈等值线生成。",
+    "skills": [
+      "IDW插值",
+      "等值线",
+      "插值精度"
+    ],
+    "knowledge_base": "熟悉反距离权重（IDW）等空间插值方法与等值线生成，掌握插值参数选择与边界带精度校验。",
+    "knowledge_tags": [
+      "IDW",
+      "反距离权重",
+      "等值线",
+      "插值场"
+    ],
+    "avatar": "/assets/avatars/L1-029.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "circuit",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 26,
+      "avg_evidence": 0
+    }
   },
   {
-    "id": "L1-036", "level": "L1", "group": "function",
-    "name": "党安", "nickname": "档案管", "role_title": "知识库与档案管理专家",
-    "one_liner": "管理证据库、Schema 入库与版本归档。",
-    "skills": ["证据归档", "Schema校验", "版本管理"],
-    "knowledge_base": "负责为每条信息分配 evidence_id、校验是否符合竞品知识 Schema、管理报告版本与历史归档，确保溯源链条完整。",
-    "knowledge_tags": ["evidence_id", "Schema校验", "版本管理", "溯源链"],
-    "avatar": "/assets/avatars/L1-036.jpg", "badge_color": "#EAF1EA",
-    "domain_icon": "folder", "gender": "male", "status": "idle",
-    "stats": { "missions": 71, "avg_evidence": 0 }
+    "id": "L1-030",
+    "level": "L1",
+    "group": "method",
+    "name": "甄实核",
+    "nickname": "POI核验",
+    "role_title": "POI 核验官 / POI Verifier",
+    "one_liner": "执行多关键词检索、去重聚簇、可信度标注。",
+    "skills": [
+      "POI检索",
+      "去重聚簇",
+      "可信度标注"
+    ],
+    "knowledge_base": "熟悉 POI 检索（分类关键词、周边检索）与多源去重聚簇（名称归一、坐标聚簇），掌握可信度标注规范。",
+    "knowledge_tags": [
+      "POI检索",
+      "关键词",
+      "去重",
+      "可信度"
+    ],
+    "avatar": "/assets/avatars/L1-030.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "checklist",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 59,
+      "avg_evidence": 0
+    }
+  },
+  {
+    "id": "L1-031",
+    "level": "L1",
+    "group": "method",
+    "name": "闻缺星",
+    "nickname": "盲区侦测",
+    "role_title": "盲区侦测师 / Blind-spot Locator",
+    "one_liner": "执行 1km 三要素判定与灰色区域聚合。",
+    "skills": [
+      "三要素判定",
+      "灰区聚合",
+      "盲区输出"
+    ],
+    "knowledge_base": "掌握盲区判定口径（1km 内无菜市场/药店/小学），熟悉网格判定与灰色区域连通聚合输出。",
+    "knowledge_tags": [
+      "1km盲区",
+      "菜市场",
+      "药店",
+      "小学"
+    ],
+    "avatar": "/assets/avatars/L1-031.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "lightbulb-shield",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 53,
+      "avg_evidence": 0
+    }
+  },
+  {
+    "id": "L1-032",
+    "level": "L1",
+    "group": "method",
+    "name": "衡计量",
+    "nickname": "评分建模",
+    "role_title": "评分建模师 / Scoring Modeler",
+    "one_liner": "执行覆盖度、可达性、多样性、均衡性评分计算。",
+    "skills": [
+      "覆盖度",
+      "可达性",
+      "评分指数"
+    ],
+    "knowledge_base": "熟悉四维体检评分建模（覆盖度/可达性/多样性/均衡性），掌握 0-100 归一化与分项雷达输出。",
+    "knowledge_tags": [
+      "综合评分",
+      "覆盖度",
+      "可达性指数",
+      "均衡性"
+    ],
+    "avatar": "/assets/avatars/L1-032.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "bar-chart",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 23,
+      "avg_evidence": 0
+    }
+  },
+  {
+    "id": "L1-033",
+    "level": "L1",
+    "group": "method",
+    "name": "温澄澈",
+    "nickname": "数据清洗",
+    "role_title": "数据清洗师 / Data Cleanser",
+    "one_liner": "清洗缺失值、超界坐标与重复记录，输出质量报告。",
+    "skills": [
+      "缺失处理",
+      "异常剔除",
+      "质量报告"
+    ],
+    "knowledge_base": "熟悉空间数据清洗（缺失值、超界坐标、重复记录）与质量报告输出，掌握清洗前后指标对比。",
+    "knowledge_tags": [
+      "数据清洗",
+      "缺失值",
+      "超界坐标",
+      "质量"
+    ],
+    "avatar": "/assets/avatars/L1-033.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "doc-chart",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 32,
+      "avg_evidence": 0
+    }
+  },
+  {
+    "id": "L1-034",
+    "level": "L1",
+    "group": "method",
+    "name": "绘星野",
+    "nickname": "地图可视化",
+    "role_title": "地图可视化设计师 / Map Visualizer",
+    "one_liner": "渲染等时圈、POI、盲区图层与柱状雷达图表。",
+    "skills": [
+      "图层渲染",
+      "热力呈现",
+      "图表设计"
+    ],
+    "knowledge_base": "熟悉地图图层渲染（等时圈多边形、POI 分色、盲区灰区）与 ECharts 图表（雷达/柱状），掌握可视化交互规范。",
+    "knowledge_tags": [
+      "等时圈",
+      "热力图",
+      "POI图层",
+      "雷达图"
+    ],
+    "avatar": "/assets/avatars/L1-034.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "line-bar",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 47,
+      "avg_evidence": 0
+    }
+  },
+  {
+    "id": "L1-035",
+    "level": "L1",
+    "group": "method",
+    "name": "稳若磐",
+    "nickname": "API韧性",
+    "role_title": "API 韧性工程师 / Resilience Engineer",
+    "one_liner": "执行 QPS 限流、退避重试与 fixture 降级兜底。",
+    "skills": [
+      "限流控制",
+      "退避重试",
+      "降级兜底"
+    ],
+    "knowledge_base": "熟悉地图 API 调用治理（信号量限流、指数退避、配额保护）与 fixture 降级兜底策略，掌握失败率监控。",
+    "knowledge_tags": [
+      "QPS限流",
+      "指数退避",
+      "降级",
+      "容错"
+    ],
+    "avatar": "/assets/avatars/L1-035.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "shield-scale",
+    "gender": "female",
+    "status": "idle",
+    "stats": {
+      "missions": 64,
+      "avg_evidence": 0
+    }
+  },
+  {
+    "id": "L1-036",
+    "level": "L1",
+    "group": "method",
+    "name": "字成章",
+    "nickname": "报告主笔",
+    "role_title": "报告主笔 / Report Author",
+    "one_liner": "汇编体检单与分章报告，负责图文结构与溯源引用。",
+    "skills": [
+      "体检单汇编",
+      "章节组织",
+      "溯源引用"
+    ],
+    "knowledge_base": "熟悉体检报告结构（体检单+分章），掌握图文编排与点位溯源引用规范，确保每个结论有出处。",
+    "knowledge_tags": [
+      "体检单",
+      "分章报告",
+      "溯源",
+      "图文结构"
+    ],
+    "avatar": "/assets/avatars/L1-036.jpg",
+    "badge_color": "#EAF1EA",
+    "domain_icon": "folder",
+    "gender": "male",
+    "status": "idle",
+    "stats": {
+      "missions": 71,
+      "avg_evidence": 0
+    }
   }
 ]

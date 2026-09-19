@@ -2,27 +2,30 @@ import { useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Home,
-  BarChart3,
+  Map,
+  GitCompare,
   Users,
-  Radar,
+  History,
+  FileText,
   Sprout,
   ChevronDown,
-  Library,
   Settings,
   Activity,
 } from 'lucide-react'
 import { fetchDashboard } from '../lib/api'
 import { useTaskRegistry, selectRunning } from '../store/taskRegistry'
 import { useProfileStore } from '../store/profileStore'
+import { BRAND } from '../lib/brand'
 import { VModal, VButton } from '../components/ui'
 import { useShallow } from 'zustand/react/shallow'
 
 const navItems = [
   { to: '/', label: '工作台', icon: Home, end: true },
-  { to: '/library', label: '我的调研', icon: BarChart3 },
-  { to: '/knowledge', label: '知识库', icon: Library },
-  { to: '/experts', label: '专家公会', icon: Users },
-  { to: '/dashboard', label: '竞争情报中心', icon: Radar },
+  { to: '/life-circle/kaili', label: '生活圈地图', icon: Map },
+  { to: '/reports', label: '报告', icon: FileText },
+  { to: '/compare', label: '双样例对比', icon: GitCompare },
+  { to: '/experts', label: '专家团', icon: Users },
+  { to: '/dashboard', label: '历史', icon: History },
 ]
 
 export default function VSidebar() {
@@ -77,7 +80,7 @@ export default function VSidebar() {
           <Sprout size={22} strokeWidth={1.8} />
         </span>
         <span className="text-[20px] font-semibold tracking-tight text-ink">
-          Verda
+          {BRAND.en}
         </span>
       </button>
 
@@ -149,7 +152,7 @@ export default function VSidebar() {
           <span className="text-aux font-semibold text-ink">我的工作空间</span>
         </div>
         <p className="mt-1 text-tag text-ink-3">
-          累计完成 {reports} 次调研 · 已沉淀 {evidence} 条证据
+          累计完成 {reports} 次体检 · 已梳理 {evidence} 处设施点位
         </p>
       </div>
 

@@ -71,14 +71,16 @@ export default function ClarifyPage() {
     // 注意：不能用 React state `ready` 做此判断——onError 闭包捕获的是
     // effect 创建时的 `ready` 快照，setReady(true) 不会更新该闭包，会导致守卫失效。
     let done = false
+    // 切换任务即重置问卷状态（任务维度的有意模式）
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReady(false)
     setError(null)
     setQuestions([])
     setStep(0)
-    // closeFn 持有 openClarifyStream 返回的关闭函数。真实 SSE 事件在连接建立后
-    // （即本调用返回、closeFn 已赋值）才异步到达；若测试同步派发事件，closeFn 尚
-    // 未赋值，?.() 安全 no-op，避免 TDZ（Cannot access 'close' before initialization）。
-    let closeFn: (() => void) | undefined
+    // closeRef 持有 openClarifyStream 返回的关闭函数。真实 SSE 事件在连接建立后
+    // （即本调用返回、closeRef.current 已赋值）才异步到达；若测试同步派发事件，
+    // 尚未赋值，?.() 安全 no-op，避免 TDZ（Cannot access 'close' before initialization）。
+    const closeRef: { current?: () => void } = {}
     let partialDone = false // 已收到 partial 基础题但尚未 complete（用于 onError 守卫）
     const close = openClarifyStream(taskId, {
       onEvent: (type, data) => {
@@ -115,7 +117,7 @@ export default function ClarifyPage() {
             setReady(true)
             if (d?.competitors_fallback) setCompetitorsFallback(true)
             done = true
-            closeFn?.() // 问卷已完整送达，主动关闭有限流，避免流关闭触发 onerror 误报
+            closeRef.current?.() // 问卷已完整送达，主动关闭有限流，避免流关闭触发 onerror 误报
           }
         } else if (type === 'clarify_update') {
           // 竞品发现完成：增量替换整组题目（答案按 id 保留），保持当前步（C4/C5）
@@ -133,7 +135,7 @@ export default function ClarifyPage() {
           setDiscoveryOngoing(false)
           setProgress(100)
           done = true
-          closeFn?.()
+          closeRef.current?.()
         } else if (type === 'error') {
           const d = data as { message?: string }
           setError(d?.message ?? '问卷生成失败')
@@ -150,7 +152,7 @@ export default function ClarifyPage() {
         setReady(true)
       },
     })
-    closeFn = close
+    closeRef.current = close
     return () => {
       closed = true
       close()

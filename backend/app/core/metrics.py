@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.fetcher import domain_of
 
@@ -26,6 +26,7 @@ def compute_report_metrics(
     tokens_used: int,
     rework_rounds: int = 0,
     issues_resolved: int = 0,
+    objective_stats: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     indep_domains = len({domain_of(getattr(e, "source_url", "")) for e in evidences
                          if getattr(e, "source_url", "")} - {""})
@@ -37,6 +38,21 @@ def compute_report_metrics(
 
     elapsed_min = max(0.1, elapsed_seconds / 60.0)
     manual_min = max(1, len(brands) * max(1, len(focus)) * MANUAL_MIN_PER_SOURCE)
+
+    # v2.1 客观性指标（只读组字段；与 audit.evaluate_quality 口径一致）
+    ev_by_id = {getattr(e, "evidence_id", ""): e for e in evidences}
+    single_source = 0
+    for c in claims:
+        ids = c.get("evidence_ids") or []
+        groups_ = {getattr(ev_by_id.get(i), "source_group", "") or i
+                   for i in ids if i in ev_by_id}
+        if len(groups_) < 2:
+            single_source += 1
+    single_source_ratio = round(single_source / total_claims, 3)
+    viral_n = sum(1 for e in evidences if getattr(e, "viral", False))
+    viral_ratio = round(viral_n / (len(evidences) or 1), 3)
+    ost = objective_stats or {}
+    viral_checked_ratio = round((ost.get("viral_checked", 0) or 0) / (len(evidences) or 1), 3)
 
     # 效率提升倍数（人工估时 / 实际耗时）
     efficiency_multiple = round(manual_min / elapsed_min, 1)
@@ -89,7 +105,12 @@ def compute_report_metrics(
             "correction_rate": None,                     # 由人工反馈注入
             "rework_rounds": rework_rounds,
             "issues_resolved": issues_resolved,
-            "formula": "准确率=高置信论点÷总论点；人工修正率=被编辑块÷可编辑块（用户反馈后更新）",
+            # v2.1 客观性指标
+            "single_source_ratio": single_source_ratio,
+            "viral_ratio": viral_ratio,
+            "viral_checked_ratio": viral_checked_ratio,
+            "formula": "准确率=高置信论点÷总论点；人工修正率=被编辑块÷可编辑块（用户反馈后更新）；"
+                       "单源占比=信源组<2 的结论占比；过热占比=viral 证据÷证据总数",
         },
     }
 

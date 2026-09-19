@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verda 报告页 · 简报/幻灯片改动预览 v2</title>
+<style>
+  :root{
+    --bg:#f6f8f7; --card:#fff; --card2:#fafcfb;
+    --ink:#1d211f; --ink2:#5b6560; --ink3:#98a29d;
+    --line:#e3e8e5; --primary:#2f9d6e; --primary-deep:#1f7a54; --primary-tint:#e9f5ef;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;color:var(--ink);line-height:1.6}
+  svg{display:inline-block;vertical-align:-2px}
+  .topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px;padding:10px 20px;background:#11231c;color:#d9efe4}
+  .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);padding:3px 10px;border-radius:999px}
+  .sp{flex:1}.url{font-size:12px;opacity:.75}
+  .page{display:flex;max-width:1280px;margin:0 auto;background:var(--card);min-height:calc(100vh - 46px);border-left:1px solid var(--line);border-right:1px solid var(--line)}
+  aside.toc{width:232px;flex-shrink:0;border-right:1px solid var(--line);background:var(--card2);padding:14px 10px}
+  .back{display:flex;gap:8px;align-items:center;padding:6px 8px;font-size:13px;color:var(--ink2)}
+  h4{font-size:12px;color:var(--ink3);padding:10px 8px 6px;letter-spacing:.4px}
+  .item{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:8px;font-size:13px;color:var(--ink2)}
+  .item.on{background:var(--primary-tint);color:var(--primary-deep);font-weight:600}
+  .num{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:6px;background:#eef2f0;font-size:11px;color:var(--ink3);flex-shrink:0}
+  .item.on .num{background:var(--primary);color:#fff}
+  main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .hero{position:relative;height:210px;background:linear-gradient(118deg,#12352a 0%,#1d6b4c 58%,#2f9d6e 100%);padding:26px 26px 58px}
+  .hero h1{color:#fff;font-family:'Songti SC','Noto Serif SC',serif;font-size:26px;font-weight:700;max-width:640px;line-height:1.4}
+  .sub{color:#cfe8db;font-size:13px;margin-top:6px}
+  .chips{display:flex;gap:8px;margin-top:12px}
+  .chip{font-size:12px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);color:#f0faf5;border-radius:999px;padding:2px 10px}
+  .bar{position:absolute;right:22px;top:20px;display:flex;gap:8px;background:rgba(16,40,30,.45);backdrop-filter:blur(6px);border-radius:12px;padding:8px 10px}
+  .btn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#e8f4ee;border:1px solid rgba(255,255,255,.28);border-radius:9px;padding:6px 12px;background:rgba(255,255,255,.08)}
+  .btn.dark{color:#12342a;background:#fff;border-color:#fff;font-weight:600}
+  .pill{margin-left:4px;font-size:10.5px;background:rgba(245,158,11,.22);color:#fbd9a6;border:1px solid rgba(245,158,11,.5);border-radius:999px;padding:1px 7px;vertical-align:1px}
+  .fcp-change{outline:3px solid #f59e0b;outline-offset:2px;border-radius:10px;background:rgba(245,158,11,.06);position:relative;z-index:5}
+  .badge{position:absolute;top:-12px;left:-8px;min-width:24px;height:24px;padding:0 6px;border-radius:999px;background:#f59e0b;color:#fff;font-size:12px;font-weight:700;display:inline-grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.25);z-index:9;white-space:nowrap}
+  .strip{border-bottom:1px solid var(--line);background:var(--card)}
+  .strip-grid{max-width:880px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);padding:14px 20px}
+  .kpi{display:flex;flex-direction:column;align-items:center;gap:2px}
+  .kpi .ic{color:var(--primary)}
+  .kpi .v{font-family:'Songti SC','Noto Serif SC',serif;font-size:26px;font-weight:700;color:var(--ink)}
+  .kpi .l{font-size:12px;color:var(--ink3)}
+  .kpi .unit{font-size:12px;color:var(--ink3)}
+  .body{max-width:880px;margin:0 auto;padding:24px 26px 60px;width:100%}
+  .switchrow{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:6px}
+  .mode-switch{display:inline-flex;gap:4px;background:#eef2f0;border:1px solid var(--line);border-radius:999px;padding:3px}
+  .mode-switch button{font-size:12px;border:0;background:transparent;border-radius:999px;padding:3px 12px;color:var(--ink2);cursor:pointer}
+  .mode-switch button.on{background:#fff;color:var(--primary-deep);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+  .hint{font-size:12px;color:var(--ink3)}
+  .brief-panel{display:none;background:var(--card);border:1px dashed #9dbcac;border-radius:14px;padding:18px;margin-top:14px}
+  .brief-show{display:block}
+  .bp-h{display:flex;align-items:center;gap:8px;font-size:15px;color:var(--primary-deep);margin-bottom:10px}
+  .key{display:inline-flex;align-items:center;gap:5px;background:#eef5f1;border:1px solid #dceae4;border-radius:6px;padding:1px 8px;font-size:11px;color:#2b5540}
+  .bp-p{font-size:13.5px;color:#37423c;margin:6px 0}
+  .kv{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .kv span{font-size:12px;background:#f2f7f4;border:1px solid #dceae4;border-radius:999px;padding:3px 10px;color:#2b5540}
+  .bp-note{font-size:12px;color:var(--ink3);margin-top:10px}
+  .cards{display:none;margin-top:6px}
+  .cards-show{display:block}
+  .mini-card{display:flex;gap:12px;align-items:flex-start;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-top:10px}
+  .mini-card .n{font-size:13px;color:var(--ink3);font-family:'Songti SC','Noto Serif SC',serif;font-weight:700;flex-shrink:0}
+  .mini-card .t{font-size:13.5px;font-weight:600}
+  .mini-card .k{font-size:12.5px;color:#3f4c45;margin-top:2px}
+  .mini-card .exp{font-size:12px;color:var(--primary-deep);margin-left:auto;white-space:nowrap;flex-shrink:0;display:inline-flex;gap:4px;align-items:center}
+  .empty-box{display:none;border:1px dashed #c9d3cd;border-radius:10px;padding:14px;color:var(--ink3);font-size:13px}
+  .slides-demo{margin-top:16px;background:#101a26;border-radius:14px;padding:16px;display:none}
+  .slides-show{display:block}
+  .sd-h{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .sd-h .t{color:#eaf2ee;font-size:13px;font-weight:600}
+  .slides-scr{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
+  .slide{flex-shrink:0;width:200px;aspect-ratio:16/9;border-radius:8px;border:2px solid rgba(255,255,255,.5);overflow:hidden;position:relative}
+  .slide .num{position:absolute;right:6px;bottom:4px;color:rgba(255,255,255,.85);font-size:11px;background:rgba(0,0,0,.35);padding:0 6px;border-radius:6px}
+  .slide.on{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.5)}
+  .slide .txt{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:10px;font-size:12px;color:#f2f7f5}
+  .slide .txt b{font-size:13px}
+  .slides-caption{color:#a9bbc2;font-size:12px;margin-top:10px}
+  .sec-title{display:flex;align-items:center;gap:12px;margin:24px 0 10px}
+  .sec-title .n{width:34px;height:34px;display:grid;place-items:center;background:var(--primary-tint);color:var(--primary-deep);font-family:'Songti SC','Noto Serif SC',serif;font-weight:700;border-radius:10px}
+  .sec-title h2{font-family:'Songti SC','Noto Serif SC',serif;font-size:20px}
+  .takeaway{border-left:3px solid var(--primary);background:var(--primary-tint);border-radius:0 10px 10px 0;padding:12px 14px;margin:10px 0}
+  .takeaway p{font-size:14px}
+  .para{font-size:14px;color:#333;margin:10px 0}
+  .ref{color:var(--primary-deep);font-size:12px}
+  .foot{color:var(--ink3);font-size:12px;text-align:center;padding:20px}
+  .legend{position:fixed;right:16px;bottom:16px;width:324px;background:#fff;border:1px solid #d8ddd9;border-radius:14px;box-shadow:0 12px 32px rgba(18,40,30,.18);padding:14px 16px;z-index:99}
+  .legend h5{font-size:13px;color:#12342a;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .legend .row{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#46534d;padding:3px 0}
+  .legend .row b{min-width:24px;height:20px;border-radius:999px;background:#f59e0b;color:#fff;display:inline-grid;place-items:center;font-size:11px;flex-shrink:0;margin-top:1px}
+  .legend .row .e{color:var(--ink2)}
+  .legend .note{margin-top:8px;font-size:11.5px;color:var(--ink3);border-top:1px solid var(--line);padding-top:8px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="tag">PREVIEW v2 · frontend-change-preview-gate</span>
+  <span class="sp"></span>
+  <span class="url">localhost:3400/report/r_b6a0c87b</span>
+</div>
+
+<div class="page">
+  <aside class="toc">
+    <div class="back">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      报告目录
+    </div>
+    <h4>阅读进度 63%</h4>
+    <div class="item on"><span class="num">0</span>执行摘要 · 核心判断</div>
+    <div class="item"><span class="num">1</span>竞争格局总览</div>
+    <div class="item"><span class="num">2</span>功能矩阵与战略意图</div>
+    <div class="item"><span class="num">3</span>商业模式与定价博弈</div>
+    <div class="item"><span class="num">4</span>目标用户与场景画像</div>
+    <div class="item"><span class="num">5</span>发展轨迹与趋势研判</div>
+    <div class="item"><span class="num">6</span>SWOT 与战略选择</div>
+    <div class="item"><span class="num">7</span>护城河深度与壁垒拆解</div>
+    <div class="item"><span class="num">8</span>关键拐点时间线与变量</div>
+    <div class="item"><span class="num">9</span>反共识洞察 · 敢下判断</div>
+    <div class="item"><span class="num">10</span>全网舆情与观点阵营</div>
+    <div class="item"><span class="num">11</span>结论与行动建议</div>
+    <div class="item"><span class="num">12</span>风险清单与不确定性</div>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <div class="bar fcp-change">
+        <span class="badge">C1·C2</span>
+        <span class="btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          知识库
+        </span>
+        <span class="btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2"/><path d="M5 4.5 8.7 8"/><path d="M19 4.5 15.3 8"/></svg>
+          决策链路
+        </span>
+        <span class="btn fcp-change" data-fcp="C1">
+          <span class="badge">C1</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+          简报<span class="pill">新增</span>
+        </span>
+        <span class="btn fcp-change" data-fcp="C2">
+          <span class="badge">C2</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h20"/><path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3"/><path d="m7 21 5-5 5 5"/></svg>
+          演示<span class="pill">新增</span>
+        </span>
+        <span class="btn dark">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          编辑
+        </span>
+        <span class="btn dark">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+          导出
+        </span>
+      </div>
+      <h1>ai、agent 工程师 竞争格局深度分析报告</h1>
+      <p class="sub">56 条联网证据 · 37 个独立来源 · 6 位专家协作生成 · 专家级模式</p>
+      <div class="chips"><span class="chip"># ai、agent工程师</span><span class="chip"># 专家级模式</span></div>
+    </div>
+
+    <div class="strip fcp-change" data-fcp="C4">
+      <span class="badge">C4</span>
+      <div class="strip-grid">
+        <div class="kpi">
+          <span class="ic">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
+          </span>
+          <span class="v">3<small class="unit">条</small></span><span class="l">核心结论</span>
+        </div>
+        <div class="kpi">
+          <span class="ic">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+          </span>
+          <span class="v">56<small class="unit">条</small></span><span class="l">联网证据</span>
+        </div>
+        <div class="kpi">
+          <span class="ic">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-3.66 0L8.07 5H4.9a2 2 0 0 0-1.88 1.34L1.6 8.44a2 2 0 0 0 2.99 2.21L1.6 13a2 2 0 0 0 2.99 2.26 2 2 0 0 0-2.99 2.22l1.42 2.1A2 2 0 0 0 4.9 21h3.17l1.1 2.82a2 2 0 0 0 3.66 0l1.1-2.82h3.17a2 2 0 0 0 1.88-1.34l1.42-2.1a2 2 0 0 0-2.99-2.22A2 2 0 0 0 22.4 13l-1.1-2a2 2 0 0 0-2.99-2.22 2 2 0 0 0 2.99-2.21l-1.42-2.1A2 2 0 0 0 19.1 4.99h-3.17z"/><circle cx="12" cy="12" r="3"/></svg>
+          </span>
+          <span class="v">37<small class="unit">个</small></span><span class="l">独立信源</span>
+        </div>
+        <div class="kpi">
+          <span class="ic">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+          </span>
+          <span class="v">100<small class="unit">%</small></span><span class="l">高置信占比</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="switchrow">
+        <div class="mode-switch">
+          <button class="on">完整报告</button>
+          <button>简报</button>
+        </div>
+        <span class="hint">切换「简报」查看 C3 目标态；下方 C5 为幻灯片示意</span>
+      </div>
+
+      <div id="briefView" class="brief-panel fcp-change brief-show" data-fcp="C3">
+        <span class="badge">C3</span>
+        <div class="bp-h">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+          一页纸精炼
+          <span class="key">summary</span><span class="key">judgments</span><span class="key">key_data</span><span class="key">actions</span>
+        </div>
+        <p class="bp-p"><b>一句话概括：</b>AI 工程赛道竞争已从模型参数转向工程化落地，具备强工具链与行业积累的厂商将掌握下一轮定价权。</p>
+        <div class="kv"><span>判断 · 赛道渗透率拐点已至（47.6%）</span><span>判断 · GPU 生态绑定成为护城河</span><span>判断 · Agent ≠ 聊天机器人</span></div>
+        <div class="kv"><span>数据 · IDC 47.6% 市占</span><span>数据 · 6× 效率提升</span><span>数据 · 851K Token</span></div>
+        <div class="kv"><span>建议 · 聚焦行业 Agent</span><span>建议 · 建设工具链生态</span></div>
+        <div class="bp-note">未生成时显示「AI 生成一页纸精炼」按钮 · 失败展示原因且 30s 冷却置灰</div>
+      </div>
+
+      <div id="briefCards" class="cards fcp-change cards-show" data-fcp="C3">
+        <span class="badge">C3</span>
+        <div class="mini-card">
+          <span class="n">0</span>
+          <div>
+            <div class="t">执行摘要 · 核心判断</div>
+            <div class="k">核心判断：AI 工程落地是胜负手，30 秒抓住全貌</div>
+            <div class="k">亮点：47.6% 市占 · 工具链生态 · 渗透率拐点</div>
+          </div>
+          <span class="exp">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 3 3 3-6"/></svg>
+            展开全文
+          </span>
+        </div>
+        <div class="mini-card">
+          <span class="n">1</span>
+          <div>
+            <div class="t">竞争格局总览</div>
+            <div class="k">核心判断：多强并立，厂商分层明显</div>
+            <div class="k">亮点：三梯队 · 卡位清晰</div>
+          </div>
+          <span class="exp">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 3 3 3-6"/></svg>
+            展开全文
+          </span>
+        </div>
+        <div class="mini-card">
+          <span class="n">7</span>
+          <div>
+            <div class="t">护城河深度</div>
+            <div class="k">核心判断：GPU 生态绑定 + 数据飞轮</div>
+            <div class="k">亮点：算力壁垒 · 渠道绑定</div>
+          </div>
+          <span class="exp">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 3 3 3-6"/></svg>
+            展开全文
+          </span>
+        </div>
+        <div id="fullView" class="empty-box fcp-change" data-fcp="C3">
+          <span class="badge">C3</span>
+          现状：完整 14 章正文长文（万字级）——「简报」切换后由上方简报视图替换；空章节自动过滤 · 亮点 ≤4 条 · 打印隐藏展开态
+        </div>
+      </div>
+
+      <div id="slidesDemo" class="slides-demo fcp-change" data-fcp="C5">
+        <span class="badge">C5</span>
+        <div class="sd-h">
+          <span class="t">新路由 /report/r_b6a0c87b/slides</span>
+          <span class="sp"></span>
+          <span class="key">← → 空格 翻页</span>
+          <span class="key">打印为 PDF</span>
+        </div>
+        <div class="slides-scr">
+          <div class="slide on"><div class="txt"><b>封面</b><span>标题/副标题/品牌/日期</span></div><span class="num">1 / 8</span></div>
+          <div class="slide"><div class="txt"><b>执行摘要</b><span>3-4 条核心判断</span></div><span class="num">2 / 8</span></div>
+          <div class="slide"><div class="txt"><b>关键数据速览</b><span>指标带 + 图表</span></div><span class="num">3 / 8</span></div>
+          <div class="slide"><div class="txt"><b>竞争格局</b><span>核心判断 + 图表</span></div><span class="num">4 / 8</span></div>
+          <div class="slide"><div class="txt"><b>护城河与反共识</b><span>合并页</span></div><span class="num">5 / 8</span></div>
+          <div class="slide"><div class="txt"><b>结论建议</b><span>行动建议</span></div><span class="num">6 / 8</span></div>
+          <div class="slide"><div class="txt"><b>风险清单</b><span>不确定性</span></div><span class="num">7 / 8</span></div>
+          <div class="slide"><div class="txt"><b>证据与信源</b><span>来源分布 + 溯源</span></div><span class="num">8 / 8</span></div>
+        </div>
+        <div class="slides-caption">16:9 全屏 · 缺失章节自动跳过且页码连续 · 浏览器「打印为 PDF」输出 A4 横向每屏一页汇报文件</div>
+      </div>
+
+      <div class="sec-title"><span class="n">0</span><h2>执行摘要 · 核心判断</h2></div>
+      <div class="takeaway"><p><b>核心判断：</b>AI 工程落地能力替代模型参数，成为本轮竞争胜负手。</p></div>
+      <p class="para">基于 56 条联网证据与 6 位专家交叉验证，当前 AI Agent 工程赛道渗透率已达拐点（IDC：头部厂商市占 47.6%）<span class="ref">[e_9ad9bfe2]</span>，硬件-模型-应用三层解耦带来全新卡位机会……</p>
+      <p class="para">围绕「上下文工程」与「工具链生态」，头部厂商构建三层架构壁垒，中小玩家转向垂直场景纵深……</p>
+    </div>
+
+    <div class="foot">预览为忠实整页示意 · 橙色描边 + 编号徽标 = 改动区 · 详见图例面板（右下角）</div>
+  </main>
+</div>
+
+<div class="legend">
+  <h5>改动区图例</h5>
+  <div class="row"><b>C1</b><div><b>顶栏 · 简报按钮</b><br><span class="e">新增（FileText 图标）：点击切换简报视图，再点返回完整</span></div></div>
+  <div class="row"><b>C2</b><div><b>顶栏 · 演示按钮</b><br><span class="e">新增（Presentation 图标）：跳转 /report/:id/slides</span></div></div>
+  <div class="row"><b>C3</b><div><b>正文区 · 简报视图</b><br><span class="e">简报模式替换正文：一页纸精炼四段 + 逐节核心判断/亮点/展开全文</span></div></div>
+  <div class="row"><b>C4</b><div><b>指标速览带 · 组件抽取</b><br><span class="e">抽为 MetricsStrip 三处共用，视觉不变、口径单一来源</span></div></div>
+  <div class="row"><b>C5</b><div><b>新路由 · 幻灯片页</b><br><span class="e">16:9 全屏 8 页模板，键盘翻页，打印导出 PDF</span></div></div>
+  <div class="note">虚线框 = 现状（弱化）；橙色描边 = 改动区；翻页/生成/冷却等交互为示意，以实际页面为准。</div>
+</div>
+
+<script>
+  const root = document.body
+  const btns = root.querySelectorAll('.mode-switch button')
+  const brief = root.querySelector('#briefView')
+  const cards = root.querySelector('#briefCards')
+  const slidesDemo = root.querySelector('#slidesDemo')
+  btns.forEach(btn => btn.addEventListener('click', () => {
+    btns.forEach(b => b.classList.toggle('on', b === btn))
+    const isBrief = btn.textContent === '简报'
+    brief.classList.toggle('brief-show', isBrief)
+    cards.classList.toggle('cards-show', isBrief)
+    if (isBrief) slidesDemo.classList.add('slides-show')
+  }))
+</script>
+</body>
+</html>

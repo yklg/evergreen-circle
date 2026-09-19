@@ -1,0 +1,44 @@
+{
+  "_doc": "A4 · 体检任务 SSE 事件契约样本（F0 冻结）。useTaskStream 在 VITE_USE_MOCK=1 时回放本流，M3 联调后端按此结构产出，禁止改事件类型/字段语义。",
+  "task_id": "lc-demo",
+  "report_id": "lc-kaili",
+  "stages": ["intake", "plan", "measure", "collect", "diagnose", "report", "audit"],
+  "events": [
+    { "type": "node_update", "data": { "stage": "intake", "node": { "id": "n-intake", "label": "确立样例与参数", "status": "working", "expert": "L3-001" } } },
+    { "type": "progress", "data": { "stage": "intake", "percent": 4, "stage_seq": 1 } },
+    { "type": "message", "data": { "stage": "intake", "text": "已确立体检中心点：凯里老街（107.9758, 26.5734），研究范围 2.5km，模式 standard", "expert": "L3-001" } },
+
+    { "type": "node_update", "data": { "stage": "plan", "node": { "id": "n-plan", "label": "专家队编排", "status": "working", "expert": "L3-002" } } },
+    { "type": "node_update", "data": { "stage": "plan", "node": { "id": "n-dispatch", "label": "按域指派 8 位专家", "status": "done", "expert": "L3-002" } } },
+    { "type": "progress", "data": { "stage": "plan", "percent": 12, "stage_seq": 2 } },
+    { "type": "message", "data": { "stage": "plan", "text": "编排完成：医疗/教育/购物/养老各域顾问就位，慢行可达性分析师负责等时圈核验", "expert": "L3-002" } },
+
+    { "type": "node_update", "data": { "stage": "measure", "node": { "id": "n-measure", "label": "网格采样与步行测时", "status": "working", "expert": "L2-005" } } },
+    { "type": "progress", "data": { "stage": "measure", "percent": 30, "stage_seq": 3 } },
+    { "type": "message", "data": { "stage": "measure", "text": "粗扫 400m 网格 221 点 → 15min 边界带加密 150m 共 321 采样点，批量距离矩阵测时中", "expert": "L2-005" } },
+    { "type": "evidence", "data": { "stage": "measure", "evidence": { "evidence_id": "ev-lc-kaili-samp-1", "source_url": "fixture://living-circle/kaili/sampling", "source_type": "api_measure", "title": "采样点测时记录（第 1 批 · 40 点）", "excerpt": "批量算路 walking 返回 40 条耗时，中位 12.4min，最远可达点位于东南侧 20min 边界", "credibility": 0.95, "collected_by": "L2-005", "captured_at": "2026-09-19T10:21:01Z", "domain": "walkability" } } },
+    { "type": "message", "data": { "stage": "measure", "text": "IDW 插值生成连续耗时场：5/10/15/20min 等值线族面积 0.31 / 0.62 / 1.21 / 2.05 km²", "expert": "L2-005" } },
+
+    { "type": "node_update", "data": { "stage": "collect", "node": { "id": "n-collect", "label": "POI 分类采集与清洗", "status": "working", "expert": "L2-004" } } },
+    { "type": "progress", "data": { "stage": "collect", "percent": 55, "stage_seq": 4 } },
+    { "type": "evidence", "data": { "stage": "collect", "evidence": { "evidence_id": "ev-lc-kaili-poi-market", "source_url": "fixture://living-circle/kaili/poi/market", "source_type": "poi_search", "title": "菜市场 POI 检索（2km）", "excerpt": "命中 4 处，名称归一+50m 聚簇去重后 4 处，圈内 3 处，最近「凯里老街菜市场」2.0min", "credibility": 0.92, "collected_by": "L1-001", "captured_at": "2026-09-19T10:21:11Z", "domain": "market" } } },
+    { "type": "evidence", "data": { "stage": "collect", "evidence": { "evidence_id": "ev-lc-kaili-poi-medical", "source_url": "fixture://living-circle/kaili/poi/medical", "source_type": "poi_search", "title": "医疗 POI 检索（2km）", "excerpt": "命中 7 处（社区医院/诊所/药店），圈内 5 处，最近「益民大药房（老街店）」2.1min", "credibility": 0.92, "collected_by": "L1-004", "captured_at": "2026-09-19T10:21:13Z", "domain": "medical" } } },
+    { "type": "progress", "data": { "stage": "collect", "percent": 70, "stage_seq": 4 } },
+    { "type": "message", "data": { "stage": "collect", "text": "8 类民生设施采集完成：总量 24 处，15min 圈内 19 处；养老类圈内 0 处待诊断", "expert": "L2-004" } },
+
+    { "type": "node_update", "data": { "stage": "diagnose", "node": { "id": "n-diagnose", "label": "覆盖统计与盲区识别", "status": "working", "expert": "L3-002" } } },
+    { "type": "progress", "data": { "stage": "diagnose", "percent": 82, "stage_seq": 5 } },
+    { "type": "message", "data": { "stage": "diagnose", "text": "1km 网格判定：识别 4 处服务盲区，累计缺失 菜市场/药店/小学；综合评分 65（设施覆盖 76 / 可达 82 / 多样性 70 / 均衡 55）", "expert": "L3-002" } },
+    { "type": "evidence", "data": { "stage": "diagnose", "evidence": { "evidence_id": "ev-lc-kaili-bs-1", "source_url": "fixture://living-circle/kaili/blindspot/bs-kaili-laojie-1", "source_type": "grid_scan", "title": "盲区点位 bs-kaili-laojie-1", "excerpt": "1km 内无菜市场/药店/小学；最近菜市西北 609m、药房正西 631m、小学西南 819m", "credibility": 0.98, "collected_by": "L3-002", "captured_at": "2026-09-19T10:21:22Z", "domain": "coverage" } } },
+
+    { "type": "node_update", "data": { "stage": "report", "node": { "id": "n-report", "label": "章节报告与建议撰写", "status": "working", "expert": "L2-008" } } },
+    { "type": "progress", "data": { "stage": "report", "percent": 93, "stage_seq": 6 } },
+    { "type": "message", "data": { "stage": "report", "text": "按 GB50180 生活圈标准撰写 8 章体检报告：养老配置与盲区整改优先级已标注", "expert": "L2-008" } },
+
+    { "type": "node_update", "data": { "stage": "audit", "node": { "id": "n-audit", "label": "质检签发", "status": "working", "expert": "L3-003" } } },
+    { "type": "progress", "data": { "stage": "audit", "percent": 98, "stage_seq": 7 } },
+    { "type": "message", "data": { "stage": "audit", "text": "质检通过：采样 321 点覆盖率 96%，证据溯源完整，签发", "expert": "L3-003" } },
+    { "type": "report_ready", "data": { "report_id": "lc-kaili", "title": "凯里老街 · 生活圈体检报告" } },
+    { "type": "done", "data": { "report_id": "lc-kaili" } }
+  ]
+}

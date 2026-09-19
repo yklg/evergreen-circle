@@ -6,7 +6,12 @@ import type {
   EvidenceQueryResp,
   Expert,
   ExpertWorkload,
+  LifeCircleCompare,
+  LifeCircleMode,
+  LifeCircleRecord,
   PingLLMResp,
+  PrefsResp,
+  PrefsValues,
   Report,
   ReportCard,
   ReportSection,
@@ -16,8 +21,10 @@ import type {
   SettingsValues,
   Subscription,
   TraceSpan,
-  ReportBrief,
 } from '../types'
+import { USE_MOCK, LC_DATA_MODE } from '../mocks/livingCircleMock'
+import { getLivingCircleReportMock } from '../mocks/livingCircleReports'
+import { replayLivingCircleStream } from '../mocks/livingCircleStream'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -106,6 +113,57 @@ export async function createTask(query: string, mode: string = 'deep', model?: s
   )
 }
 
+/* ── 生活圈体检（M3 真实编排，type=living_circle 独立流水线）────── */
+
+/**
+ * 发起生活圈体检任务。center=[lng,lat]（BD-09）可缺省——后端地理编码 / fixture 样例名匹配兜底。
+ * 真实链路：失败必须显式抛出（假 taskId 会让工作台白屏，不做静默兜底）。
+ */
+export async function createLivingCircleTask(input: {
+  query: string
+  mode?: LifeCircleMode
+  center?: [number, number] | null
+  city?: string
+  address?: string
+  data_mode?: string
+}): Promise<CreateTaskResp> {
+  const r = await fetch(`${API_BASE}/api/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: input.query,
+      mode: input.mode ?? 'standard',
+      type: 'living_circle',
+      center: input.center ?? null,
+      city: input.city ?? '',
+      address: input.address ?? '',
+      data_mode: input.data_mode ?? LC_DATA_MODE,
+    }),
+  })
+  const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }
+  if (!r.ok || !data.taskId) {
+    throw new Error(data.detail || data.message || `创建体检任务失败（HTTP ${r.status}）`)
+  }
+  return { taskId: data.taskId }
+}
+
+/** 历史体检记录列表（对齐 LifeCircleRecord，历史页 / 报告中心共用）。 */
+export async function fetchLifeCircleReports(): Promise<LifeCircleRecord[]> {
+  return safeJson<LifeCircleRecord[]>('/api/life-circle', undefined, [])
+}
+
+/** 完整体检报告（Report 挂载 living_circle，渲染适配器直接消费）。 */
+export async function fetchLifeCircleReport(reportId: string): Promise<Report | null> {
+  return safeJson<Report | null>(`/api/life-circle/${reportId}`, undefined, null)
+}
+
+/** 双社区对比（LifeCircleCompare：reports + diff 指标表）。 */
+export async function fetchLifeCircleCompare(ids: string[]): Promise<LifeCircleCompare | null> {
+  if (ids.length < 2) return null
+  const qs = ids.map(encodeURIComponent).join(',')
+  return safeJson<LifeCircleCompare | null>(`/api/life-circle/compare?ids=${qs}`, undefined, null)
+}
+
 export async function submitClarify(
   taskId: string,
   answers: Record<string, unknown>,
@@ -122,6 +180,8 @@ export async function submitClarify(
 }
 
 export async function fetchReport(reportId: string): Promise<Report | null> {
+  // F 阶段：mock 态由 fixture 构造完整 Report（report_type/living_circle 由渲染适配器消费）
+  if (USE_MOCK) return getLivingCircleReportMock(reportId)
   return safeJson<Report | null>(`/api/reports/${reportId}`, undefined, null)
 }
 
@@ -174,20 +234,19 @@ export async function deleteReport(reportId: string): Promise<{ ok: boolean }> {
   return safeJson(`/api/reports/${reportId}`, { method: 'DELETE' }, { ok: true })
 }
 
-/* 一页纸精炼（简报）：幂等生成并返回；失败（HTTP 非 2xx / 网络异常）必须显式抛出并提供错误信息。 */
-export async function generateReportBrief(
-  reportId: string,
-): Promise<{ ok?: boolean; brief?: ReportBrief; message?: string }> {
+/* 一页纸精炼（简报，G7）：创建 kind='brief' 后台任务并返回 taskId。
+ * 幂等/失败语义在任务流内：产物落库后 report.brief 就绪；历史补帧/终态重连由任务流保证。
+ * HTTP 非 2xx（如 404）显式抛出；网络异常亦显式抛出（不做静默兜底）。 */
+export async function generateReportBrief(reportId: string): Promise<{ taskId: string }> {
   const r = await fetch(`${API_BASE}/api/reports/${reportId}/brief`, { method: 'POST' })
-  const data = (await r.json().catch(() => ({}))) as {
-    ok?: boolean
-    brief?: ReportBrief
-    message?: string
-  }
+  const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }
   if (!r.ok) {
-    throw new Error(data.message || `生成失败（HTTP ${r.status}）`)
+    throw new Error(data.detail || data.message || `请求失败（HTTP ${r.status}）`)
   }
-  return data
+  if (!data.taskId) {
+    throw new Error(data.message || '未返回任务 ID，请重试')
+  }
+  return { taskId: data.taskId }
 }
 
 /* 仪表盘真实统计 */
@@ -269,6 +328,11 @@ export interface SSEHandlers {
 }
 
 export function openTaskStream(taskId: string, handlers: SSEHandlers): () => void {
+  // A4：体检任务（lc-*）在 mock 态回放 fixture 事件流（默认报告 lc-kaili，样区页可显式覆写）；
+  // M3 换真实 SSE，事件类型/字段契约不变，前端零改动。
+  if (USE_MOCK && taskId.startsWith('lc-')) {
+    return replayLivingCircleStream(taskId, handlers)
+  }
   const url = `${API_BASE}/api/tasks/${taskId}/stream`
   const es = new EventSource(url)
   const types: SSEEventType[] = [
@@ -364,4 +428,81 @@ export function getTaskStatus(taskId: string): Promise<TaskStatusResp> {
 /** 进行中的任务列表。 */
 export function listRunningTasks(): Promise<RunningTask[]> {
   return safeJson<RunningTask[]>('/api/tasks/running', undefined, [])
+}
+
+/* ── 用户级偏好（prefs）───────────────────────────────────
+   与 fetchSettings/saveSettings 的分工：settings 是系统级运行时配置（密钥脱敏）；
+   prefs 是用户级偏好（明文）。持久化策略（本地秒开 / 远端真相源 / 首次上推）
+   不在本层，见 src/lib/persist.ts —— 本层只管 HTTP。 */
+
+/**
+ * 「当前部署根本没有这个接口」——与「临时网络故障」是两回事。
+ *
+ * 触发场景：Vercel 只读镜像 `api/index.py` 是**有意裁剪**的部署形态（该目录
+ * 是 backend/ 的子集，见 backend/tests/test_api_mirror_guard.py），只写 /tmp、
+ * 明确声明「刷新/重启后不持久化」。因此那边不存在 /api/prefs **不是 bug**。
+ *
+ * 拿到此错误意味着：应永久降级为纯本地持久化，而不是把它当成故障反复重推。
+ */
+export class PrefsUnsupportedError extends Error {
+  constructor(status: number) {
+    super(`该部署未提供 /api/prefs（HTTP ${status}），已降级为本地持久化`)
+    this.name = 'PrefsUnsupportedError'
+  }
+}
+
+/** 服务端偏好接口可用性。`unknown` 表示尚未观察到任何结论，此时正常发请求。 */
+export type PrefsApiCapability = 'unknown' | 'supported' | 'unsupported'
+
+let prefsCapability: PrefsApiCapability = 'unknown'
+
+/** 供 persist 层查询：`unsupported` 时不再空推、不再刷告警。 */
+export function getPrefsApiCapability(): PrefsApiCapability {
+  return prefsCapability
+}
+
+/** 判定「接口不存在」的状态码（404 路由缺失 / 405 方法未实现）。 */
+function isMissingEndpoint(status: number): boolean {
+  return status === 404 || status === 405
+}
+
+/** 读取用户偏好。后端不可用时返回 null（由 persist 层决定"保留本地值"）。 */
+export async function fetchPrefs(): Promise<PrefsResp | null> {
+  try {
+    const r = await fetch(`${API_BASE}/api/prefs`)
+    if (isMissingEndpoint(r.status)) {
+      prefsCapability = 'unsupported'
+      return null
+    }
+    if (!r.ok) return null
+    prefsCapability = 'supported'
+    return (await r.json()) as PrefsResp
+  } catch {
+    return null
+  }
+}
+
+/** 写入用户偏好（增量 patch）。失败抛错，由 persist 层保留 pending 标记待重推。 */
+export async function savePrefs(patch: PrefsValues): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/prefs`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patch }),
+  })
+  if (isMissingEndpoint(r.status)) {
+    // 该部署没有这个接口 → 记录能力缺失，抛专用错误让 persist 层永久降级
+    prefsCapability = 'unsupported'
+    throw new PrefsUnsupportedError(r.status)
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}))
+    const errors = (data as { detail?: { errors?: Record<string, string> } })?.detail?.errors
+    const msg = errors
+      ? Object.entries(errors)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join('\n')
+      : `偏好保存失败（HTTP ${r.status}）`
+    throw new Error(msg)
+  }
+  prefsCapability = 'supported'
 }

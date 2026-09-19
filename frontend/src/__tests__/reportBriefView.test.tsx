@@ -13,7 +13,7 @@
  *  - ReportPage：点「简报」切简报视图、再点恢复完整视图（指标带仍在）；点「演示」跳 /report/{id}/slides
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ReportBriefView from '../components/ReportBriefView'
 import * as api from '../lib/api'
@@ -75,6 +75,25 @@ vi.mock('../store/reportStore', () => ({
 }))
 
 const mockedGenerate = api.generateReportBrief as unknown as ReturnType<typeof vi.fn>
+const mockedOpenStream = api.openTaskStream as unknown as ReturnType<typeof vi.fn>
+
+/** 捕获 openTaskStream 传入的 handlers，返回 close 函数（供用例驱动 SSE 事件）。 */
+function captureStreamHandlers() {
+  let handlers: api.SSEHandlers | null = null
+  const closeFn = vi.fn()
+  mockedOpenStream.mockImplementation((_taskId: string, h: api.SSEHandlers) => {
+    handlers = h
+    return closeFn
+  })
+  return {
+    get handlers() {
+      if (!handlers) throw new Error('openTaskStream 未被调用')
+      return handlers
+    },
+    closeFn,
+    ensureCalled: () => expect(mockedOpenStream).toHaveBeenCalledTimes(1),
+  }
+}
 
 function makeReport(overrides: Partial<Report> = {}): Report {
   const id = overrides.id ?? 'r1'
@@ -111,6 +130,7 @@ const fakeBrief = {
 
 beforeEach(() => {
   mockedGenerate.mockReset()
+  mockedOpenStream.mockReset()
 })
 
 afterEach(() => {
@@ -126,35 +146,68 @@ describe('ReportBriefView 一页纸精炼', () => {
     expect(screen.getByText('行动A')).toBeTruthy()
   })
 
-  it('无 brief → 显示「AI 生成一页纸精炼」按钮，点击调用 generateReportBrief 并渲染结果', async () => {
-    mockedGenerate.mockResolvedValue({ ok: true, brief: fakeBrief })
+  it('无 brief → 点击 → 创建任务(得 taskId) → SSE progress 渲染进度', async () => {
+    mockedGenerate.mockResolvedValue({ taskId: 'bt_1' })
+    const stream = captureStreamHandlers()
     render(<ReportBriefView report={makeReport()} />)
-    const btn = screen.getByRole('button', { name: /AI 生成一页纸精炼/ })
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByRole('button', { name: /AI 生成一页纸精炼/ }))
     await waitFor(() => expect(mockedGenerate).toHaveBeenCalledWith('r1'))
-    await waitFor(() => expect(screen.getByText('一句话概括')).toBeTruthy())
+    stream.ensureCalled()
+    expect(mockedOpenStream).toHaveBeenCalledWith('bt_1', expect.any(Object))
+
+    // 驱动 progress 事件 → 进度条 + 阶段文案 + 按钮置灰「生成中…」
+    act(() => stream.handlers.onEvent('progress', { percent: 40, stage: '压缩核心判断…' }))
+    expect(screen.getByText('40%')).toBeTruthy()
+    expect(screen.getByText('压缩核心判断…')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /生成中/ }) as HTMLButtonElement).toBeTruthy()
   })
 
-  it('失败显式 + 冷却：brief_failed_at 距今 <30s 时按钮置灰并提示冷却', async () => {
-    mockedGenerate.mockRejectedValue(new Error('LLM 未配置'))
-    const failedAt = new Date(Date.now() - 5 * 1000).toISOString() // 5 秒前失败 → 冷却中
-    render(<ReportBriefView report={makeReport({ brief_failed_at: failedAt })} />)
-    const btn = screen.getByRole('button', { name: /AI 生成一页纸精炼/ }) as HTMLButtonElement
-    expect(btn.disabled).toBe(true)
-    expect(screen.getByText(/上次失败不足 30 秒/)).toBeTruthy()
-    // 冷却期点击无效：不会触发生成（也不会产生新的失败文案）
-    fireEvent.click(btn)
-    expect(mockedGenerate).not.toHaveBeenCalled()
+  it('done 事件 → 触发 onBriefDone；父级重载后 brief 四段落地', async () => {
+    mockedGenerate.mockResolvedValue({ taskId: 'bt_2' })
+    const stream = captureStreamHandlers()
+    const onBriefDone = vi.fn()
+    const { rerender } = render(
+      <ReportBriefView report={makeReport()} onBriefDone={onBriefDone} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /AI 生成一页纸精炼/ }))
+    await waitFor(() => expect(mockedOpenStream).toHaveBeenCalledTimes(1))
+
+    stream.handlers.onEvent('done', { reportId: 'r1' })
+    expect(onBriefDone).toHaveBeenCalledTimes(1)
+    expect(stream.closeFn).toHaveBeenCalledTimes(1)
+
+    // 父级重载：report.brief 就绪 → 四段渲染、进度与错误态清空
+    rerender(<ReportBriefView report={makeReport({ brief: fakeBrief })} onBriefDone={onBriefDone} />)
+    expect(screen.getByText('一句话概括')).toBeTruthy()
+    expect(screen.getByText('判断1')).toBeTruthy()
+    expect(screen.queryByText(/生成/)).toBeNull()
   })
 
-  it('冷却期过后（brief_failed_at 距今 ≥30s）按钮恢复可点击；点击失败 → 展示原因', async () => {
-    mockedGenerate.mockRejectedValue(new Error('LLM 未配置'))
-    const stale = new Date(Date.now() - 60 * 1000).toISOString()
-    render(<ReportBriefView report={makeReport({ brief_failed_at: stale })} />)
+  it('SSE error 事件 → 显式展示原因，按钮立即恢复可重试（无 30s 冷却 hack）', async () => {
+    mockedGenerate.mockResolvedValue({ taskId: 'bt_3' })
+    const stream = captureStreamHandlers()
+    render(<ReportBriefView report={makeReport()} />)
+    fireEvent.click(screen.getByRole('button', { name: /AI 生成一页纸精炼/ }))
+    await waitFor(() => expect(mockedOpenStream).toHaveBeenCalledTimes(1))
+    act(() => stream.handlers.onEvent('error', { message: 'LLM 未配置' }))
+
+    expect(screen.getByText(/生成失败：LLM 未配置/)).toBeTruthy()
+    expect(stream.closeFn).toHaveBeenCalledTimes(1)
+    // 失败后可立即重试：按钮可用，未见冷却文案
     const btn = screen.getByRole('button', { name: /AI 生成一页纸精炼/ }) as HTMLButtonElement
     expect(btn.disabled).toBe(false)
-    fireEvent.click(btn)
+    expect(screen.queryByText(/上次失败不足 30 秒/)).toBeNull()
+    expect(screen.queryByText(/冷却/)).toBeNull()
+  })
+
+  it('任务创建失败（HTTP/网络异常）→ 显式展示原因，不伪装成功', async () => {
+    mockedGenerate.mockRejectedValue(new Error('LLM 未配置'))
+    render(<ReportBriefView report={makeReport()} />)
+    fireEvent.click(screen.getByRole('button', { name: /AI 生成一页纸精炼/ }))
     await waitFor(() => expect(screen.getByText(/生成失败：LLM 未配置/)).toBeTruthy())
+    expect(mockedOpenStream).not.toHaveBeenCalled()
+    const btn = screen.getByRole('button', { name: /AI 生成一页纸精炼/ }) as HTMLButtonElement
+    expect(btn.disabled).toBe(false)
   })
 
   it('brief 含 HTML 特殊字符 → 以纯文本渲染，不产生元素（禁止 dangerouslySetInnerHTML）', () => {

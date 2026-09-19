@@ -141,4 +141,13 @@
   .brief-para-expand {
     display: none !important;
   }
+
+  /* 报告详情页英雄区：背景改由 CSS 渐变承担（原为封面 <img>）。
+     浏览器默认「不打印背景」，此处不声明则导出 PDF 时渐变变白纸、
+     而标题是白色 → 导出的文档里标题彻底消失。
+     两个属性必须双写：Safari 仍依赖 -webkit- 前缀。 */
+  .report-hero {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
 }

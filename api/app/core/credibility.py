@@ -98,6 +98,7 @@ def score_evidence(
     ok_fetch: bool = True,
     excerpt: str = "",
     signals: Optional[dict] = None,
+    viral: bool = False,
 ) -> int:
     """返回 0-100 的可信度分数（int，精确到个位、有差异）。
 
@@ -138,6 +139,10 @@ def score_evidence(
 
     # 社媒平台热度信号：评论/点赞/粉丝越多，口碑越有代表性（对数衰减，最高 +12）
     score += _engagement_bonus(signals)
+
+    # 舆论过热惩罚（v2.1，与 backend 一致）：高热≠可信，按传入标记扣分
+    if viral:
+        score -= 8
 
     # 让分数有非 5 倍数的细微差异：用域名长度做轻微扰动（确定性、可复现）
     if domain:
