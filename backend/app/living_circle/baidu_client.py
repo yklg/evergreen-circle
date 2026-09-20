@@ -78,7 +78,14 @@ class BaiduClient:
         return None
 
     async def geoconv(self, coords: List[Tuple[float, float]], from_: int = 1, to: int = 5) -> List[Tuple[float, float]]:
-        """坐标转换（默认 GCJ-02→BD-09）。返回转换后 (lng, lat) 列表。"""
+        """坐标转换（默认 WGS-84→BD-09）。返回转换后 (lng, lat) 列表。
+
+        百度 `geoconv/v1` 的坐标类型编号：**1=WGS-84(GPS)、2=GCJ-02(国测局)、3=BD-09(百度)**。
+        故默认 `from_=1, to=5` 是「WGS-84 → BD-09 经纬度」（5 = bd09ll），
+        与浏览器 `navigator.geolocation` 的输出口径对齐。
+        （原 docstring 写作「GCJ-02→BD-09」——把 1 当成 GCJ-02。这类"文档与编码不一致"
+        正是坐标系事故的温床，故此处逐字写清编号含义。）
+        """
         if not coords:
             return []
         pairs = ";".join(f"{lng},{lat}" for lng, lat in coords)
@@ -91,15 +98,30 @@ class BaiduClient:
         return out
 
     async def reverse_geocoding(self, location: Tuple[float, float]) -> Optional[Dict[str, Any]]:
+        """坐标 → 地址（BD-09 输入）。
+
+        ⚠️ 历史实现返回 ``{"name": formatted_address, "city": ""}`` —— ``city`` 恒为空串：
+        契约字段已声明却**从未接线**（百度响应里明明有 ``addressComponent``）。
+        后果是「城市」只能由调用方去别处猜（前端拿的是**当前展示报告**的城市 →
+        名/坐标/城市三者来源不一，实测产出「名称=北京劲松 / 中心=昆明」的报告）。
+
+        现按百度 ``addressComponent`` 取：直辖市（北京/上海/天津/重庆）的 ``city`` 为空，
+        此时回落 ``province``；``district`` 单独返回供调用方组合。
+        """
         resp = await self._get(
             "/reverse_geocoding/v3/",
             {"location": f"{location[1]},{location[0]}", "coordtype": "bd09ll", "extensions_poi": 0},
         )
         if not resp or resp.get("status") != 0:
             return None
+        result = resp.get("result") or {}
+        comp = result.get("addressComponent") or {}
+        city = (comp.get("city") or "").strip() or (comp.get("province") or "").strip()
         return {
-            "name": (resp.get("result", {}) or {}).get("formatted_address", "") or "",
-            "city": "",
+            "name": result.get("formatted_address", "") or "",
+            "city": city,
+            "district": (comp.get("district") or "").strip(),
+            "province": (comp.get("province") or "").strip(),
         }
 
     # ── POI 检索 ────────────────────────────────────────
@@ -141,44 +163,134 @@ class BaiduClient:
                 break
         return results
 
-    # ── 步行测时 ────────────────────────────────────────
-    async def direction_walking(self, origin: Tuple[float, float], destination: Tuple[float, float]) -> Optional[float]:
-        """单点步行测时 → 分钟（None=不可达/失败）。"""
-        resp = await self._get(
-            "/directionlite/v1/walking",
-            {"origin": f"{origin[1]},{origin[0]}", "destination": f"{destination[1]},{destination[0]}"},
-        )
-        if not resp or resp.get("status") != 0:
-            return None
-        result = (resp.get("result") or {}).get("routes") or []
-        if not result:
-            return None
-        duration_s = result[0].get("duration", 0)
-        return duration_s / 60.0 if isinstance(duration_s, (int, float)) else None
+    # ── 测时（批量矩阵 + 单点兜底）────────────────────────
+    async def _measure_matrix(
+        self,
+        travel_mode: str,
+        origins: List[Tuple[float, float]],
+        destination: Tuple[float, float],
+        chunk_size: Optional[int] = None,
+    ) -> List[Optional[float]]:
+        """通用距离矩阵（walking/riding/driving）：N×1 → 分钟列表（None=不可达）。
+
+        travel_mode: walking / riding / driving
+        chunk_size: 分块大小（默认从 caliber 读取；若未加载 manifest 则兜底 25）
+        """
+        from app.living_circle.caliber import get_caliber
+
+        caliber = get_caliber(travel_mode)
+        api = caliber.api
+        if not api:
+            raise ValueError(f"Travel mode {travel_mode!r} has no API capability configured")
+
+        chunk = chunk_size or api.chunk
+        matrix_path = api.matrix_path
+        fallback_path = api.fallback_path
+
+        out: List[Optional[float]] = []
+        dest = f"{destination[1]},{destination[0]}"
+
+        for start in range(0, len(origins), chunk):
+            chunk_origins = origins[start : start + chunk]
+            origins_str = "|".join(f"{lat},{lng}" for lng, lat in chunk_origins)
+            resp = await self._get(
+                matrix_path,
+                {"origins": origins_str, "destinations": dest},
+            )
+            rows = (resp or {}).get("result") or []
+            if isinstance(rows, dict):
+                rows = rows.get("rows") or []  # 兼容 {result:{rows:[...]}} 变体
+
+            if len(rows) < len(chunk_origins):
+                # 批量块部分/全部失败 → 降级单点兜底
+                logger.warning(
+                    "[living_circle] %s routematrix 块行数不足（need=%d got=%d），降级单点兜底",
+                    travel_mode, len(chunk_origins), len(rows),
+                )
+                for p in chunk_origins:
+                    out.append(await self._direction_single(travel_mode, p, destination, fallback_path))
+                continue
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    out.append(None)
+                    continue
+                # 不可达判定：duration.value == null（探针 P3 结论：restrictions_status 不可靠）
+                duration_obj = row.get("duration")
+                if duration_obj is None:
+                    out.append(None)
+                    continue
+                
+                # 兼容两种格式：{duration: {value: N}} 或 {duration: N}（裸数字）
+                if isinstance(duration_obj, dict):
+                    dur_value = duration_obj.get("value")
+                elif isinstance(duration_obj, (int, float)):
+                    dur_value = duration_obj
+                else:
+                    # 字符串或其他类型 → 视为不可达（不猜值）
+                    dur_value = None
+                
+                if dur_value is None:
+                    out.append(None)
+                    continue
+                # duration 单位为秒 → 转分钟
+                out.append(round(float(dur_value) / 60.0, 1))
+
+        return out
+
+    async def measure_matrix(
+        self,
+        travel_mode: str,
+        origins: List[Tuple[float, float]],
+        destination: Tuple[float, float],
+    ) -> List[Optional[float]]:
+        """批量距离矩阵（**任意出行方式**）：N×1 → 分钟列表（None=不可达/该元素失败）。
+
+        pipeline 与数据源都走这一个入口；``travel_mode`` 由调用方从 `CheckParams` 传入。
+        旧版 pipeline 只会调 ``route_matrix_walking`` ⇒ 用户选「骑行/驾车」时测时口径
+        被静默降级为步行（报告仍按骑行/驾车口径渲染），是「形参名承诺 ≠ 实参语义」的又一例。
+        """
+        return await self._measure_matrix(travel_mode, origins, destination)
 
     async def route_matrix_walking(
         self,
         origins: List[Tuple[float, float]],
         destination: Tuple[float, float],
     ) -> List[Optional[float]]:
-        """批量距离矩阵（walking）：N×1 → 分钟列表（None=不可达/该元素失败）。
+        """批量距离矩阵（walking）：向后兼容薄壳，等价 ``measure_matrix("walking", …)``。"""
+        return await self._measure_matrix("walking", origins, destination)
 
-        分块调用（MATRIX_CHUNK/次），聚合结果；M0 探针已验证批量分支可行。
-        """
-        out: List[Optional[float]] = []
-        dest = f"{destination[1]},{destination[0]}"
-        for start in range(0, len(origins), MATRIX_CHUNK):
-            chunk = origins[start : start + MATRIX_CHUNK]
-            origins_str = "|".join(f"{lat},{lng}" for lng, lat in chunk)
-            resp = await self._get(
-                "/routematrix/v2/walking",
-                {"origins": origins_str, "destinations": dest},
-            )
-            elements = (resp or {}).get("result", {}).get("elements") or []
-            for el in elements:
-                if el.get("status") != 0:
-                    out.append(None)
-                else:
-                    duration_s = el.get("duration", {}).get("value")
-                    out.append(duration_s / 60.0 if isinstance(duration_s, (int, float)) else None)
-        return out
+    async def _direction_single(
+        self,
+        travel_mode: str,
+        origin: Tuple[float, float],
+        destination: Tuple[float, float],
+        fallback_path: str,
+    ) -> Optional[float]:
+        """单点方向 API 兜底（当矩阵返回行数不足时调用）。"""
+        o_lat, o_lng = origin[1], origin[0]
+        d_lat, d_lng = destination[1], destination[0]
+        resp = await self._get(
+            fallback_path,
+            {"origin": f"{o_lat},{o_lng}", "destination": f"{d_lat},{d_lng}"},
+        )
+        if not resp or resp.get("status") != 0:
+            return None
+        result = resp.get("result")
+        if not result or not isinstance(result, dict):
+            return None
+        routes = result.get("routes")
+        if not routes or not isinstance(routes, list) or len(routes) == 0:
+            return None
+        duration_sec = routes[0].get("duration")
+        if duration_sec is None:
+            return None
+        return round(float(duration_sec) / 60.0, 1)
+
+    async def direction_walking(
+        self,
+        origin: Tuple[float, float],
+        destination: Tuple[float, float],
+    ) -> Optional[float]:
+        """单点步行方向 API（兜底通道）。"""
+        return await self._direction_single("walking", origin, destination, "/directionlite/v1/walking")

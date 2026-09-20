@@ -1,3 +1,4 @@
+
 """青野 Verda 后端入口（FastAPI）。
 
 挂载：48 专家 API + 任务创建/澄清 + SSE 思维流 + 报告/历史 + 仪表盘统计
@@ -16,7 +17,9 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.living_circle.geo_utils import parse_bd_lnglat
 
 from app.core import db
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
@@ -47,7 +50,7 @@ _logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """启动编排：配置键迁移（键名泛化 zhipu_* → llm_*）显式执行，fail-fast。
+    """启动编排：配置键迁移（键名泛化 zhipu_* -> llm_*）显式执行，fail-fast。
 
     并回收孤儿 running：进程重启后内存里的实时任务已丢，DB 仍标记 running 会
     让前端悬浮条永久转圈，这里统一标 failed。
@@ -293,31 +296,102 @@ class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"  # quick | deep | expert
     model: Optional[str] = None  # 用户选择的分析模型；空/'Auto'/None 表示按 settings 编排
+    purpose: str = ""  # 目的地产出体裁：''(通用 research) | guide(攻略) | assess(评估) | 其余任意
     # 生活圈体检入参（type=living_circle，A1 独立流水线）
     type: str = "research"
     center: Optional[List[float]] = None  # [lng, lat] BD-09
     city: str = ""
     address: str = ""
     data_mode: str = ""  # ''=auto（live 无 AK 自动降级 fixture） | 'live' | 'fixture'
+    travel_mode: str = "walking"  # walking / riding / driving（阶段 3 多方式）
+    coord_sys: str = "bd09"  # 入参 center 的坐标系：'bd09' | 'wgs84'（后者由服务端 geoconv 转换）
+
+    @field_validator("center", mode="before")
+    @classmethod
+    def _validate_center(cls, v):
+        """BD-09 经纬度**值域**校验 —— 跨层坐标契约的唯一关口。
+
+        `LngLat` 是裸元组 ``Tuple[float, float]``：BD-09 经纬度、百度墨卡托米、局部平面米
+        三者在类型系统里**完全同形**，typing 与 TypeScript 都拦不住（喂错坐标系是「类型正确」的）。
+        历史事故：BMapGL ``dragend`` 的 ``e.point`` 是墨卡托平面米
+        ``(11440230.81, 2860409.52)``，被当作经纬度穿过 API → 落库 → 报告 ``scene.center``
+        → 前端再渲染坏地图；**一次写库，之后每次打开都必现**（自我强化闭环）。
+
+        故契约只能落在值域上，且必须卡在**唯一写入口**（此处）。``mode="before"`` 是有意的：
+        在 pydantic 把 ``["107.9", "26.5"]`` 悄悄转成 float 之前就校验原始值——字符串坐标
+        本身就是「上游没走契约」的信号，不该被容错掩盖。
+        """
+        if v is None:
+            return None
+        parsed = parse_bd_lnglat(v)
+        if parsed is None:
+            raise ValueError(
+                "center 必须是 BD-09 经纬度 [lng, lat]（|lng|<=180 且 |lat|<=90）；"
+                f"收到 {v!r}。若来自地图拖拽，注意 BMapGL 的 e.point 是墨卡托平面米，"
+                "应取 e.latLng 或 marker.getPosition()"
+            )
+        return [parsed[0], parsed[1]]
+
+
+async def _to_bd09(center: List[float], coord_sys: str) -> List[float]:
+    """把入参 center 归一到 BD-09（本域**唯一**的合法坐标系）。
+
+    `coord_sys='wgs84'`（浏览器原生定位，无浏览器 AK 时的降级路径）与 BD-09 相差约 600m
+    —— 与 15 分钟生活圈同量级。旧实现在这条路上**直接把 WGS-84 当 BD-09 用**，中心静默偏移。
+
+    缺 AK 或转换失败时**拒绝**（422/502），绝不「照抄一个看起来像坐标的值」：
+    错中心一旦落库，报告 `scene.center` 就是坏的，之后每次打开都复现。
+    """
+    if coord_sys != "wgs84":
+        return center
+    from app.core.config import get_settings
+
+    ak = get_settings().baidu_server_ak
+    if not ak:
+        raise HTTPException(
+            status_code=422,
+            detail="收到 WGS-84 坐标，但服务端未配置百度 AK，无法转换为 BD-09；"
+                   "请在地图上选点，或直接输入 BD-09 经纬度",
+        )
+    from app.living_circle.baidu_client import BaiduClient
+
+    client = BaiduClient(ak=ak)
+    try:
+        # from=1（WGS-84 GPS）→ to=5（BD-09 经纬度）
+        conv = await client.geoconv([(float(center[0]), float(center[1]))], from_=1, to=5)
+    finally:
+        await client.aclose()
+    parsed = parse_bd_lnglat(conv[0]) if conv else None
+    if parsed is None:
+        raise HTTPException(status_code=502, detail="坐标转换（geoconv）返回异常结果，请稍后重试")
+    return [parsed[0], parsed[1]]
 
 
 @app.post("/api/tasks")
-def post_task(body: CreateTaskBody):
+async def post_task(body: CreateTaskBody):
     if body.type == "living_circle":
         from app.core.pipeline.living_circle import create_living_circle_task
+        from app.living_circle.caliber import get_caliber
 
-        # M3：允许 center 缺省（纯地名输入）——流水线内 live 地理编码 / fixture 样例匹配兜底
+        # B1 修复：按 travel_mode 取 caliber.study_radius_m，不再硬编码 2500
+        travel_mode = body.travel_mode if body.travel_mode in ("walking", "riding", "driving") else "walking"
+        caliber = get_caliber(travel_mode)
+        # 坐标系归一：WGS-84 → BD-09（缺 AK 时 422 拒绝，不静默照抄）
+        center = await _to_bd09(body.center, body.coord_sys) if body.center else None
+
         task_id = create_living_circle_task({
             "scene_name": body.query,
             "city": body.city,
             "address": body.address,
-            "center": body.center,
-            "study_radius_m": 2500.0,
-            "mode": body.mode if body.mode in ("quick", "standard", "precise") else "standard",
+            "center": center,
+            "study_radius_m": float(caliber.study_radius_m),
+            "sample_profile": body.mode if body.mode in ("quick", "standard", "precise") else "standard",
+            "travel_mode": travel_mode,
             "data_mode": body.data_mode,
         })
         return {"taskId": task_id}
-    return create_task(body.query, mode=body.mode, model=body.model)
+    kind = "travel_guide" if body.purpose == "guide" else "travel_assess" if body.purpose == "assess" else "research"
+    return create_task(body.query, mode=body.mode, model=body.model, purpose=body.purpose, kind=kind)
 
 
 class ClarifyBody(BaseModel):
@@ -436,6 +510,45 @@ def delete_report(report_id: str):
 
 
 # ── 生活圈体检报告（A1 独立端点 / 独立文档）───────────────
+@app.get("/api/life-circle/regions")
+def life_circle_regions():
+    """全国省市区三级区划（离线内置，供前端联动地址选择）。
+
+    仅返回名称层级（体积小）；中心坐标由后端统一解析（live geocoding → 离线区划），
+    前端不携带坐标，避免双份定位逻辑。
+    """
+    from app.living_circle.geo_index.offline_geocoder import OfflineGeocoder
+
+    geo = OfflineGeocoder()
+    return {
+        "ok": True,
+        "regions": [
+            {
+                "province": p.get("province", ""),
+                "cities": [
+                    {"name": c.get("name", ""), "districts": [d.get("name", "") for d in c.get("districts", [])]}
+                    for c in p.get("cities", [])
+                ],
+            }
+            for p in geo._provinces
+        ],
+    }
+
+
+@app.get("/api/life-circle/map-config")
+def life_circle_map_config():
+    """浏览器 AK + 个性化地图 styleId 下发（供前端 BMapGL 加载）。
+
+    浏览器 AK 是公开键：百度侧按 Referer 白名单限域（localhost/部署域名），
+    随页面源码公开属设计内行为，故不走 mask_effective 脱敏；空值表示未配置。
+    styleId 为空时前端回退内置 S2 低饱和浅色 styleJson 模板。
+    """
+    from app.core.config import get_settings
+
+    s = get_settings()
+    return {"ok": True, "browser_ak": s.baidu_browser_ak, "map_style_id": s.baidu_map_style_id}
+
+
 @app.get("/api/life-circle")
 def list_life_circle_reports():
     """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。"""
@@ -460,6 +573,22 @@ def compare_life_circle(ids: str = ""):
     }
 
 
+@app.get("/api/life-circle/{report_id}/share")
+def share_life_circle_report(report_id: str):
+    """报告分享直达信息（E1）：返回分享链接元数据；报告页本身公开可读，无需鉴权。"""
+    rep = db.get_living_circle_report(report_id)
+    if not rep:
+        raise HTTPException(status_code=404, detail="体检报告不存在")
+    lc = rep.get("living_circle") or {}
+    scene = lc.get("scene") or {}
+    return {
+        "ok": True,
+        "url": f"/report/{report_id}?share=1",
+        "title": rep.get("title", f"{scene.get('name', '生活圈')} · 体检报告"),
+        "scene_name": scene.get("name", ""),
+    }
+
+
 @app.get("/api/life-circle/{report_id}")
 def get_life_circle_report(report_id: str):
     """完整体检报告（report_type='living_circle' + living_circle 挂载）。"""
@@ -470,19 +599,31 @@ def get_life_circle_report(report_id: str):
 
 
 def _lc_diff(a: dict, b: dict) -> List[dict]:
-    """双样例指标差异表（对齐前端 diff 字段：metric / a_value / b_value / desc）。"""
+    """双样例指标差异表（对齐前端 diff 字段：metric / a_value / b_value / desc）。
+
+    P0-2：offline 报告不产出可比评分/盲区 → 相关行标注「离线估算·不可比」，不参与比较。
+    """
     a15 = next((z["area_km2"] for z in a.get("isochrones", []) if z["minutes"] == 15), 0)
     b15 = next((z["area_km2"] for z in b.get("isochrones", []) if z["minutes"] == 15), 0)
     pa, pb = a.get("poi", {}), b.get("poi", {})
+    a_off, b_off = a.get("data_origin") == "offline", b.get("data_origin") == "offline"
     sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
     ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
     rows: List[dict] = [
         {"metric": "15min 等时圈面积 (km²)", "a_value": round(a15, 2), "b_value": round(b15, 2),
          "desc": ("A 更大" if a15 > b15 else "B 更大") if a15 != b15 else "相当"},
-        {"metric": "POI 采集", "a_value": pa.get("total", 0), "b_value": pb.get("total", 0), "desc": "设施密度"},
-        {"metric": "圈内 POI", "a_value": pa.get("in_circle", 0), "b_value": pb.get("in_circle", 0), "desc": "可达覆盖"},
-        {"metric": "综合评分", "a_value": sa, "b_value": sb, "desc": ("A 更优" if sa > sb else "B 更优") if sa != sb else "持平"},
-        {"metric": "服务盲区", "a_value": ba, "b_value": bb, "desc": ("A 更多" if ba > bb else "B 更多") if ba != bb else "持平"},
+        {"metric": "POI 采集", "a_value": pa.get("total", 0), "b_value": pb.get("total", 0),
+         "desc": "设施密度" if not (a_off or b_off) else "离线估算未采集 POI"},
+        {"metric": "圈内 POI", "a_value": pa.get("in_circle", 0), "b_value": pb.get("in_circle", 0),
+         "desc": "可达覆盖" if not (a_off or b_off) else "离线估算未采集 POI"},
+        {"metric": "综合评分",
+         "a_value": "离线估算" if a_off else sa,
+         "b_value": "离线估算" if b_off else sb,
+         "desc": "不可比 · 离线估算" if (a_off or b_off) else (("A 更优" if sa > sb else "B 更优") if sa != sb else "持平")},
+        {"metric": "服务盲区",
+         "a_value": "离线估算" if a_off else ba,
+         "b_value": "离线估算" if b_off else bb,
+         "desc": "不可比 · 离线估算" if (a_off or b_off) else (("A 更多" if ba > bb else "B 更多") if ba != bb else "持平")},
     ]
     return rows
 

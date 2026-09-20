@@ -266,7 +266,7 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
 function Slide({ title, subtitle, center }: { title: string; subtitle?: string; center: ReactNode }) {
   return (
     <div className="flex h-full flex-col px-14 py-12">
-      <div className="text-xs uppercase tracking-[0.25em] text-[#2f9d6e]">{BRAND.en} · 竞品调研汇报</div>
+      <div className="text-xs uppercase tracking-[0.25em] text-[#2f9d6e]">{BRAND.en} · 目的地调研汇报</div>
       <h1 className="mt-2 font-serif text-[30px] font-bold leading-snug text-[#16211b]">{title}</h1>
       {subtitle && <p className="mt-1 text-sm text-[#5b6560]">{subtitle}</p>}
       <div className="mt-6 flex-1 overflow-hidden">{center}</div>
@@ -278,7 +278,7 @@ function CoverMeta({ r }: { r: Report }) {
   return (
     <div className="mt-4 space-y-2 text-sm text-[#5b6560]">
       <div>生成日期：{r.created_at}</div>
-      {r.brands && r.brands.length > 0 && <div>竞品范围：{r.brands.join(' · ')}</div>}
+      {r.brands && r.brands.length > 0 && <div>调研对象：{r.brands.join(' · ')}</div>}
       <div>
         {r.evidence.length} 条联网证据 · {r.claims.length} 条结论 · {r.experts.length} 位专家协作
       </div>

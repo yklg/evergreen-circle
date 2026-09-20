@@ -9,9 +9,11 @@ import type {
   LifeCircleCompare,
   LifeCircleMode,
   LifeCircleRecord,
+  LifeCircleShare,
   PingLLMResp,
   PrefsResp,
   PrefsValues,
+  RegionProvince,
   Report,
   ReportCard,
   ReportSection,
@@ -22,9 +24,13 @@ import type {
   Subscription,
   TraceSpan,
 } from '../types'
-import { USE_MOCK, LC_DATA_MODE } from '../mocks/livingCircleMock'
+import { isFixtureMode } from '../store/dataModeStore'
+import { kindForPurpose } from './viewRegistry'
 import { getLivingCircleReportMock } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream } from '../mocks/livingCircleStream'
+import { replayResearchStream } from '../mocks/researchStream'
+import { asBdLngLat } from './geo'
+import type { CoordSys } from './geo'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
 
@@ -101,15 +107,24 @@ export async function pingLLM(): Promise<PingLLMResp> {
   }
 }
 
-export async function createTask(query: string, mode: string = 'deep', model?: string | null): Promise<CreateTaskResp> {
+export async function createTask(
+  query: string,
+  mode: string = 'deep',
+  model?: string | null,
+  purpose: string = '',
+): Promise<CreateTaskResp> {
+  const kind = kindForPurpose(purpose)
+  // 演示态离线：不触后端，直接回传 demo taskId 走 fixture 流（与 createLivingCircleTask 同判据）。
+  if (isFixtureMode()) return { taskId: `demo-${Date.now()}`, kind, purpose }
   return safeJson<CreateTaskResp>(
     '/api/tasks',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode, model: model ?? null }),
+      body: JSON.stringify({ query, mode, model: model ?? null, purpose }),
     },
-    { taskId: `demo-${Date.now()}` },
+    // 真实态网络/离线兜底：仍回传 kind/purpose，前端据此走 taskViewProvider + fixture 流
+    { taskId: `demo-${Date.now()}`, kind, purpose },
   )
 }
 
@@ -126,18 +141,25 @@ export async function createLivingCircleTask(input: {
   city?: string
   address?: string
   data_mode?: string
+  /** 中心点坐标系：bd09（默认，地图/文本输入）| wgs84（浏览器原生定位，服务端转 BD-09） */
+  coord_sys?: CoordSys
 }): Promise<CreateTaskResp> {
+  // 坐标契约：前端唯一写入口。非法坐标当场抛错，**绝不**送进库
+  // （一旦落库，报告 scene.center 就是坏的，之后每次打开都复现）。
+  const center = input.center == null ? null : asBdLngLat(input.center, 'createLivingCircleTask')
   const r = await fetch(`${API_BASE}/api/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query: input.query,
-      mode: input.mode ?? 'standard',
+      sample_profile: input.mode ?? 'standard',  // R5: mode → sample_profile
       type: 'living_circle',
-      center: input.center ?? null,
+      center,
+      coord_sys: input.coord_sys ?? 'bd09',
       city: input.city ?? '',
       address: input.address ?? '',
-      data_mode: input.data_mode ?? LC_DATA_MODE,
+      // P1-1：任务数据源并入模式开关（live→真实/离线估算链路，fixture→内置演示）
+      data_mode: input.data_mode ?? (isFixtureMode() ? 'fixture' : 'live'),
     }),
   })
   const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }
@@ -155,6 +177,21 @@ export async function fetchLifeCircleReports(): Promise<LifeCircleRecord[]> {
 /** 完整体检报告（Report 挂载 living_circle，渲染适配器直接消费）。 */
 export async function fetchLifeCircleReport(reportId: string): Promise<Report | null> {
   return safeJson<Report | null>(`/api/life-circle/${reportId}`, undefined, null)
+}
+
+/** 全国省市区三级区划（D1：无 AK 依赖的离线树，供地址联动选择）。 */
+export async function fetchLifeCircleRegions(): Promise<RegionProvince[]> {
+  const r = await safeJson<{ ok: boolean; regions?: RegionProvince[] }>(
+    '/api/life-circle/regions',
+    undefined,
+    { ok: true, regions: [] },
+  )
+  return r?.regions ?? []
+}
+
+/** 报告分享直达信息（E1：url/title；报告页公开可读）。 */
+export async function fetchLifeCircleShare(reportId: string): Promise<LifeCircleShare | null> {
+  return safeJson<LifeCircleShare | null>(`/api/life-circle/${reportId}/share`, undefined, null)
 }
 
 /** 双社区对比（LifeCircleCompare：reports + diff 指标表）。 */
@@ -180,8 +217,8 @@ export async function submitClarify(
 }
 
 export async function fetchReport(reportId: string): Promise<Report | null> {
-  // F 阶段：mock 态由 fixture 构造完整 Report（report_type/living_circle 由渲染适配器消费）
-  if (USE_MOCK) return getLivingCircleReportMock(reportId)
+  // 演示态（fixture）：由内置快照构造完整 Report（report_type/living_circle 由渲染适配器消费）
+  if (isFixtureMode()) return getLivingCircleReportMock(reportId)
   return safeJson<Report | null>(`/api/reports/${reportId}`, undefined, null)
 }
 
@@ -327,11 +364,23 @@ export interface SSEHandlers {
   onOpen?: () => void
 }
 
-export function openTaskStream(taskId: string, handlers: SSEHandlers): () => void {
-  // A4：体检任务（lc-*）在 mock 态回放 fixture 事件流（默认报告 lc-kaili，样区页可显式覆写）；
-  // M3 换真实 SSE，事件类型/字段契约不变，前端零改动。
-  if (USE_MOCK && taskId.startsWith('lc-')) {
-    return replayLivingCircleStream(taskId, handlers)
+export interface OpenTaskStreamMeta {
+  kind?: string
+  purpose?: string
+}
+
+export function openTaskStream(
+  taskId: string,
+  handlers: SSEHandlers,
+  meta: OpenTaskStreamMeta = {},
+): () => void {
+  // 演示（fixture）态按任务类型分流回放：
+  // - 生活圈任务（lc-*）→ replayLivingCircleStream（既有契约）；其余 research/旅行 →
+  //   replayResearchStream（角色专家流水线，与真实 SSE 事件字段同构）。
+  // - 真实态统一走 /api SSE，事件类型/字段契约不变，前端零改动。
+  if (isFixtureMode()) {
+    if (taskId.startsWith('lc-')) return replayLivingCircleStream(taskId, handlers)
+    return replayResearchStream(taskId, handlers, { purpose: meta.purpose ?? '' })
   }
   const url = `${API_BASE}/api/tasks/${taskId}/stream`
   const es = new EventSource(url)
@@ -412,9 +461,15 @@ export interface RunningTask {
   started_at: string | null
 }
 
-/** 实时进度与状态；断连后仍在后台跑，可轮询感知终态。 */
-export function getTaskStatus(taskId: string): Promise<TaskStatusResp> {
-  return safeJson<TaskStatusResp>(`/api/tasks/${taskId}/status`, undefined, {
+/** 实时进度与状态；断连后仍在后台跑，可轮询感知终态。
+ *  `notFound` 仅在「HTTP 200 且 body.status 为空」时为 true（后端明确无此任务，
+ *  见 backend runner.get_status：对未知任务恒 200 + status:null）；网络失败 / 5xx →
+ *  `notFound=false`（暂不可用），由调用方保留现状下轮再试，避免把后端暂不可用误判为
+ *  “任务不存在”而误删运行中的真实任务。 */
+export async function getTaskStatus(
+  taskId: string,
+): Promise<TaskStatusResp & { notFound: boolean }> {
+  const unavailable: TaskStatusResp & { notFound: boolean } = {
     status: null,
     percent: 0,
     stage: '',
@@ -422,7 +477,16 @@ export function getTaskStatus(taskId: string): Promise<TaskStatusResp> {
     report_id: null,
     started_at: null,
     updated_at: null,
-  })
+    notFound: false,
+  }
+  try {
+    const r = await fetch(`${API_BASE}/api/tasks/${taskId}/status`)
+    if (!r.ok) return unavailable
+    const body = (await r.json()) as TaskStatusResp
+    return { ...body, notFound: body.status == null }
+  } catch {
+    return unavailable
+  }
 }
 
 /** 进行中的任务列表。 */

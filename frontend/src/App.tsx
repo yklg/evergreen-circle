@@ -57,7 +57,9 @@ export default function App() {
           <Route path="/knowledge" element={<KnowledgePage />} />
         </Route>
 
-        {/* 全屏沉浸页：澄清 / 工作台 / 报告 / 图谱 */}
+        {/* 全屏沉浸页：澄清 / 工作台 / 报告 / 图谱
+            目的地调研统一经首页向导发起，工作台仅承载带 taskId 的流水线
+            （/workspace/:taskId），无参 /workspace 不再注册；未知路径由 * 兜底回首页。 */}
         <Route path="/clarify/:taskId" element={<ClarifyPage />} />
         <Route path="/workspace/:taskId" element={<WorkspacePage />} />
         <Route path="/report/:reportId" element={<ReportPage />} />

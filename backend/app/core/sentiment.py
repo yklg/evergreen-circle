@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from app.core.llm import chat_json
@@ -268,3 +269,90 @@ def _build_camps(brand: str, comments: List[Dict[str, Any]], total: int) -> List
             "quotes": quotes,
         })
     return camps
+
+
+def category_keywords(category: str) -> List[str]:
+    """把主题短语拆成关键词，用于舆情相关性消歧（如『交通与票务』→ [交通, 票务]）。
+
+    中英文混合分词：英文按字母数字连字符片段；中文短语在整段之外再切 2 字片段，
+    提升命中召回（长短语不再被当拒绝词）。去重保序；空→[]。
+    """
+    if not category:
+        return []
+    kws: List[str] = []
+    for w in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{1,}", category.lower()):
+        kws.append(w)
+    for run in re.findall(r"[\u4e00-\u9fff]{2,}", category):
+        kws.append(run.lower())
+        if len(run) > 2:
+            for i in range(len(run) - 1):
+                kws.append(run[i:i + 2].lower())
+    seen: set = set()
+    return [k for k in kws if not (k in seen or seen.add(k))]
+
+
+def sentiment_relevant(topic: str, cat_keywords: List[str], title: str, text: str) -> bool:
+    """舆情/口碑结果相关性判定：必须命中主题名，或同时带主题关键词（消歧）。
+
+    解决「调研目的地却抓到无关内容」：主题名命中即相关；若主题名未命中，
+    则要求至少命中 1 个主题关键词，否则判为题不对版丢弃。
+    单字主题不构成直击（防『山』误配『黄山/泰山』），需关键词背书。
+    """
+    blob = f"{title} {text}".lower()
+    b = (topic or "").lower().strip()
+    if not b:
+        return True
+    # 主题名（英文或≥2字中文）直接命中
+    if len(b) >= 2 and b in blob:
+        return True
+    # 主题名未命中 → 必须有主题关键词背书，否则大概率跑题
+    if cat_keywords:
+        return any(k in blob for k in cat_keywords)
+    # 没有主题信息时退回宽松：要求主题名出现（上面已判），到这里说明没命中 → 丢弃
+    return False
+
+
+def aggregate_sentiment(evidences: List[Dict[str, Any]], topic: str) -> Dict[str, Any]:
+    """确定性舆情聚合：对一批证据做主题相关的正/中/负计数 + 主题词频 + 代表原声。
+
+    与 analyze_sentiment（平台维度、需真实评论检索）互补：本函数作为可离线主线，
+    任何写了情感标签的证据（appraisal ∈ positive/neutral/negative）优先采用，缺失时
+    回退到规则判定。theme 字段或文本片段用作词频。quotes 始终绑定真实 evidence_id。
+    """
+    pos = neu = neg = 0
+    themes: Dict[str, int] = {}
+    quotes: List[Dict[str, Any]] = []
+    for e in evidences:
+        text = (e.get("text") or "").strip()
+        lab = str(e.get("appraisal") or "").lower()
+        if lab in ("positive", "pos"):
+            s = "positive"
+        elif lab in ("negative", "neg"):
+            s = "negative"
+        elif lab in ("neutral", "neu"):
+            s = "neutral"
+        else:
+            r = _rule_sentiment(text)
+            s = {"pos": "positive", "neg": "negative", "neu": "neutral"}[r]
+        if s == "positive":
+            pos += 1
+        elif s == "negative":
+            neg += 1
+        else:
+            neu += 1
+        th = (e.get("theme") or "").strip() or "整体"
+        themes[th] = themes.get(th, 0) + 1
+        if text:
+            quotes.append({
+                "evidence_id": e.get("evidence_id", ""),
+                "text": text[:160],
+            })
+    ordered = sorted(themes.items(), key=lambda kv: kv[1], reverse=True)
+    return {
+        "topic": topic,
+        "positive": pos,
+        "neutral": neu,
+        "negative": neg,
+        "themes": [t for t, _ in ordered[:10]],
+        "quotes": quotes,
+    }

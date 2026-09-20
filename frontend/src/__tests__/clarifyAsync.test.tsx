@@ -61,48 +61,64 @@ function renderClarify(taskId: string) {
   )
 }
 
-// ── P0#2（M3 演进）：HomePage 非 mock → 生活圈体检真实编排 → 工作台 SSE ──
-describe('T-HP1 HomePage 非 mock 发起生活圈体检', () => {
-  it('纯地名提交 → 创建 living_circle 任务（center 缺省）→ /workspace/:taskId', async () => {
-    mockedCreateLivingCircleTask.mockResolvedValue({ taskId: 't_xyz' })
+// ── P0#2（M3 演进）：HomePage 入口改道「目的地调研」→ 分步问答 → research 流水线 ──
+async function walkWizardAndLaunch(typeLabel: string) {
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(typeLabel) })) // Q1 报告类型
+  fireEvent.click(screen.getByRole('button', { name: '下一步' })) // → Q2（深度默认 deep）
+  fireEvent.click(screen.getByRole('button', { name: '下一步' })) // → Q3 确认
+  fireEvent.click(screen.getByRole('button', { name: '发起调研' })) // launch（精确文本）
+}
+
+describe('T-HP1 HomePage 真实态发起目的地调研（经分步问答）', () => {
+  it('纯地名提交 → 向导选「调研评估」→ createTask(purpose=assess) → /workspace/:taskId', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't_xyz', kind: 'travel_assess' })
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     )
-    const ta = screen.getByPlaceholderText(/输入社区名、地名或经度,纬度/)
-    fireEvent.change(ta, { target: { value: '凯里老街' } })
+    const ta = screen.getByPlaceholderText(/输入目的地名/)
+    fireEvent.change(ta, { target: { value: '黄山' } })
     fireEvent.keyDown(ta, { key: 'Enter', metaKey: true })
 
-    await waitFor(() => expect(mockedCreateLivingCircleTask).toHaveBeenCalled())
-    expect(mockedCreateLivingCircleTask).toHaveBeenCalledWith(
-      expect.objectContaining({ query: '凯里老街', center: undefined }),
+    // Enter 先弹向导，未发任务
+    await waitFor(() => expect(screen.getByText(/分步问答/)).toBeTruthy())
+    expect(mockedCreateTask).not.toHaveBeenCalled()
+
+    await walkWizardAndLaunch('调研评估')
+    await waitFor(() => expect(mockedCreateTask).toHaveBeenCalled())
+    expect(mockedCreateTask).toHaveBeenCalledWith(
+      '以15分钟便民生活圈视角调研「黄山」，产出评估报告',
+      'deep',
+      undefined,
+      'assess',
     )
     await waitFor(() => expect(navigateFn).toHaveBeenCalled())
     expect(navigateFn).toHaveBeenCalledWith(
       '/workspace/t_xyz',
-      expect.objectContaining({ state: { query: '凯里老街' } }),
+      expect.objectContaining({ state: { query: expect.stringContaining('黄山'), kind: 'travel_assess', purpose: 'assess' } }),
     )
   })
 
-  it('坐标输入 → center=[lng,lat] 随请求下发', async () => {
-    mockedCreateLivingCircleTask.mockResolvedValue({ taskId: 't_coord' })
+  it('样例卡「凯里老街」→ 向导默认「游玩攻略」→ createTask(purpose=guide)', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't_sample', kind: 'travel_guide' })
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     )
-    const ta = screen.getByPlaceholderText(/输入社区名、地名或经度,纬度/)
-    fireEvent.change(ta, { target: { value: '107.9758, 26.5734' } })
-    fireEvent.keyDown(ta, { key: 'Enter', metaKey: true })
+    fireEvent.click(screen.getByRole('button', { name: /凯里老街/ }))
+    await waitFor(() => expect(screen.getByText(/分步问答/)).toBeTruthy())
+    expect(screen.getByText(/目标：凯里老街/)).toBeTruthy()
 
+    await walkWizardAndLaunch('游玩攻略') // 默认类型即攻略
     await waitFor(() =>
-      expect(mockedCreateLivingCircleTask).toHaveBeenCalledWith(
-        expect.objectContaining({ center: [107.9758, 26.5734] }),
+      expect(mockedCreateTask).toHaveBeenCalledWith(
+        expect.stringContaining('「凯里老街」'),
+        'deep',
+        undefined,
+        'guide',
       ),
-    )
-    await waitFor(() =>
-      expect(navigateFn).toHaveBeenCalledWith('/workspace/t_coord', expect.anything()),
     )
   })
 })
@@ -230,13 +246,13 @@ describe('T-Wizard 分步向导 + 核对屏', () => {
 
   it('TC-W5 competitors 自定义输入在核对屏仍可添加', async () => {
     mockReady([
-      { id: 'competitors', question: '重点调研哪些竞品？', type: 'multi' as const, options: ['竞品A'] },
+      { id: 'competitors', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
     ])
     renderClarify('t_w5')
-    await screen.findByText('重点调研哪些竞品？')
+    await screen.findByText('重点调研哪些对象？')
     fireEvent.click(screen.getByText('下一步'))
     expect(await screen.findByText('请核对，可直接修改')).toBeTruthy()
-    const input = screen.getByPlaceholderText(/补充其他想调研的竞品/)
+    const input = screen.getByPlaceholderText(/补充其他想调研的/)
     fireEvent.change(input, { target: { value: '自研新品' } })
     fireEvent.click(screen.getByText('添加'))
     expect(await screen.findByText('自研新品')).toBeTruthy()
@@ -275,17 +291,17 @@ describe('T-AutoAdvance 自动前进（单选 + 多选）', () => {
   it('TC-AA2 选中后手动点「下一步」不双跳（仍仅前进 1 步）', async () => {
     mockReady([
       { id: 'q1', question: '目标市场是？', type: 'single' as const, options: ['国内', '海外'] },
-      { id: 'q2', question: '竞品范围是？', type: 'single' as const, options: ['头部', '长尾'] },
+      { id: 'q2', question: '调研范围是？', type: 'single' as const, options: ['头部', '长尾'] },
       { id: 'q3', question: '预算偏好？', type: 'single' as const, options: ['高', '低'] },
     ])
     renderClarify('t_aa2')
     await screen.findByText('目标市场是？')
     fireEvent.click(screen.getByText('国内')) // 安排自动前进
     fireEvent.click(screen.getByText('下一步')) // 立刻手动前进并取消定时器
-    expect(await screen.findByText('竞品范围是？')).toBeTruthy()
+    expect(await screen.findByText('调研范围是？')).toBeTruthy()
     // 等待超出自动前进延时：因定时器已取消，且 q2 未选，应仍停在 q2（不双跳）
     await new Promise((r) => setTimeout(r, 600))
-    expect(screen.getByText('竞品范围是？')).toBeTruthy()
+    expect(screen.getByText('调研范围是？')).toBeTruthy()
     expect(screen.queryByText('预算偏好？')).toBeNull()
   })
 
@@ -338,24 +354,24 @@ describe('T-AutoAdvance 自动前进（单选 + 多选）', () => {
 
   it('TC-AA7 competitors（multi+自定义）选中后同样停顿自动前进', async () => {
     mockReady([
-      { id: 'competitors', question: '重点调研哪些竞品？', type: 'multi' as const, options: ['竞品A'] },
+      { id: 'competitors', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
       { id: 'q2', question: '目标市场是？', type: 'single' as const, options: ['国内', '海外'] },
     ])
     renderClarify('t_aa7')
-    await screen.findByText('重点调研哪些竞品？')
-    fireEvent.click(screen.getByText('竞品A')) // 多选 chip → 走与 multi 同一路径
+    await screen.findByText('重点调研哪些对象？')
+    fireEvent.click(screen.getByText('对象A')) // 多选 chip → 走与 multi 同一路径
     expect(await screen.findByText('完成本题')).toBeTruthy()
     await waitFor(() => expect(screen.getByText('目标市场是？')).toBeTruthy(), { timeout: 2500 })
   })
 
   it('TC-AA8 competitors 单步自定义补充后同样停顿自动前进（走 maybeAdvance 统一路径）', async () => {
     mockReady([
-      { id: 'competitors', question: '重点调研哪些竞品？', type: 'multi' as const, options: ['竞品A'] },
+      { id: 'competitors', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
       { id: 'q2', question: '目标市场是？', type: 'single' as const, options: ['国内', '海外'] },
     ])
     renderClarify('t_aa8')
-    await screen.findByText('重点调研哪些竞品？')
-    const input = screen.getByPlaceholderText(/补充其他想调研的竞品/)
+    await screen.findByText('重点调研哪些对象？')
+    const input = screen.getByPlaceholderText(/补充其他想调研的/)
     fireEvent.change(input, { target: { value: '自研新品' } })
     fireEvent.click(screen.getByText('添加')) // 自定义补充 → 经 maybeAdvance 排程（验证 schedule 形参已移除）
     expect(await screen.findByText('完成本题')).toBeTruthy()
@@ -438,7 +454,7 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
       handlers?.onEvent('clarify_update', {
         questions: [
           { id: 'focus', question: '最看重哪些维度？', type: 'multi', options: ['功能'] },
-          { id: 'competitors', question: '重点调研哪些竞品？', type: 'multi', options: ['竞品A'] },
+          { id: 'competitors', question: '重点调研哪些对象？', type: 'multi', options: ['对象A'] },
         ],
         competitors_fallback: true,
         complete: true,
@@ -448,7 +464,7 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
     fireEvent.click(screen.getByText('下一步'))
     fireEvent.click(screen.getByText('下一步'))
     expect(await screen.findByText('请核对，可直接修改')).toBeTruthy()
-    expect(screen.getByText(/以下竞品为自动识别候选，建议核对或手动补充/)).toBeTruthy()
+    expect(screen.getByText(/以下调研对象为自动识别候选，建议核对或手动补充/)).toBeTruthy()
     // 旧的大警告文案必须消失（C6：不再弹「AI 不可用」）
     expect(screen.queryByText(/已使用默认问卷/)).toBeNull()
   })
@@ -470,15 +486,15 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
     })
     expect(await screen.findByText('最看重哪些维度？')).toBeTruthy()
     expect(screen.queryByText(/请确认我们理解的调研对象/)).toBeNull()
-    expect(screen.queryByText(/自动发现了以下候选竞品/)).toBeNull()
-    // 竞品发现完成 → 增量追加到末尾（scope + competitors），当前步不变
+    expect(screen.queryByText(/自动发现了以下候选对象/)).toBeNull()
+    // 调研对象发现完成 → 增量追加到末尾（scope + competitors），当前步不变
     act(() => {
       handlers?.onEvent('clarify_update', {
         questions: [
           { id: 'focus', question: '最看重哪些维度？', type: 'multi', options: ['功能'] },
           { id: 'perspective', question: '视角？', type: 'single', options: ['PM'] },
           { id: 'scope', question: '请确认我们理解的调研对象是否准确？', type: 'single', options: ['准确，继续', '不准确'] },
-          { id: 'competitors', question: '自动发现了以下候选竞品，请勾选', type: 'multi', options: ['竞品A'] },
+          { id: 'competitors', question: '自动发现了以下候选对象，请勾选', type: 'multi', options: ['对象A'] },
         ],
         competitors_fallback: false,
         complete: true,
@@ -488,12 +504,12 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
     expect(screen.getByText('最看重哪些维度？')).toBeTruthy()
     // focus → perspective
     fireEvent.click(screen.getByText('下一步'))
-    // perspective → scope（竞品发现追加的 scope 题）
+    // perspective → scope（调研对象发现追加的 scope 题）
     fireEvent.click(screen.getByText('下一步'))
     expect(await screen.findByText(/请确认我们理解的调研对象是否准确/)).toBeTruthy()
-    // scope → competitors（竞品发现追加的 competitors 题）
+    // scope → competitors（调研对象发现追加的 competitors 题）
     fireEvent.click(screen.getByText('下一步'))
-    expect(await screen.findByText(/自动发现了以下候选竞品/)).toBeTruthy()
+    expect(await screen.findByText(/自动发现了以下候选对象/)).toBeTruthy()
   })
 
   it('TC-A5 点击重试重新拉起 SSE', async () => {

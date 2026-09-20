@@ -1,16 +1,15 @@
 /**
- * 生活圈体检地图页（F2 核心 · F0 实物版）。
+ * 生活圈体检地图页（F2 核心 · 真实化升级版）。
  *
- * 本期（F 阶段）以 fixture 驱动的「静态画布」形态呈现：
- *   - 无 AK / 无 BMapGL 依赖，纯 SVG 投影渲染等时圈族 / POI / 盲区灰区
- *   - M 阶段接入 BMapGL 与真实 /api 后，本页升级为真地图交互，画布逻辑复用
+ * 渲染层：BMapGL 真实百度地图（S2 低饱和浅色底图）——等时圈/盲区 Polygon、
+ * POI 真实坐标 Marker、可拖拽中心标记（LcMap 组件）；无 AK/离线自动降级静态画布。
+ * 数据：mock=内置快照（M5 真实路网覆写）；真实模式=最近一次体检报告。
  *
- * 契约：src/types.ts 的 LivingCircleReport（F0 冻结）。
+ * 契约：src/types.ts 的 LivingCircleReport（F0 冻结 + poi.points 增量）。
  * 投影/配色与报告页快照共用 src/lib/livingCircle.ts（单一真相源）。
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   TriangleAlert,
   Crosshair,
@@ -20,31 +19,56 @@ import {
   FileText,
   Play,
   X,
+  Navigation,
 } from 'lucide-react'
 import {
   SAMPLE_COMMUNITIES,
   getLifeCircleMock,
-  USE_MOCK,
 } from '../mocks/livingCircleMock'
 import { LC_REPORT_ID } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream, LC_STAGES, stageLabel } from '../mocks/livingCircleStream'
-import { createLivingCircleTask, fetchLifeCircleReports, fetchLifeCircleReport } from '../lib/api'
+import { fetchLifeCircleReports, fetchLifeCircleReport } from '../lib/api'
+import { launchLifeCircle, subscribeLifeCircleTask } from '../lib/lifeCircleFlow'
+import { useDataModeStore } from '../store/dataModeStore'
+import { useTaskRegistry } from '../store/taskRegistry'
+import LcMap from '../components/lifecircle/LcMap'
+import RegionSelector from '../components/lifecircle/RegionSelector'
+import type { LcMapHandle, LcMapMode } from '../components/lifecircle/LcMap'
 import type {
   LngLat,
   LivingCircleReport,
-  FacilityCategoryStat,
 } from '../types'
 import {
-  LC_CANVAS,
   LC_CAT_COLOR,
-  LC_ISO_COLORS,
-  lcPolyPts,
-  lcRightmost,
-  lcToPx,
+  LC_BLIND_SEV,
+  LC_BLIND_SEV_ORDER,
+  LC_BLIND_FIX_STRATEGY,
+  affectedOf,
+  fixesOf,
+  gapScoreOf,
+  severityOf,
 } from '../lib/livingCircle'
+import { asBdLngLat } from '../lib/geo'
+import type { CoordSys } from '../lib/geo'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 
-/* 画布几何与投影/配色：来自 lib/livingCircle.ts（W/H/R 见 LC_CANVAS） */
+/** 待提交的中心点：坐标**与坐标系标签必须同行**，否则 600m 偏差会静默进入体检。 */
+interface PendingCenter {
+  lnglat: LngLat
+  coordSys: CoordSys
+}
+
+/**
+ * 发起体检的任务入参（唯一组装产物）。
+ *
+ * 刻意**不含 city**：城市与本次查询无关（旧实现取「当前展示报告」的城市，是第三个来源），
+ * 改由后端按中心点逆地理补全，使名称/坐标/城市三者锚定在同一中心点上。
+ */
+interface TaskInput {
+  query: string
+  center?: LngLat
+  coord_sys: CoordSys
+}
 
 function StatRow({ label, value }: { label: string; value: string }) {
   return (
@@ -58,8 +82,16 @@ function StatRow({ label, value }: { label: string; value: string }) {
 export default function LifeCirclePage() {
   const { sceneId = 'kaili' } = useParams()
   const navigate = useNavigate()
+  const isFixture = useDataModeStore((s) => s.mode === 'fixture')
   const [customCenter, setCustomCenter] = useState<LngLat | null>(null)
+  /** 与 customCenter 同行的坐标系标签（地图拖拽/点击 → bd09；原生定位 → wgs84） */
+  const [customCoordSys, setCustomCoordSys] = useState<CoordSys>('bd09')
   const [dragging, setDragging] = useState(false)
+  /* BMapGL 真实地图渲染层（C5 徽标语义 + C3 定位按钮共用） */
+  const lcMapRef = useRef<LcMapHandle>(null)
+  const [mapMode, setMapMode] = useState<LcMapMode>('boot')
+  const [locating, setLocating] = useState(false)
+  const [locateErr, setLocateErr] = useState('')
 
   /* A4 演示任务流（仅 mock 分支；M3 真实分支由工作台 SSE 接管） */
   const [playing, setPlaying] = useState(false)
@@ -71,13 +103,64 @@ export default function LifeCirclePage() {
   /* M3 真实分支：拉取最近一次体检记录渲染画布 + 顶部「开始体检」CTA */
   const [realReport, setRealReport] = useState<LivingCircleReport | null>(null)
   const [realLatestId, setRealLatestId] = useState('')
-  const [realLoading, setRealLoading] = useState(!USE_MOCK)
+  const [realLoading, setRealLoading] = useState(!isFixture)
   const [ctaText, setCtaText] = useState('')
   const [ctaBusy, setCtaBusy] = useState(false)
   const [ctaErr, setCtaErr] = useState('')
+  const [regionOpen, setRegionOpen] = useState(false)
+  const location = useLocation()
+  /* D·回落 SSE 运行态（真实模式）：进度值单一事实源 = taskRegistry。
+     本页只保留「当前正在跟随的任务 id」做订阅锚点，runStage/runPercent/runActive
+     均由注册表派生（lifeCircleFlow 写入），不再维护并行的局部进度。 */
+  const [runMsg, setRunMsg] = useState('')
+  const [runTaskId, setRunTaskId] = useState('')
+  const lcTasks = useTaskRegistry((s) => s.tasks)
+  const regTask = runTaskId ? lcTasks[runTaskId] : null
+  const runActive = !!regTask && regTask.status === 'running'
+  const runStage = regTask?.stage || 'intake'
+  const runPercent = regTask?.percent ?? 0
+  const flowRef = useRef<(() => void) | null>(null)
+  const pendingTaskRef = useRef('')
+
+  /* SSE 闭环回调：进度由 capture 写 register 后经派生渲染；失败/就绪仅做页面复位（服务/渲染层由 registry 落终态） */
+  const flowCallbacks = {
+    onProgress: (_stage: string, _percent: number, message?: string) => {
+      if (message) setRunMsg(message)
+    },
+    onError: (message: string) => {
+      setRunTaskId('')
+      setRunMsg('')
+      flowRef.current?.()
+      flowRef.current = null
+      pendingTaskRef.current = ''
+      setCtaErr(message)
+    },
+    onReportReady: (report: LivingCircleReport, reportId: string) => {
+      setRunTaskId('')
+      setRunMsg('')
+      flowRef.current?.()
+      flowRef.current = null
+      pendingTaskRef.current = ''
+      setRealReport(report)
+      setRealLatestId(reportId)
+    },
+  }
+
+  /* 幂等订阅：HomePage 真实模式 navigate 携带 taskId → 本页接管 SSE 进度并自动渲染。
+     重复挂载/重入同任务不重复开流。 */
+  const incomingTaskId = (location.state as { taskId?: string } | null)?.taskId ?? ''
+  useEffect(() => {
+    if (isFixture || !incomingTaskId) return
+    if (pendingTaskRef.current === incomingTaskId) return
+    pendingTaskRef.current = incomingTaskId
+    setRunTaskId(incomingTaskId)
+    setRunMsg('')
+    setCtaErr('')
+    flowRef.current = subscribeLifeCircleTask(incomingTaskId, flowCallbacks)
+  }, [incomingTaskId, isFixture])
 
   useEffect(() => {
-    if (USE_MOCK) return
+    if (isFixture) return
     let cancelled = false
     fetchLifeCircleReports()
       .then((rows) => {
@@ -95,53 +178,116 @@ export default function LifeCirclePage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [isFixture])
 
   const report = useMemo<LivingCircleReport | null>(() => {
-    if (!USE_MOCK) return realReport
+    if (!isFixture) return realReport
     if (sceneId === 'custom') {
-      // F 阶段：自定义中心点复用最近样例（M 阶段替换为在线计算）
+      // 演示态：自定义中心点复用最近样例
       return SAMPLE_COMMUNITIES[0] ? SAMPLE_COMMUNITIES[0].report : null
     }
     return getLifeCircleMock(sceneId)
-  }, [sceneId, realReport])
+  }, [sceneId, realReport, isFixture])
 
   const center: LngLat = customCenter ?? report?.scene.center ?? [0, 0]
 
-  // 样区路由参数与报告 id：custom → 最近样例 kaili（仅 mock 分支使用）
+  // 样区路由参数与报告 id：custom → 最近样例 kaili（仅演示分支使用）
   const effectiveScene = sceneId === 'custom' ? 'kaili' : sceneId
   const reportId = LC_REPORT_ID(effectiveScene)
-  const targetReportId = USE_MOCK ? reportId : realLatestId
+  const targetReportId = isFixture ? reportId : realLatestId
 
-  /** M3：以当前输入（或画布新中心点）发起真实体检任务 → 工作台 SSE */
-  async function startRealCheck(centerOverride?: LngLat) {
-    if (ctaBusy) return
-    const query = ctaText.trim()
-    const m = /^\s*([\d.]+)\s*,\s*([\d.]+)\s*$/.exec(query)
-    let center = centerOverride
-    if (!center && m) center = [Number(m[1]), Number(m[2])]
+  /**
+   * 任务入参组装（阶段 2 P0）——**名称/坐标/坐标系一次性组装，同源同行**。
+   *
+   * ## 被修掉的事故
+   *
+   * 旧实现：`onLocate` 里 `setCtaText(hit.name)` 紧接着 `startRealCheck(hit.lnglat)`，
+   * 而 `startRealCheck` 读 `ctaText.trim()`。React 的 setState 是排队的 —— 同一次事件
+   * 回调里 state 还没更新，于是：
+   *
+   * | 字段 | 旧来源 | 实测值 |
+   * |---|---|---|
+   * | scene_name | 闭包里的**旧** ctaText | 北京劲松 |
+   * | center | 定位的**新**坐标 | 102.76, 25.03（昆明） |
+   * | city | `report?.scene.city`（**当前展示的报告**） | 北京·朝阳 |
+   *
+   * 三字段三个来源 → 报告自相矛盾（实测 `lc-d3cfa371`）。
+   *
+   * ## 修法
+   *
+   * 1. 名称改由**参数显式传入**（`nameOverride`），不再依赖 setState 后的 state；
+   * 2. **城市不再随请求发送** —— 它与本次查询无关，改由后端对中心点逆地理补全
+   *    （`reverse_geocoding`）；这样「名/坐标/城市」全部锚定在**同一个中心点**上。
+   */
+  function buildTaskInput(opts: { pending?: PendingCenter; nameOverride?: string }): TaskInput {
+    const typed = ctaText.trim()
+    const coordText = /^\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*$/.exec(typed)
+    const explicitName = (opts.nameOverride ?? '').trim()
+
+    if (opts.pending) {
+      // 地图拖拽 / 浏览器定位：名称、坐标、坐标系同时到达
+      return {
+        query: explicitName || (coordText ? '' : typed) || '生活圈体检',
+        center: opts.pending.lnglat,
+        coord_sys: opts.pending.coordSys,
+      }
+    }
+    if (coordText) {
+      // 文本输入约定为 BD-09（占位文案已注明）；越界即当场报错，
+      // 不允许把坏坐标写进库（一次写库 → 每次打开都复现）。
+      return {
+        query: explicitName || '生活圈体检',
+        center: asBdLngLat([Number(coordText[1]), Number(coordText[2])], 'LifeCirclePage.坐标输入'),
+        coord_sys: 'bd09',
+      }
+    }
+    return { query: explicitName || typed || '生活圈体检', coord_sys: 'bd09' }
+  }
+
+  /** M3：以当前输入（或地图新中心点）发起真实体检任务 → 回落本页 SSE 进度（不再进工作台） */
+  async function startRealCheck(opts: { pending?: PendingCenter; nameOverride?: string } = {}) {
+    if (ctaBusy || runActive) return
     setCtaErr('')
     setCtaBusy(true)
+    setRunTaskId('')
+    setRunMsg('正在创建任务…')
     try {
-      const r = await createLivingCircleTask({
-        query: query || report?.scene.name || '生活圈体检',
-        mode: 'standard',
-        center,
-        city: report?.scene.city ?? '',
-      })
-      navigate(`/workspace/${r.taskId}`, { state: { query: query || report?.scene.name || '' } })
+      const input = buildTaskInput(opts)
+      const handle = await launchLifeCircle(
+        {
+          query: input.query,
+          center: input.center,
+          coord_sys: input.coord_sys,
+          // city 有意不传：由后端按中心点逆地理（见 buildTaskInput 注释）
+        },
+        flowCallbacks,
+      )
+      if (pendingTaskRef.current && pendingTaskRef.current !== handle.taskId) {
+        handle.close() // 已有其它进行中任务 → 关闭新建流，防多流互串
+      }
+      pendingTaskRef.current = handle.taskId
+      setRunTaskId(handle.taskId)
+      flowRef.current = handle.close
     } catch (e) {
+      setRunTaskId('')
+      setRunMsg('')
       setCtaErr(e instanceof Error ? e.message : String(e))
     } finally {
       setCtaBusy(false)
     }
   }
 
-  useEffect(() => () => closeRef.current?.(), [])
+  useEffect(
+    () => () => {
+      closeRef.current?.()
+      flowRef.current?.()
+    },
+    [],
+  )
 
   if (!report) {
     // 真实模式：暂无体检记录 → 引导发起
-    if (!USE_MOCK) {
+    if (!isFixture) {
       return (
         <div className="mx-auto flex min-h-full max-w-[720px] flex-col items-center justify-center gap-4 px-6 py-16 text-center">
           <Info size={32} className="text-ink-3" />
@@ -149,6 +295,27 @@ export default function LifeCirclePage() {
           <p className="text-aux text-ink-2">
             输入社区名或坐标发起第一次生活圈体检，完成后会在这里展示等时圈与体检单
           </p>
+          {runActive && (
+            <div
+              className="mt-1 flex w-full max-w-md items-center gap-3 rounded-card border border-primary-soft bg-primary-tint px-4 py-3 text-left"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-btn bg-primary text-white">
+                <Play size={16} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-aux font-semibold text-ink">
+                  体检进行中 · {stageLabel(runStage)}
+                  <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
+                </div>
+                {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
+              </div>
+              <div className="h-1.5 w-24 overflow-hidden rounded-chip bg-line">
+                <div className="h-full rounded-chip bg-primary" style={{ width: `${Math.max(0, Math.min(100, runPercent))}%` }} />
+              </div>
+            </div>
+          )}
           <div className="mt-1 flex w-full max-w-md items-center gap-2">
             <input
               value={ctaText}
@@ -182,19 +349,34 @@ export default function LifeCirclePage() {
     )
   }
 
-  const isoZones = report.isochrones
-
-  /** 画布点击 = 设定新中心点（D2：拖点/点选 → 确认后重新体检） */
-  function onCanvasClick(e: ReactMouseEvent<SVGSVGElement>) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const px = ((e.clientX - rect.left) / rect.width) * LC_CANVAS.W
-    const py = ((e.clientY - rect.top) / rect.height) * LC_CANVAS.H
-    const mx = ((px - LC_CANVAS.W / 2) / (LC_CANVAS.W / 2)) * LC_CANVAS.R
-    const my = ((LC_CANVAS.H / 2 - py) / (LC_CANVAS.H / 2)) * LC_CANVAS.R
-    const dLat = my / 111320
-    const dLng = mx / (111320 * Math.cos((center[1] * Math.PI) / 180))
-    setCustomCenter([center[0] + dLng, center[1] + dLat])
-    setDragging(true)
+  /** C3 定位到我：浏览器定位 → 逆地理社区名（live 走 BMapGL，降级用 WGS-84 原始坐标）→ 就地标注/发起体检 */
+  async function onLocate() {
+    if (locating) return
+    setLocating(true)
+    setLocateErr('')
+    const hit = await lcMapRef.current?.locate()
+    setLocating(false)
+    if (!hit) {
+      setLocateErr('定位失败或未授权，请检查浏览器定位权限')
+      return
+    }
+    if (hit.coordSys === 'wgs84') {
+      // 降级分支（无浏览器 AK）：拿到的是 WGS-84，偏约 600m，如实告知并由服务端转换
+      setLocateErr('已定位（WGS-84 原始坐标，提交时由服务端转为 BD-09）')
+    }
+    if (isFixture) {
+      setCustomCenter(hit.lnglat)
+      setCustomCoordSys(hit.coordSys)
+      setDragging(true)
+    } else {
+      // 输入框同步定位到的名称 —— **仅供人看**：请求的名称走下方的显式参数，
+      // 不依赖这次 setState（setState 排队，同 tick 内读到的仍是旧值，即阶段 2 事故根因）。
+      setCtaText(hit.name || '当前位置')
+      void startRealCheck({
+        pending: { lnglat: hit.lnglat, coordSys: hit.coordSys },
+        nameOverride: hit.name,
+      })
+    }
   }
 
   /** A4：回放体检流水线事件流（演示用；M3 由真实任务流接管） */
@@ -229,7 +411,7 @@ export default function LifeCirclePage() {
   return (
     <div className="mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6">
       {/* 顶栏：mock=场景切换 + 演示流水线；M3=真实「开始体检」CTA + 最新报告入口 */}
-      {USE_MOCK ? (
+      {isFixture ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             {SAMPLE_COMMUNITIES.map((c) => (
@@ -258,10 +440,37 @@ export default function LifeCirclePage() {
             >
               对比双样例 →
             </button>
+            <button
+              onClick={onLocate}
+              disabled={locating}
+              title="使用设备当前位置发起体检（C3）"
+              className="flex h-9 items-center gap-1.5 rounded-chip px-3 text-aux text-ink-2 transition-colors hover:bg-primary-tint disabled:opacity-50"
+            >
+              <Navigation size={13} /> {locating ? '定位中…' : '定位到我'}
+            </button>
           </div>
+          {locateErr && <span className="text-tag text-risk">{locateErr}</span>}
           {report.data_origin === 'fixture_sample' && (
             <span className="inline-flex items-center gap-1.5 rounded-chip border border-warn/60 bg-warn/10 px-3 h-9 text-tag font-medium text-ink-2">
               <Info size={14} /> 演示数据模式（fixture · 等时圈为圆形近似，M5 后真实路网覆写）
+            </span>
+          )}
+          {report.served_from === 'cache' && (
+            <span className="inline-flex items-center gap-1.5 rounded-chip border border-primary-soft bg-primary-tint px-3 h-9 text-tag font-medium text-ink-2">
+              <Info size={14} /> 历史实时结果 · 离线可查
+            </span>
+          )}
+          {report.data_origin === 'offline' && (
+            <span className="inline-flex items-center gap-1.5 rounded-chip border border-warn/60 bg-warn/10 px-3 h-9 text-tag font-medium text-ink-2">
+              <Info size={14} /> 离线估算 · 距离模型（未联网，POI 与评分待实时体检）
+            </span>
+          )}
+          {report.data_origin === 'live' && report.served_from !== 'cache' && (
+            <span className="inline-flex items-center gap-1.5 rounded-chip border border-primary-soft bg-primary-tint px-3 h-9 text-tag font-medium text-ink-2">
+              <Info size={14} />
+              {mapMode === 'live'
+                ? `真实地图 · 实时路网测时（${report.sampling.interpolation === 'idw' ? 'IDW 等时圈' : '等时圈'}）`
+                : `内置快照 · 真实百度路网测时（${report.sampling.interpolation === 'idw' ? 'IDW 等时圈' : '等时圈'}）离线演示`}
             </span>
           )}
         </div>
@@ -278,7 +487,7 @@ export default function LifeCirclePage() {
               className="h-9 flex-1 rounded-btn border border-line bg-card px-3 text-aux text-ink outline-none placeholder:text-ink-3 focus:border-primary"
             />
             <button
-              onClick={() => startRealCheck(customCenter ?? undefined)}
+              onClick={() => startRealCheck({ pending: customCenter ? { lnglat: customCenter, coordSys: customCoordSys } : undefined })}
               disabled={ctaBusy}
               className="flex h-9 shrink-0 items-center gap-1.5 rounded-btn bg-primary px-4 text-aux font-medium text-white shadow-card hover:bg-primary-deep disabled:opacity-40"
             >
@@ -300,94 +509,91 @@ export default function LifeCirclePage() {
             >
               对比双样例 →
             </button>
+            <button
+              onClick={onLocate}
+              disabled={locating}
+              title="使用设备当前位置发起体检（C3）"
+              className="flex h-9 items-center gap-1.5 rounded-chip px-3 text-aux text-ink-2 transition-colors hover:bg-primary-tint disabled:opacity-50"
+            >
+              <Navigation size={13} /> {locating ? '定位中…' : '定位到我'}
+            </button>
+            {!isFixture && (
+              <button
+                onClick={() => setRegionOpen((v) => !v)}
+                title="从全国行政区划选择地址（无 AK 也能出离线体检骨架）"
+                className={`flex h-9 items-center gap-1.5 rounded-chip px-3 text-aux transition-colors ${
+                  regionOpen ? 'bg-primary text-white' : 'text-ink-2 hover:bg-primary-tint'
+                }`}
+              >
+                <MapPin size={13} /> 区划选择
+              </button>
+            )}
             <span className="inline-flex items-center gap-1.5 rounded-chip border border-warn/60 bg-warn/10 px-3 h-9 text-tag font-medium text-ink-2">
-              <Info size={14} /> {report.data_origin === 'fixture_sample' ? '演示数据模式（fixture）' : '真实数据模式（live）'}
+              <Info size={14} /> {report.served_from === 'cache' ? '历史实时结果 · 离线可查' : report.data_origin === 'offline' ? '离线估算模式（未联网）' : report.data_origin === 'fixture_sample' ? '演示数据模式（fixture）' : '真实数据模式（live）'}
             </span>
           </div>
+          {!isFixture && regionOpen && (
+            <div className="mt-2">
+              <RegionSelector
+                visible={regionOpen}
+                onPick={(s) => setCtaText(s)}
+                onClose={() => setRegionOpen(false)}
+              />
+            </div>
+          )}
         </div>
       )}
-      {!USE_MOCK && ctaErr && (
+      {!isFixture && ctaErr && (
         <div className="rounded-btn bg-risk/10 px-3 py-1.5 text-tag text-risk" role="alert">
           体检任务创建失败：{ctaErr}
         </div>
       )}
+      {!isFixture && locateErr && (
+        <div className="rounded-btn bg-risk/10 px-3 py-1.5 text-tag text-risk" role="alert">
+          {locateErr}
+        </div>
+      )}
+
+      {/* 回落 SSE：报告生成中，进度直接显示在本页（不再跳工作台） */}
+      {!isFixture && runActive && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-card border border-primary-soft bg-primary-tint px-4 py-3"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-btn bg-primary text-white">
+            <Play size={15} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-aux font-semibold text-ink">
+              生活圈体检进行中 · {stageLabel(runStage)}
+              <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
+            </div>
+            {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
+          </div>
+          <div className="h-1.5 w-40 overflow-hidden rounded-chip bg-line">
+            <div
+              className="h-full rounded-chip bg-primary"
+              style={{ width: `${Math.max(0, Math.min(100, runPercent))}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-        {/* 地图画布 */}
-        <div className="relative overflow-hidden rounded-card border border-line bg-card shadow-card">
-          <svg
-            viewBox={`0 0 ${LC_CANVAS.W} ${LC_CANVAS.H}`}
-            className="block w-full cursor-crosshair select-none"
-            onClick={onCanvasClick}
-            role="img"
-            aria-label="生活圈等时圈画布"
-          >
-            <rect x={0} y={0} width={LC_CANVAS.W} height={LC_CANVAS.H} fill="#f9faf8" />
-            {[-2, -1, 0, 1, 2].map((i) => (
-              <line key={`v${i}`} x1={LC_CANVAS.W / 2 + (i * LC_CANVAS.W) / 5} y1={0} x2={LC_CANVAS.W / 2 + (i * LC_CANVAS.W) / 5} y2={LC_CANVAS.H} stroke="#e7ebe7" strokeWidth={1} />
-            ))}
-            {[-2, -1, 0, 1, 2].map((i) => (
-              <line key={`h${i}`} x1={0} y1={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} x2={LC_CANVAS.W} y2={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} stroke="#e7ebe7" strokeWidth={1} />
-            ))}
-
-            {[...isoZones].sort((a, b) => b.minutes - a.minutes).map((z) => {
-              const color = LC_ISO_COLORS[isoZones.findIndex((x) => x.minutes === z.minutes)] ?? LC_ISO_COLORS[0]
-              const ring = z.geojson.coordinates[0]
-              return (
-                <g key={z.minutes}>
-                  <polygon points={lcPolyPts(center, ring)} fill={color.fill} stroke={color.stroke} strokeWidth={1.5} strokeLinejoin="round" />
-                  {(() => {
-                    const [lx, ly] = lcRightmost(center, ring)
-                    return (
-                      <text x={lx - 4} y={ly - 6} fontSize={12} fill="#5F7B69" textAnchor="end" fontWeight={600}>
-                        {z.minutes} min
-                      </text>
-                    )
-                  })()}
-                </g>
-              )
-            })}
-
-            {report.blindspots.map((b) => (
-              <g key={b.id}>
-                <polygon points={lcPolyPts(center, b.polygon.coordinates[0])} fill="rgba(120,120,120,0.16)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="5 4" />
-                <circle cx={lcToPx(center, b.center[0], b.center[1])[0]} cy={lcToPx(center, b.center[0], b.center[1])[1]} r={5} fill="#E8B54D" stroke="#fff" strokeWidth={1.5} />
-              </g>
-            ))}
-
-            {report.sampling.points.length > 0 &&
-              report.poi.categories.map((c: FacilityCategoryStat) => {
-                const idx = report.poi.categories.indexOf(c)
-                const theta = idx * 2.4
-                const radius = 260 + ((idx * 70) % 520)
-                const [px, py] = lcToPx(center, center[0], center[1])
-                return (
-                  <circle
-                    key={c.category}
-                    cx={px + Math.cos(theta) * radius * 0.9}
-                    cy={py + Math.sin(theta) * radius * 0.9}
-                    r={7}
-                    fill={LC_CAT_COLOR[c.category] ?? '#7c6670'}
-                    stroke="#fff"
-                    strokeWidth={1.5}
-                    opacity={0.92}
-                  />
-                )
-              })}
-
-            {(() => {
-              const [x, y] = lcToPx(center, center[0], center[1])
-              return (
-                <g>
-                  <circle cx={x} cy={y} r={14} fill="rgba(124,152,133,0.18)" stroke="#5F7B69" strokeWidth={1.5} strokeDasharray="3 3" />
-                  <circle cx={x} cy={y} r={6} fill="#5F7B69" stroke="#fff" strokeWidth={2} />
-                  <text x={x} y={y - 20} fontSize={12} fill="#3f5042" textAnchor="middle" fontWeight={600}>
-                    {report.scene.name}
-                  </text>
-                </g>
-              )
-            })()}
-          </svg>
+        {/* 地图画布：BMapGL 真实地图（LcMap），无 AK/离线自动降级静态画布 */}
+        <div className="relative min-h-[480px] overflow-hidden rounded-card border border-line bg-card shadow-card">
+          <LcMap
+            ref={lcMapRef}
+            report={report}
+            customCenter={customCenter}
+            onCenterChange={(c) => {
+              setCustomCenter(c)
+              setCustomCoordSys('bd09') // 地图交互产出的必然是 BD-09
+              setDragging(true)
+            }}
+            onMapMode={setMapMode}
+          />
 
           {/* 图例（悬浮） */}
           <div className="absolute left-3 top-3 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur">
@@ -398,22 +604,38 @@ export default function LifeCirclePage() {
                 {k === 'market' ? '菜市场' : k === 'medical' ? '医疗' : k === 'education' ? '教育' : k === 'shopping' ? '购物' : k === 'elderly' ? '养老' : k === 'finance' ? '金融' : k === 'recreation' ? '文体' : '政务/服务'}
               </span>
             ))}
+            <span className="mt-1 flex items-center gap-1.5 border-t border-line/70 pt-1.5 text-tag text-ink-3">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'linear-gradient(135deg,#8fbfa2,#2c5a3f)' }} />
+              采样点耗时热力（0→20min）
+            </span>
+            {LC_BLIND_SEV_ORDER.map((sev) => (
+              <span key={sev} className="flex items-center gap-1.5 text-tag text-ink-3">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: LC_BLIND_SEV[sev].dot }} />
+                {LC_BLIND_SEV[sev].label}盲区 · 缺口≥0.6/0.33/其余
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5 text-tag text-ink-3">
+              <span className="inline-block h-3 w-3" style={{ background: 'transparent', border: '1.5px solid #1f9e63', position: 'relative' }}>
+                <span className="absolute left-1/2 top-1/2 block h-[2px] w-2 -translate-x-1/2 -translate-y-1/2 bg-[#1f9e63]" />
+              </span>
+              补点处方（流动服务/改道/补建）
+            </span>
           </div>
 
           {dragging ? (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-chip border border-line bg-card/95 px-4 py-2 shadow-card backdrop-blur">
+            <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-chip border border-line bg-card/95 px-4 py-2 shadow-card backdrop-blur">
               <span className="text-tag text-ink-2">
                 已设定新中心点（{center[0].toFixed(4)}, {center[1].toFixed(4)}）
               </span>
               <button
                 onClick={() => {
-                  if (USE_MOCK) {
+                  if (isFixture) {
                     const next = sceneId === 'custom' ? SAMPLE_COMMUNITIES[0] : SAMPLE_COMMUNITIES.find((c) => c.id === sceneId)
                     if (next) navigate(`/life-circle/${next.id}`)
                     setDragging(false)
                   } else {
                     setDragging(false)
-                    startRealCheck(customCenter ?? undefined)
+                    startRealCheck({ pending: customCenter ? { lnglat: customCenter, coordSys: customCoordSys } : undefined })
                   }
                 }}
                 className="ml-2 inline-flex items-center gap-1 rounded-chip bg-primary px-2.5 py-1 text-tag font-medium text-white hover:bg-primary-deep"
@@ -422,8 +644,9 @@ export default function LifeCirclePage() {
               </button>
             </div>
           ) : (
-            <div className="absolute bottom-3 left-3 hidden items-center gap-1 rounded-chip bg-card/80 px-3 py-1.5 text-tag text-ink-3 backdrop-blur sm:flex">
-              <Crosshair size={12} /> 点击画布任意位置设定新中心点
+            <div className="absolute bottom-3 left-3 z-10 hidden items-center gap-1 rounded-chip bg-card/80 px-3 py-1.5 text-tag text-ink-3 backdrop-blur sm:flex">
+              <Crosshair size={12} />
+              {mapMode === 'live' ? '拖拽地图中心标记设定新中心点' : '点击画布任意位置设定新中心点'}
             </div>
           )}
         </div>
@@ -439,12 +662,25 @@ export default function LifeCirclePage() {
                 </div>
               </div>
               <div className="text-right">
-                <div className="font-serif text-[34px] font-semibold leading-none text-primary">{report.scores.total}</div>
-                <div className="mt-1 text-tag text-ink-3">综合评分</div>
+                {report.data_origin === 'offline' ? (
+                  <div className="text-right">
+                    <div className="text-sm font-semibold leading-none text-ink-3">评分待实时体检</div>
+                    <div className="mt-1 text-tag text-ink-3">离线估算 · 距离模型，不可与实时分比较</div>
+                  </div>
+                ) : (
+                  <div className="text-right">
+                    <div className="font-serif text-[34px] font-semibold leading-none text-primary">{report.scores.total}</div>
+                    <div className="mt-1 text-tag text-ink-3">综合评分</div>
+                  </div>
+                )}
               </div>
             </div>
             <div className="mt-3 border-t border-line pt-3">
-              <MiniRadar report={report} />
+              {report.data_origin === 'offline' ? (
+                <p className="py-6 text-center text-tag text-ink-3">分类雷达需实时体检数据</p>
+              ) : (
+                <MiniRadar report={report} />
+              )}
             </div>
           </div>
 
@@ -467,12 +703,34 @@ export default function LifeCirclePage() {
             <StatRow label="采样点" value={`${report.sampling.points.length} 个（可达 ${report.sampling.points.filter((p) => p.reachable).length}）`} />
             <StatRow label="15min 等时圈面积" value={`${(report.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`} />
             <StatRow label="服务盲区" value={`${report.blindspots.length} 处`} />
+            
+            {/* R2/R6：口径举证对象 */}
+            {report.caliber && (
+              <>
+                <div className="mt-3 border-t border-line pt-3">
+                  <div className="mb-2 text-tag font-medium text-ink-2">测算口径</div>
+                  <StatRow label="出行方式" value={report.caliber.travel_mode === 'walking' ? '步行' : report.caliber.travel_mode === 'riding' ? '骑行' : report.caliber.travel_mode === 'driving' ? '驾车' : report.caliber.travel_mode} />
+                  <StatRow label="速度" value={`${report.caliber.speed_m_per_min} m/min`} />
+                  <StatRow label="绕行系数" value={`×${report.caliber.detour_k}`} />
+                  <StatRow label="研究半径" value={`${report.caliber.study_radius_m} m`} />
+                  <StatRow label="等时圈档位" value={report.caliber.iso_minutes.map(m => `${m}min`).join(' / ')} />
+                  <div className="mt-2 text-tag text-ink-3 leading-relaxed">
+                    {report.caliber.basis}
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-tag text-ink-3">
+                    <span className={`inline-block h-2 w-2 rounded-full ${report.caliber.measured ? 'bg-ok' : 'bg-warn'}`} />
+                    {report.caliber.measured ? '实测数据' : '估算模型'}
+                  </div>
+                </div>
+              </>
+            )}
+            
             <button
               onClick={() => targetReportId && navigate(`/report/${targetReportId}`)}
               disabled={!targetReportId}
               className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-btn bg-primary px-4 h-10 font-medium text-white shadow-card hover:bg-primary-deep disabled:opacity-40"
             >
-              <FileText size={15} /> 查看{USE_MOCK ? '体检报告' : '最新报告'}
+              <FileText size={15} /> 查看{isFixture ? '体检报告' : '最新报告'}
             </button>
           </div>
 
@@ -480,24 +738,50 @@ export default function LifeCirclePage() {
             <div className="mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink">
               <TriangleAlert size={15} className="text-warn" /> 服务盲区清单
             </div>
-            {report.blindspots.length === 0 ? (
+            {report.data_origin === 'offline' ? (
+              <p className="text-tag text-ink-3">离线估算未联网采集 POI，盲区识别需实时体检后给出</p>
+            ) : report.blindspots.length === 0 ? (
               <p className="text-tag text-ink-3">覆盖良好，未发现 1km 服务盲区</p>
             ) : (
               <div className="flex flex-col gap-2">
-                {report.blindspots.map((b) => (
-                  <div key={b.id} className="rounded-btn border border-line/70 bg-ink-3/10 p-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-aux font-medium text-ink">{b.id.replace('bs-', '盲区 ')}</span>
-                      <span className="text-tag text-ink-3">{b.center[0].toFixed(4)},{b.center[1].toFixed(4)}</span>
+                {report.blindspots.map((b) => {
+                  const sev = severityOf(b)
+                  const sevSpec = LC_BLIND_SEV[sev]
+                  const gap = gapScoreOf(b)
+                  const affected = affectedOf(b) as { sampling_sites?: number; estimated_residents?: number } | null
+                  const fix = (fixesOf(b) as { facility: string; strategy: string; priority: number }[])[0]
+                  return (
+                    <div key={b.id} className="rounded-btn border border-line/70 bg-ink-3/10 p-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-aux font-medium text-ink">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: sevSpec?.dot ?? '#8a8a8a' }} />
+                          {b.id.replace('bs-', '盲区 ')}
+                        </span>
+                        <span className="text-tag text-ink-3">{b.center[0].toFixed(4)},{b.center[1].toFixed(4)}</span>
+                      </div>
+                      <div className="mt-1 text-tag text-ink-3">
+                        缺失：{b.missing_facilities.join(' / ')}
+                        {sevSpec?.label ? <> · <span style={{ color: sevSpec.stroke }}>{sevSpec.label}</span></> : ''}
+                        {gap != null ? <> · 缺口 {gap}</> : ''}
+                      </div>
+                      {b.reach?.real_walk_min != null && (
+                        <div className="mt-0.5 text-tag text-ink-3">
+                          最近替代步行 {b.reach.real_walk_min}min{b.reach.isochrone_based ? '（实测等时圈）' : '（估算）'}
+                        </div>
+                      )}
+                      {affected && affected.sampling_sites != null && (
+                        <div className="mt-0.5 text-tag text-ink-3">
+                          受估 {affected.estimated_residents ?? '?'} 人 · 采样 {affected.sampling_sites} 点
+                        </div>
+                      )}
+                      {fix && (
+                        <div className="mt-0.5 text-tag font-medium" style={{ color: '#1f9e63' }}>
+                          建议补{fix.facility} · {LC_BLIND_FIX_STRATEGY[fix.strategy] ?? fix.strategy} · P{fix.priority}
+                        </div>
+                      )}
                     </div>
-                    <div className="mt-1 text-tag text-ink-3">
-                      缺失：{b.missing_facilities.join(' / ')}
-                    </div>
-                    <div className="mt-0.5 text-tag text-ink-3">
-                      {b.nearest[0]?.facility === 'market' ? `最近菜市 ${b.nearest[0]?.name ?? ''} ${b.nearest[0]?.distance_m}m·${b.nearest[0]?.direction}` : ''}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>

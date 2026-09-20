@@ -2,10 +2,14 @@
 
 守护 runner._drive 异常收口：当调研进行中遇 Google 临时高负载（503），
 失败态文案应为友好中文「负载较高（503）」，而非原始英文栈。
+
+注意：runner 通过封闭注册表 KIND_PIPELINES 分发到 research_pipeline（而非
+legacy orchestrator.run_pipeline），因此这里 patch 的是真正的分发目标。
 """
 import asyncio
 
 from app.core import orchestrator
+from app.core.pipeline import research
 from app.core.runner import _Run, _drive
 
 
@@ -19,7 +23,7 @@ def test_runner_503_friendly_message(monkeypatch):
         raise e
         yield  # noqa: UNREACHABLE (保持 async generator，供 `async for` 消费)
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _boom_pipeline)
+    monkeypatch.setattr(research, "research_pipeline", _boom_pipeline)
 
     r = _Run()
     asyncio.run(_drive("t1", r))

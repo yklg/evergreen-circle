@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { History, FileText, MapPin, TriangleAlert, Database, TrendingUp, Inbox } from 'lucide-react'
 import { getLifeCircleRecords } from '../mocks/livingCircleReports'
-import { USE_MOCK } from '../mocks/livingCircleMock'
+import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports } from '../lib/api'
 import type { LifeCircleRecord } from '../types'
 import { scoreGrade } from '../lib/livingCircle'
@@ -22,14 +22,15 @@ function fmtTime(iso: string): string {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const isFixture = useDataModeStore((s) => s.mode === 'fixture')
   const [realRecords, setRealRecords] = useState<LifeCircleRecord[] | null>(null)
-  const [loading, setLoading] = useState(!USE_MOCK)
+  const [loading, setLoading] = useState(!isFixture)
 
-  // F 阶段直接走 fixture；M 阶段从真实接口取数（/api/life-circle 历史体检记录）
-  const records = USE_MOCK ? getLifeCircleRecords() : realRecords
+  // 演示态直接走内置快照；真实态从 /api/life-circle 历史体检记录取数
+  const records = isFixture ? getLifeCircleRecords() : realRecords
 
   useEffect(() => {
-    if (USE_MOCK) return
+    if (isFixture) return
     let cancelled = false
     fetchLifeCircleReports()
       .then((rows) => {
@@ -41,13 +42,13 @@ export default function DashboardPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [isFixture])
 
-  // 体检记录侧统计（评分>0 的才算体检口径）
+  // 体检记录侧统计（有可比评分（非 null 且 >0）的才算体检口径；offline 报告不参与）
   const stats = useMemo(() => {
-    const scored = (records ?? []).filter((r) => r.total_score > 0)
+    const scored = (records ?? []).filter((r) => r.total_score != null && r.total_score > 0)
     if (scored.length === 0) return null
-    const avg = Math.round(scored.reduce((a, r) => a + r.total_score, 0) / scored.length)
+    const avg = Math.round(scored.reduce((a, r) => a + (r.total_score ?? 0), 0) / scored.length)
     const latest = [...scored].sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1))[0]
     return {
       total: scored.length,
@@ -95,8 +96,8 @@ export default function DashboardPage() {
           {/* 记录列表 */}
           <div className="mt-6 flex flex-col gap-3">
             {records.map((r) => {
-              const grade = r.total_score > 0 ? scoreGrade(r.total_score) : null
-              const scorable = r.total_score > 0
+              const grade = r.total_score != null && r.total_score > 0 ? scoreGrade(r.total_score) : null
+              const scorable = r.total_score != null && r.total_score > 0
               return (
                 <div
                   key={r.id}
@@ -111,7 +112,7 @@ export default function DashboardPage() {
                         : { color: '#7c8680', background: '#eef2ee', border: '1px solid #e2e8e2' }
                     }
                   >
-                    {scorable ? r.total_score : '—'}
+                    {scorable ? r.total_score : r.data_origin === 'offline' ? '离线估算' : '—'}
                   </div>
 
                   <div className="min-w-0 flex-1">
@@ -131,6 +132,12 @@ export default function DashboardPage() {
                       {r.data_origin === 'fixture_sample' && (
                         <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5">演示数据</span>
                       )}
+                      {r.data_origin === 'live' && (
+                        <span className="rounded-chip bg-primary-tint px-1.5 py-0.5 text-primary-deep">真实路网测评</span>
+                      )}
+                      {r.data_origin === 'offline' && (
+                        <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5 text-warn-deep">离线估算</span>
+                      )}
                       {scorable && (
                         <span className="rounded-chip bg-primary-tint px-1.5 py-0.5 text-primary-deep">综合 {grade!.label}</span>
                       )}
@@ -145,7 +152,7 @@ export default function DashboardPage() {
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-tag text-ink-3">
-                        <Database size={13} /> 竞争调研
+                        <Database size={13} /> 目的地调研
                       </span>
                     )}
                   </div>
@@ -161,9 +168,9 @@ export default function DashboardPage() {
             })}
           </div>
 
-          {USE_MOCK && (
+          {isFixture && (
             <p className="mt-5 text-tag text-ink-3">
-              演示数据：含两样区实检与早期轮次快照；M 阶段由真实体检任务自动归档。
+              内置快照：两样区真实百度实跑数据，离线一键复现；真实体检任务自动归档同源。
             </p>
           )}
         </>

@@ -11,10 +11,14 @@ import {
   ChevronDown,
   Settings,
   Activity,
+  Database,
+  MonitorPlay,
 } from 'lucide-react'
 import { fetchDashboard } from '../lib/api'
 import { useTaskRegistry, selectRunning } from '../store/taskRegistry'
 import { useProfileStore } from '../store/profileStore'
+import { useDataModeStore } from '../store/dataModeStore'
+import { resolveTaskLanding } from '../lib/viewRegistry'
 import { BRAND } from '../lib/brand'
 import { VModal, VButton } from '../components/ui'
 import { useShallow } from 'zustand/react/shallow'
@@ -32,6 +36,9 @@ export default function VSidebar() {
   const navigate = useNavigate()
   const [reports, setReports] = useState(0)
   const [evidence, setEvidence] = useState(0)
+  // 数据模式（C1/C2）：运行时开关，真实联调（live）为常态；演示（fixture）走内置快照
+  const dataMode = useDataModeStore((s) => s.mode)
+  const setDataMode = useDataModeStore((s) => s.setMode)
   // selectRunning 每次调用返回新数组 → 用 useShallow 做浅比较，避免 Zustand v5 +
   // React 19 useSyncExternalStore 把「同值新引用」当成快照变更，引发无限重渲染（白屏）。
   const running = useTaskRegistry(useShallow(selectRunning))
@@ -105,10 +112,11 @@ export default function VSidebar() {
           </NavLink>
         ))}
 
-        {/* 进行中的任务：有后台运行任务时显示，带脉冲点，点击回工作台 */}
+        {/* 进行中的任务：有后台运行任务时显示，带脉冲点，点击回落对应任务落地页（research→工作台 / living_circle→生活圈页） */}
         {running.length > 0 && (
           <NavLink
-            to={`/workspace/${running[0].taskId}`}
+            to={resolveTaskLanding(running[0].kind, running[0].taskId)}
+            end={false}
             className={({ isActive }) =>
               [
                 'relative flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-verda',
@@ -122,13 +130,43 @@ export default function VSidebar() {
               <Activity size={19} strokeWidth={1.8} />
               <span className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-ok ring-2 ring-card" />
             </span>
-            <span className="flex-1 truncate">进行中的任务</span>
+            <span className="flex-1 truncate">
+              {running[0].kind === 'living_circle' ? '生活圈体检中' : '进行中的任务'}
+            </span>
             <span className="text-tag font-medium text-primary-deep">{running[0].percent}%</span>
           </NavLink>
         )}
 
         {/* 分隔线 + 系统设置入口（与业务导航区分） */}
         <div className="mb-1 mt-3 h-px bg-line" />
+        {/* C2 · 数据模式运行时开关：真实联调（live）/ 演示（fixture），点击即时全局生效 */}
+        <div className="mx-2 mb-2 mt-1 rounded-btn border border-line/80 bg-bg/60 p-1.5">
+          <div className="mb-1 flex items-center gap-1 px-1 text-tag text-ink-3">
+            <Database size={11} /> 数据模式
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => setDataMode('live')}
+              title="连真实后端：区划选择 / 历史 / 报告 / 体检走 /api（无 AK 时自动离线估算）"
+              className={`flex h-7 flex-1 items-center justify-center gap-1 rounded-btn text-tag font-medium transition-colors ${
+                dataMode === 'live' ? 'bg-primary text-white shadow-card' : 'text-ink-2 hover:bg-primary-tint'
+              }`}
+            >
+              <MonitorPlay size={12} /> 真实联调
+            </button>
+            <button
+              type="button"
+              onClick={() => setDataMode('fixture')}
+              title="内置快照演示：凯里/劲松双样例，零后端"
+              className={`flex h-7 flex-1 items-center justify-center gap-1 rounded-btn text-tag font-medium transition-colors ${
+                dataMode === 'fixture' ? 'bg-warn text-white shadow-card' : 'text-ink-2 hover:bg-primary-tint'
+              }`}
+            >
+              <MonitorPlay size={12} /> 演示
+            </button>
+          </div>
+        </div>
         <NavLink
           to="/settings"
           className={({ isActive }) =>

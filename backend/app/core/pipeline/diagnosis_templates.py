@@ -54,6 +54,42 @@ def _grade(total: float) -> str:
     return "差"
 
 
+def _loc_prefix(scene: dict) -> str:
+    """地点前缀：``城市 · 地址｜``，**空片段不参与拼接**；全空时整个前缀（含 ``｜``）省略。
+
+    为什么要判空：``address`` 可能为空（例如区划选择只给了城市）。直接 f-string 拼接会产出
+    「昆明市 · ｜综合 64.4 分」这种悬空分隔符 —— 分隔符只有在两侧都有内容时才有意义。
+    """
+    parts = (
+        str(scene.get("city") or "").strip(),
+        str(scene.get("address") or "").strip(),
+    )
+    joined = " · ".join(p for p in parts if p)
+    return f"{joined}｜" if joined else ""
+
+
+def lc_subtitle(lc: dict) -> str:
+    """报告副标题 —— **单一实现**：生成报告与存量回填共用这一份公式。
+
+    把两个判据收在一个函数里，避免"生成时写对、回填时又写歪"：
+
+    - 「共 N 处设施」数**可达区内**（``poi.in_circle``），不是采集区内（``poi.total``）。
+      旧实现引 ``poi.total``，同一份报告里「POI 采集（圈内 N）」与副标题会互相矛盾。
+    - 地点前缀空片段不参与拼接（见 :func:`_loc_prefix`），避免「昆明市 · ｜综合 …」悬空分隔符。
+    """
+    scene = lc.get("scene") or {}
+    total = (lc.get("scores") or {}).get("total", 0)
+    poi_in_reach = int((lc.get("poi") or {}).get("in_circle") or 0)
+    if (lc.get("data_origin") or "") == "offline":
+        # 离线估算：不产出可比章节（P0-2 诚实性），仅体检骨架
+        return f"{_loc_prefix(scene)}离线估算 · 评分待实时体检 · 未联网采集 POI"
+    return (
+        f"{_loc_prefix(scene)}综合 {total} 分（{_grade(total)}）"
+        f"· {len(lc.get('blindspots') or [])} 处服务盲区"
+        f" · 共 {poi_in_reach} 处设施（可达区内）"
+    )
+
+
 def _triad(lc: dict, facility: str) -> Optional[dict]:
     for t in (lc.get("scores") or {}).get("triads", []):
         if t.get("facility") == facility:
@@ -113,13 +149,15 @@ def _sec_overview(lc: dict, ev_id: str) -> dict:
     area15 = next((z["area_km2"] for z in (lc.get("isochrones") or []) if z["minutes"] == 15), 0)
     miss = [t["facility"] for t in (lc.get("scores") or {}).get("triads", []) if not t.get("covered")]
     triad_note = f"三要素中「{'、'.join(miss)}」存在 1km 覆盖缺口" if miss else "菜市场/药店/小学三要素 1km 内均可达"
+    poi = lc.get("poi") or {}
     return {
         "id": "overview",
         "title": "体检概览",
         "level": 2,
         "key_takeaway": (
             f"本样区综合评分 {total}（{_grade(total)}），15 分钟步行可达圈约 {area15:.2f} km²，"
-            f"{reachable}/{n} 个采样点可达；设施总量 {(lc.get('poi') or {}).get('total', 0)} 处。"
+            f"{reachable}/{n} 个采样点可达；设施总量 {poi.get('total', 0)} 处"
+            f"（圈内 {poi.get('in_circle', 0)}）。"
             f"{triad_note}，共识别 {len((lc.get('blindspots') or []))} 处服务盲区。"
         ),
         "paragraphs": [
@@ -245,18 +283,39 @@ def _sec_isochrone(lc: dict, ev_id: str) -> dict:
 
 def _sec_blindspot(lc: dict) -> dict:
     bs = lc.get("blindspots", [])
+    sev_label = {"heavy": "重度", "medium": "中度", "light": "轻度"}
+    strat_label = {"mobile_service": "流动服务", "reroute": "移动点/改道补充", "build": "补建站点"}
+    sev_count = {"heavy": 0, "medium": 0, "light": 0}
+    for b in bs:
+        sev_count[b.get("severity") or "light"] += 1
+
+    def _fix_short(fx: dict) -> str:
+        if not fx:
+            return "—"
+        strat = strat_label.get(fx.get("strategy"), fx.get("strategy") or "")
+        return f"{fx.get('facility')}·{strat}·P{fx.get('priority')}" if fx.get("priority") is not None else f"{fx.get('facility')}·{strat}"
+
     rows = [
         {
             "id": b["id"], "center": f"{b['center'][0]:.4f}, {b['center'][1]:.4f}",
-            "missing": b.get("missing_facilities", []), "nearest_name": (b.get("nearest") or [{}])[0].get("name", "—"),
+            "severity": b.get("severity") or "", "severity_label": sev_label.get(b.get("severity") or "", ""),
+            "gap": b.get("gap_score"),
+            "missing": b.get("missing_facilities", []),
+            "nearest_name": (b.get("nearest") or [{}])[0].get("name", "—"),
             "nearest_d": (b.get("nearest") or [{}])[0].get("distance_m", 0),
             "direction": (b.get("nearest") or [{}])[0].get("direction", ""),
+            "fix": (b.get("fixes") or [{}])[0],
         }
         for b in bs
     ]
     claims = [
         {
-            "claim_id": f"c-lc-bs-{r['id']}", "text": f"{r['id']}：1km 内无 {'、'.join(r['missing'])}；最近「{r['nearest_name']}」{int(r['nearest_d'])}m（{r['direction']}）",
+            "claim_id": f"c-lc-bs-{r['id']}",
+            "text": (
+                f"{r['id']}（{'、'.join(r['missing'])}）{r['severity_label'] or r['severity']}级："
+                f"最近「{r['nearest_name']}」{int(r['nearest_d'])}m（{r['direction']}）；"
+                f"建议 {_fix_short(r['fix'])}"
+            ),
             "field": "blindspot", "evidence_ids": [f"ev-lc-bs-{r['id']}"],
             "confidence": "high", "cross_validated": True, "author": "许映川",
         }
@@ -265,15 +324,18 @@ def _sec_blindspot(lc: dict) -> dict:
     return {
         "id": "blindspot", "title": "服务盲区诊断", "level": 2,
         "key_takeaway": (
-            f"识别 {len(bs)} 处 1km 服务盲区" if bs else "未发现 1km 服务盲区，三要素齐备"
+            f"识别 {len(bs)} 处 1km 服务盲区（重度 {sev_count['heavy']}／中度 {sev_count['medium']}／轻度 {sev_count['light']}）"
+            if bs else "未发现 1km 服务盲区，三要素齐备"
         ),
-        "paragraphs": ["按赛题口径（1km 内无菜市场/药店/小学即判盲）识别，下表为各盲区缺失要素与最近设施方位（供补点/加设移动服务参考）。"] if bs else ["按赛题口径网格扫描：各网格点 1km 圆内三类必备设施均有覆盖。"],
+        "paragraphs": ["按赛题口径（1km 内无菜市场/药店/小学即判盲）识别。下表为各盲区的缺失要素、严重度分级与补点建议（供整改优先级参考）。"] if bs else ["按赛题口径网格扫描：各网格点 1km 圆内三类必备设施均有覆盖。"],
         "claims": claims,
         "data_grid": {
-            "columns": ["盲区编号", "中心点", "缺失设施", "最近设施", "最近距离"],
+            "columns": ["盲区编号·严重度", "缺失设施", "最近设施", "补点建议"],
             "rows": [{
-                "name": r["id"], "value": r["nearest_name"], "metric": " / ".join(r["missing"]),
-                "source": f"{r['center']} · {int(r['nearest_d'])}m·{r['direction']}", "source_url": "",
+                "name": f"{r['id']} · {r['severity_label'] or '—'}",
+                "value": f"最近 {r['nearest_name']} {int(r['nearest_d'])}m · {_fix_short(r['fix'])}",
+                "metric": " / ".join(r["missing"]),
+                "source": f"{r['center']} · {r['direction']} · gap {r['gap']}", "source_url": "",
             } for r in rows],
         },
         "source_evidence_ids": [f"ev-lc-bs-{r['id']}" for r in rows],
@@ -339,23 +401,79 @@ def build_evidence(lc: dict) -> List[dict]:
     return ev
 
 
+def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
+    """离线估算报告的诚实章节（P0-2：不产出可比评分/盲区/整改建议）。
+
+    仅保留体检骨架：概览（数据口径 + 距离模型等时圈）、可达性（圆形近似说明）、
+    结论（明确待实时体检）——绝不冒充真实路网测时与 POI 分析。
+    """
+    scene = lc.get("scene") or {}
+    areas = [(z["minutes"], z["area_km2"]) for z in lc.get("isochrones", [])]
+    n = len((lc.get("sampling") or {}).get("points", []))
+    reachable = sum(1 for p in (lc.get("sampling") or {}).get("points", []) if p.get("reachable"))
+    area15 = next((a for m, a in areas if m == 15), 0)
+    return [
+        {
+            "id": "overview", "title": "体检概览（离线估算）", "level": 2,
+            "key_takeaway": "当前为离线估算模式：未连接百度实时路网与 POI，等时圈按「区县中心近似 + 直线距离 × 绕行系数」距离模型推导，综合评分与服务盲区需实时体检后给出，不可与实时分比较。",
+            "paragraphs": [
+                f"中心点「{scene.get('name', '')}」（{scene.get('city', '')} · {scene.get('address', '')}）由内置全国区划库定位（区县中心近似），研究范围 {(scene.get('study_radius_m') or 1000) / 1000:.1f}km。",
+                f"数据口径：data_origin=offline · interpolation={(lc.get('sampling') or {}).get('interpolation')}。15 分钟等时圈约 {area15:.2f} km²（圆形近似，非真实路网形状）。",
+                f"采样 {n} 点（直线距离 × 绕行系数 1.3 测时，可达 {reachable}）；未联网采集 POI，设施清单、盲区与评分需发起实时体检后给出。",
+            ],
+            "charts": [{"chart_id": "chart-offline-isochrone", "type": "bar",
+                        "title": "分级步行等时圈面积（km² · 距离模型）", "option": _chart_isochrone(lc)}],
+            "source_evidence_ids": ["ev-lc-measure"],
+        },
+        {
+            "id": "isochrone", "title": "可达性与等时圈", "level": 2,
+            "key_takeaway": f"5/10/15/20 分钟等时圈面积 {' / '.join(f'{a:.2f}' for _, a in areas)} km²；方式：{(lc.get('sampling') or {}).get('interpolation')}（圆形近似）",
+            "paragraphs": [
+                "离线模式未调用百度路网测时，等时圈由直线距离 × 绕行系数换算步行耗时后取圆形近似，仅用于体检骨架展示。",
+                "「不取底层路网、仅基于分布点位测时推导」仍是算法主线；本页为离线兜底，形状不反映真实路网，实时体检后自动替换为 IDW 插值等时圈。",
+            ],
+            "charts": [],
+            "source_evidence_ids": ["ev-lc-measure"],
+        },
+        {
+            "id": "conclusion", "title": "体检结论（待实时体检）", "level": 2,
+            "key_takeaway": "离线估算无真实 POI/盲区数据，本页不给出可比结论；请发起实时体检获取真实路网等时圈、设施覆盖与整改建议。",
+            "paragraphs": [
+                "离线模式下评分、盲区、整改建议均不产出（data_origin=offline 报告落库时 total_score 为 NULL，前端显示「待实时体检」）。",
+                "有 AK/配额时对同一中心点发起实时体检，结果将落盘缓存（30 天），无 AK 时也可离线复用历史实时结果。",
+            ],
+            "claims": [{
+                "claim_id": "c-lc-offline-1",
+                "text": "离线估算模式：不产出可比评分/盲区，待实时体检",
+                "field": "conclusion", "evidence_ids": [],
+                "confidence": "high", "cross_validated": True, "author": "温叙白",
+            }],
+            "source_evidence_ids": [],
+        },
+    ]
+
+
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:
     """把 LivingCircleReport(data) 组装成完整 Report（渲染适配器直接消费）。"""
     scene = lc.get("scene") or {}
-    total = (lc.get("scores") or {}).get("total", 0)
-    blist = lc.get("blindspots", [])
+    offline = (lc.get("data_origin") or "") == "offline"
     ev_measure = f"ev-lc-measure"
 
-    sections = [
-        _sec_overview(lc, ev_measure),
-        _sec_medical(lc),
-        _sec_education(lc),
-        _sec_market(lc),
-        _sec_elderly(lc),
-        _sec_isochrone(lc, ev_measure),
-        _sec_blindspot(lc),
-        _sec_conclusion(lc),
-    ]
+    if offline:
+        # 离线估算：不产出可比章节（P0-2 诚实性），仅体检骨架
+        sections = _offline_sections(lc)
+    else:
+        sections = [
+            _sec_overview(lc, ev_measure),
+            _sec_medical(lc),
+            _sec_education(lc),
+            _sec_market(lc),
+            _sec_elderly(lc),
+            _sec_isochrone(lc, ev_measure),
+            _sec_blindspot(lc),
+            _sec_conclusion(lc),
+        ]
+    subtitle = lc_subtitle(lc)
     experts = [
         "L3-001", "L3-002", "L3-003", "L2-001", "L2-002", "L2-003",
         "L2-004", "L2-005", "L2-008", "L1-001", "L1-004", "L1-005", "L1-008",
@@ -369,10 +487,7 @@ def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dic
         "id": report_id,
         "report_type": "living_circle",
         "title": title or f"{scene.get('name', '')} · 生活圈体检报告",
-        "subtitle": (
-            f"{scene.get('city', '')} · {scene.get('address', '')}｜综合 {total} 分（{_grade(total)}）"
-            f"· {len(blist)} 处服务盲区 · 共 {(lc.get('poi') or {}).get('total', 0)} 处设施"
-        ),
+        "subtitle": subtitle,
         "query": scene.get("name", ""),
         "brands": [],
         "mode": "standard",

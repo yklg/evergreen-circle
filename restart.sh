@@ -22,7 +22,7 @@ if [ -n "$NODE_BIN" ]; then export PATH="$NODE_BIN:$PATH"; fi
 kill_port() {
   local port="$1"
   local pids
-  pids="$(lsof -nP -iTCP:":$port" -sTCP:LISTEN -t 2>/dev/null)"
+  pids="$(lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null)"
   if [ -n "$pids" ]; then
     echo "  端口 $port 被占用，正在结束进程: $pids"
     # 同时杀进程组（detached_run 用 setsid，PGID==leader PID），覆盖 npm→vite 子进程；
@@ -32,7 +32,7 @@ kill_port() {
       kill "$pid" 2>/dev/null        # 单进程兜底
     done
     sleep 1
-    pids="$(lsof -nP -iTCP:":$port" -sTCP:LISTEN -t 2>/dev/null)"
+    pids="$(lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null)"
     if [ -n "$pids" ]; then
       echo "  强制结束: $pids"
       for pid in $pids; do
@@ -43,7 +43,7 @@ kill_port() {
     fi
   fi
   # 校验：若仍未释放，明确告警（避免新实例绑定失败、留下僵死的 pidfile）
-  if lsof -nP -iTCP:":$port" -sTCP:LISTEN -t >/dev/null 2>&1; then
+  if lsof -nP -iTCP:$port -sTCP:LISTEN -t >/dev/null 2>&1; then
     echo "  WARNING: 端口 $port 仍被占用，新实例可能无法绑定。"
   fi
 }

@@ -31,10 +31,11 @@ class StubBaidu:
         self.poi_calls += 1
         return self._poi_set(query, center)
 
-    async def route_matrix_walking(self, origins, destination):
+    async def _measure_matrix(self, travel_mode, origins, destination, chunk_size=None):
+        """阶段 3：通用矩阵方法（stub 实现）。"""
         self.matrix_calls += 1
         return [
-            (haversine_m(destination, p) / self.speed) if haversine_m(destination, p) < 2200 else None
+            round((haversine_m(destination, p) / self.speed), 1) if haversine_m(destination, p) < 2200 else None
             for p in origins
         ]
 
@@ -51,19 +52,31 @@ def test_fixture_source_nearby_match():
 
 
 def test_fixture_source_returns_expected_fixture_data():
+    """M5：内置快照为真实百度实跑数据（live / IDW）。
+
+    断言的是**快照性质与结构自洽**，不是具体分值：旧版把坐标钉成
+    `scores.total == 58.5` / `blindspots == 3`，用真实 AK 重算夹具后立刻假红，
+    而它真正想守的是「fixture 是真实实跑产物、契约字段完整」。
+    """
     ds = FixtureDataSource()
     r = asyncio.run(ds.compute(CheckParams(scene_name="kaili", center=KAILI_CENTER)))
-    assert r["data_origin"] == "fixture_sample"
-    assert r["scores"]["total"] == 65
-    assert len(r["blindspots"]) == 4
-    assert r["sampling"]["interpolation"] == "circular_approx"
+    assert r["data_origin"] == "live"
+    assert r["sampling"]["interpolation"] == "idw"
+    assert [z["minutes"] for z in r["isochrones"]] == [5, 10, 15, 20]
+    assert 0 <= r["scores"]["total"] <= 100
+    assert len(r["poi"]["categories"]) == 8
+    assert len(r["poi"]["points"]) > 0
+    # 空间口径举证（Q1/Q2 可判据化的最小集，必须随快照一起冻结）
+    cal = r["caliber"]
+    assert cal["collect_radius_m"] >= cal["reach_circumradius_m"] * 0.999
+    assert cal["cells_judged"] + cal["cells_unknown"] == cal["cells_inside"]
 
 
 def test_live_source_full_pipeline_contract():
     center = KAILI_CENTER
     stub = StubBaidu(center)
     ds = LiveDataSource(ak="stub", client=stub, engine=IsochroneEngine(), repo=Repository())
-    params = CheckParams(scene_name="凯里老街", city="贵州·凯里", center=center, mode="quick")
+    params = CheckParams(scene_name="凯里老街", city="贵州·凯里", center=center, sample_profile="quick")
     r = asyncio.run(ds.compute(params))
 
     # 契约顶层字段
@@ -76,6 +89,20 @@ def test_live_source_full_pipeline_contract():
     # 8 类 POI
     assert len(r["poi"]["categories"]) == 8
     assert r["poi"]["total"] > 0
+    # M5.1：逐 POI 点位（真实坐标，BMapGL 渲染契约）——live 管线必须产出
+    pts = r["poi"]["points"]
+    assert len(pts) > 0
+    for p in pts:
+        assert set(p.keys()) == {"id", "name", "category", "lnglat", "minutes", "in_circle"}
+        assert p["id"].startswith("poi-")
+        assert len(p["lnglat"]) == 2
+        assert isinstance(p["lnglat"][0], float)
+        assert isinstance(p["in_circle"], bool)
+    # 每类截断 ≤ 25
+    from collections import Counter
+
+    for cat, n in Counter(p["category"] for p in pts).items():
+        assert n <= 25
     # 评分 0-100 + 三要素 3 条
     assert 0 <= r["scores"]["total"] <= 100
     assert len(r["scores"]["triads"]) == 3
@@ -91,7 +118,7 @@ def test_live_source_repository_cache_used():
     stub = StubBaidu(center)
     repo = Repository()
     ds = LiveDataSource(ak="stub", client=stub, engine=IsochroneEngine(), repo=repo)
-    params = CheckParams(scene_name="凯里老街", center=center, mode="quick")
+    params = CheckParams(scene_name="凯里老街", center=center, sample_profile="quick")
     asyncio.run(ds.compute(params))
     calls_after_first = (stub.poi_calls, stub.matrix_calls)
     asyncio.run(ds.compute(params))  # 同场景 → 缓存命中，不重复采集
@@ -99,9 +126,66 @@ def test_live_source_repository_cache_used():
 
 
 def test_get_data_source_factory_modes():
-    from app.living_circle.data_source import get_data_source
+    """v2 路由：fixture 显式 → Fixture；有 AK → Caching(Live)；无 AK → Caching(Offline)。"""
+    from app.living_circle.data_source import CachingDataSource, OfflineDataSource, get_data_source
 
     fixture = get_data_source("fixture")
     assert isinstance(fixture, FixtureDataSource)
     live = get_data_source("live", ak="x")
-    assert isinstance(live, LiveDataSource)
+    assert isinstance(live, CachingDataSource)
+    assert isinstance(live.source, LiveDataSource)
+    offline = get_data_source("live", ak="")
+    assert isinstance(offline, CachingDataSource)
+    assert isinstance(offline.source, OfflineDataSource)
+    assert offline.read_only is True  # 离线结果不写回 live 缓存
+
+
+def test_fixture_blindspots_annotated_with_new_fields():
+    """契约文档 §8：fixture 演示态由后端归一化补齐盲区新字段（不手编 JSON）。
+
+    守护：severity∈三枚举、gap∈[0,1]、fixes 目标不重复且 priority 连续唯一、
+    reach.isochrone_based 为 true（fixture 有实测采样点）、affected 为诚实 proxy。
+    """
+    ds = FixtureDataSource()
+    r = asyncio.run(ds.compute(CheckParams(scene_name="jing", center=JINSONG_CENTER)))
+    bs = r["blindspots"]
+    assert bs, "劲松快照应至少含 1 处盲区（补点注解的载体）"
+    priorities: set = set()
+    for b in bs:
+        assert b["severity"] in {"heavy", "medium", "light"}
+        assert 0.0 <= b["gap_score"] <= 1.0
+        assert {"severity", "gap_score", "fixes", "reach", "affected"} <= set(b.keys())
+        # reach 应复用实测采样点 IDW → isochrone_based=true（R3）
+        assert b["reach"]["isochrone_based"] is True
+        assert "real_walk_min" in b["reach"]
+        # fixes 目标不重复
+        facs = [f["facility"] for f in b["fixes"]]
+        assert len(facs) == len(set(facs))
+        for f in b["fixes"]:
+            assert isinstance(f["priority"], int) and f["priority"] >= 1
+            priorities.add(f["priority"])
+            assert f["strategy"] in {"mobile_service", "reroute", "build"}
+        # affected 为诚实代理（非空采样 → proxy，非 null）
+        assert b["affected"] is not None
+        assert b["affected"]["provenance"] == "proxy"
+    assert priorities == set(range(1, len(priorities) + 1)), "fixes.priority 须从 1 连续唯一"
+
+
+def test_annotate_blindspots_offline_null_affected():
+    """R4：无采样点的报告（离线/缺 sampling）→ affected=null、reach 降级 nearest/80。"""
+    import copy as _copy
+
+    from app.living_circle.assemble import annotate_blindspots
+
+    ds = FixtureDataSource()
+    r = asyncio.run(ds.compute(CheckParams(scene_name="jing", center=JINSONG_CENTER)))
+    if not r["blindspots"]:
+        return
+    stripped = _copy.deepcopy(r)
+    stripped["sampling"]["points"] = []  # 模拟离线：无采样
+    out = annotate_blindspots(stripped)
+    for b in out["blindspots"]:
+        # R4：无采样 → affected=null，不抛伪代理数
+        assert b["affected"] is None
+        # reach 降级 isochrone_based=false（无实测采样，不能谎称等时圈实测）
+        assert b["reach"]["isochrone_based"] is False

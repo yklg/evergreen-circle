@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * F3 · 报告中心（ReportsPage）：VITE_USE_MOCK=1 下列出体检报告，
- * 类型过滤 + 打开阅读器接线正确。
+ * F3 · 报告中心（ReportsPage）：演示态（fixture）下列出体检报告，
+ * 类型过滤 + 打开阅读器接线正确。数据模式已运行时化：注入 store 为 fixture。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
@@ -21,7 +21,8 @@ function lastPath(): string | null {
 
 async function renderReports() {
   vi.resetModules()
-  vi.stubEnv('VITE_USE_MOCK', '1')
+  const { useDataModeStore } = await import('../store/dataModeStore')
+  useDataModeStore.setState({ mode: 'fixture' }) // 演示态：内置快照列表
   const { default: Page } = await import('../pages/ReportsPage')
   const P = Page as ComponentType
   return render(
@@ -42,7 +43,7 @@ afterEach(() => {
   cleanup()
 })
 
-describe('ReportsPage · 报告中心（mock 态）', () => {
+describe('ReportsPage · 报告中心（演示态）', () => {
   it('页面骨架 + 报告类型徽标（生活圈体检）', async () => {
     await renderReports()
     expect(screen.getByRole('heading', { name: /报告中心/ })).toBeTruthy()
@@ -55,9 +56,9 @@ describe('ReportsPage · 报告中心（mock 态）', () => {
     expect(screen.getAllByText(/北京劲松 · 生活圈体检报告/).length).toBeGreaterThan(0)
   })
 
-  it('过滤：切「竞争调研」→ 空态；切回「全部」→ 恢复列表', async () => {
+  it('过滤：切「目的地调研」→ 空态；切回「全部」→ 恢复列表', async () => {
     await renderReports()
-    fireEvent.click(screen.getByRole('button', { name: '竞争调研' }))
+    fireEvent.click(screen.getByRole('button', { name: '目的地调研' }))
     expect(screen.getByText('暂无该类报告')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '全部' }))
     expect(screen.getAllByText(/凯里老街 · 生活圈体检报告/).length).toBeGreaterThan(0)

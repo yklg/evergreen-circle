@@ -52,7 +52,7 @@ export function VMetricsPanel({ metrics }: { metrics?: ReportMetrics }) {
   return (
     <div className="my-6">
       <div className="mb-3 flex items-center gap-1.5 text-aux font-semibold text-ink">
-        <Gauge size={15} className="text-primary" /> 效能与业务闭环指标（相比人工竞品分析，公式透明可解释）
+        <Gauge size={15} className="text-primary" /> 效能与业务闭环指标（公式透明可解释）
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {cards.map((c) => {

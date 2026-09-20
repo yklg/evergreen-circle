@@ -101,13 +101,13 @@ def _model(tier: str) -> str:
 
 
 # ── 任务创建 / 澄清（落库）─────────────────────────────────
-def create_task(query: str, mode: str = "deep", model: Optional[str] = None) -> Dict[str, Any]:
+def create_task(query: str, mode: str = "deep", model: Optional[str] = None, purpose: str = "", kind: str = "research") -> Dict[str, Any]:
     task_id = _sid("t")
     questions = _clarify_questions(query)
     meta: Dict[str, Any] = {"_mode": mode}
     if model and model != "Auto":
         meta["_model"] = model
-    db.save_task(task_id, query, meta)
+    db.save_task(task_id, query, meta, kind=kind, purpose=purpose)
     return {"taskId": task_id, "needClarify": True, "clarifyQuestions": questions}
 
 

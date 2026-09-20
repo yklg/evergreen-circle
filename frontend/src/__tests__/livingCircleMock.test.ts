@@ -10,7 +10,9 @@ describe('livingCircleMock 数据源', () => {
     expect(new Set(SAMPLE_COMMUNITIES.map((c) => c.id)).size).toBe(2)
     for (const c of SAMPLE_COMMUNITIES) {
       expect(c.report.scene.name).toBeTruthy()
-      expect(c.report.data_origin).toBe('fixture_sample')
+      // M5：内置快照为真实百度实跑数据
+      expect(c.report.data_origin).toBe('live')
+      expect(c.report.sampling.interpolation).toBe('idw')
     }
   })
 

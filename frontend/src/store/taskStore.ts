@@ -37,7 +37,7 @@ const BASE_NODES: DAGNode[] = [
   { id: 'intake', label: '需求理解', status: 'idle' },
   { id: 'orchestrator', label: '编排派遣', status: 'idle' },
   { id: 'collect', label: '证据采集', status: 'idle' },
-  { id: 'analyze', label: '交叉分析', status: 'idle' },
+  { id: 'sentiment', label: '聚合口碑舆情', status: 'idle' },
   { id: 'write', label: '报告撰写', status: 'idle' },
   { id: 'audit', label: '质检审裁', status: 'idle' },
   { id: 'done', label: '签发交付', status: 'idle' },

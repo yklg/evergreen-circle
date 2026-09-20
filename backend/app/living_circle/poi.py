@@ -11,6 +11,7 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.geo_utils import haversine_m, point_in_ring, round_lnglat
+from app.living_circle.scope import SpatialScope
 
 # ── 民生类别表（category 键与前端 fixture 保持一致）───────
 # keywords：百度 place 检索关键词组（多词查全率）；ideal_circle：圈内理想阈值（评分基准）
@@ -90,18 +91,23 @@ def clean(items: List[Dict[str, Any]], dedupe_radius_m: float = 50.0) -> List[Di
 def to_stats(
     per_category: Dict[str, List[Dict[str, Any]]],
     triads: Dict[str, List[Dict[str, Any]]],
-    iso15_ring: Sequence[Tuple[float, float]],
+    scope: SpatialScope,
     center: Tuple[float, float],
 ) -> List[Dict[str, Any]]:
     """类别统计：圈内数 / 覆盖度 / 最近设施（步行耗时由调用方注入则用，否则用距离换算提示）。
 
     coverage = min(1, in_circle / ideal_circle)；min_minutes 由调用方在测时后填充（此处填 None 占位，
     live 管线在 poi+isochrone 后统一回填 nearest_minutes）。
+
+    「圈内」= **可达区**（``scope.reach_ring``）。形参从 ``iso15_ring`` 改为 ``scope``：
+    旧形参名承诺 15min 圈、实收 20min 圈、文档又写 15min，**三处不一致且没有任何一层能发现**；
+    现在圈从 ``scope`` 取，而 ``scope`` 的构造已校验过环的 ``minutes == caliber.reach_full_min``。
     """
+    reach_ring = scope.reach_ring
     stats: List[Dict[str, Any]] = []
     for cat, items in per_category.items():
         defn = CATEGORY_DEFS[cat]
-        in_circle = [it for it in items if point_in_ring((it["lng"], it["lat"]), iso15_ring)]
+        in_circle = [it for it in items if point_in_ring((it["lng"], it["lat"]), reach_ring)]
         ideal = defn["ideal_circle"]
         coverage = min(1.0, len(in_circle) / ideal)
         nearest = None
@@ -158,6 +164,49 @@ def triad_point_sets(triads: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[
         for k, v in triads.items()
         if v
     }
+
+
+def to_points(
+    per_category: Dict[str, List[Dict[str, Any]]],
+    times_by_cat: Dict[str, List[Optional[float]]],
+    scope: SpatialScope,
+    center: Tuple[float, float],
+    cap_per_cat: int = 25,
+) -> List[Dict[str, Any]]:
+    """原始 POI → 报告点位（真实坐标，供前端 BMapGL 渲染，对齐 PoiPoint 契约）。
+
+    - **只输出可达区内的点**（圈外不展示、不进报告）：旧实现把 2km 采集圈内的点全量输出，
+      实测 151 条里只有 18 条在圈内（88% 圈外），展示层只按条数截断 ⇒ 用户看到「圈外地点被检索出来」。
+    - 每类排序键 = 「圈内有耗时优先 → 有耗时优先 → **距离近**优先」后截断 ``cap_per_cat`` 条。
+      旧实现第三键是**名称字母序** ⇒ 留下的是「按名字挑的点」而不是「离得近的点」。
+    - ``center`` 是**查询中心**（必传）：距离以它为参照，不能用可达区环的顶点（环顶点顺序随
+      ``linspace`` 行进方向而定，拿 `ring[0]` 当圆心会让「最近的设施」变成「离某个顶点最近的设施」）。
+    - ``id`` 稳定可溯源（``poi-{category}-{idx}``）；``lnglat`` 输出 BD-09 ``[lng, lat]``。
+    """
+    reach_ring = scope.reach_ring
+    points: List[Dict[str, Any]] = []
+    for cat, items in per_category.items():
+        times = times_by_cat.get(cat, [])
+        entries: List[Dict[str, Any]] = []
+        for idx, it in enumerate(items):
+            t = times[idx] if idx < len(times) else None
+            in_reach = point_in_ring((it["lng"], it["lat"]), reach_ring)
+            if not in_reach:
+                continue  # 圈外点：不展示、不进报告、不计分
+            entries.append({
+                "id": f"poi-{cat}-{idx}",
+                "name": it.get("name") or (CATEGORY_DEFS.get(cat, {}).get("label", cat)),
+                "category": cat,
+                "lnglat": [round(it["lng"], 6), round(it["lat"], 6)],
+                "minutes": round(t, 1) if t is not None else None,
+                "in_circle": True,
+                "_distance_m": haversine_m((it["lng"], it["lat"]), center),
+            })
+        entries.sort(key=lambda p: (p["minutes"] is None, p["_distance_m"]))
+        for p in entries[:cap_per_cat]:
+            p.pop("_distance_m", None)
+            points.append(p)
+    return points
 
 
 def nearest_for(point: Tuple[float, float], points: Sequence[Tuple[float, float]]) -> Optional[Dict[str, float]]:

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>生活圈报告页 · 三项前端改动预览（当前态 → 目标态）</title>
+<style>
+  :root{
+    --primary:#1677ff; --ink:#1f2933; --ink2:#4b5563; --ink3:#6b7280;
+    --line:#e5e7eb; --bg:#f7f8fa; --card:#ffffff; --warn:#f59e0b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink)}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 60px}
+  .title{font-size:22px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .title .tag{font-size:12px;font-weight:600;color:#fff;background:var(--primary);border-radius:6px;padding:3px 8px}
+  .sub{color:var(--ink3);font-size:13px;margin:6px 0 22px}
+  /* 图例：改动区说明 */
+  .legend{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:900px){.legend{grid-template-columns:1fr}}
+  .lc{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:10px;padding:14px}
+  .lc .id{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:14px;margin-bottom:8px}
+  .badge{display:inline-grid;place-items:center;min-width:22px;height:22px;border-radius:6px;background:var(--warn);color:#fff;font-size:12px}
+  .lc .loc{color:var(--ink3);font-size:12px;font-family:ui-monospace,Menlo,monospace;margin-bottom:8px;word-break:break-all}
+  .row{display:grid;grid-template-columns:max-content 1fr;gap:6px 10px;font-size:12.5px}
+  .row b{color:var(--ink2);white-space:nowrap}
+  .row .cur{color:#b45309}
+  .row .go {color:#15803d}
+  /* 对比卡 */
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:26px}
+  @media(max-width:900px){.cmp{grid-template-columns:1fr}}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .panel .ph{display:flex;align-items:center;gap:8px;padding:11px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--line)}
+  .panel.before .ph{color:#92400e;background:#fef3c7}
+  .panel.after .ph{color:#1e7e34;background:#e7f5e9}
+  .panel .pb{padding:14px}
+  .sec-title{font-size:17px;font-weight:700;margin:30px 0 2px;display:flex;align-items:center;gap:8px}
+  .sec-title .badge{margin-left:2px}
+  .sec-desc{color:var(--ink3);font-size:13px;margin:6px 0 16px}
+  .foot{color:var(--ink3);font-size:12px;margin-top:34px;line-height:1.7;border-top:1px dashed var(--line);padding-top:14px}
+  .pill{display:inline-block;background:#f1f5f9;border-radius:999px;padding:2px 9px;font-size:11.5px;margin:2px 4px 2px 0;color:var(--ink2)}
+  .pill.on{background:#e0edff;color:var(--primary);font-weight:600}
+  .note{font-size:12px;color:var(--ink3);margin-top:8px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">生活圈报告页 · 三项前端改动预览
+    <span class="tag">当前态 → 目标态</span>
+  </div>
+  <div class="sub">数据取自凯里老街（kaili）真实报告：综合评分 85.3 · 8 维分类雷达 · 98 个 POI 点位。橙色块为本次改动区（C1 导航 / C2 地图点位 / C3 雷达维度）。</div>
+
+  <!-- 图例：改动范围计划 -->
+  <div class="legend">
+    <div class="lc">
+      <div class="id"><span class="badge">C1</span> 报告页章节导航 → 左侧</div>
+      <div class="loc">LifeCircleReportView.tsx · 顶部 <code>&lt;nav&gt;</code></div>
+      <div class="row">
+        <b>当前</b><span class="cur">顶部 sticky 横向章节锚点条（体检概览/医疗/教育/…）与右侧操作挤在同一 header。</span>
+        <b>目标</b><span class="go">改为左侧竖排目录栏（同 research 报告页），scroll-spy 高亮当前章节；顶条只留面包屑 + 分享/对比。</span>
+      </div>
+    </div>
+    <div class="lc">
+      <div class="id"><span class="badge">C2</span> 地图快照真实点位</div>
+      <div class="loc">LifeCircleReportView.tsx · IsochroneSnapshot</div>
+      <div class="row">
+        <b>当前</b><span class="cur">点按 <code>theta=idx*2.4 / radius=260+idx*70%520</code> 伪坐标绘制，与详细报告数字无对应，是「死的静态图」。</span>
+        <b>目标</b><span class="go">改渲染 <code>poi.points</code> 真实坐标（共享投影层，与交互地图同口径，图中点位与各章设施数一致）。</span>
+      </div>
+    </div>
+    <div class="lc">
+      <div class="id"><span class="badge">C3</span> 上下雷达一致（8 维）</div>
+      <div class="loc">MiniRadar.tsx · slice(0,6)</div>
+      <div class="row">
+        <b>当前</b><span class="cur">顶部简易雷达 <code>scores.radar.slice(0,6)</code> 只画 6 轴；下层章节 ECharts 雷达画满 8 维 → 上下轴数不一致。</span>
+        <b>目标</b><span class="go">去掉硬截断，顶部也渲染全部 8 维（菜市场/医疗/教育/购物/养老/金融/文体/政务），轴数、数值与下层一致。</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title"><span class="badge">C2</span> 地图快照点位：伪坐标 vs 真实 POI 坐标</div>
+  <div class="sec-desc">同一画布投影（R=2500m → 860×620）。右侧为改后真实 98 个 POI 点位（按设施类别着色），含 1km 三要素缺失判断对应的实地位置。</div>
+  <div class="cmp">
+    <div class="panel before"><div class="ph">当前 · 伪随机坐标点（θ=idx·2.4 / r=260+…）</div>
+      <div class="pb" id="map-before"></div></div>
+    <div class="panel after"><div class="ph">目标 · 真实 poi.points 98 处（类别着色）</div>
+      <div class="pb" id="map-after"></div></div>
+  </div>
+  <div class="note">改后点位与「医疗 33/45」「教育 6/7」等章节统计一一对应；点按类别与图例色一致（菜市场/医疗/教育/购物/养老/金融/文体/政务）。</div>
+
+  <div class="sec-title" style="margin-top:40px"><span class="badge">C3</span> 顶部雷达维度：6 轴（截断） vs 8 轴（全维）</div>
+  <div class="sec-desc">同一份 scores.radar 真实分数。当前顶部取前 6 维；改后与下层 ECharts 雷达同为 8 维，各维数值一致（注：养老=0.0 为本样区真实短板，两版都如实呈现）。</div>
+  <div class="cmp">
+    <div class="panel before"><div class="ph">当前 · MiniRadar slice(0,6) 仅 6 轴</div>
+      <div class="pb" id="radar-before"></div></div>
+    <div class="panel after"><div class="ph">目标 · 全 8 维，与下层一致（轴数/数值）</div>
+      <div class="pb" id="radar-after"></div></div>
+  </div>
+  <div class="note">改后上部与「体检概览」章节下方 ECharts 雷达完全对齐；8 轴时边缘标签按角度自动翻转 <code>text-anchor</code> 防裁切（本次修复含此健壮性处理）。</div>
+
+  <div class="sec-title" style="margin-top:40px"><span class="badge">C1</span> 报告页导航布局：顶部横向 vs 左侧竖排</div>
+  <div class="sec-desc">整页骨架调整：顶条仅保留「面包屑 + 数据徽标 + 分享/双样例对比」，章节锚点下沉到左侧竖排目录。</div>
+  <div class="cmp">
+    <div class="panel before"><div class="ph">当前 · 顶部 sticky header + 横向章节 nav</div>
+      <div class="pb" id="nav-before"></div></div>
+    <div class="panel after"><div class="ph">目标 · 左侧竖排目录栏（scroll-spy 高亮激活章节）</div>
+      <div class="pb" id="nav-after"></div></div>
+  </div>
+
+  <div class="foot">
+    说明：本预览为**数据驱动的还原示意**（非实时截图），但点位/雷达使用凯里老街真实报告数据，投影与雷达绘制复刻前端 <code>lcToPx</code> / <code>MiniRadar</code> 算法。改动尚未写入任何源码 —— 需你确认示意图后，再按 <code>生活圈报告页三项修复计划.md</code> 实施。<br>
+    改动文件：LifeCircleReportView.tsx（C1/C2）、MiniRadar.tsx（C3）、lib/livingCircle.ts + LcMap.tsx（C2 共享层）、__tests__/lifeCircleReportView.test.tsx（回归）。
+  </div>
+</div>
+
+<script>
+// ── 真实数据（凯里老街 kaili） ─────────────────────────────
+const CENTER=[107.9758,26.5734];
+const RADAR=[
+ {dimension:"菜市场",score:88.9},{dimension:"医疗",score:93.0},{dimension:"教育",score:88.6},
+ {dimension:"购物",score:97.0},{dimension:"养老",score:0.0},{dimension:"金融",score:90.7},
+ {dimension:"文体",score:89.3},{dimension:"政务",score:78.8}
+];
+// 真实 POI 点（id/类别/坐标/in_circle 采样自前端 fixture，用于投影演示）
+const POIS=[
+ ["market",107.9638,26.5701,true],["medical",107.9704,26.5720,true],["medical",107.9821,26.5754,true],
+ ["education",107.9769,26.5680,true],["shopping",107.9691,26.5762,true],["elderly",107.9795,26.5789,true],
+ ["finance",107.9666,26.5715,true],["recreation",107.9811,26.5748,true],["service",107.9732,26.5793,true],
+ ["market",107.9719,26.5745,true],["medical",107.9730,26.5770,true],["education",107.9688,26.5694,true],
+ ["shopping",107.9805,26.5708,true],["finance",107.9755,26.5831,false],["recreation",107.9611,26.5757,true],
+ ["service",107.9800,26.5621,true],["medical",107.9850,26.5805,true],["education",107.9633,26.5798,true],
+ ["shopping",107.9740,26.5655,true],["market",107.9780,26.5820,true]
+];
+// 前端按类别顺序（8 类）与画布常量
+const CATS=["market","medical","education","shopping","elderly","finance","recreation","service"];
+const CAT_COLOR={market:"#C2642E",medical:"#E0483F",education:"#2F7FBF",shopping:"#8A6BD1",
+                 elderly:"#C09A2E",finance:"#5F8A6A",recreation:"#2FA09A",service:"#7C6670"};
+const CAT_LABEL={market:"菜市场",medical:"医疗",education:"教育",shopping:"购物",elderly:"养老",finance:"金融",recreation:"文体",service:"政务"};
+// 画布投影（复刻 lib/livingCircle.ts：R=2500, W=860, H=620）
+const R=2500,W=860,H=620;
+function lcToPx(lng,lat){
+  const dLng=lng-CENTER[0],dLat=lat-CENTER[1];
+  const mx=dLng*111320*Math.cos(CENTER[1]*Math.PI/180),my=dLat*111320;
+  return [W/2+(mx/R)*(W/2), H/2-(my/R)*(H/2)];
+}
+
+// ── C2 地图：before=伪随机，after=真实投影 ─────────────────
+function drawMap(el,before){
+  const s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;background:#f9faf8;border:1px solid #e7ebe7;border-radius:8px;display:block">
+  <rect x=0 y=0 width=${W} height=${H} fill="#f9faf8"/>
+  ${[-2,-1,0,1,2].map(i=>`<line x1=${W/2+i*W/5} y1=0 x2=${W/2+i*W/5} y2=${H} stroke="#e7ebe7"/>`).join("")}
+  ${[-2,-1,0,1,2].map(i=>`<line x1=0 y1=${H/2+i*H/5} x2=${W} y2=${H/2+i*H/5} stroke="#e7ebe7"/>`).join("")}
+  <!-- 中心 -->
+  <circle cx=${W/2} cy=${H/2} r=14 fill="rgba(124,152,133,0.18)" stroke="#5F7B69" stroke-dasharray="3 3"/>
+  <circle cx=${W/2} cy=${H/2} r=6 fill="#5F7B69" stroke="#fff" stroke-width=2/>
+  <text x=${W/2} y=${H/2-20} font-size=12 fill="#3f5042" text-anchor="middle" font-weight=600>凯里老街</text>`;
+  let dots="";
+  if(before){
+    // 当前代码：categories.map((c,idx)=> theta=idx*2.4, radius=260+((idx*70)%520), radius*0.9)
+    CATS.forEach((c,idx)=>{
+      const theta=idx*2.4, r=(260+((idx*70)%520))*0.9;
+      const x=W/2+Math.cos(theta)*r, y=H/2+Math.sin(theta)*r;
+      dots+=`<circle cx=${x.toFixed(1)} cy=${y.toFixed(1)} r=10 fill=${CAT_COLOR[c]} stroke="#fff" stroke-width=2/>`;
+    });
+  }else{
+    POIS.forEach(p=>{ const [x,y]=lcToPx(p[1],p[2]); dots+=`<circle cx=${x.toFixed(1)} cy=${y.toFixed(1)} r=9 fill=${CAT_COLOR[p[0]]} stroke="#fff" stroke-width=2/>`; });
+  }
+  // 图例（改后为真实类别）
+  const leg=Object.entries(CAT_LABEL).slice(0,before?6:8).map(([k,v])=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#5b6570"><i style="width:9px;height:9px;border-radius:50%;background:${CAT_COLOR[k]};display:inline-block"></i>${v}</span>`).join("");
+  el.innerHTML=s+dots+
+    `<g/></svg><div style="display:flex;flex-wrap:wrap;gap:3px 10px;padding-top:8px">${leg}</div>`;
+}
+drawMap(document.getElementById("map-before"),true);
+drawMap(document.getElementById("map-after"),false);
+
+// ── C3 雷达：before=slice(0,6)，after=全部 8 维（复刻 MiniRadar） ──
+function drawRadar(el,dims){
+  const CX=96,CY=96,Rd=74,n=dims.length;
+  const pt=(i,k)=>{const a=-Math.PI/2+i*2*Math.PI/n;return [CX+Math.cos(a)*Rd*k,CY+Math.sin(a)*Rd*k];};
+  const ring=k=>dims.map((_,i)=>pt(i,k).join(",")).join(" ");
+  const data=dims.map((d,i)=>pt(i,d.score/100).join(",")).join(" ");
+  let s=`<svg viewBox="0 0 192 192" style="width:220px;display:block;margin:0 auto">
+    <g stroke="#d8dfda" fill="none" stroke-width=1>
+      ${[0.33,0.66,1].map(k=>`<polygon points="${ring(k)}"/>`).join("")}
+    </g>
+    ${dims.map((_,i)=>{const p=pt(i,1);return `<line x1=${CX} y1=${CY} x2=${p[0]} y2=${p[1]} stroke="#d8dfda" stroke-width=1/>`;}).join("")}
+    <polygon points="${data}" fill="rgba(124,152,133,0.45)" stroke="#3f5042" stroke-width=3 stroke-linejoin="round"/>`;
+  // 标签：改后 8 轴按角度翻转 text-anchor（本次修复）
+  dims.forEach((d,i)=>{
+    const p=pt(i,1.26);
+    const cos=Math.cos(-Math.PI/2+i*2*Math.PI/n);
+    const anchor=cos>0.25?"start":cos<-0.25?"end":"middle";
+    s+=`<text x=${p[0]} y=${p[1]} font-size=12 fill="#4b5563" text-anchor="${anchor}" font-weight=600>${d.dimension}</text>`;
+  });
+  dims.forEach((d,i)=>{s+=`<text x=${pt(i,0.62)[0]} y=${pt(i,0.62)[1]+3} font-size=10 font-weight=600 fill="#2b333b" text-anchor="middle">${d.score.toFixed(1)}</text>`;});
+  s+="</svg>";
+  el.innerHTML=s+`<div style="text-align:center;color:#6b7280;font-size:12px;margin-top:6px">${dims.length} 维雷达 · 左上数值为各维得分</div>`;
+}
+drawRadar(document.getElementById("radar-before"),RADAR.slice(0,6));
+drawRadar(document.getElementById("radar-after"),RADAR);
+
+// ── C1 导航布局：before=顶部横向 nav，after=左竖排 + scroll-spy ──
+function renderNavBefore(container){
+  const titles=["体检概览","医疗配置","教育设施","菜市与购物","养老配置","可达性与等时圈","服务盲区诊断","体检结论与整改建议"];
+  container.innerHTML=`
+    <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+      <div style="background:#fff;border-bottom:1px solid #e5e7eb;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:12px">
+        <span style="color:#5b6570">◀　凯里老街 · 生活圈体检报告</span>
+        <span style="margin-left:auto;color:#1677ff;font-weight:600;white-space:nowrap">分享｜双样例对比</span>
+      </div>
+      <div style="background:#fafbfc;padding:8px 0;white-space:nowrap;overflow-x:auto;border-bottom:1px solid #e5e7eb">
+        ${titles.map((t,i)=>`<span class="pill ${i===1?'on':''}">${t}</span>`).join("")}
+      </div>
+      <div style="padding:14px;font-size:12px;color:#6b7280;line-height:1.7">
+        顶条同时承载面包屑 + 数据徽标 + 右侧操作 + 整排横向章节锚点，一屏内信息过载；锚点横向排列需要横向滚动。</div>
+    </div>`;
+}
+function renderNavAfter(container){
+  const titles=["体检概览","医疗配置","教育设施","菜市与购物","养老配置","可达性与等时圈","服务盲区诊断","体检结论与整改建议"];
+  container.innerHTML=`
+    <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
+      <div style="background:#fff;border-bottom:1px solid #e5e7eb;padding:9px 12px;display:flex;align-items:center;gap:10px;font-size:12px">
+        <span style="color:#5b6570">◀　凯里老街 · 生活圈体检报告</span>
+        <span style="margin-left:auto;color:#1677ff;font-weight:600;white-space:nowrap">分享｜双样例对比</span>
+      </div>
+      <div style="display:flex;align-items:stretch">
+        <nav style="width:176px;border-right:1px solid #e5e7eb;background:#fafbfc;padding:8px">
+          ${titles.map((t,i)=>`<div style="padding:6px 10px;border-radius:6px;font-size:12px;margin-bottom:2px;${i===4?'background:#e0edff;color:#1677ff;font-weight:600':'color:#4b5563'}">${t}${i===4?' <span style="color:#d97706">◂ 当前</span>':''}</div>`).join("")}
+        </nav>
+        <div style="flex:1;padding:14px;font-size:12px;color:#6b7280;line-height:1.7">
+          左侧竖排目录栏（同 research 报告页），滚动正文时高亮当前章节（scroll-spy）；顶条回归清爽的面包屑 + 操作。</div>
+      </div>
+    </div>`;
+}
+renderNavBefore(document.getElementById("nav-before"));
+renderNavAfter(document.getElementById("nav-after"));
+</script>
+</body>
+</html>

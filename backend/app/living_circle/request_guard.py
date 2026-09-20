@@ -50,10 +50,10 @@ class CallGuard:
     def __init__(
         self,
         max_concurrency: int = 4,
-        min_interval_s: float = 0.05,
-        max_retries: int = 2,
+        min_interval_s: float = 0.25,
+        max_retries: int = 4,
         backoff_base_s: float = 0.5,
-        backoff_max_s: float = 8.0,
+        backoff_max_s: float = 12.0,
         timeout_s: float = 12.0,
     ) -> None:
         self._sem = asyncio.Semaphore(max_concurrency)

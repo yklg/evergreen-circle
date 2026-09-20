@@ -1,6 +1,6 @@
 """几何工具（living_circle 域单一实现来源，A1）。
 
-约定：全域使用百度坐标系 BD-09，坐标一律 (lat, lng)。渲染/插值所需的
+约定：全域使用百度坐标系 BD-09，坐标一律 (lng, lat)。渲染/插值所需的
 「米制平面」由本模块统一提供：
   - to_local_xy / xy_to_lnglat：以中心点为原点的本地等距近似投影（渲染用，非测地结算）
   - haversine_m：球面大圆米制距离（盲区判定/近邻距离）
@@ -10,12 +10,56 @@ M 阶段所有换算只准走这里，禁止各模块自行 COPY 换算逻辑。
 from __future__ import annotations
 
 import math
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 LngLat = Tuple[float, float]  # (lng, lat)
 
 # 每度纬度对应米（WGS-84 平均）
 M_PER_DEG_LAT = 111_320.0
+
+# BD-09 经纬度的合法值域（值域即契约，不随模块漂移）
+BD_LNG_ABS_MAX = 180.0
+BD_LAT_ABS_MAX = 90.0
+
+
+def parse_bd_lnglat(v: object) -> Optional[LngLat]:
+    """BD-09 经纬度合法性解析 —— 全项目唯一实现。
+
+    契约（四条同时满足才算合法）：
+      1) 是长度恰为 2 的序列；
+      2) 两项均为实数（``bool`` 不算）；
+      3) 两项均有限（拒绝 inf / nan）；
+      4) ``|lng| <= 180`` 且 ``|lat| <= 90``。
+
+    任一条不满足 → 返回 ``None``，由调用方决定拒绝方式（API 层 422 / 前端抛错）。
+
+    **为什么必须是「值校验」而不是「类型校验」**：本域的 ``LngLat`` 是裸元组
+    ``Tuple[float, float]``，BD-09 经纬度、百度墨卡托米、局部平面米三者在类型系统里
+    **完全同形**。历史事故：BMapGL ``dragend`` 的 ``e.point`` 是墨卡托平面坐标（米）
+    ``(11440230.81, 2860409.52)``，被当作经纬度穿过全链路 → 地图中心被打到
+    ``lng 150.81, lat 84.60``（北极圈）→ 无瓦片 → 画布退化为纯色。
+    故坐标系语义只能由**值域**兜住；这也是本函数作为跨层契约存在的唯一理由。
+    """
+    if isinstance(v, (str, bytes)):
+        return None
+    try:
+        items = list(v)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+    if len(items) != 2:
+        return None
+    out: List[float] = []
+    for it in items:
+        if isinstance(it, bool) or not isinstance(it, (int, float)):
+            return None
+        f = float(it)
+        if not math.isfinite(f):
+            return None
+        out.append(f)
+    lng, lat = out
+    if abs(lng) > BD_LNG_ABS_MAX or abs(lat) > BD_LAT_ABS_MAX:
+        return None
+    return (lng, lat)
 
 # 方位词（盲区"最近设施"的方向描述，16 方位）
 _DIRECTIONS = [

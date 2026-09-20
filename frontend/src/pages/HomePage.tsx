@@ -9,28 +9,20 @@ import {
   Sparkles,
   MapPin,
   Building2,
-  Crosshair,
-  Zap,
-  Gem,
-  Crown,
+  Target,
   Sprout,
 } from 'lucide-react'
 import { VSunGlow } from '../components/ui'
 import { fadeUp, stagger } from '../lib/motion'
 import { useUIStore } from '../store/uiStore'
-import { createLivingCircleTask } from '../lib/api'
 import { useSettingsStore } from '../store/settingsStore'
 import { findProviderByBaseUrl } from '../lib/llmProviders'
 import { candidatesFor } from '../lib/modelResolution'
 import { BRAND } from '../lib/brand'
-import { SAMPLE_COMMUNITIES, USE_MOCK } from '../mocks/livingCircleMock'
-import type { LifeCircleMode, LngLat } from '../types'
-
-const MODE_OPTIONS = [
-  { key: 'quick', icon: Zap, label: '速览', desc: '粗扫采样 · 约 1 分钟出圈' },
-  { key: 'standard', icon: Gem, label: '标准', desc: '分级采样 · 约 2 分钟出圈' },
-  { key: 'precise', icon: Crown, label: '精细', desc: '边界加密 · 约 3 分钟出圈' },
-]
+import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
+import { launchResearch, buildResearchQuery } from '../lib/researchFlow'
+import ResearchWizard from '../components/ResearchWizard'
+import type { ResearchOut, ResearchDepth } from '../components/ResearchWizard'
 
 const FEATURES = [
   '5/10/15/20 分钟等时圈',
@@ -109,45 +101,36 @@ function ModelPicker() {
 export default function HomePage() {
   const navigate = useNavigate()
   const [text, setText] = useState('')
-  const [mode, setMode] = useState('standard')
   const [submitting, setSubmitting] = useState(false)
   const [subErr, setSubErr] = useState('')
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const [wizardPlace, setWizardPlace] = useState('黄山')
   const taRef = useRef<HTMLTextAreaElement>(null)
 
-  /** 发起体检：F 阶段 mock 直接进生活圈地图页；M 阶段走真实编排（任务 → 工作台 SSE） */
+  /** 统一发起：先弹分步问答（报告类型 + 深度），确认后在真实/演示模式下一律建任务进工作台流水线 */
   function startCheck(target?: string) {
-    if (USE_MOCK) {
-      navigate(target ? `/life-circle/${target}` : '/life-circle/kaili')
-      return
-    }
+    const sample =
+      target && target !== 'custom' ? SAMPLE_COMMUNITIES.find((c) => c.id === target) : undefined
+    const place = text.trim() || sample?.title || '黄山'
+    setWizardPlace(place)
+    setWizardOpen(true)
+  }
+
+  /** 向导确认后发起：真实态走后端专家流水线；演示态 createTask 兜底 demo-* 回放 fixture 流 */
+  async function handleLaunch(out: ResearchOut, depth: ResearchDepth) {
     if (submitting) return
-    const query = text.trim() || '凯里老街'
-    // 入参解析：样例卡 → 携带样例中心；坐标输入 → center=[lng,lat]；纯地名 → 仅 scene_name（后端地理编码/样例匹配兜底）
-    const sample = SAMPLE_COMMUNITIES.find((c) => c.id === target)
-    const m = /^\s*([\d.]+)\s*,\s*([\d.]+)\s*$/.exec(query)
-    let center: LngLat | undefined
-    let city = ''
-    if (sample) {
-      center = sample.report.scene.center
-      city = sample.city
-    } else if (m) {
-      center = [Number(m[1]), Number(m[2])]
-    }
     setSubErr('')
     setSubmitting(true)
-    createLivingCircleTask({
-      query: sample?.title ?? query,
-      mode: mode as LifeCircleMode,
-      center,
-      city,
-    })
-      .then((r) => navigate(`/workspace/${r.taskId}`, { state: { query } }))
-      .catch((e) => {
-        const msg = e instanceof Error ? e.message : String(e)
-        setSubErr(msg)
-        setSubmitting(false)
-      })
-      .finally(() => setSubmitting(false))
+    try {
+      const query = buildResearchQuery(wizardPlace, out)
+      const { taskId, kind } = await launchResearch(query, depth, out)
+      setWizardOpen(false)
+      navigate(`/workspace/${taskId}`, { state: { query, kind, purpose: out } })
+    } catch (e) {
+      setSubErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -213,35 +196,12 @@ export default function HomePage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) startCheck()
             }}
-            placeholder="输入社区名、地名或经度,纬度（BD-09）—— 例如：凯里老街 / 107.9758,26.5734"
+            placeholder="输入目的地名进行调研 —— 例如：黄山 / 凯里老街 / 大理"
             className="w-full resize-none bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-3"
           />
-          {/* 体检模式三档 */}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-tag text-ink-3">体检模式</span>
-            {MODE_OPTIONS.map((m) => {
-              const Icon = m.icon
-              const active = mode === m.key
-              return (
-                <button
-                  key={m.key}
-                  type="button"
-                  onClick={() => setMode(m.key)}
-                  title={m.desc}
-                  className={`inline-flex items-center gap-1.5 rounded-chip px-3 h-8 text-aux font-medium transition-colors ${
-                    active ? 'bg-primary text-white' : 'bg-primary-tint/60 text-ink-2 hover:bg-primary-tint'
-                  }`}
-                >
-                  <Icon size={14} /> {m.label}
-                </button>
-              )
-            })}
-            <span className="text-tag text-ink-3">
-              {MODE_OPTIONS.find((m) => m.key === mode)?.desc}
-            </span>
-          </div>
+          {/* 备注：调研深度与报告类型在「分步问答」中选定 */}
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-tag text-ink-3">真实路网测时 · POI 覆盖统计 · 示范数据可离线演示</span>
+            <span className="text-tag text-ink-3">多角色专家 + LLM 在线调研 · 生成攻略 / 评估报告</span>
             <div className="flex items-center gap-2">
               <ModelPicker />
               <button
@@ -254,7 +214,7 @@ export default function HomePage() {
                 onClick={() => startCheck()}
                 disabled={submitting}
                 className="grid h-11 w-11 place-items-center rounded-full bg-primary text-white shadow-card transition-all hover:scale-105 hover:bg-primary-deep active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
-                title="开始生活圈体检"
+                title="开始目的地调研"
               >
                 <ArrowUp size={20} />
               </button>
@@ -262,13 +222,13 @@ export default function HomePage() {
           </div>
           {subErr && (
             <div className="mt-2 rounded-btn bg-risk/10 px-3 py-1.5 text-tag text-risk" role="alert">
-              体检任务创建失败：{subErr}（请确认后端已启动）
+              调研任务创建失败：{subErr}（请确认后端已启动）
             </div>
           )}
         </motion.div>
 
-        {/* 样例社区 + 自定义中心点 */}
-        <p className="mt-9 text-aux text-ink-3">内置双样例 · 或自定义中心点</p>
+        {/* 内置样例 + 自定义目的地 */}
+        <p className="mt-9 text-aux text-ink-3">内置目的地样例 · 或自定义</p>
         <motion.div
           variants={stagger}
           initial="initial"
@@ -296,11 +256,11 @@ export default function HomePage() {
             className="group flex flex-col rounded-card border border-dashed border-line bg-card/60 p-4 text-left shadow-card backdrop-blur transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-float"
           >
             <span className="grid h-9 w-9 place-items-center rounded-btn bg-primary-tint/60 text-primary">
-              <Crosshair size={18} />
+              <Target size={18} />
             </span>
-            <span className="mt-3 text-aux font-semibold text-ink">自定义中心点</span>
-            <span className="mt-0.5 text-tag text-ink-3">任意城市 · 任意坐标</span>
-            <span className="mt-1 text-tag leading-relaxed text-ink-3">在地图点选或输入坐标，立即体检</span>
+            <span className="mt-3 text-aux font-semibold text-ink">自定义目的地</span>
+            <span className="mt-0.5 text-tag text-ink-3">任意地点 · 任意关键词</span>
+            <span className="mt-1 text-tag leading-relaxed text-ink-3">在上方输入地名后发起调研，立即生成报告</span>
           </motion.button>
         </motion.div>
 
@@ -316,6 +276,13 @@ export default function HomePage() {
           ))}
         </div>
       </div>
+
+      <ResearchWizard
+        open={wizardOpen}
+        place={wizardPlace}
+        onClose={() => setWizardOpen(false)}
+        onLaunch={handleLaunch}
+      />
     </div>
   )
 }

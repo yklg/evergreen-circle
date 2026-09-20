@@ -93,7 +93,7 @@ export default function ClarifyPage() {
             if (d?.message) setStage(d.message)
           } else if (d?.stage === 'discovering') {
             setProgress(70)
-            setProgressLabel('正在发现竞品…')
+            setProgressLabel('正在发现调研对象…')
           } else if (d?.message) {
             setStage(d.message)
           }
@@ -110,7 +110,7 @@ export default function ClarifyPage() {
             partialDone = true
             setDiscoveryOngoing(true)
             setProgress(50)
-            setProgressLabel('基础问卷已就绪，正在发现竞品…')
+            setProgressLabel('基础问卷已就绪，正在发现调研对象…')
           } else {
             // 完整问卷（重连 / 在途复用）：原行为，收齐即关闭流
             setQuestions(d?.questions ?? [])
@@ -202,7 +202,7 @@ export default function ClarifyPage() {
     }
   }
 
-  // 添加自定义选项（如用户自己想调研的竞品），加入已选集合并成为可见 chip。
+  // 添加自定义选项（如用户想补充的调研对象），加入已选集合并成为可见 chip。
   // 返回合并后的数组（无输入返回 null）。是否自动前进由调用方经 maybeAdvance 决策，
   // 故此处不再持有 schedule 形参——「核对屏不自动前进」规则统一收敛到上层 wiring（review 不调 maybeAdvance）。
   function addCustom(qid: string): string[] | null {
@@ -302,7 +302,7 @@ export default function ClarifyPage() {
           <div className="flex items-center justify-center gap-2 bg-bg/90 py-1.5 text-tag text-ink-3 backdrop-blur">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" />
             {progressLabel}
-            <span className="rounded-full border border-primary/40 px-2 py-0.5 text-primary-deep">竞品识别中…</span>
+            <span className="rounded-full border border-primary/40 px-2 py-0.5 text-primary-deep">调研对象识别中…</span>
           </div>
         </div>
       )}
@@ -322,8 +322,8 @@ export default function ClarifyPage() {
             {competitorsFallback && q?.id === 'competitors' && (
               <div className="mt-4 rounded-card border border-line/60 bg-card px-4 py-2.5 text-tag text-ink-3">
                 {competitorsPresent
-                  ? '以下竞品为自动识别候选，建议核对或手动补充。'
-                  : '未能自动识别竞品，可在「补充」题说明你关注的对手。'}
+                  ? '以下调研对象为自动识别候选，建议核对或手动补充。'
+                  : '未能自动识别调研对象，可在「补充」题说明你关注的对手。'}
               </div>
             )}
 
@@ -434,8 +434,8 @@ export default function ClarifyPage() {
             {competitorsFallback && (
               <div className="mt-4 rounded-card border border-line/60 bg-card px-4 py-2.5 text-tag text-ink-3">
                 {competitorsPresent
-                  ? '以下竞品为自动识别候选，建议核对或手动补充。'
-                  : '未能自动识别竞品，可在「补充」题说明你关注的对手。'}
+                  ? '以下调研对象为自动识别候选，建议核对或手动补充。'
+                  : '未能自动识别调研对象，可在「补充」题说明你关注的对手。'}
               </div>
             )}
 

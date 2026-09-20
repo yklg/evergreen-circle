@@ -1,11 +1,33 @@
-"""服务盲区识别（赛题口径）：研究网格上 1km 半径内三要素覆盖判定 + 灰区聚合。
+"""服务盲区识别（赛题口径）：可达区内 1km 半径三要素覆盖判定 + 灰区聚合。
 
-判定：对研究范围内的 200m 网格点，检查其 1km 圆内是否同时存在
-菜市场 / 药店 / 小学；缺失任一 → 该点判盲。相邻缺失点聚为连通簇，
-输出：盲区中心（簇质心）+ 缺失设施 + 最近各类设施（距离/方位）+ 灰区多边形。
+判定：对**可达区**内的网格点，检查其 1km 圆内是否同时存在 菜市场 / 药店 / 小学；
+缺失任一 → 该点判盲。相邻缺失点聚为连通簇，输出：盲区中心（簇质心）+ 缺失设施 +
+最近各类设施（距离/方位）+ 灰区多边形。
+
+## 本轮修复的两个结构性缺陷（Q1 本体）
+
+1. **判定网格越出可达区**（旧：``xs = linspace(-study_radius_m, study_radius_m, n)``）
+   判定网格铺满「研究区 ±2500m」，而采集区只有 2000m 半径 ⇒ 2km 外「**没查**」被当成
+   「**没有**」，四个角点必然缺失 → 从角点起连通域 → 外边界 = 整张方形（5.4km，比研究区还大）。
+   现在：网格铺 ±``scope.reach_circumradius_m``，且**只保留落在可达区多边形内的格**。
+   可达区外没有「可达但缺设施」这回事，语义上就不该判盲。
+
+2. **像素→米换算用了名义格距**（旧：``return miss, grid_m, center_idx``）
+   名义 ``grid_m=200``，而 ``linspace`` 的实际格距是 ``2R/(n-1)``（27 格时 = 192.31m）
+   ⇒ 所有多边形尺寸被放大 4%。现在 ``cover_matrix`` 返回**实际格距** ``step``，
+   下游（``trace_exterior`` / ``_has_in_cluster`` / 簇质心）一律只用 ``step``，不再用名义值。
+
+## 第三件事：采集区外沿的格必须标 unknown，不能判盲
+
+判「某格 1km 内没有药店」的前提是**那个 1km 圆被采集区完整覆盖**。格越靠近采集边界，
+其 1km 圆就有越大比例落在采集区外 —— 那部分「没查」，不构成「没有」。
+故引入 ``judged``（可判定）掩码：``|cell| ≤ 采集半径 − 1km`` 的格才判盲，
+其余落在可达区内的格计入 ``cells_unknown`` 并在报告口径里**显式暴露**。
+⇒ 采集半径若算错，症状是「unknown 计数上升（可见、可诊断）」，而不是「盲区膨胀成整张网格（静默错误）」。
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -17,9 +39,13 @@ from app.living_circle.geo_utils import (
     direction_word,
     ensure_closed,
     haversine_m,
+    point_in_ring,
     round_lnglat,
     xy_to_lnglat,
 )
+from app.living_circle.scope import SpatialScope
+
+_logger = logging.getLogger(__name__)
 
 # 盲区判定半径（赛题标准）与判定网格
 BLIND_RADIUS_M = 1000.0
@@ -34,52 +60,87 @@ TRIAD_LABEL: Dict[str, str] = {
 
 TRIAD_KEYS = ("market", "pharmacy", "primary")
 
+# 补点策略：按「最近替代距离」分档（数据驱动，可扩展策略类型）
+#  ≤600m → 流动服务；600–1200m → 移动点/改道；>1200m → 新建
+EFFORT_BY_DIST: Tuple[Tuple[float, str], ...] = (
+    (600.0, "mobile_service"),
+    (1200.0, "reroute"),
+)
+
+# 严重度分档阈值（gap 越大越严重）
+SEV_HEAVY = 0.6
+SEV_MEDIUM = 0.33
+SEVERITIES = ("heavy", "medium", "light")
+
+
+def judge_radius_m(scope: SpatialScope, radius_m: float = BLIND_RADIUS_M) -> float:
+    """可判定半径：圆心到「1km 圆仍完整落在采集区内」的最远距离。
+
+    = 采集半径 − 判定半径。可达区内超出该半径的格**不判盲**（数据不足以支撑结论）。
+    """
+    return max(0.0, float(scope.collect_radius_m) - float(radius_m))
+
 
 def cover_matrix(
     center: LngLat,
-    study_radius_m: float,
+    scope: SpatialScope,
     triads: Dict[str, Sequence[Tuple[float, float]]],
     grid_m: float = BLIND_GRID_M,
     radius_m: float = BLIND_RADIUS_M,
-) -> Tuple[np.ndarray, float, float]:
-    """构建缺失掩码（True=该格 1km 内缺要素）。
+) -> Tuple[np.ndarray, float, Dict[str, int]]:
+    """构建缺失掩码（True = 该格判盲）。
 
-    返回 (miss_mask, grid_step, center_ij_index)；中心格在掩码中点。
+    网格铺 ``±scope.reach_circumradius_m``，仅保留两重筛选后的格：
+      - ``inside``：格心落在可达区多边形内（可达区外不判盲）；
+      - ``judged``：格心距中心 ≤ ``采集半径 − radius_m``（1km 圆被采集区完整覆盖）。
+
+    返回 ``(miss, step, stats)``：
+      - ``step`` 为**实际格距** ``2R/(n-1)``（不是名义 ``grid_m``）；
+      - ``stats`` 为格数分档（``cells_inside`` / ``cells_judged`` / ``cells_unknown``），
+        供报告口径显式暴露「有多少可达区内的格没被判定」。
     """
-    n = max(3, int(math.ceil(study_radius_m / grid_m)) * 2 + 1)
-    xs = np.linspace(-study_radius_m, study_radius_m, n)
-    ys = np.linspace(-study_radius_m, study_radius_m, n)
+    scan = float(scope.reach_circumradius_m)
+    k = max(1, int(math.ceil(scan / grid_m)))
+    n = 2 * k + 1
+    step = (2.0 * scan) / (n - 1)  # ← 真实格距（旧实现返回的是名义 grid_m，尺寸偏 4%）
+    coords = np.linspace(-scan, scan, n)
+    judge_r = judge_radius_m(scope, radius_m)
+
+    inside = np.zeros((n, n), dtype=bool)
+    judged = np.zeros((n, n), dtype=bool)
+    for i in range(n):          # i = y 行
+        for j in range(n):      # j = x 列
+            x, y = float(coords[j]), float(coords[i])
+            lng, lat = xy_to_lnglat(center, x, y)
+            if not point_in_ring((lng, lat), scope.reach_ring):
+                continue
+            inside[i, j] = True
+            if math.hypot(x, y) <= judge_r + 1e-9:
+                judged[i, j] = True
 
     # 预转三要素为局部米坐标（加速 1km 命中判定）
-    local: Dict[str, List[Tuple[float, float]]] = {}
-    for k, pts in triads.items():
+    local: Dict[str, np.ndarray] = {}
+    for k2, pts in triads.items():
         if not pts:
             continue
-        arr = np.array(
-            [# x 米, y 米
-                (dx, dy)
-                for (lng, lat) in pts
-                for (dx, dy) in [_local_m(center, lng, lat)]
-            ],
-            dtype=float,
-        )
-        local[k] = arr
-
-    P = local.get("market")
-    F = local.get("pharmacy")
-    E = local.get("primary")
+        local[k2] = np.array([_local_m(center, lng, lat) for (lng, lat) in pts], dtype=float)
 
     miss = np.zeros((n, n), dtype=bool)
-    for i in range(n):
-        for j in range(n):
-            x, y = xs[j], ys[i]
-            has_m = _has_within(x, y, P, radius_m)
-            has_f = _has_within(x, y, F, radius_m)
-            has_e = _has_within(x, y, E, radius_m)
-            if (not has_m) or (not has_f) or (not has_e):
-                miss[i, j] = True
-    center_idx = (n - 1) // 2
-    return miss, grid_m, center_idx
+    rows, cols = np.where(judged)
+    for i, j in zip(rows, cols):
+        x, y = float(coords[j]), float(coords[i])
+        has_m = _has_within(x, y, local.get("market"), radius_m)
+        has_f = _has_within(x, y, local.get("pharmacy"), radius_m)
+        has_e = _has_within(x, y, local.get("primary"), radius_m)
+        if (not has_m) or (not has_f) or (not has_e):
+            miss[i, j] = True
+
+    stats = {
+        "cells_inside": int(inside.sum()),
+        "cells_judged": int(judged.sum()),
+        "cells_unknown": int((inside & ~judged).sum()),
+    }
+    return miss, float(step), stats
 
 
 def _local_m(center: LngLat, lng: float, lat: float) -> Tuple[float, float]:
@@ -96,14 +157,118 @@ def _has_within(x: float, y: float, pts: Any, radius_m: float) -> bool:
     return bool((d2 <= radius_m * radius_m).any())
 
 
-def find_blindspots(
+def _missing_nearest_m(miss_keys: Sequence[str], nearest: Sequence[Dict[str, Any]]) -> Dict[str, float]:
+    """每个缺失类的小区最近替代距离。
+
+    赛题口径下缺失类必无 1km 内设施，故 ``nearest`` 只可能在 >1km 处有值；
+    若某缺失类连任何设施都没有（``nearest`` 里被跳过），按其最严重处理（``inf``）。
+    """
+    by_key = {n.get("facility"): n.get("distance_m") for n in nearest}
+    return {k: float(by_key.get(k, float("inf"))) for k in miss_keys}
+
+
+def _excess_farness(miss_nearest: Dict[str, float], min_gap: float = BLIND_RADIUS_M) -> float:
+    """度量「超出必达下限的距离」而非绝对距离，保证三档真实可达（R2/架构审查）。
+
+    ``farness = mean over 缺失类 of min(1, max(0, d_k − min_gap)/min_gap)``。
+    缺失类若完全无设施（``inf``）→ 该项取 1（最严重，P1-1 回退）。
+    归一到 [0,1]。
+    """
+    if not miss_nearest:
+        return 0.0
+    total = 0.0
+    for d in miss_nearest.values():
+        if d == float("inf"):
+            total += 1.0
+        else:
+            total += min(1.0, max(0.0, d - min_gap) / min_gap)
+    return total / len(miss_nearest)
+
+
+def _gap_score(m: int, farness: float) -> float:
+    """连续缺口指数 ∈ [0,1]：缺失占比 m/类数 + 超出必达下限的替代距离。
+
+    ``m/类数`` 用 ``len(TRIAD_KEYS)`` 归一化（而非硬编码 3），未来加品类不失真（P1-2）。
+    """
+    if m <= 0:
+        return 0.0
+    m_norm = min(m / len(TRIAD_KEYS), 1.0)
+    g = 0.6 * m_norm + 0.4 * farness
+    return round(min(1.0, g), 3)
+
+
+def _severity_of(gap: float) -> str:
+    if gap >= SEV_HEAVY:
+        return "heavy"
+    if gap >= SEV_MEDIUM:
+        return "medium"
+    return "light"
+
+
+def _strategy_for(distance_m: float) -> str:
+    if distance_m == float("inf"):
+        return "build"
+    for threshold, strategy in EFFORT_BY_DIST:
+        if distance_m <= threshold:
+            return strategy
+    return "build"
+
+
+def _cluster_served(cluster: np.ndarray, step: float, radius_m: float = BLIND_RADIUS_M) -> int:
+    """簇质心 1km 内的判盲格数（补点优先级的 serves 基准）。"""
+    rows, cols = np.where(cluster)
+    if len(rows) == 0:
+        return 0
+    cy, cx = float(rows.mean()), float(cols.mean())
+    served = 0
+    for r, c in zip(rows, cols):
+        if math.hypot(c - cx, r - cy) * step <= radius_m:
+            served += 1
+    return int(served)
+
+
+def _fixes_for(
+    miss_keys: Sequence[str],
+    miss_nearest: Dict[str, float],
+    cluster_center: LngLat,
+    served: int,
+    gap: float,
+) -> List[Dict[str, Any]]:
+    """为每个缺失类生成补点处方；``_key_*`` 为全局优先级排序用内部字段，末尾剔除。"""
+    out: List[Dict[str, Any]] = []
+    for k in miss_keys:
+        d = miss_nearest.get(k, float("inf"))
+        out.append({
+            "facility": TRIAD_LABEL.get(k, k),
+            "point": [round(cluster_center[0], 6), round(cluster_center[1], 6)],
+            "strategy": _strategy_for(d),
+            "nearest_alt_m": None if d == float("inf") else round(d, 1),
+            "served": served,
+            "_key_gap": gap,
+            "_key_serves": served,
+        })
+    return out
+
+
+def _assign_priorities(fixes: List[Dict[str, Any]]) -> None:
+    """按 gap↓、serves↓、设施名 排序，给全部补点处方连续唯一 priority。"""
+    for pos, f in enumerate(
+        sorted(fixes, key=lambda x: (-x.get("_key_gap", 0.0), -x.get("_key_serves", 0), x.get("facility", ""))),
+        start=1,
+    ):
+        f["priority"] = pos
+        f.pop("_key_gap", None)
+        f.pop("_key_serves", None)
+
+
+def find_blindspots_with_stats(
     center: LngLat,
-    study_radius_m: float,
+    scope: SpatialScope,
     triads: Dict[str, List[Dict[str, Any]]],
     grid_m: float = BLIND_GRID_M,
     prefix: str = "area",
-) -> List[Dict[str, Any]]:
-    """识别盲区：契约 BlindSpot[]。
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """识别盲区，并返回格数分档（供报告口径举证）。
 
     triads: {market/pharmacy/primary: [{lng,lat,name}, ...]}（已清洗）。
     """
@@ -111,9 +276,16 @@ def find_blindspots(
         k: [round_lnglat(p["lng"], p["lat"]) for p in v if "lng" in p and "lat" in p]
         for k, v in triads.items()
     }
-    miss, step, c_idx = cover_matrix(center, study_radius_m, point_sets, grid_m)
+    miss, step, stats = cover_matrix(center, scope, point_sets, grid_m)
+    scan = float(scope.reach_circumradius_m)
+
     if not miss.any():
-        return []
+        if stats["cells_unknown"]:
+            _logger.info(
+                "盲区判定：可达区内 %d 格未判定（采集区未覆盖其 1km 邻域）—— 非「无盲区」",
+                stats["cells_unknown"],
+            )
+        return [], stats
 
     # 每个缺失簇独立聚合（在掩码中按连通域逐个提取）
     result: List[Dict[str, Any]] = []
@@ -126,17 +298,16 @@ def find_blindspots(
                 cluster = mask_connect_center(miss & ~worked, (i, j))
                 worked |= cluster
 
-                # 簇质心（像素 → 米 → lnglat）
+                # 簇质心（像素 → 米 → lnglat）；像素→米一律用真实格距 step
                 rows, cols = np.where(cluster)
                 cy = float(rows.mean())
                 cx = float(cols.mean())
-                x_m = cx * step - study_radius_m
-                y_m = cy * step - study_radius_m
-                cluster_center = xy_to_lnglat(center, x_m, y_m)
+                cluster_center = xy_to_lnglat(center, cx * step - scan, cy * step - scan)
 
                 miss_keys = [
                     k for k in TRIAD_KEYS
-                    if not point_sets.get(k) or not _has_in_cluster(cluster, center, study_radius_m, point_sets[k], grid_m)
+                    if not point_sets.get(k)
+                    or not _has_in_cluster(cluster, center, scan, point_sets[k], step)
                 ]
                 if not miss_keys:
                     miss_keys = list(TRIAD_KEYS)  # 理论上必缺，兜底展示
@@ -164,12 +335,17 @@ def find_blindspots(
                             "direction": direction_word(cluster_center, best_p),
                         })
 
-                # 灰区多边形 = 簇掩码外边界
-                xy_ring = smooth_ring(trace_exterior(cluster, grid_m))
-                ring_lnglat = [
-                    xy_to_lnglat(center, v[0] - study_radius_m, v[1] - study_radius_m)
-                    for v in xy_ring
-                ]
+                # 严重度/连续缺口指数/补点处方（纯函数，仅依赖 triad 中心 —— 装配层负责 reach/affected）
+                miss_nearest = _missing_nearest_m(miss_keys, nearest)
+                farness = _excess_farness(miss_nearest)
+                gap = _gap_score(len(miss_keys), farness)
+                severity = _severity_of(gap)
+                served = _cluster_served(cluster, step)
+                fixes = _fixes_for(miss_keys, miss_nearest, cluster_center, served, gap)
+
+                # 灰区多边形 = 簇掩码外边界（同样只用真实格距 step）
+                xy_ring = smooth_ring(trace_exterior(cluster, step))
+                ring_lnglat = [xy_to_lnglat(center, v[0] - scan, v[1] - scan) for v in xy_ring]
                 closed = ensure_closed(ring_lnglat)
                 idx += 1
                 result.append({
@@ -178,18 +354,42 @@ def find_blindspots(
                     "radius_m": int(BLIND_RADIUS_M),
                     "missing_facilities": [TRIAD_LABEL.get(k, k) for k in miss_keys if k in TRIAD_LABEL],
                     "nearest": nearest,
+                    "severity": severity,
+                    "gap_score": gap,
+                    "fixes": fixes,
                     "polygon": {"type": "Polygon", "coordinates": [closed]},
                 })
-    # 去重：同一缺失出现多次的簇只在 result 中出现一次（id 唯一由 idx 保证）
-    return result
+    # 全局排序：给全部补点处方分配连续唯一 priority（gap↓、serves↓）
+    _fixes_all = [f for b in result for f in b.get("fixes", [])]
+    _assign_priorities(_fixes_all)
+    return result, stats
 
 
-def _has_in_cluster(cluster: np.ndarray, center, study_radius_m, pts_key: Sequence[Tuple[float, float]], grid_m) -> bool:
-    """簇内任一格 1km 圆内命中某类设施。"""
+def find_blindspots(
+    center: LngLat,
+    scope: SpatialScope,
+    triads: Dict[str, List[Dict[str, Any]]],
+    grid_m: float = BLIND_GRID_M,
+    prefix: str = "area",
+) -> List[Dict[str, Any]]:
+    """识别盲区：契约 ``BlindSpot[]``（``find_blindspots_with_stats`` 的薄壳）。"""
+    spots, _stats = find_blindspots_with_stats(center, scope, triads, grid_m=grid_m, prefix=prefix)
+    return spots
+
+
+def _has_in_cluster(
+    cluster: np.ndarray,
+    center: LngLat,
+    scan_radius_m: float,
+    pts_key: Sequence[Tuple[float, float]],
+    step: float,
+) -> bool:
+    """簇内任一格 1km 圆内命中某类设施（像素→米一律用真实格距 step）。"""
     rows, cols = np.where(cluster)
+    arr = np.array([_local_m(center, p[0], p[1]) for p in pts_key], dtype=float)
     for r, c in zip(rows, cols):
-        x_m = float(c) * grid_m - study_radius_m
-        y_m = float(r) * grid_m - study_radius_m
-        if _has_within(x_m, y_m, np.array([_local_m(center, p[0], p[1]) for p in pts_key], dtype=float), BLIND_RADIUS_M):
+        x_m = float(c) * step - scan_radius_m
+        y_m = float(r) * step - scan_radius_m
+        if _has_within(x_m, y_m, arr, BLIND_RADIUS_M):
             return True
     return False

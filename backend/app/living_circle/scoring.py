@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from app.living_circle.caliber import get_caliber
+
 WEIGHTS = {"coverage": 0.40, "reachability": 0.25, "diversity": 0.20, "balance": 0.15}
 
-REACH_FULL_MIN = 20.0  # 20min 内步行可达视为可达性满分
+REACH_FULL_MIN = get_caliber("walking").reach_full_min  # 20min 内步行可达视为可达性满分
 
 
 def _cat_score(coverage: float, min_minutes: float | None) -> float:

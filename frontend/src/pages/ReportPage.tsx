@@ -25,9 +25,11 @@ import {
 import { useReportStore } from '../store/reportStore'
 import { useAnnotationStore } from '../store/annotationStore'
 import type { HighlightColor } from '../store/annotationStore'
+import type { SentimentResult, SentimentFlatResult } from '../types'
 import { VChart } from '../components/VChart'
 import { VClaimCard } from '../components/VClaimCard'
 import { VSentimentPanel } from '../components/VSentimentPanel'
+import { VSentimentFlatPanel } from '../components/VSentimentFlatPanel'
 import { VEvidenceCard } from '../components/VEvidenceFeed'
 import { VEditableBlock } from '../components/VEditableBlock'
 import { VSelectionToolbar } from '../components/VSelectionToolbar'
@@ -39,6 +41,7 @@ import { VDataGrid } from '../components/VDataGrid'
 import { VFeatureMatrix, VPricingTable, VPersonaCards } from '../components/VStructured'
 import { ChapterContentMap } from '../components/ChapterContentMap'
 import { refineSection, submitFeedback, refineReportEvidence, openTaskStream } from '../lib/api'
+import { tocLinkCls } from '../lib/reportLayout'
 import { VSkeleton } from '../components/ui'
 import MetricsStrip from '../components/MetricsStrip'
 import ReportBriefView from '../components/ReportBriefView'
@@ -56,6 +59,15 @@ const HL_LABEL: Record<HighlightColor, string> = {
   ok: '认同',
   risk: '存疑',
   info: '待办',
+}
+
+/* 舆情结构判别：目的地调研流水线产出扁平 {positive/neutral/negative/themes/quotes}；
+   旧 SentimentResult 含 overall/by_platform。以「存在整体计数且无 overall」为扁平判据。 */
+function isFlatSentiment(
+  s: SentimentResult | SentimentFlatResult | undefined
+): s is SentimentFlatResult {
+  if (!s || typeof s !== 'object') return false
+  return !('overall' in s) && ('positive' in s || 'negative' in s || 'neutral' in s)
 }
 
 export default function ReportPage() {
@@ -307,9 +319,7 @@ export default function ReportPage() {
               <button
                 key={t.id}
                 onClick={() => jumpTo(t.id)}
-                className={`flex w-full items-start gap-2.5 rounded-btn px-3 py-2 text-left text-aux transition-colors ${
-                  active ? 'bg-primary-tint font-medium text-primary-deep' : 'text-ink-2 hover:bg-primary-tint/50'
-                }`}
+                className={tocLinkCls(active)}
               >
                 <span
                   className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-chip text-[11px] font-semibold transition-colors ${
@@ -506,7 +516,7 @@ export default function ReportPage() {
                 </div>
               )}
 
-              {/* 结构化竞品知识（功能树/定价表/用户画像）*/}
+              {/* 结构化洞察（功能树/定价表/用户画像）*/}
               {sec.structured?.type === 'feature_tree' && <VFeatureMatrix data={sec.structured.data} />}
               {sec.structured?.type === 'pricing_model' && <VPricingTable data={sec.structured.data} />}
               {sec.structured?.type === 'user_persona' && <VPersonaCards data={sec.structured.data} />}
@@ -514,10 +524,16 @@ export default function ReportPage() {
               {/* 数据空间（CSV 表格）*/}
               {sec.data_grid && <VDataGrid grid={sec.data_grid} title={`${sec.title} · 数据空间`} />}
 
-              {/* 舆情专章 */}
-              {sec.id === 'sentiment' && r.sentiment && (
+              {/* 舆情/口碑专章：按结构自适应 —— 扁平（目的地调研 research 流水线）走
+                  VSentimentFlatPanel；旧 SentimentResult（overall/by_platform）走 VSentimentPanel。
+                  目的地三档的舆情章节 id 为 guide_voice / assess_voice（无独立 sentiment 节）；此处两者皆渲染。 */}
+              {['sentiment', 'guide_voice', 'assess_voice'].includes(sec.id) && r.sentiment && (
                 <div className="mt-5">
-                  <VSentimentPanel sentiment={r.sentiment} />
+                  {isFlatSentiment(r.sentiment) ? (
+                    <VSentimentFlatPanel sentiment={r.sentiment} />
+                  ) : (
+                    <VSentimentPanel sentiment={r.sentiment} />
+                  )}
                 </div>
               )}
 
@@ -570,7 +586,7 @@ export default function ReportPage() {
                 <h2 className="font-serif text-h2 text-ink">实景图集 · 采集自联网真实页面</h2>
               </div>
               <p className="mt-3 text-aux text-ink-2">
-                以下图片均在调研过程中从竞品官网、媒体与社媒页面实时抓取（OG 预览图优先），每张图均可点击溯源至原始页面。
+                以下图片均在调研过程中从来源网站、媒体与社媒页面实时抓取（OG 预览图优先），每张图均可点击溯源至原始页面。
               </p>
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {r.figures.map((f, i) => (

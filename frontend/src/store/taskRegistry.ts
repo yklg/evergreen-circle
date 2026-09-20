@@ -13,6 +13,8 @@ export type TaskStatus = 'running' | 'done' | 'failed'
 export interface TaskRecord {
   taskId: string
   query: string
+  kind: string
+  purpose: string
   status: TaskStatus
   percent: number
   evidence_count: number
@@ -60,6 +62,8 @@ export const useTaskRegistry = create<TaskRegistryState>((set) => ({
         [t.taskId]: {
           taskId: t.taskId,
           query: t.query ?? prev?.query ?? '',
+          kind: t.kind ?? prev?.kind ?? 'research',
+          purpose: t.purpose ?? prev?.purpose ?? '',
           status: t.status ?? prev?.status ?? 'running',
           percent: t.percent ?? prev?.percent ?? 0,
           evidence_count: t.evidence_count ?? prev?.evidence_count ?? 0,

@@ -43,6 +43,8 @@ from app.core.schemas import coerce_feature_tree, coerce_pricing_model, coerce_u
 from app.core.search import multi_search
 from app.core.sentiment import analyze_sentiment, PLATFORM_LABEL, PLATFORM_SITES
 from app.core.textquality import is_relevant_content
+from app.core.research_profile import REPORT_PROFILES as TRAVEL_PROFILES  # noqa: A004 收口单一真相源
+from app.core.research_profile import report_voice as _research_report_voice
 from app.data import expert_by_id, load_experts
 
 
@@ -93,6 +95,20 @@ MODE_CONFIG = {
 }
 
 
+# ── 目的地产出体裁（workspace「目的地攻略/评估调研」）──────────────
+# 单一真相源收口到 research_profile.REPORT_PROFILES：guard 调研流水线
+# （research/travel_guide/travel_assess）与遗留竞品引擎共用同一份人设/章节集，
+# 防止两处定义漂移、避免目的地报告被竞品/生活圈人设染色（错域防护）。
+# 注意：TRAVEL_PROFILES 与 report_voice 均为 research_profile 的**直接别名**
+# （同一对象），保证 orchestrator 侧任何改动/新增档位即时同步到真源。
+report_voice = _research_report_voice  # 转发即真源（保持 identity，B5 契约）
+
+
+# 单条调研任务的「报告 voice」覆盖（仅 travel 目的语义生效）。
+# 与 _pipeline_model_override 同构：ContextVar 随协程隔离，入口 set，任务零串扰。
+_pipeline_voice: ContextVar[str] = ContextVar("_pipeline_voice", default="")
+
+
 # 单条调研任务的「用户指定分析模型」覆盖（仅 core/aux 档生效，fast 杂务不动）。
 # ContextVar 随每个 asyncio pipeline 协程隔离；run_pipeline 入口 set 覆盖式写入，
 # 不同任务之间无串扰（且每次 set 覆盖旧值，无累积）。
@@ -124,7 +140,7 @@ def _model(tier: str) -> str:
 
 
 # ── 任务创建 / 澄清（落库）─────────────────────────────────
-def create_task(query: str, mode: str = "deep", model: Optional[str] = None) -> Dict[str, Any]:
+def create_task(query: str, mode: str = "deep", model: Optional[str] = None, purpose: str = "", kind: str = "research") -> Dict[str, Any]:
     """快路径：只落库 task_id + meta，不调 LLM，毫秒级返回。
 
     澄清问卷改为 ClarifyPage 挂载后通过 SSE 懒生成（见 async generate_clarify），
@@ -136,7 +152,9 @@ def create_task(query: str, mode: str = "deep", model: Optional[str] = None) -> 
     meta: Dict[str, Any] = {"_mode": mode}
     if model and model != "Auto":
         meta["_model_override"] = model
-    db.save_task(task_id, query, meta)
+    # purpose：目的地产出体裁（guide 攻略 / assess 评估）；空串 = 通用 research。
+    # run_pipeline 据此切换章节集与报告 voice（见 TRAVEL_PROFILES / report_voice）。
+    db.save_task(task_id, query, meta, kind=kind, purpose=purpose)
     return {"taskId": task_id}
 
 
@@ -1037,6 +1055,13 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     if mode not in MODE_CONFIG:
         mode = "deep"
     cfg = MODE_CONFIG[mode]
+    # 目的地产出体裁：guide/assess → 切换章节集 + 报告 voice（人设）。复用原引擎的
+    # 采集/编排/写作链路，仅替换「章节集」与「撰写人设」，杜绝目的地报告被竞品/生活圈染色。
+    purpose = task.get("purpose", "") or ""
+    _pipeline_voice.set(report_voice(purpose).get("persona", ""))
+    if purpose in TRAVEL_PROFILES:
+        travel_sections = TRAVEL_PROFILES[purpose]["sections"]
+        cfg = {**cfg, "sections": travel_sections, "label": TRAVEL_PROFILES[purpose]["label"]}
     # 调研视角（PM/运营/销售/用户/投资人/通用）→ 报告追加针对性专属板块
     perspective = _normalize_perspective(clar.get("perspective", ""))
 
@@ -1456,10 +1481,12 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         title = dict(SECTION_PLAN).get(sid, sid)
         model = _model("core") if sid in CORE_SECTIONS else _model("aux")
         trace.set_context(task_id, writer, "write", f"撰写章节「{title}」")
+        # 协程域内读取 voice（asyncio.to_thread 不传播 ContextVar，须以参数显式传递）
         return sid, await asyncio.to_thread(
             _write_single_section, sid, title, query, brands, focus,
             evidences, claims, analysis, model,
-            cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"]
+            cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"],
+            persona=_pipeline_voice.get(),
         )
 
     tasks = [asyncio.create_task(_write_one(sid)) for sid in section_ids]
@@ -1743,6 +1770,18 @@ SECTION_PLAN = [
     ("persp_sales", "销售视角 · 卖点提炼与竞品话术"),
     ("persp_user", "用户视角 · 选型决策与避坑指南"),
     ("persp_investor", "投资人视角 · 增长壁垒与价值研判"),
+    # 目的地产出体裁（workspace「目的地攻略/评估调研」，TRAVEL_PROFILES 章节集）
+    ("guide_overview", "一、目的地总览与必看亮点"),
+    ("guide_transport", "二、交通可达与通行建议"),
+    ("guide_food_stay", "三、餐饮与住宿"),
+    ("guide_route", "四、经典路线与行程规划"),
+    ("guide_safe", "五、安全与应急"),
+    ("guide_budget", "六、预算与性价比"),
+    ("assess_access", "一、可达性评估"),
+    ("assess_amenity", "二、配套完善度评估"),
+    ("assess_price", "三、性价比评估"),
+    ("assess_safety", "四、安全性评估"),
+    ("assess_conclusion", "五、总体结论与建议"),
 ]
 
 # 视角 → 专属章节 id
@@ -1792,17 +1831,31 @@ SECTION_PROMPTS = {
     "persp_sales": "以销售视角输出：逐个竞品提炼差异化卖点与价值主张，给出『我方 vs 竞品』的对比话术、常见异议应对话术与一句话杀手锏，便于一线销售直接使用。",
     "persp_user": "以用户/消费者视角输出：不同人群该如何选型、各竞品最适合谁、真实使用中的优点与坑、性价比与迁移成本，给出清晰的选型决策建议与避坑指南。",
     "persp_investor": "以投资人视角输出：赛道空间与增长性、各玩家的护城河与壁垒强度、商业模式健康度与单位经济、关键风险与潜在拐点，给出价值研判与重点关注信号。",
+    # 目的地产出体裁（TRAVEL_PROFILES 章节定位）
+    "guide_overview": "目的地总览与必看亮点：交代目的地定位、核心看点、季节与最佳出行窗口，让读者 30 秒抓住『为什么值得去、什么时候去最好』。",
+    "guide_transport": "交通可达与通行建议：进出的大交通（飞机/高铁/自驾）与当地小交通（打车/公交/租车）、每程耗时、票价区间与避坑建议。",
+    "guide_food_stay": "餐饮与住宿：按预算档位给出餐饮特色与住宿选择，含大致价位、位置建议与预订注意点。",
+    "guide_route": "经典路线与行程规划：给出可照做的 2/3/5 天行程，注明每日节奏、停留点与体感强度；对热门点/高人流给出错峰建议。",
+    "guide_safe": "安全与应急：气候与路况风险、极端天气/高反应对、必备物资、紧急联系电话与就近就医提示。",
+    "guide_budget": "预算与性价比：分项（交通/住宿/餐饮/门票/其他）给出预算区间，指出哪些钱花得值、哪些可省。",
+    "assess_access": "可达性评估：从大交通便捷度、小交通密度、进出耗时与成本、游客承载力等综合判断交通可达性，给出明确倾向结论。",
+    "assess_amenity": "配套完善度评估：评估目的地及周边的商业/餐饮/住宿/医疗/网络/服务配套是否跟得上游览或短居需求，指出明显短板。",
+    "assess_price": "性价比评估：把『花费 vs 体验』放到同价位可比目的地中衡量，给出高/中/低性价比的明确判断与理由。",
+    "assess_safety": "安全性评估：从治安、健康卫生、极端天气与地形风险、应急与救援可达性等评估安全水平，给出明确风险提示与缓释建议。",
+    "assess_conclusion": "总体结论与建议：整合各维度给出总评（推荐/谨慎/不推荐）、最适合的人群画像，以及补足短板的具体建议。",
 }
 
 
 def _write_single_section(sid: str, title: str, query, brands, focus,
                           evidences, claims, analysis, model: str,
                           min_paragraphs: int = 5, para_words: str = "180-280",
-                          section_max_tokens: int = 6000) -> Dict[str, Any]:
+                          section_max_tokens: int = 6000,
+                          persona: str = "") -> Dict[str, Any]:
     """单章独立生成：每章独立 token 预算 + 独立模型，失败不影响其他章节。
 
     篇幅深度由 min_paragraphs/para_words/section_max_tokens 三档动态控制
     （快速/深度/专家级越来越长、越来越详尽）。
+    persona：可选报告 voice（travel 目的用攻略/评估人设，空则回落券商行研级人设）。
     """
     field_map = {
         "summary": ["overview", "feature_tree", "pricing_model"],
@@ -1857,8 +1910,13 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖券商首席分析师 + MBB 咨询合伙人级别的报告撰稿人。"
-                    "你正在写一份观点鲜明、敢于下判断的社区生活圈体检报告，对标城市规划院的体检评估报告。\n"
+                    # 报告 voice：travel 目的用攻略/评估专家人设，其余回落券商行研级人设
+                    # （与其它章节共享同一写作规范，仅人设与报告体裁不同——错域防护）。
+                    persona or (
+                        "你是顶尖券商首席分析师 + MBB 咨询合伙人级别的报告撰稿人。"
+                        "你正在写一份观点鲜明、敢于下判断的社区生活圈体检报告，对标城市规划院的体检评估报告。"
+                    )
+                    + "你正在为本次调研撰写对应章节，观点鲜明、敢于下判断、结论先行、有数据支撑。\n"
                     f"本章定位：{section_role}\n"
                     "写作要求（务必做到）：\n"
                     "1) 结论先行：先给一句最锐利、最有信息量的『核心判断』（key_takeaway），可以是反共识的、大胆的判断；\n"

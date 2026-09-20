@@ -164,11 +164,13 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
 
 # ── 任务 ────────────────────────────────────────────────
-def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research") -> None:
-    # api（只读镜像）tasks 表无 kind 列：kind 随 clarifications 落库，保持老 schema 兼容
+def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research", purpose: str = "") -> None:
+    # api（只读镜像）tasks 表无 kind/purpose 列：kind/purpose 随 clarifications 落库，保持老 schema 兼容
     store = dict(clarifications) if clarifications else {}
     if kind != "research":
         store["_kind"] = kind
+    if purpose:
+        store["_purpose"] = purpose
     with _LOCK:
         c = _connect()
         c.execute(

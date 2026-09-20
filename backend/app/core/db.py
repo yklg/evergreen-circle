@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import datetime as _dt
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -216,6 +217,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             ("updated_at", "TEXT"),
             ("error", "TEXT"),
             ("kind", "TEXT"),
+            ("purpose", "TEXT"),
         ):
             if col not in cols:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {coltype}")
@@ -367,13 +369,13 @@ def clear_prefs() -> None:
 
 
 # ── 任务 ────────────────────────────────────────────────
-def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research") -> None:
+def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research", purpose: str = "") -> None:
     with _LOCK:
         c = _connect()
         c.execute(
-            "INSERT OR REPLACE INTO tasks(task_id,query,clarifications,status,created_at,report_id,kind)"
-            " VALUES(?,?,?,?,?,COALESCE((SELECT report_id FROM tasks WHERE task_id=?),NULL),?)",
-            (task_id, query, json.dumps(clarifications, ensure_ascii=False), "created", _now(), task_id, kind),
+            "INSERT OR REPLACE INTO tasks(task_id,query,clarifications,status,created_at,report_id,kind,purpose)"
+            " VALUES(?,?,?,?,?,COALESCE((SELECT report_id FROM tasks WHERE task_id=?),NULL),?,?)",
+            (task_id, query, json.dumps(clarifications, ensure_ascii=False), "created", _now(), task_id, kind, purpose),
         )
         c.commit()
 
@@ -1106,10 +1108,16 @@ def get_report_feedback(report_id: str) -> Optional[Dict[str, Any]]:
 # 与 reports 表刻意分离：体检报告 body 整体序列化进本表 data 列；
 # 前端 ReportPage 用渲染适配器（report_type）分发，不出现在旧 reports 列表。
 def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> None:
-    """落库一份生活圈体检报告（幂等：按 report_id INSERT OR REPLACE）。"""
+    """落库一份生活圈体检报告（幂等：按 report_id INSERT OR REPLACE）。
+
+    P0-2：离线估算报告（data_origin='offline'）不产出可比评分 → total_score 存 NULL，
+    历史/对比对 offline 显示「离线估算」而非 0 分。
+    """
     lc = report.get("living_circle") or {}
     scene = lc.get("scene") or {}
     scores = lc.get("scores") or {}
+    is_offline = lc.get("data_origin") == "offline"
+    total_score = None if is_offline else float(scores.get("total", 0) or 0)
     with _LOCK:
         c = _connect()
         c.execute(
@@ -1121,7 +1129,7 @@ def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> No
                 scene.get("name", ""),
                 json.dumps(report, ensure_ascii=False),
                 lc.get("data_origin", ""),
-                float(scores.get("total", 0) or 0),
+                total_score,
                 len(lc.get("blindspots") or []),
                 report.get("created_at", _now()),
             ),
@@ -1130,19 +1138,56 @@ def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> No
 
 
 def get_living_circle_report(report_id: str) -> Optional[Dict[str, Any]]:
-    """读取完整体检报告（含 living_circle 挂载的 Report 结构）。"""
+    """读取完整体检报告（含 living_circle 挂载的 Report 结构）。
+
+    读路径幂等归一化（盲区表征契约升级的架构兜底，见「盲区表征重构-实施计划」§8）：
+    当报告中盲区为**旧 schema**（缺 ``severity/gap_score/fixes/reach/affected``）时，
+    用 ``annotate_blindspots`` 按报告中已实测的采样点补齐——让历史存量报告与新建报告
+    呈现一致的严重度分档/连续缺口/补点处方/真实可达/受估人群，避免演示与实时口径断裂。
+    新 schema 报告已是全量，重放幂等（仅按当前采样态重算 reach/affected，语义不变）。
+    """
     c = _connect()
     row = c.execute("SELECT data FROM living_circle_reports WHERE report_id=?", (report_id,)).fetchone()
     if not row:
         return None
     try:
-        return json.loads(row["data"])
+        data = json.loads(row["data"])
     except (json.JSONDecodeError, TypeError):
         return None
+    lc = data.get("living_circle")
+    if isinstance(lc, dict):
+        bs = lc.get("blindspots")
+        need = isinstance(bs, list) and any(
+            not isinstance(b, dict) or not b.get("severity") for b in bs
+        )
+        if need:
+            from app.living_circle.assemble import annotate_blindspots
+
+            data["living_circle"] = annotate_blindspots(lc)
+    return data
 
 
-def list_living_circle_reports(limit: int = 50) -> List[Dict[str, Any]]:
-    """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。"""
+def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False) -> List[Dict[str, Any]]:
+    """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。
+
+    ``include_incomplete=False``（默认）时**跳过不合几何契约的报告** —— 两类会被挡住：
+
+    - **内容缺件**：如 ``lc-c796c62d``（迤栖村）``isochrones`` 空 / POI 空 / 0 分；
+    - **几何不自洽**：如 ``lc-d3cfa371`` 盲区 29.13km²（= 整张 5.4km 判定网格）、
+      151 个点位里 133 个在圈外；以及 3 份 ``fixture_sample`` 老快照。
+
+    这些报告在库中**保留**（只隐藏，不删除），只是不再出现在用户可见列表里
+    （旧版代码签发过它们，读路径必须挡住）。
+
+    判据与写路径**同源**（``living_circle.report_contract.assess_geometry``），
+    避免「写路径收紧了、读路径还按老口径放行」的漂移。审计/体检脚本可传
+    ``include_incomplete=True`` 全量取。
+
+    > 「陈旧快照」不需要额外状态位：老夹具几何必违反「盲区 ⊆ 可达区」、旧算法 live
+    > 报告必缺 ``caliber`` 口径声明 —— 隐藏与否是**几何契约的派生结论**。
+    """
+    from app.living_circle.report_contract import assess_geometry
+
     c = _connect()
     rows = c.execute(
         "SELECT report_id, scene_key, scene_name, data_origin, total_score, blindspot_count, created_at"
@@ -1150,22 +1195,36 @@ def list_living_circle_reports(limit: int = 50) -> List[Dict[str, Any]]:
         (limit,),
     ).fetchall()
     out = []
+    hidden: List[str] = []
     for r in rows:
         d = dict(r)
         data = get_living_circle_report(d["report_id"]) or {}
         lc = data.get("living_circle") or {}
         scene = lc.get("scene") or {}
+        if not include_incomplete:
+            issues = assess_geometry(lc)
+            if not issues.ok:
+                hidden.append(f"{d['report_id']}({issues.reason})")
+                continue
         out.append({
             "id": d["report_id"],
             "title": data.get("title", f"{d['scene_name']} · 生活圈体检报告"),
             "scene_name": d["scene_name"] or scene.get("name", ""),
             "city": scene.get("city", ""),
             "checked_at": d["created_at"],
-            "total_score": int(d["total_score"] or 0),
+            # P0-2：offline 报告 total_score 为 NULL → 透传 null（前端显示「离线估算」），不伪造 0 分
+            "total_score": d["total_score"],
             "blindspot_count": int(d["blindspot_count"] or 0),
             "data_origin": d["data_origin"] or lc.get("data_origin", ""),
             "interpolation": (lc.get("sampling") or {}).get("interpolation", "circular_approx"),
         })
+    if hidden:
+        # 不静默：隐藏了哪些、为什么，逐条留痕（数据仍在库中，可用 include_incomplete=True 取回）
+        logging.getLogger(__name__).warning(
+            "list_living_circle_reports 隐藏 %d 条不合几何契约的报告（保留未删除）：%s",
+            len(hidden),
+            "; ".join(hidden),
+        )
     return out
 
 

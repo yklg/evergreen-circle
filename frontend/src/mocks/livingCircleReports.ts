@@ -20,7 +20,7 @@ import type {
   ReportSection,
 } from '../types'
 import { SAMPLE_COMMUNITIES } from './livingCircleMock'
-import { scoreGrade } from '../lib/livingCircle'
+import { lcLocPrefix, scoreGrade } from '../lib/livingCircle'
 
 /** D4 · 专家署名表（与 backend/app/data/experts.json 及 api 副本的 id 对齐；M2 换血后仅文案微调） */
 export const LC_EXPERT: Record<string, { name: string; role: string }> = {
@@ -251,7 +251,11 @@ function secBlindspot(r: LivingCircleReport): ReportSection {
     id: 'blindspot',
     title: '服务盲区诊断',
     level: 2,
-    key_takeaway: r.blindspots.length ? `识别 ${r.blindspots.length} 处 1km 服务盲区${r.blindspots.some((b) => b.missing_facilities.includes('小学')) ? '，含小学缺口' : ''}；三要素缺位处列出最近设施的距离与方位供整改` : '未发现 1km 服务盲区，三要素齐备',
+    key_takeaway: r.blindspots.length
+      ? `识别 ${r.blindspots.length} 处 1km 服务盲区${r.blindspots.some((b) => b.missing_facilities.includes('小学')) ? '，含小学缺口' : ''}；三要素缺位处列出最近设施的距离与方位供整改`
+      : r.caliber?.cells_unknown
+        ? `可判定范围内未发现 1km 服务盲区；网格扫描 ${r.caliber.cells_inside ?? '—'} 格中仅 ${r.caliber.cells_judged ?? '—'} 格可判定，其余 ${r.caliber.cells_unknown} 格因采集半径不足未判定，不能据此判定全圈无障碍`
+        : '网格扫描全部完成判定，未发现 1km 服务盲区，三要素齐备',
     paragraphs: [
       `按赛题口径（1km 内无菜市场/药店/小学即判盲），以 ${
         r.blindspots.length ? `${r.blindspots.length} 处` : '网格扫描'
@@ -454,7 +458,7 @@ function buildSections(r: LivingCircleReport): ReportSection[] {
       key_takeaway: overviewNote(r),
       paragraphs: [
         `本次体检由常青圈规划专家队按「intake→plan→measure→collect→diagnose→report→audit」流水线完成，中心点「${r.scene.name}」（${r.scene.city} · ${r.scene.address}），研究范围 ${(r.scene.study_radius_m / 1000).toFixed(1)}km。`,
-        `数据口径：${r.data_origin === 'fixture_sample' ? '演示数据（fixture_sample）· 等时圈圆形近似' : '真实百度 API（live）· IDW 插值等时圈'}。图例与章节图表均可溯源至采样点 / POI / 判定等确定性动作。`,
+        `数据口径：${r.data_origin === 'offline' ? '离线估算（offline）· 区县中心近似 + 距离模型测时，未联网采集 POI，评分与盲区需实时体检后给出' : r.data_origin === 'fixture_sample' ? '演示数据（fixture_sample）· 等时圈圆形近似' : '真实百度 API（live）· IDW 插值等时圈'}。图例与章节图表均可溯源至采样点 / POI / 判定等确定性动作。`,
       ],
       charts: [radarChart(r), coverageBarChart(r)],
       source_evidence_ids: [`ev-${r.scene.name}-measure`],
@@ -494,7 +498,11 @@ export function buildLivingCircleReport(sceneId: string): Report | null {
     id: LC_REPORT_ID(sceneId),
     report_type: 'living_circle',
     title: `${lc.scene.name} · 生活圈体检报告`,
-    subtitle: `${lc.scene.city} · ${lc.scene.address}｜综合 ${lc.scores.total} 分（${scoreGrade(lc.scores.total).label}）· ${lc.blindspots.length} 处服务盲区 · 共 ${lc.poi.total} 处设施`,
+    // 副标题的「共 N 处设施」数**可达区内**（`poi.in_circle`），不是采集区内（`poi.total`）。
+    // 与后端 `core/pipeline/diagnosis_templates.py::assemble_report` 保持逐字同口径 ——
+    // 同一句话在两处实现（Py/TS）里各写一份时，口径必须显式对齐，否则演示报告与真实报告会不一致。
+    // 地点前缀走 `lcLocPrefix` 单一实现（空片段不拼接，避免「昆明市 · ｜综合…」悬空分隔符）。
+    subtitle: `${lcLocPrefix(lc.scene)}综合 ${lc.scores.total} 分（${scoreGrade(lc.scores.total).label}）· ${lc.blindspots.length} 处服务盲区 · 共 ${lc.poi.in_circle} 处设施（可达区内）`,
     query: lc.scene.name,
     brands: [],
     mode: 'standard',
@@ -535,8 +543,8 @@ export function getLivingCircleReportMock(id: string): Report | null {
 
 /** 历史页 / 报告中心共用：历次体检记录（首批 = 两样区实检 + 早期轮次快照） */
 export function getLifeCircleRecords(): LifeCircleRecord[] {
-  const two: LifeCircleRecord[] = ['kaili', 'beijing-jinsong']
-    .map((sceneId) => {
+  const two: LifeCircleRecord[] = (['kaili', 'beijing-jinsong']
+    .map((sceneId): LifeCircleRecord | null => {
       const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
       if (!sample) return null
       const lc = sample.report
@@ -552,7 +560,7 @@ export function getLifeCircleRecords(): LifeCircleRecord[] {
         interpolation: lc.sampling.interpolation,
       }
     })
-    .filter((x): x is LifeCircleRecord => x !== null)
+    .filter((x): x is LifeCircleRecord => x !== null))
 
   // 早期轮次快照（fixture 演示历史时间线；复用阅读器，见 LC_ALIAS）
   const snapshots: LifeCircleRecord[] = [

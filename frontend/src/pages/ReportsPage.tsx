@@ -1,5 +1,5 @@
 /**
- * 报告中心（F3）：全部报告列表（生活圈体检 / 竞争调研），按类型过滤后打开阅读器。
+ * 报告中心（F3）：全部报告列表（生活圈体检 / 目的地调研），按类型过滤后打开阅读器。
  *
  * F 阶段（VITE_USE_MOCK=1）列出体检报告（fixture）；
  * M 阶段接入真实 /api/reports + /api/life-circle/list 后自动补齐两类数据。
@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileText, MapPin, TriangleAlert, Inbox, GitCompare } from 'lucide-react'
 import { getLifeCircleRecords } from '../mocks/livingCircleReports'
-import { USE_MOCK } from '../mocks/livingCircleMock'
+import { useDataModeStore } from '../store/dataModeStore'
 import { fetchReports, fetchLifeCircleReports } from '../lib/api'
 import type { ReportCard, LifeCircleRecord } from '../types'
 
@@ -23,18 +23,19 @@ function fmtDate(iso: string): string {
 
 export default function ReportsPage() {
   const navigate = useNavigate()
+  const isFixture = useDataModeStore((s) => s.mode === 'fixture')
   const [filter, setFilter] = useState<TypeFilter>('all')
   const [research, setResearch] = useState<ReportCard[]>([])
   const [realLcRecords, setRealLcRecords] = useState<LifeCircleRecord[]>([])
 
   useEffect(() => {
-    if (USE_MOCK) return
+    if (isFixture) return
     fetchReports().then((rows) => setResearch(Array.isArray(rows) ? rows : [])).catch(() => {})
     fetchLifeCircleReports().then(setRealLcRecords).catch(() => {})
-  }, [])
+  }, [isFixture])
 
   const items = useMemo(() => {
-    const lcRecords = USE_MOCK ? getLifeCircleRecords() : realLcRecords
+    const lcRecords = isFixture ? getLifeCircleRecords() : realLcRecords
     const researchItems = research.map((r) => ({
       key: `research-${r.report_id}`,
       type: 'research' as const,
@@ -59,14 +60,14 @@ export default function ReportsPage() {
     }))
     const all = [...lcItems, ...researchItems].sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1))
     return filter === 'all' ? all : all.filter((i) => i.type === filter)
-  }, [research, realLcRecords, filter])
+  }, [research, realLcRecords, filter, isFixture])
 
   return (
     <div className="mx-auto max-w-content px-8 py-8">
       <header>
         <h1 className="font-serif text-h1 text-ink">报告中心</h1>
         <p className="mt-1 text-aux text-ink-2">
-          全部已生成报告（生活圈体检与竞争调研）—— 按类型过滤，点击打开完整阅读器
+          全部已生成报告（生活圈体检与目的地调研）—— 按类型过滤，点击打开完整阅读器
         </p>
       </header>
 
@@ -76,7 +77,7 @@ export default function ReportsPage() {
           [
             { key: 'all', label: '全部' },
             { key: 'living_circle', label: '生活圈体检' },
-            { key: 'research', label: '竞争调研' },
+            { key: 'research', label: '目的地调研' },
           ] as { key: TypeFilter; label: string }[]
         ).map((t) => (
           <button
@@ -89,7 +90,7 @@ export default function ReportsPage() {
             {t.label}
           </button>
         ))}
-        {USE_MOCK && <span className="ml-auto text-tag text-ink-3">演示数据 · 与历史页同源</span>}
+        {isFixture && <span className="ml-auto text-tag text-ink-3">演示数据 · 与历史页同源</span>}
       </div>
 
       {items.length === 0 ? (
@@ -131,19 +132,22 @@ export default function ReportsPage() {
                       it.type === 'living_circle' ? 'bg-primary-tint text-primary-deep' : 'bg-bg text-ink-3 ring-1 ring-line'
                     }`}
                   >
-                    {it.type === 'living_circle' ? '生活圈体检' : '竞争调研'}
+                    {it.type === 'living_circle' ? '生活圈体检' : '目的地调研'}
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-tag text-ink-3">
                   <span>{it.scene_name}{it.city ? ` · ${it.city}` : ''}</span>
                   <span>{fmtDate(it.checked_at)}</span>
-                  {it.type === 'living_circle' && it.score > 0 && (
+                  {it.type === 'living_circle' && it.score != null && it.score > 0 && (
                     <>
                       <span className="font-medium text-ink">评分 {it.score}</span>
                       <span className="inline-flex items-center gap-0.5">
                         <TriangleAlert size={12} className="text-warn" /> 盲区 {it.blindspots} 处
                       </span>
                     </>
+                  )}
+                  {it.type === 'living_circle' && it.score == null && (
+                    <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5 text-tag text-ink-2">离线估算</span>
                   )}
                 </div>
               </div>

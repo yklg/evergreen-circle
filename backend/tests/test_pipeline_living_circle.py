@@ -69,7 +69,19 @@ def test_pipeline_persists_independent_document():
     rep = db.get_living_circle_report(rid)
     assert rep is not None
     assert rep["report_type"] == "living_circle"
-    assert rep["living_circle"]["scores"]["total"] == 65  # 凯里 fixture 口径
+    # 断言**快照性质与内部自洽**，而不是钉死具体分值：夹具是真实实跑快照，
+    # 一旦用真实 AK 重算（AK 配额 / 路网变化），硬编码分值会把这条"落库链路"用例带成假红。
+    lc = rep["living_circle"]
+    assert lc["scene"]["name"] == "凯里老街"
+    assert lc["data_origin"] == "live"
+    assert 0 <= lc["scores"]["total"] <= 100
+    assert len(lc["scores"]["triads"]) == 3
+    assert len(lc["isochrones"]) == 4
+    # 空间口径举证随报告一起落库（Q1/Q2 的可判据化必须活到持久层）
+    cal = lc["caliber"]
+    assert cal["collect_radius_m"] >= cal["reach_circumradius_m"] * 0.999
+    assert cal["cells_judged"] + cal["cells_unknown"] == cal["cells_inside"]
+    assert len(lc["blindspots"]) <= cal["cells_judged"], "盲区数不可能超过可判定格数"
     records = db.list_living_circle_reports()
     assert any(r["id"] == rid for r in records)
     # task 终态完成
@@ -101,6 +113,37 @@ def test_pipeline_assemble_report_structure():
     assert bs_sec["data_grid"]["rows"] == [] or len(bs_sec["data_grid"]["rows"]) == len(rep["living_circle"]["blindspots"])
     # dispatch 与专家表闭合
     assert any(d["id"] == "L3-001" for d in rep["dispatch"])
+
+
+def test_pipeline_report_has_caliber_field():
+    """R2/R6：报告顶层包含 caliber 举证对象，记录出行方式、速度、绕行系数等口径。
+
+    注：`sample_profile` 断言的是**夹具自述的采样档**——权威快照由
+    `scripts/snapshot_live.py` 以 `mode="standard"` 实跑生成，两者必须一致。
+    """
+    tid = create_living_circle_task(KAILI)
+    events = _run_pipeline(tid)
+    rid = next(e for e in events if e["type"] == "done")["data"]["report_id"]
+    rep = db.get_living_circle_report(rid)
+    
+    lc = rep["living_circle"]
+    assert "caliber" in lc, "生活圈报告必须包含 caliber 字段"
+    cal = lc["caliber"]
+    assert cal["travel_mode"] == "walking"
+    assert isinstance(cal["speed_m_per_min"], (int, float))
+    assert isinstance(cal["detour_k"], (int, float))
+    assert isinstance(cal["study_radius_m"], int)
+    assert isinstance(cal["iso_minutes"], list)
+    assert isinstance(cal["basis"], str) and len(cal["basis"]) > 0
+    assert cal["measured"] is True  # walking 是实测
+    assert cal["sample_profile"] == "standard"
+    # ── 空间口径三概念（可达区 / 采集区 / 研究区）必须显式举证 ──
+    assert cal["reach_full_min"] == 20.0
+    assert cal["reach_radius_bound_m"] > 0
+    assert cal["reach_circumradius_m"] > 0
+    assert cal["collect_radius_m"] >= cal["reach_circumradius_m"] * 0.999
+    assert cal["collect_margin_m"] >= 0
+    assert cal["cells_judged"] + cal["cells_unknown"] == cal["cells_inside"]
 
 
 def test_create_task_requires_pipeline_kind():

@@ -33,6 +33,10 @@ export interface ClarifyQuestion {
 }
 export interface CreateTaskResp {
   taskId: string
+  /** 后端归一化后的任务类型（research / travel_guide / travel_assess）。后端已随 purpose 落库。 */
+  kind?: string
+  /** 目的地产出体裁：''(通用 research) | guide | assess。 */
+  purpose?: string
 }
 
 /* SSE 事件 */
@@ -156,7 +160,7 @@ export interface DataGrid {
   }[]
 }
 
-/* 结构化竞品知识 */
+/* 结构化洞察（feature_tree/pricing_model/user_persona，语义中立，非竞品专属） */
 export interface StructuredBlock {
   type: 'feature_tree' | 'pricing_model' | 'user_persona'
   data: Record<string, unknown>[]
@@ -197,13 +201,26 @@ export interface SentimentResult {
   sample_size: number
 }
 
+/* 目的地调研（guide/assess/research）扁平的确定性舆情聚合（research 流水线产出）：
+ * 命中数为口碑证据条数，非平台样本量；仅含主题词频 + 代表原声，无竞品/平台语义。 */
+export interface SentimentFlatResult {
+  topic?: string
+  positive?: number
+  neutral?: number
+  negative?: number
+  themes?: string[]
+  quotes?: { evidence_id?: string; text?: string }[]
+  platform?: Record<string, unknown> | null
+}
+
 export interface Report {
   id: string
   title: string
   subtitle: string
-  /** A1 弱关联：research=竞争调研报告；living_circle=生活圈体检报告（渲染适配器据此前再分发） */
+  /** 渲染适配器依据：research=目的地综合调研报告；living_circle=生活圈体检报告 */
   report_type?: 'research' | 'living_circle'
   query?: string
+  /** 目的地调研产出的 brands 恒为空（不产出竞品对比）；兼容旧报告保留 */
   brands?: string[]
   mode?: string
   created_at: string
@@ -215,7 +232,7 @@ export interface Report {
   charts: ChartSpec[]
   evidence: Evidence[]
   claims: Claim[]
-  sentiment?: SentimentResult
+  sentiment?: SentimentResult | SentimentFlatResult
   glossary: { term: string; definition: string; source?: string }[]
   figures?: ReportFigure[]
   structured?: Record<string, Record<string, unknown>[]>
@@ -501,6 +518,54 @@ export interface FacilityCategoryStat {
   nearest_name: string | null
 }
 
+/** 单个 POI 点位（真实坐标，供 BMapGL 地图渲染；契约增量字段） */
+export interface PoiPoint {
+  id: string
+  name: string
+  /** 与 FacilityCategoryStat.category 同键 */
+  category: string
+  /** [lng, lat]（BD-09） */
+  lnglat: LngLat
+  /** 距中心点步行耗时(分钟)，插值回填；无则 null */
+  minutes: number | null
+  /** 是否落在 15min 等时圈内 */
+  in_circle: boolean
+}
+
+/** 盲区补点处方（策略 + 优先级，供整改参考） */
+export interface BlindFix {
+  /** 缺失设施名（菜市场/药店/小学） */
+  facility: string
+  /** 建议补点位置 */
+  point: LngLat
+  /** 补建策略：mobile_service / reroute / build */
+  strategy: 'mobile_service' | 'reroute' | 'build'
+  /** 最近替代距离(m)，无任何该型设施时为 null */
+  nearest_alt_m: number | null
+  /** 覆盖的判盲格数 */
+  served: number
+  /** 全局整改优先级（连续唯一，越小越优先） */
+  priority: number
+}
+
+/** 盲区到达最近替代设施的可达性（R3：优先等时圈实测） */
+export interface BlindReach {
+  real_walk_min: number | null
+  /** 是否来自真实等时圈(IDW)实测；离线降级为 false */
+  isochrone_based: boolean
+}
+
+/** 受影响人群（诚实代理：采样点实测 + 密度估算；离线为 null） */
+export interface BlindAffected {
+  /** 落在盲区多边形内的采样点数量（实测） */
+  sampling_sites: number
+  estimated_households: number
+  estimated_residents: number
+  /** 固定 'proxy'（估算非实测） */
+  provenance: 'proxy'
+  note: string
+}
+
 /** 单条服务盲区（1km 内无菜市场/药店/小学） */
 export interface BlindSpot {
   id: string
@@ -519,6 +584,16 @@ export interface BlindSpot {
   }[]
   /** 灰色区域多边形 */
   polygon: GeojsonPolygon
+  /** 严重度分级：heavy / medium / light（v2 新字段，老数据可能缺失） */
+  severity?: 'heavy' | 'medium' | 'light'
+  /** 连续缺口指数 ∈ [0,1] */
+  gap_score?: number
+  /** 补点处方（按优先级排序） */
+  fixes?: BlindFix[]
+  /** 真实可达性 */
+  reach?: BlindReach
+  /** 受影响人群（估算代理；离线/无采样为 null） */
+  affected?: BlindAffected | null
 }
 
 /** 盲区三要素覆盖结论 */
@@ -544,12 +619,51 @@ export interface LifeCircleScores {
 export interface LivingCircleReport {
   scene: LifeCircleScene
   generated_at: string
-  /** live=真实百度 API 计算；fixture_sample=内置演示数据(圆形近似) */
-  data_origin: 'live' | 'fixture_sample'
+  /**
+   * 数据来源（v2 扩展）：
+   * - live=真实百度 API 计算；offline=离线估算（距离模型，未联网 POI，评分不可比）；
+   * - fixture_sample=内置演示数据；cache 命中时保持原值 + served_from='cache'
+   */
+  data_origin: 'live' | 'offline' | 'fixture_sample'
+  /** 缓存命中标识（无 AK 时返回历史实时结果） */
+  served_from?: 'cache'
+  /** 缓存命中时间（ISO） */
+  cached_at?: string
+  /** R2/R6：测算口径举证对象（出行方式、速度、绕行系数等） */
+  caliber?: {
+    travel_mode: string
+    speed_m_per_min: number
+    detour_k: number
+    study_radius_m: number
+    iso_minutes: number[]
+    basis: string
+    measured: boolean
+    sample_profile: string
+    note?: string // 离线估算时附加说明
+    /* ── 空间口径三概念（可达区 / 采集区 / 研究区）的显式举证 ──
+       修复「四个名字三个概念零个表示」后新增：没有这几个数，前端就无法诚实回答
+       「盲区为什么这么少」——`cells_unknown` 占比高时必须说明「判不了」而不是「没问题」。 */
+    /** 可达区口径分钟数（= reach_full_min，通常 20） */
+    reach_full_min?: number
+    /** 可达区半径**理论下界** = 分钟 × 速度 ÷ 绕行系数（量级校验用） */
+    reach_radius_bound_m?: number
+    /** 可达区外接圆半径（**实测**最大顶点距中心距离） */
+    reach_circumradius_m?: number
+    /** 实际 POI 采集半径（= 外接圆 + collect_margin_m） */
+    collect_radius_m?: number
+    /** 采集半径相对外接圆的余量（D2=0 严格不外扩；D1=1000 判定覆盖 100%） */
+    collect_margin_m?: number
+    /** 可达区内的网格格数 */
+    cells_inside?: number
+    /** 其中**可判定**的格数（1km 邻域被采集区完整覆盖） */
+    cells_judged?: number
+    /** 其中**不可判定**的格数（数据不足，既不算有盲区也不算没盲区） */
+    cells_unknown?: number
+  }
   isochrones: IsochroneZone[]
   sampling: {
     points: SamplingPoint[]
-    /** 等时圈生成方式：idw=采样点反距离加权插值；circular_approx=圆形近似 */
+    /** 等时圈生成方式：idw=采样点反距离加权插值；circular_approx=距离模型/圆形近似 */
     interpolation: 'idw' | 'circular_approx'
     /** 是否通过了散点扇形/双阶段采样（30% 评分点叙事） */
     is_scattered: boolean
@@ -558,6 +672,8 @@ export interface LivingCircleReport {
     categories: FacilityCategoryStat[]
     total: number
     in_circle: number
+    /** 逐 POI 点位（真实坐标，BMapGL 渲染）；旧快照/降级可能为空数组 */
+    points: PoiPoint[]
   }
   blindspots: BlindSpot[]
   scores: LifeCircleScores
@@ -584,8 +700,26 @@ export interface LifeCircleRecord {
   scene_name: string
   city: string
   checked_at: string
-  total_score: number
+  /** offline 报告为 null（不伪造 0 分），前端显示「离线估算」 */
+  total_score: number | null
   blindspot_count: number
-  data_origin: 'live' | 'fixture_sample'
+  data_origin: 'live' | 'offline' | 'fixture_sample'
   interpolation: 'idw' | 'circular_approx'
+}
+
+/** 全国省市区三级区划（D1 联动选择器；后端 regions 端点仅返回名称树） */
+export interface RegionProvince {
+  province: string
+  cities: {
+    name: string
+    districts: string[]
+  }[]
+}
+
+/** 报告分享直达信息（E1） */
+export interface LifeCircleShare {
+  ok: boolean
+  url: string
+  title: string
+  scene_name: string
 }

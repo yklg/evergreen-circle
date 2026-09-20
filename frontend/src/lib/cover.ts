@@ -19,7 +19,7 @@ export interface CoverSource {
 }
 
 function makeCoverSvg(title: string, brands: string[]): string {
-  const t = (title || '竞品调研').slice(0, 20)
+  const t = (title || '目的地调研').slice(0, 20)
   const b = (brands.slice(0, 3).join(' · ') || BRAND.coverByline)
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">' +
@@ -29,7 +29,7 @@ function makeCoverSvg(title: string, brands: string[]): string {
     '<rect width="800" height="450" fill="url(#g)"/>' +
     '<circle cx="650" cy="80" r="150" fill="#ffffff" opacity="0.06"/>' +
     '<circle cx="110" cy="390" r="90" fill="#ffffff" opacity="0.05"/>' +
-    `<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">${BRAND.en.toUpperCase()} · 竞品调研</text>` +
+    `<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">${BRAND.en.toUpperCase()} · 调研报告</text>` +
     `<text x="46" y="225" fill="#ffffff" font-family="sans-serif" font-size="40" font-weight="700">${t}</text>` +
     `<text x="48" y="272" fill="#ccfbf1" font-family="sans-serif" font-size="22">${b}</text>` +
     '<text x="48" y="410" fill="#99f6e4" font-family="sans-serif" font-size="16" opacity="0.85">结论可溯源 · 证据可沉淀</text>' +

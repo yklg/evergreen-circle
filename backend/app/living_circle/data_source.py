@@ -1,11 +1,16 @@
-"""数据源接口与实现（A3 数据源与韧性分离）。
+"""数据源接口与实现（A3 数据源与韧性分离 · v2 全国离线检索）。
 
 - `DataSource`：`compute(CheckParams) -> LivingCircleReport(dict 契约)` 的抽象。
-- `LiveDataSource`：真实百度 API 编排（等时圈 → POI → 盲区 → 评分）；
-  韧性（限流/退避）在 baidu_client/request_guard，业务快照回退不在这里。
-- `FixtureDataSource`：内置双样例（凯里/劲松），按中心点就近匹配——评审无 Key 演示与降级兜底。
-- `get_data_source(mode, ...)`：按任务 `data_mode: 'live'|'fixture'` 选择实现。
-缓存键经 Repository 注入，并带 data_mode 前缀（防串）。
+- `load_poi(client, center, radius_m)`：POI 采集（8 类 + 三要素）**全项目唯一实现**；
+  采集半径必须由调用方从 `SpatialScope.collect_radius_m` 传入（本函数不带默认值）。
+- `LiveDataSource`：真实百度 API 编排（等时圈 → POI → 盲区 → 评分）；韧性在 client/guard。
+- `FixtureDataSource`：内置双样例（凯里/劲松），显式演示模式使用。
+- `OfflineDataSource`：离线估算（无 AK 兜底任意地区）——内置区划定位 + 距离模型等时圈
+  （复用 IsochroneEngine，注入「直线距离×绕行系数/步行速度」），POI 标注「需联网体检」，
+  不产出可比评分/盲区（防污染对比口径）。
+- `CachingDataSource`：横切缓存装饰器（v2 核心）——实时结果持久落盘（SqliteCache 30 天），
+  无 AK 时先命中「历史实时结果」（served_from='cache'）再落离线估算。
+- `get_data_source(mode, ...)`：二选一路由（有 AK → Caching(Live)；无 AK → Caching(Offline)）。
 """
 from __future__ import annotations
 
@@ -15,29 +20,60 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
-
+from app.living_circle.assemble import assemble_living_circle
 from app.living_circle.baidu_client import BaiduClient
-from app.living_circle.blindspot import find_blindspots
-from app.living_circle.geo_utils import to_local_xy
-from app.living_circle.isochrone import IsochroneEngine, idw_for_points
-from app.living_circle.poi import CATEGORY_DEFS, TRIAD_KEYWORDS, clean, to_stats
+from app.living_circle.geo_index.offline_geocoder import OfflineGeocoder
+from app.living_circle.geo_utils import haversine_m
+from app.living_circle.caliber import get_caliber, caliber_payload_key
+from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes
+from app.living_circle.poi import CATEGORY_DEFS, TRIAD_KEYWORDS, clean
 from app.living_circle.repository import Repository
-from app.living_circle.scoring import compute_scores, triad_from_points
+from app.living_circle.scope import SpatialScope
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+_DEFAULT_CENTER = (107.9758, 26.5734)  # 最终兜底：凯里老街（演示样区）
+
+
+async def load_poi(
+    client: BaiduClient,
+    center: Tuple[float, float],
+    radius_m: float,
+) -> Tuple[Dict[str, list], Dict[str, list]]:
+    """采集 8 类民生 POI + 三要素 POI（多关键词查全 + 清洗）—— **全项目唯一实现**。
+
+    ``radius_m`` 必须**由调用方从 :class:`SpatialScope` 取**（``scope.collect_radius_m``），
+    本函数不再自带默认值：旧版 live 管线硬编码 ``radius_m=2000``、数据源读 caliber 的
+    ``study_radius_m=2500``，两条路径同时存在且数值不同——同一个「采集半径」有两个真相，
+    圈外点与整片盲区两个症状都由它派生。去默认值是让「谁决定采集半径」变成编译期可见的问题。
+    """
+    per_category: Dict[str, list] = {}
+    for cat, defn in CATEGORY_DEFS.items():
+        items: list = []
+        for kw in defn["keywords"]:
+            items += await client.place_search(kw, center, radius_m=radius_m)
+        per_category[cat] = clean(items)
+    triads: Dict[str, list] = {}
+    for key, kw in TRIAD_KEYWORDS.items():
+        triads[key] = clean(await client.place_search(kw, center, radius_m=radius_m))
+    return per_category, triads
 
 
 @dataclass
 class CheckParams:
-    """一次体检的输入定格（对齐前端 LifeCircleScene + mode）。"""
+    """一次体检的输入定格（对齐前端 LifeCircleScene + mode）。
+
+    R5 命名治理：
+    - mode → sample_profile（采样档位：quick/standard/precise）
+    - travel_mode（出行方式：walking/riding/driving，默认 walking）
+    """
 
     scene_name: str
     city: str = ""
     address: str = ""
     center: Tuple[float, float] = field(default_factory=lambda: (0.0, 0.0))  # (lng, lat)
     study_radius_m: float = 2500.0
-    mode: str = "standard"  # quick / standard / precise
+    sample_profile: str = "standard"  # quick / standard / precise（原 mode）
+    travel_mode: str = "walking"  # walking / riding / driving
 
 
 class DataSource:
@@ -69,13 +105,14 @@ class FixtureDataSource(DataSource):
     async def compute(self, params: CheckParams) -> Dict[str, Any]:
         if not self._fixtures:
             raise ValueError("无内置样例数据（fixtures 目录为空）")
+        from app.living_circle.assemble import annotate_blindspots
         from app.living_circle.geo_utils import haversine_m
 
         best = min(
             self._fixtures,
             key=lambda r: haversine_m(params.center, tuple(r["scene"]["center"])),
         )
-        return copy.deepcopy(best)
+        return annotate_blindspots(best)
 
 
 class LiveDataSource(DataSource):
@@ -87,47 +124,16 @@ class LiveDataSource(DataSource):
         client: Optional[BaiduClient] = None,
         engine: Optional[IsochroneEngine] = None,
         repo: Optional[Repository] = None,
-        poi_radius_m: int = 2000,
     ) -> None:
         self.client = client or BaiduClient(ak=ak)
         self.engine = engine or IsochroneEngine()
         self.repo = repo or Repository()
-        self.poi_radius = poi_radius_m
 
     async def aclose(self) -> None:
         await self.client.aclose()
 
     def _scene_payload(self, p: CheckParams) -> str:
-        return (
-            f"{p.scene_name}|{p.center[0]:.6f},{p.center[1]:.6f}|"
-            f"{int(p.study_radius_m)}|{p.mode}"
-        )
-
-    async def _load_poi(self, center: Tuple[float, float]) -> Tuple[Dict[str, list], Dict[str, list]]:
-        """采集 8 类民生 POI + 三要素 POI（多关键词查全 + 清洗）。"""
-        per_category: Dict[str, list] = {}
-        for cat, defn in CATEGORY_DEFS.items():
-            items: list = []
-            for kw in defn["keywords"]:
-                items += await self.client.place_search(kw, center, radius_m=self.poi_radius)
-            per_category[cat] = clean(items)
-        triads: Dict[str, list] = {}
-        for key, kw in TRIAD_KEYWORDS.items():
-            triads[key] = clean(await self.client.place_search(kw, center, radius_m=self.poi_radius))
-        return per_category, triads
-
-    @staticmethod
-    def _minutes_by_point(
-        points: List[Dict[str, Any]],
-        sample_xy: np.ndarray,
-        minutes: List[Optional[float]],
-        center: Tuple[float, float],
-    ) -> List[float | None]:
-        """对 POI 点集按 IDW 场插值耗时（一次向量化）。"""
-        if not points:
-            return []
-        query_xy = np.array([to_local_xy(center, p["lng"], p["lat"]) for p in points])
-        return idw_for_points(sample_xy, minutes, query_xy)
+        return caliber_payload_key(p.scene_name, p.center, p.study_radius_m, p.sample_profile)
 
     async def compute(self, params: CheckParams) -> Dict[str, Any]:
         payload_key = self._scene_payload(params)
@@ -136,80 +142,140 @@ class LiveDataSource(DataSource):
             return cached
 
         center = params.center
+        caliber = get_caliber(params.travel_mode)
 
-        # 1) 等时圈（批量步行矩阵测时 → IDW → 等值线族）
+        # 1) 等时圈（批量矩阵测时 → IDW → 等值线族）
+        async def meter_fn(pts: List[Tuple[float, float]]) -> List[Optional[float]]:
+            return await self.client._measure_matrix(params.travel_mode, pts, center)
+
         iso = await self.engine.compute(
             center,
-            lambda pts: self.client.route_matrix_walking(pts, center),
+            meter_fn,
             study_radius_m=params.study_radius_m,
-            mode=params.mode,
+            mode=params.sample_profile,
         )
-        iso15 = next((z for z in iso["isochrones"] if z["minutes"] == 15), None)
-        iso15_ring = iso15["geojson"]["coordinates"][0] if iso15 else []
-        sample_pts = iso["sampling"]["points"]
-        sample_minutes = [sp["minutes"] for sp in sample_pts]
-        # 采样点局部坐标（与插值场同原点 → POI 耗时回填复用同一批 IDW）
-        sample_xy = np.array([to_local_xy(center, sp["lng"], sp["lat"]) for sp in sample_pts])
 
-        # 2) POI 采集与清洗
-        per_category, triads = await self._load_poi(center)
+        # 2) 空间口径绑定：按 minutes 选可达区环（禁止 iso["isochrones"][-1] 按位置取环）
+        scope = SpatialScope.from_iso(caliber, center, params.study_radius_m, iso)
+        scope.invariant()
 
-        # 3) 类别统计 + 耗时回填（对全部 POI 一次插值，再按类别取最近）
-        stats = to_stats(per_category, triads, iso15_ring, center)
-        for s in stats:
-            cat = s["category"]
-            items = per_category.get(cat, [])
-            times = self._minutes_by_point(items, sample_xy, sample_minutes, center)
-            paired = [(t, it) for t, it in zip(times, items) if t is not None]
-            if paired:
-                best_t, best_it = min(paired, key=lambda x: x[0])
-                s["min_minutes"] = best_t
-                s["nearest_name"] = best_it.get("name") or s.get("nearest_name")
-            else:
-                s["min_minutes"] = None
+        # 3) POI 采集（半径唯一来自 scope.collect_radius_m）
+        per_category, triads = await load_poi(self.client, center, scope.collect_radius_m)
 
-        # 4) 三要素覆盖结论 + 盲区
-        def field_fn(pt: Tuple[float, float]) -> Optional[float]:
-            xy = np.array([to_local_xy(center, pt[0], pt[1])])  # (1,2)
-            vals = idw_for_points(sample_xy, sample_minutes, xy)
-            v = vals[0]
-            return None if v is None or v > 20 else v
+        # 4) 组装（唯一实现，与 pipeline 共用）
+        report = assemble_living_circle(params, iso, per_category, triads, scope)
+        self.repo.cache_report("live", payload_key, report)
+        return report
 
-        def as_full(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-            return [{"lng": it["lng"], "lat": it["lat"], "name": it.get("name", "")} for it in items]
 
-        triads_conclusion = triad_from_points(
-            as_full(triads.get("market", [])),
-            as_full(triads.get("pharmacy", [])),
-            as_full(triads.get("primary", [])),
-            field_fn,
-        )
-        blindspots = find_blindspots(center, params.study_radius_m, triads, prefix=params.scene_name)
+class OfflineDataSource(DataSource):
+    """离线估算数据源（L3，v2）：任意地区兜底——区划定位 + 距离模型等时圈。
 
-        # 5) 评分
-        scores = compute_scores(stats, triads_conclusion, len(blindspots))
+    原则（评审诚实性）：`data_origin='offline'`、`interpolation='circular_approx'`，
+    POI 标注「需联网体检」，**不产出可比评分/盲区**（scores.note 说明，前端不渲染数字）。
+    复用 IsochroneEngine（与 live 同构契约），仅测时函数替换为「直线距离×绕行/速度」。
+    """
 
-        report = {
+    def __init__(self, geocoder: Optional[OfflineGeocoder] = None, engine: Optional[IsochroneEngine] = None) -> None:
+        self.geocoder = geocoder or OfflineGeocoder()
+        self.engine = engine or IsochroneEngine()
+
+    def resolve_center(self, params: CheckParams) -> Optional[Tuple[float, float]]:
+        """中心解析：显式坐标 > 区划定位 > 凯里兜底。"""
+        c = params.center
+        if c and c != (0.0, 0.0):
+            return tuple(c)
+        hits = self.geocoder.search(params.scene_name)
+        if hits and hits[0].center:
+            return tuple(hits[0].center)
+        return _DEFAULT_CENTER
+
+    async def compute(self, params: CheckParams) -> Dict[str, Any]:
+        center = self.resolve_center(params)
+        # 步骤 5：离线估算 detour_k / speed 按 travel_mode 分档
+        caliber = get_caliber(params.travel_mode)
+
+        async def meter_fn(pts: List[Tuple[float, float]]) -> List[Optional[float]]:
+            # 距离模型：直线距离 × 绕行系数 → 分钟（与 live 同源速度基准）
+            return [hour_to_minutes(haversine_m(center, p) * caliber.detour_k, caliber.speed_m_per_min) for p in pts]
+
+        iso = await self.engine.compute(center, meter_fn, study_radius_m=params.study_radius_m, mode=params.sample_profile)
+
+        # R2/R6：离线报告也增 caliber 举证对象
+        caliber_report = {
+            "travel_mode": params.travel_mode,
+            "speed_m_per_min": caliber.speed_m_per_min,
+            "detour_k": caliber.detour_k,
+            "study_radius_m": caliber.study_radius_m,
+            "iso_minutes": list(caliber.iso_minutes),
+            "basis": caliber.basis,
+            "measured": caliber.measured,
+            "sample_profile": params.sample_profile,
+            "note": "离线估算（未实测，按距离模型粗估）",
+        }
+
+        return {
             "scene": {
                 "name": params.scene_name,
                 "city": params.city,
-                "address": params.address,
+                "address": params.address or "离线估算（区县中心近似）",
                 "center": [round(center[0], 6), round(center[1], 6)],
                 "study_radius_m": int(params.study_radius_m),
             },
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-            "data_origin": "live",
+            "data_origin": "offline",
+            "caliber": caliber_report,
             "isochrones": iso["isochrones"],
-            "sampling": iso["sampling"],
-            "poi": {
-                "categories": stats,
-                "total": sum(s["total"] for s in stats),
-                "in_circle": sum(s["in_circle"] for s in stats),
+            "sampling": {**iso["sampling"], "interpolation": "circular_approx", "is_scattered": False},
+            "poi": {"categories": [], "total": 0, "in_circle": 0, "points": []},
+            "blindspots": [],
+            "scores": {
+                "total": 0,
+                "radar": [],
+                "bars": [],
+                "triads": [],
+                "note": (
+                    f"离线估算：步行速度 {caliber.speed_m_per_min} m/min × 绕行系数 {caliber.detour_k} 的距离模型，"
+                    "未联网采集 POI——综合评分与服务盲区需实时体检后给出，且离线分不可与实时分比较"
+                ),
             },
-            "blindspots": blindspots,
-            "scores": scores,
         }
-        self.repo.cache_report("live", payload_key, report)
+
+
+class CachingDataSource(DataSource):
+    """横切缓存装饰器（v2 核心）：先查持久缓存，命中返回（served_from='cache'）；未命中委托并回填。
+
+    - 有 AK：包装 Live —— 同中心 30 天秒开 + 实时结果落盘；
+    - 无 AK：包装 Offline（read_only）——命中「历史实时结果」离线可查，未命中才走离线估算。
+    - 透传内层 `client`（pipeline 用 hasattr 判断是否走 live geocoding / 测时）。
+    """
+
+    def __init__(self, source: DataSource, repo: Optional[Repository] = None, data_mode: str = "live", read_only: bool = False) -> None:
+        self.source = source
+        self.repo = repo or Repository()
+        self.data_mode = data_mode
+        self.read_only = read_only
+
+    @property
+    def client(self) -> Optional[BaiduClient]:
+        return getattr(self.source, "client", None)
+
+    @staticmethod
+    def _payload(params: CheckParams) -> str:
+        c = params.center or (0.0, 0.0)
+        return caliber_payload_key(params.scene_name, c, params.study_radius_m, params.sample_profile)
+
+    async def compute(self, params: CheckParams) -> Dict[str, Any]:
+        payload = self._payload(params)
+        hit = self.repo.get_report(self.data_mode, payload)
+        if hit is not None:
+            hit = copy.deepcopy(hit)
+            hit["served_from"] = "cache"
+            hit["cached_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            return hit
+        report = await self.source.compute(params)
+        if not self.read_only:
+            self.repo.cache_report(self.data_mode, payload, report)
         return report
 
 
@@ -218,16 +284,23 @@ def get_data_source(
     ak: str = "",
     client: Optional[BaiduClient] = None,
     repo: Optional[Repository] = None,
+    geocoder: Optional[OfflineGeocoder] = None,
 ) -> DataSource:
-    """工厂：按 data_mode 选择实现；显式 live 但无 AK → 降级 fixture（A3 韧性，不抛错）。
+    """工厂（v2 二选一路由 + 横切缓存）：
 
-    水平降级在此（数据源选择层），不污染 baidu_client；前端横幅标注 data_origin。
+    - `mode=fixture`（显式演示）→ FixtureDataSource（两样例，零回归）；
+    - 有 AK → CachingDataSource(LiveDataSource)（实时全链路 + 落盘缓存）；
+    - 无 AK → CachingDataSource(OfflineDataSource, read_only)（先命中历史实时，再离线估算）。
+
+    韧性降级在数据源选择层（不污染 baidu_client）；前端按 data_origin/served_from 标注。
     """
-    if mode == "fixture" or (mode == "live" and not ak):
-        if mode == "live" and not ak:
-            # 显式告警让可观测性可查；返回 fixture 保证演示不中断
-            import logging
-
-            logging.getLogger(__name__).warning("baidu AK 缺失，生活圈体检降级为 fixture 演示数据")
+    if mode == "fixture":
         return FixtureDataSource()
-    return LiveDataSource(ak=ak, client=client, repo=repo)
+    repo = repo or Repository()
+    if ak:
+        live = LiveDataSource(ak=ak, client=client, repo=repo)
+        return CachingDataSource(live, repo=repo, data_mode="live")
+    import logging
+
+    logging.getLogger(__name__).warning("baidu AK 缺失：先查历史实时缓存，未命中走离线估算（data_origin=offline）")
+    return CachingDataSource(OfflineDataSource(geocoder=geocoder), repo=repo, data_mode="live", read_only=True)

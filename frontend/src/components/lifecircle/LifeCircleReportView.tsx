@@ -7,6 +7,7 @@
  *
  * M 阶段 BMapGL 接入后仅替换快照渲染层，页面骨架不变。
  */
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ChevronLeft,
@@ -19,19 +20,32 @@ import {
   GitCompare,
   Database,
   Sparkles,
+  Share2,
+  Plus,
+  Info as InfoIcon,
 } from 'lucide-react'
-import type { Report, LivingCircleReport, LngLat, FacilityCategoryStat } from '../../types'
+import type { Report, LivingCircleReport, LngLat } from '../../types'
 import {
   LC_CANVAS,
   LC_CAT_COLOR,
   LC_CAT_LABEL_OF,
   LC_ISO_COLORS,
+  LC_BLIND_SEV,
+  LC_BLIND_FIX_STRATEGY,
+  affectedOf,
+  fixesOf,
+  gapScoreOf,
+  severityOf,
   lcPolyPts,
   lcRightmost,
   lcToPx,
+  lcSnapshotPoiLayer,
   scoreGrade,
+  dataOriginBadge,
 } from '../../lib/livingCircle'
+import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
+import ShareModal from './ShareModal'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
 import { LC_EXPERT } from '../../mocks/livingCircleReports'
@@ -69,23 +83,13 @@ function IsochroneSnapshot({ lc }: { lc: LivingCircleReport }) {
           <circle cx={lcToPx(center, b.center[0], b.center[1])[0]} cy={lcToPx(center, b.center[0], b.center[1])[1]} r={5} fill="#E8B54D" stroke="#fff" strokeWidth={1.5} />
         </g>
       ))}
-      {lc.poi.categories.map((c: FacilityCategoryStat, idx) => {
-        const theta = idx * 2.4
-        const radius = 260 + ((idx * 70) % 520)
-        const [px, py] = lcToPx(center, center[0], center[1])
-        return (
-          <circle
-            key={c.category}
-            cx={px + Math.cos(theta) * radius * 0.9}
-            cy={py + Math.sin(theta) * radius * 0.9}
-            r={7}
-            fill={LC_CAT_COLOR[c.category] ?? '#7c6670'}
-            stroke="#fff"
-            strokeWidth={1.5}
-            opacity={0.92}
-          />
-        )
-      })}
+      {/* POI 真实点位：共享投影层（与 LcMap 降级画布同口径，点位与详细报告数字一致）；
+          离线（poi.points 恒为空）时自然降级为空数组，不绘制 */}
+      {lcSnapshotPoiLayer(center, lc.poi.points).map((p) => (
+        <circle key={p.key} cx={p.cx} cy={p.cy} r={6} fill={p.fill} stroke="#fff" strokeWidth={1.5} opacity={0.92}>
+          {p.title && <title>{p.title}</title>}
+        </circle>
+      ))}
       {(() => {
         const [x, y] = lcToPx(center, center[0], center[1])
         return (
@@ -116,19 +120,76 @@ function jumpToSection(id: string) {
   document.getElementById(`lc-sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+/**
+ * 盲区判定的**覆盖度**（有则返回，无则 null）。
+ *
+ * 这三个数把「判不了」与「没问题」分开：网格扫了 `inside` 格，其中只有 `judged` 格
+ * 的 1km 判定邻域被采集区完整覆盖，其余 `unknown` 格**既不算有盲区、也不算没盲区**。
+ * 没有它的「0 处盲区」是无法解读的（可能是全扫完真没有，也可能是 90% 没判）。
+ */
+function blindspotCoverage(lc: LivingCircleReport): { inside: number; judged: number; unknown: number } | null {
+  const c = lc.caliber
+  if (!c || c.cells_inside == null || c.cells_judged == null) return null
+  return { inside: c.cells_inside, judged: c.cells_judged, unknown: c.cells_unknown ?? c.cells_inside - c.cells_judged }
+}
+
+/** 覆盖度脚注：只要存在未判定格，就必须写出来（否则盲区数会被读成「全貌」） */
+function coverageNote(lc: LivingCircleReport) {
+  const cov = blindspotCoverage(lc)
+  if (!cov || cov.unknown <= 0) return null
+  const pctJudged = cov.inside > 0 ? Math.round((cov.judged / cov.inside) * 100) : 0
+  return (
+    <p className="mt-2 border-t border-line/60 pt-2 text-tag text-ink-3">
+      判定覆盖：网格 {cov.inside} 格中已判定 {cov.judged} 格（{pctJudged}%），
+      {cov.unknown} 格因采集半径（{lc.caliber?.collect_radius_m ?? '—'}m）不足以覆盖 1km 判定邻域而未判定 ——
+      盲区数不含这些区域，存在少报可能。
+    </p>
+  )
+}
+
+/** 0 处盲区时的结论句：有未判定格就不能说「三要素齐备」 */
+function emptyBlindspotNote(lc: LivingCircleReport): string {
+  const cov = blindspotCoverage(lc)
+  if (!cov) return '按赛题口径（1km 内无菜市场/药店/小学）扫描，本次未发现服务盲区。'
+  if (cov.unknown > 0) {
+    return `已在可判定范围内（${cov.judged} 格）确认三要素齐备，未发现 1km 服务盲区；但仍有 ${cov.unknown} 格无法判定，不能据此判定全圈无障碍。`
+  }
+  return `网格扫描 ${cov.inside} 格全部完成判定，菜市场/药店/小学三要素齐备，未发现 1km 服务盲区。`
+}
+
 export default function LifeCircleReportView({ report }: { report: Report }) {
   const navigate = useNavigate()
+  const [shareOpen, setShareOpen] = useState(false)
   const lc = report.living_circle as LivingCircleReport
   const grade = scoreGrade(lc.scores.total)
   // 报告 id 形如 lc-{sceneId}，反推样区路由参数（如 lc-kaili → kaili）
   const sceneKey = report.id.startsWith('lc-') ? report.id.slice(3) : 'kaili'
   const reachable = lc.sampling.points.filter((p) => p.reachable).length
   const area15 = lc.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0
+  const isShared = typeof window !== 'undefined' && window.location.search.includes('share=1')
+  // C1：左竖排章节导航的当前高亮（scroll-spy，与 research 报告页同模式）
+  const [activeSection, setActiveSection] = useState(report.toc[0]?.id ?? '')
+  const mainRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const scroller = mainRef.current
+    if (!scroller) return
+    const onScroll = () => {
+      let cur = ''
+      for (const s of report.sections) {
+        const node = document.getElementById(`lc-sec-${s.id}`)
+        if (node && node.getBoundingClientRect().top - scroller.getBoundingClientRect().top <= 152) cur = s.id
+      }
+      if (cur) setActiveSection(cur)
+    }
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => scroller.removeEventListener('scroll', onScroll)
+  }, [report.sections])
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
-      {/* sticky 摘要条：场景 + 评分 + 盲区 + 锚点导航 */}
-      <header className="sticky top-0 z-30 border-b border-line bg-card/95 backdrop-blur">
+      {/* 顶部条：面包屑 + 数据徽标 + 右侧操作（章节导航已迁至左侧 aside） */}
+      <header className="z-30 shrink-0 border-b border-line bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-2.5">
           <button
             onClick={() => navigate(`/life-circle/${sceneKey}`)}
@@ -141,9 +202,21 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             <MapPin size={15} className="shrink-0 text-primary" />
             <span className="truncate text-aux font-semibold text-ink">{lc.scene.name} · 生活圈体检报告</span>
             <span className="rounded-chip bg-primary-tint px-2 py-0.5 text-tag font-medium text-primary-deep">体检单</span>
-            {lc.data_origin === 'fixture_sample' && (
-              <span className="hidden rounded-chip border border-warn/60 bg-warn/10 px-2 py-0.5 text-tag text-ink-2 sm:inline">演示数据</span>
-            )}
+            {(() => {
+              const b = dataOriginBadge(lc)
+              return (
+                <span
+                  title={b.detail}
+                  className={`hidden rounded-chip px-2 py-0.5 text-tag font-medium sm:inline ${
+                    b.tone === 'live' || b.tone === 'info'
+                      ? 'bg-ok/10 text-primary-deep'
+                      : 'border border-warn/60 bg-warn/10 text-ink-2'
+                  }`}
+                >
+                  {b.label}
+                </span>
+              )
+            })()}
           </div>
           <div className="ml-auto flex items-center gap-4">
             <span className="hidden items-center gap-1 text-tag text-ink-2 md:inline-flex">
@@ -153,6 +226,13 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
               <TriangleAlert size={13} className="text-warn" /> 盲区 {lc.blindspots.length} 处
             </span>
             <button
+              onClick={() => setShareOpen(true)}
+              title="分享报告直达链接 / 二维码"
+              className="inline-flex items-center gap-1.5 rounded-btn bg-primary-tint px-3 h-9 text-aux font-medium text-primary-deep hover:bg-primary-soft/40"
+            >
+              <Share2 size={14} /> 分享
+            </button>
+            <button
               onClick={() => navigate('/compare')}
               className="inline-flex items-center gap-1.5 rounded-btn bg-primary-tint px-3 h-9 text-aux font-medium text-primary-deep hover:bg-primary-soft/40"
             >
@@ -160,26 +240,62 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             </button>
           </div>
         </div>
-        {/* 章节锚点 */}
-        <nav className="mx-auto flex max-w-6xl items-center gap-1.5 overflow-x-auto px-6 pb-2">
-          {report.toc.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => jumpToSection(t.id)}
-              className="shrink-0 rounded-chip bg-bg px-2.5 py-1 text-tag text-ink-2 transition-colors hover:bg-primary-tint hover:text-primary-deep"
-            >
-              {t.title}
-            </button>
-          ))}
-        </nav>
       </header>
 
-      {/* 可滚动区 */}
-      <div className="flex-1 overflow-y-auto">
-        {lc.data_origin === 'fixture_sample' && (
+      {/* 左：竖排章节目录（scroll-spy 高亮；lg 以下隐藏，与 research 报告页一致） */}
+      <div className="flex min-h-0 flex-1">
+        <aside className="hidden w-64 shrink-0 border-r border-line bg-card/50 lg:flex lg:flex-col">
+          <nav aria-label="章节目录" className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
+            {report.toc.map((t, i) => {
+              const active = activeSection === t.id
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => jumpToSection(t.id)}
+                  aria-current={active ? 'page' : undefined}
+                  className={tocLinkCls(active)}
+                >
+                  <span
+                    className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-chip text-[11px] font-semibold transition-colors ${
+                      active ? 'bg-primary text-white' : 'bg-line/70 text-ink-3'
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="break-words leading-snug">{t.title}</span>
+                </button>
+              )
+            })}
+          </nav>
+        </aside>
+
+        {/* 主可滚动区：scroll-spy 监听此容器 */}
+        <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto">
+        {isShared && (
+          <div className="mx-auto mt-4 max-w-6xl px-6">
+            <div className="flex items-center gap-2 rounded-card border border-primary-soft bg-primary-tint/70 px-4 py-2 text-tag text-ink-2">
+              <InfoIcon size={14} className="shrink-0 text-primary-deep" /> 分享来源 · 该报告经由直达链接访问（可扫码/复制链接传播）
+            </div>
+          </div>
+        )}
+        {lc.served_from === 'cache' && (
+          <div className="mx-auto mt-4 max-w-6xl px-6">
+            <div className="flex items-center gap-2 rounded-card border border-primary-soft bg-primary-tint/70 px-4 py-2 text-tag text-ink-2">
+              <InfoBadge /> 历史实时结果 · 离线可查：真实百度路网测时快照（{lc.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值等时圈' : '等时圈'} · 采样 {lc.sampling.points.length} 点，可达 {reachable}）
+            </div>
+          </div>
+        )}
+        {lc.data_origin === 'offline' && (
           <div className="mx-auto mt-4 max-w-6xl px-6">
             <div className="flex items-center gap-2 rounded-card border border-warn/40 bg-warn/10 px-4 py-2 text-tag text-ink-2">
-              <InfoBadge /> 演示数据模式（fixture_sample）：等时圈为圆形近似，M5 阶段由真实百度 API 路网测时覆写
+              <InfoBadge /> 离线估算 · 距离模型（未联网采集 POI）：区县中心近似 + 直线距离 × 绕行系数测时，等时圈为圆形近似——评分与盲区需实时体检后给出，不可与实时分比较
+            </div>
+          </div>
+        )}
+        {lc.data_origin === 'live' && lc.served_from !== 'cache' && (
+          <div className="mx-auto mt-4 max-w-6xl px-6">
+            <div className="flex items-center gap-2 rounded-card border border-primary-soft bg-primary-tint/70 px-4 py-2 text-tag text-ink-2">
+              <InfoBadge /> 真实百度路网测时数据（{lc.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值等时圈' : '等时圈'} · 采样 {lc.sampling.points.length} 点，可达 {reachable}）
             </div>
           </div>
         )}
@@ -192,7 +308,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
               <IsochroneSnapshot lc={lc} />
               <div className="absolute left-3 top-3 flex max-w-[150px] flex-col gap-1 rounded-btn border border-line bg-card/90 p-2.5 backdrop-blur">
                 <span className="text-tag font-medium text-ink-2">图层</span>
-                {Object.entries(LC_CAT_COLOR).slice(0, 6).map(([k, v]) => (
+                {Object.entries(LC_CAT_COLOR).map(([k, v]) => (
                   <span key={k} className="flex items-center gap-1.5 text-tag text-ink-3">
                     <span className="h-2 w-2 rounded-full" style={{ background: v }} />
                     {LC_CAT_LABEL_OF(k)}
@@ -212,16 +328,29 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="font-serif text-[40px] font-semibold leading-none" style={{ color: grade.color }}>
-                      {lc.scores.total}
-                    </div>
-                    <div className="mt-1 text-tag text-ink-3">
-                      综合评分 · {grade.label}
-                    </div>
+                    {lc.data_origin === 'offline' ? (
+                      <div className="text-right">
+                        <div className="text-sm font-semibold leading-none text-ink-3">评分待实时体检</div>
+                        <div className="mt-1 text-tag text-ink-3">离线估算 · 距离模型，不可与实时分比较</div>
+                      </div>
+                    ) : (
+                      <div className="text-right">
+                        <div className="font-serif text-[40px] font-semibold leading-none" style={{ color: grade.color }}>
+                          {lc.scores.total}
+                        </div>
+                        <div className="mt-1 text-tag text-ink-3">
+                          综合评分 · {grade.label}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="mt-3 border-t border-line pt-3">
-                  <MiniRadar report={lc} />
+                  {lc.data_origin === 'offline' ? (
+                    <p className="py-6 text-center text-tag text-ink-3">分类雷达需实时体检数据</p>
+                  ) : (
+                    <MiniRadar report={lc} />
+                  )}
                 </div>
               </div>
 
@@ -248,30 +377,79 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             </div>
           </div>
 
-          {/* 盲区清单（体检单内嵌） */}
-          {lc.blindspots.length > 0 && (
+          {/* 盲区清单（体检单内嵌）
+              空结果**不得静默消失**：0 处盲区有两种截然不同的含义——
+              ① 扫过的格子都判过、三要素齐备；② 绝大多数格子因采集半径不足**判不了**。
+              两者在 UI 上必须可区分，否则「0 处」会被读成「没问题」。 */}
+          {lc.data_origin === 'offline' ? (
+            <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
+              <div className="mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink">
+                <TriangleAlert size={15} className="text-warn" /> 服务盲区清单
+              </div>
+              <p className="text-tag text-ink-3">离线估算未联网采集 POI，盲区识别需实时体检后给出</p>
+            </div>
+          ) : lc.blindspots.length > 0 ? (
             <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
               <div className="mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink">
                 <TriangleAlert size={15} className="text-warn" /> 服务盲区清单（{lc.blindspots.length}）
               </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                {lc.blindspots.map((b) => (
-                  <div key={b.id} className="rounded-btn border border-line/70 bg-bg p-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-aux font-medium text-ink">{b.id.replace(/^bs-/, '盲区 ')}</span>
-                      <span className="text-tag text-ink-3">
-                        {b.center[0].toFixed(4)},{b.center[1].toFixed(4)}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-tag text-ink-3">缺失：{b.missing_facilities.join(' / ')}</div>
-                    {b.nearest[0] && (
-                      <div className="mt-0.5 text-tag text-ink-3">
-                        最近「{b.nearest[0].name}」{Math.round(b.nearest[0].distance_m)}m·{b.nearest[0].direction}
+                {lc.blindspots.map((b) => {
+                  const sev = severityOf(b)
+                  const sevSpec = LC_BLIND_SEV[sev]
+                  const gap = gapScoreOf(b)
+                  const affected = affectedOf(b) as { sampling_sites?: number; estimated_residents?: number } | null
+                  const fix = (fixesOf(b) as { facility: string; strategy: string; priority: number }[])[0]
+                  return (
+                    <div key={b.id} className="rounded-btn border border-line/70 bg-bg p-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-aux font-medium text-ink">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: sevSpec?.dot ?? '#8a8a8a' }} />
+                          {b.id.replace(/^bs-/, '盲区 ')}
+                        </span>
+                        <span className="text-tag text-ink-3">
+                          {b.center[0].toFixed(4)},{b.center[1].toFixed(4)}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <div className="mt-1 text-tag text-ink-3">
+                        缺失：{b.missing_facilities.join(' / ')}
+                        {sevSpec?.label ? <> · <span style={{ color: sevSpec.stroke }}>{sevSpec.label}</span></> : ''}
+                        {gap != null ? <> · 缺口 {gap}</> : ''}
+                      </div>
+                      {b.nearest[0] && (
+                        <div className="mt-0.5 text-tag text-ink-3">
+                          最近「{b.nearest[0].name}」{Math.round(b.nearest[0].distance_m)}m·{b.nearest[0].direction}
+                        </div>
+                      )}
+                      {b.reach?.real_walk_min != null && (
+                        <div className="mt-0.5 text-tag text-ink-3">
+                          最近替代步行 {b.reach.real_walk_min}min{b.reach.isochrone_based ? '（实测等时圈）' : '（估算）'}
+                        </div>
+                      )}
+                      {affected && affected.sampling_sites != null && (
+                        <div className="mt-0.5 text-tag text-ink-3">
+                          受估 {affected.estimated_residents ?? '?'} 人 · 采样 {affected.sampling_sites} 点
+                        </div>
+                      )}
+                      {fix && (
+                        <div className="mt-0.5 text-tag font-medium" style={{ color: '#1f9e63' }}>
+                          <Plus size={11} className="mr-0.5 inline-block" />
+                          建议补{fix.facility} · {LC_BLIND_FIX_STRATEGY[fix.strategy] ?? fix.strategy} · P{fix.priority}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
+              {coverageNote(lc)}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
+              <div className="mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink">
+                <TriangleAlert size={15} className="text-warn" /> 服务盲区清单（0）
+              </div>
+              <p className="text-tag text-ink-3">{emptyBlindspotNote(lc)}</p>
+              {coverageNote(lc)}
             </div>
           )}
 
@@ -396,7 +574,13 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             )}
           </section>
         </main>
+      </main>
       </div>
+
+      {/* E1 分享弹窗（复制直达链接 + 二维码） */}
+      {shareOpen && (
+        <ShareModal reportId={report.id} title={report.title ?? lc.scene.name} onClose={() => setShareOpen(false)} />
+      )}
     </div>
   )
 }

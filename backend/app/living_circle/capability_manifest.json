@@ -1,0 +1,52 @@
+{
+  "generated_at": "2026-09-20T00:00:00Z",
+  "ak_masked": "iB2****4ol",
+  "probe_version": "0.2",
+  
+  "capacity": {
+    "walking": {
+      "measured": true,
+      "matrix_enabled": true,
+      "chunk_max_origins": 100,
+      "direction_fallback": false,
+      "poi_radius_max_m": 9000,
+      "notes": "Walking matrix fully operational up to 100 origins; no direction fallback needed"
+    },
+    "riding": {
+      "measured": true,
+      "matrix_enabled": true,
+      "chunk_max_origins": 100,
+      "direction_fallback": true,
+      "poi_radius_max_m": 9000,
+      "notes": "Riding matrix operational; directionlite/v1/riding available as fallback"
+    },
+    "driving": {
+      "measured": true,
+      "matrix_enabled": true,
+      "chunk_max_origins": 25,
+      "direction_fallback": true,
+      "poi_radius_max_m": 9000,
+      "notes": "Driving matrix limited to 25 origins (401 at 50+); direction/v2/driving available as fallback"
+    }
+  },
+  
+  "unreachable_detection": {
+    "method": "duration_value_null",
+    "restrictions_status_reliable": false,
+    "notes": "status=2 indicates parameter error (out of range), not unreachable. Use result[0].elements[0].duration.value == null for unreachable detection."
+  },
+  
+  "poi_search": {
+    "radius_tested": [2000, 5000, 9000],
+    "max_results_per_query": 10,
+    "truncation_risk": "low",
+    "notes": "All radius levels return 10 results consistently; no pagination truncation observed in test"
+  },
+  
+  "performance": {
+    "standard_mode_full_run_ms": 425,
+    "estimated_requests_per_check": 12,
+    "throttle_threshold_rpm": null,
+    "notes": "Single standard mode check completes in ~0.4s with 12 matrix requests"
+  }
+}

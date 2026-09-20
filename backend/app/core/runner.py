@@ -51,6 +51,54 @@ class _Run:
 _running: Dict[str, _Run] = {}
 
 
+# --------------------------------------------------------------------------- #
+# 封闭任务注册表：kind → 流水线工厂(task_id)。
+# 显式登记每一类可执行任务；未登记 kind 走 fail-loud，绝不落到「竞品/调研」兜底。
+# 值一律为「调用期才导入」的工厂，避免模块加载期循环依赖（H2 对比导入自洽）。
+# 契约约定：kind=路由键（task 类型），purpose=内容腔调（report_voice 档位），勿跨用途。
+# --------------------------------------------------------------------------- #
+def _load_research(task_id: str):
+    from app.core.pipeline.research import research_pipeline  # noqa: PLC0415
+    return research_pipeline(task_id)
+
+
+def _load_living(task_id: str):
+    from app.core.pipeline.living_circle import living_circle_pipeline  # noqa: PLC0415
+    return living_circle_pipeline(task_id)
+
+
+def _load_refine(task_id: str):
+    return orchestrator.refine_report_pipeline(task_id)
+
+
+def _load_brief(task_id: str):
+    return orchestrator.brief_report_pipeline(task_id)
+
+
+KIND_PIPELINES: Dict[str, Any] = {
+    # 目的地调研一族（攻略/评估/综合）：概览一致，走中性 research 流水线
+    "research": _load_research,
+    "travel_guide": _load_research,
+    "travel_assess": _load_research,
+    "refine": _load_refine,
+    "brief": _load_brief,
+    # 生活圈体检（独立子域）
+    "living_circle": _load_living,
+}
+
+
+def _fail_loud(task_id: str, r: _Run, msg: str) -> None:
+    """未登记 kind 的终态收尾：广播 error + 落库 failed（绝不以 done 冒充成功）。"""
+    ev = {"type": "error", "data": {"message": msg}}
+    r.buffer.append(ev)
+    for q in list(r.subs):
+        q.put_nowait(ev)
+    r.status = "failed"
+    r.error = msg
+    r.updated_at = _now()
+    db.set_task_failed(task_id, msg)
+
+
 def ensure_running(task_id: str) -> _Run:
     """幂等：返回该 task 的运行句柄。
 
@@ -90,20 +138,15 @@ def ensure_running(task_id: str) -> _Run:
 
 async def _drive(task_id: str, r: _Run) -> None:
     try:
-        # 按 tasks.kind 分发到不同的执行引擎（共享 progress/done/error 处理）
+        # 按 tasks.kind 从封闭注册表分发（无 else 兜底：未登记即 fail-loud）
         full = db.get_task_full(task_id) or {}
         kind = (full.get("kind") or "research")
-        if kind == "refine":
-            gen = orchestrator.refine_report_pipeline(task_id)
-        elif kind == "brief":
-            gen = orchestrator.brief_report_pipeline(task_id)
-        elif kind == "living_circle":
-            # 生活圈体检流水线（独立域，A2 解耦；延迟导入防循环）
-            from app.core.pipeline.living_circle import living_circle_pipeline
-
-            gen = living_circle_pipeline(task_id)
-        else:
-            gen = orchestrator.run_pipeline(task_id)
+        pipe = KIND_PIPELINES.get(kind)
+        if pipe is None:
+            msg = f"未知任务类型 {kind!r}，无法执行。"
+            _fail_loud(task_id, r, msg)
+            return
+        gen = pipe(task_id)
         async for ev in gen:
             r.buffer.append(ev)          # 历史缓冲（重连补帧）
             for q in list(r.subs):       # 广播给各订阅者专属队列
@@ -117,10 +160,26 @@ async def _drive(task_id: str, r: _Run) -> None:
                 db.patch_task_progress(task_id, r.percent, r.stage, r.evidence_count)
             elif ev["type"] == "report_ready":
                 r.report_id = ev["data"].get("reportId")
+            elif ev["type"] == "error":
+                # 全仓约定：error 事件即**终态**（各流水线 yield 后立即 return，并已自行
+                # db.set_task_failed）。此处只把内存态对齐库态 —— 否则 /api/tasks 列表
+                # 会一直显示 running（僵尸态），而库里其实早已 failed。
+                r.status = "failed"
+                r.error = (ev.get("data") or {}).get("message") or "任务失败"
             elif ev["type"] == "done":
-                r.report_id = ev["data"].get("reportId") or r.report_id
-                r.status = "done"
-                db.mark_task_done(task_id, r.report_id or "")
+                d = ev["data"] or {}
+                r.report_id = d.get("reportId") or r.report_id
+                if d.get("status") == "failed":
+                    # ⚠️ `done` 只表示「事件流结束」，不表示成功。执行引擎判定失败时
+                    # （如 live 却几何为空）会带 status='failed' 收尾；若这里无条件
+                    # mark_task_done，就会把引擎写的 failed **覆盖成 done** ——
+                    # 守卫被自己的收尾动作抹掉，缺陷重新静默。
+                    r.status = "failed"
+                    r.error = d.get("error") or "任务失败"
+                    db.set_task_failed(task_id, r.error)
+                else:
+                    r.status = "done"
+                    db.mark_task_done(task_id, r.report_id or "")
     except asyncio.CancelledError:
         # 被 cancel() 取消：交给定终态逻辑，不写失败原因遮蔽用户意图
         r.status = "failed"
@@ -199,19 +258,24 @@ async def subscribe(task_id: str):
 
 def get_status(task_id: str) -> Dict[str, Any]:
     r = _running.get(task_id)
+    full = db.get_task_full(task_id) or {}
     if r is not None and r.alive:
-        return {
+        base = {
             "status": r.status, "percent": r.percent, "stage": r.stage,
             "evidence_count": r.evidence_count, "report_id": r.report_id,
             "started_at": r.started_at, "updated_at": r.updated_at,
         }
-    full = db.get_task_full(task_id) or {}
-    return {
-        "status": full.get("status"), "percent": full.get("percent") or 0,
-        "stage": full.get("stage") or "", "evidence_count": full.get("evidence_count") or 0,
-        "report_id": full.get("report_id"), "started_at": full.get("started_at"),
-        "updated_at": full.get("updated_at"),
-    }
+    else:
+        base = {
+            "status": full.get("status"), "percent": full.get("percent") or 0,
+            "stage": full.get("stage") or "", "evidence_count": full.get("evidence_count") or 0,
+            "report_id": full.get("report_id"), "started_at": full.get("started_at"),
+            "updated_at": full.get("updated_at"),
+        }
+    # kind/purpose：供前端「工作台刷新/直达」走 taskViewProvider 判型回退（localStorage 兜底）
+    base["kind"] = full.get("kind") or "research"
+    base["purpose"] = full.get("purpose") or ""
+    return base
 
 
 def list_running() -> List[Dict[str, Any]]:

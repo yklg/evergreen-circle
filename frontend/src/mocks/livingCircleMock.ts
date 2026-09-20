@@ -1,22 +1,13 @@
 /**
  * 常青圈 · 生活圈体检 mock 数据层（F0c）。
  *
- * VITE_USE_MOCK 开关（显式）：
- *   - VITE_USE_MOCK=1：走内置 fixture（离线演示 / F 阶段开发）
- *   - 默认（未设置 / VITE_USE_MOCK=0）：走真实 /api（M3 联调后使用）
- * dev 演示在 .env.development 里默认置 1。
- *
+ * 数据模式已提升为运行时开关（store/dataModeStore，侧边栏「数据模式」tab）——
+ * 本文件不再导出 USE_MOCK / LC_DATA_MODE 常量（v3，P1-1：任务 data_mode 由模式开关派生）。
  * fixture 只读不写，M5 阶段由真实百度 API 快照替换（保持同契约）。
  */
 import type { LivingCircleReport, LngLat } from '../types'
 import kailiJson from './fixtures/livingCircle/kaili.json'
 import jinsongJson from './fixtures/livingCircle/beijing-jinsong.json'
-
-/** 显式开关：仅当 VITE_USE_MOCK=1 时启用 fixture 演示；测试/联调默认走真实路径 */
-export const USE_MOCK = import.meta.env.VITE_USE_MOCK === '1'
-
-/** 联调数据模式（M3）：'fixture'=内置演示（默认，稳定可复现）；'live'=真实百度 AK（M5 切）。 */
-export const LC_DATA_MODE = import.meta.env.VITE_LC_DATA_MODE ?? 'fixture'
 
 /** 内置样例社区（工作台示例卡 + 轮询入口共用同一数据源，保证一致） */
 export interface SampleCommunity {
@@ -33,14 +24,14 @@ export const SAMPLE_COMMUNITIES: SampleCommunity[] = [
     title: '凯里老街',
     city: '贵州·凯里',
     blurb: '欠发达样区 · 核心圈设施可及，外围 1km 存在 4 处服务盲区',
-    report: kailiJson as LivingCircleReport,
+    report: kailiJson as unknown as LivingCircleReport,
   },
   {
     id: 'beijing-jinsong',
     title: '北京劲松',
     city: '北京·朝阳',
     blurb: '成熟城区样区 · 三要素齐备，仅东南边缘 1 处轻微盲区',
-    report: jinsongJson as LivingCircleReport,
+    report: jinsongJson as unknown as LivingCircleReport,
   },
 ]
 

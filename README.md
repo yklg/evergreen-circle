@@ -47,14 +47,17 @@
  │   ├─ living_circle/poi.py        # 8 类 POI 采集清洗 + 类别统计
  │   ├─ living_circle/blindspot.py  # 1km 盲区扫描 + 灰区聚合
  │   ├─ living_circle/scoring.py    # 三因子评分
- │   ├─ living_circle/data_source.py# 数据源抽象：live(百度 AK) / fixture(内置演示)，无 AK 自动降级
+ │   ├─ living_circle/data_source.py# 三级数据源：Live(百度 AK+配额) / Offline(全国区划+距离模型) / fixture(内置演示)
+ │   │                              #   + CachingDataSource 横切缓存（30 天落盘，无 AK 离线可查历史实时结果）
+ │   ├─ living_circle/repository.py # SqliteCache 落盘缓存（lc_cache.db，WAL + busy_timeout）
+ │   ├─ living_circle/geo_index/    # 全国省市区三级区划 + 区县中心坐标（离线地名定位，随仓库提交）
  │   └─ living_circle/baidu_client.py + request_guard.py  # 真实 API 调用 + 限流/退避（韧性）
  ├─ core/runner.py                  # 后台常驻任务调度（按 kind 分发，断连续跑，重连补帧）
  ├─ core/db.py                      # SQLite（含 living_circle_reports 独立文档）
- └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/compare…）
+ └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/regions、/api/life-circle/{id}/share…）
 ```
 
-> 数据模式总开关（前端）：`VITE_USE_MOCK=1` 走内置 fixture（离线可演示，等时圈圆形近似）；`VITE_USE_MOCK=0` 连真实编排。任务数据源（后端）：`VITE_LC_DATA_MODE=fixture|live`（`.env.development`），缺百度 AK 时自动降级 fixture，界面横幅标注 `data_origin`。
+> **三级数据源 + 离线兜底（T1-T6）**：有百度 AK/配额 → Live 真实路网测时 + 真实 POI（主链路，赛题 40% 实时性）；无 AK/预算耗尽 → 先查历史实时缓存（`served_from=cache`，30 天内离线可查），未命中走 **Offline 离线估算**（内置全国区划定位 + 复用等时圈引擎的「直线距离 × 绕行系数」距离模型，`data_origin=offline`，诚实标注不产出可比评分/盲区）；`fixture` 仅作演示/对比样例。前端按 `data_origin`+`served_from` 四态徽标标注（离线估算 / 历史实时 / 真实数据 / 演示数据），离线报告显示「评分待实时体检」占位，绝不冒充真实路网测时。
 
 ---
 
@@ -84,6 +87,18 @@ cd frontend && npm install && npm run dev
 
 ### 一键脚本（macOS/Linux）
 
+**从零到跑全自动**（推荐，首次/换机/依赖缺失时用）：
+
+```bash
+./start.sh            # 环境自检 → 按需自动建环境装依赖 → 启动前后端 → 自动打开浏览器
+./start.sh --check    # 只做自检，不启动不安装
+./start.sh --no-install  # 跳过依赖安装直接启动（依赖已就绪时更快）
+./start.sh --force    # 强制重装后端/前端依赖
+./start.sh --no-open  # 启动但不自动打开浏览器
+```
+
+日常启动/重启/关闭：
+
 ```bash
 ./restart.sh   # 清理旧进程 → 后端(:8010) → 前端(:3400)
 ./stop.sh
@@ -103,11 +118,25 @@ cd frontend && npm install && npm run dev
 ```bash
 cp backend/.env.example backend/.env
 # backend/.env 填入：BAIDU_SERVER_AK=…  BAIDU_BROWSER_AK=…
+# （可选）BAIDU_MAP_STYLE_ID=…  —— 百度控制台「个性化地图」发布的样式 ID，用于底图风格调适
 ```
 
-缺 AK 时不影响演示（自动降级 fixture）；`BAIDU_BROWSER_AK` 供浏览器端 JS API 后续接入（M5）。
+缺 AK 时不影响演示（自动降级为静态画布并标注「内置快照」）；`BAIDU_BROWSER_AK` 供前端 BMapGL 渲染真实地图（地图页/对比页），经 `GET /api/life-circle/map-config` 下发（浏览器 AK 为公开键，靠 Referer 白名单限域，属设计内行为）。
+
+**AK 脱敏三档**：本地 `.env` / `config.local.js`（gitignore，不入库）→ CI 从仓库 Secret 注入 → 代码占位符兜底（空值即降级，无密钥运行时零报错）。浏览器 AK 公开属设计内，靠 Referer 白名单限域；服务端 AK 只存于 `backend/.env`，接口层 `mask_effective` 脱敏，日志不落明文。
 
 > 其余密钥（LLM / 搜索 / 平台 cookie）见 `backend/.env.example` 注释。所有密钥仅走环境变量，`.env` 已被 .gitignore 屏蔽。
+
+---
+
+## 🗺️ 真实地图渲染（评审对齐）
+
+- **底图**：BMapGL v3.0 真实百度瓦片（可缩放/平移），应用「个性化地图」浅色样式（`BAIDU_MAP_STYLE_ID` 优先，空则内置低饱和 styleJson 模板），与项目浅色视觉一致。
+- **强调（赛题 30%）**：底图仅作地理参照，**不取底层路网**——等时圈/耗时场完全由「渔网采样 → 分散点位批量算路测时 → IDW 插值」推导（见算法简述），与底图路网拓扑无关。
+- **热力（赛题 40%）**：采样点耗时热力（498 点按 0→20min 渐变着色）+ 5/10/15/20min 等值线族叠加 + POI 真实坐标 Marker + 盲区灰区。
+- **交互**：中心标记可拖拽（D2 确认流）、「定位到我」浏览器定位（BMapGL Geolocation 转 BD-09 + 逆地理）、点击 POI 弹详情。
+- **降级**：无 AK / 离线 / 脚本加载失败 → 自动回退静态 SVG 画布 + 降级横幅（评审无网演示能力不退化）。
+- **快照点位补采**：`cd backend && .venv/bin/python -m scripts.make_fixture_points` —— 只向权威快照附加 `poi.points`（真实坐标），不改动评分/等时圈/盲区等冻结字段（百度个人额度有限，建议低峰/次日运行）。
 
 ---
 

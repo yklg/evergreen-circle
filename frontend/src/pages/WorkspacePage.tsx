@@ -10,11 +10,14 @@ import {
   RotateCcw,
   Sparkles,
   CheckCircle2,
+  ClipboardList,
+  ChevronRight,
 } from 'lucide-react'
 import { useTaskStream } from '../hooks/useTaskStream'
 import { useTaskStore } from '../store/taskStore'
 import { useTaskRegistry } from '../store/taskRegistry'
 import { useExpertStore } from '../store/expertStore'
+import { taskViewProvider } from '../lib/viewRegistry'
 import { VFlowDag } from '../components/VFlowDag'
 import { VAgentStream } from '../components/VAgentStream'
 import { VEvidenceFeed } from '../components/VEvidenceFeed'
@@ -24,10 +27,20 @@ import { VCountUp } from '../components/ui'
 export default function WorkspacePage() {
   const { taskId } = useParams()
   const navigate = useNavigate()
-  const { state } = useLocation() as { state: { query?: string } | null }
-  const query = state?.query ?? ''
+  const { state } = useLocation() as { state: { query?: string; kind?: string; purpose?: string } | null }
+  const locQuery = state?.query ?? ''
 
-  useTaskStream(taskId, query)
+  const byId = useExpertStore((s) => s.byId)
+  const upsertTask = useTaskRegistry((s) => s.upsert)
+  const tasks = useTaskRegistry((s) => s.tasks)
+
+  // kind 判定：导航 state 优先 → 本地 registry（刷新/直达存活）→ 默认 research
+  const kind = taskId ? (state?.kind ?? tasks[taskId]?.kind ?? 'research') : 'research'
+  const purpose = taskId ? (state?.purpose ?? tasks[taskId]?.purpose ?? '') : ''
+  const view = taskViewProvider(kind)
+
+  // 全部 hooks 无条件调用（渲染分支变化时 hook 顺序保持稳定）
+  useTaskStream(taskId, locQuery, { purpose })
 
   const {
     nodes,
@@ -43,9 +56,7 @@ export default function WorkspacePage() {
     error,
     query: storeQuery,
   } = useTaskStore()
-  const byId = useExpertStore((s) => s.byId)
-  const upsertTask = useTaskRegistry((s) => s.upsert)
-  const displayQuery = storeQuery || query
+  const displayQuery = storeQuery || locQuery
 
   const reworkMsg = messages.find((m) => m.kind === 'rework')
 
@@ -56,6 +67,25 @@ export default function WorkspacePage() {
       return () => clearTimeout(t)
     }
   }, [finished, reportId, navigate])
+
+  // 视图协议防线：非 research 任务误入工作台 → 业务引导而非空白
+  if (view.role !== 'research') {
+    return (
+      <div className="grid min-h-screen place-items-center bg-bg p-6">
+        <div className="max-w-md rounded-card border border-line bg-card p-6 text-center shadow-card">
+          <ClipboardList size={28} className="mx-auto text-primary" />
+          <div className="mt-2 text-h3 text-ink">{view.hint || '该任务不在此处展示'}</div>
+          <p className="mt-1 text-tag text-ink-2">工作台仅承载『目的地攻略 / 评估』角色调研流水线。</p>
+          <button
+            onClick={() => navigate('/life-circle')}
+            className="mt-4 inline-flex h-10 items-center gap-1.5 rounded-btn bg-primary px-4 font-medium text-white transition-colors hover:bg-primary-deep"
+          >
+            <ChevronRight size={15} /> 前往生活圈页
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
@@ -84,7 +114,7 @@ export default function WorkspacePage() {
           <Sprout size={18} strokeWidth={1.8} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-aux font-medium text-ink">{displayQuery || '竞品分析任务'}</div>
+          <div className="truncate text-aux font-medium text-ink">{displayQuery || '目的地调研任务'}</div>
           <div className="text-tag text-ink-3">任务 {taskId}</div>
         </div>
         {/* 进度 */}

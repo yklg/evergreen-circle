@@ -6,10 +6,11 @@
   - interpolation='idw'，is_scattered 表示是否双阶段（粗扫+边界加密）散点采样
 
 算法要点（赛题 30% 评分点——不取底层路网）：
-  - 以中心点 2.5km 研究范围做 400m 粗网格 → 15min 边界环带（0.8~1.6km）加密 150m
+  - 以中心点研究范围做粗网格 → 边界环带加密（fine_band 由口径派生，防最内圈坍缩）
   - IDW（k-近邻反距离加权）由采样耗时场推导连续耗时场
   - 对每个分钟阈值取「中心连通可达掩码」的外边界环（Moore 追踪）→ 多边形
 依赖：numpy（已有）；测时注入 `meter_fn`（live=百度批量矩阵；测试=合成径向场）。
+口径单一事实源：速度 / 圈层 / fine_band 全部从 `caliber.py` 派生（R1）。
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tup
 
 import numpy as np
 
+from app.living_circle.caliber import ReachCaliber, get_caliber
 from app.living_circle.contour import mask_connect_center, smooth_ring, trace_exterior
 from app.living_circle.geo_utils import (
     LngLat,
@@ -27,17 +29,30 @@ from app.living_circle.geo_utils import (
     xy_to_lnglat,
 )
 
-ISO_MINUTES = [5, 10, 15, 20]
+# ── 兼容旧接口：保留常量名但改为引用 caliber（防外部直接 import 断裂）───
+ISO_MINUTES = list(get_caliber("walking").iso_minutes)
 
-# 模式 → 网格参数（quick/standard/precise）
+# 采样档位预设（与 travel_mode 解耦；travel_mode 的半径/grid_n 由 caliber 提供）
 MODE_PARAMS = {
     "quick": {"coarse": 400, "fine": None, "grid_n": 41},
-    "standard": {"coarse": 400, "fine": 150, "grid_n": 61},
+    "standard": {"coarse": 400, "fine": 150, "grid_n": get_caliber("walking").grid_n_for_standard},
     "precise": {"coarse": 300, "fine": 120, "grid_n": 81},
 }
+WALK_SPEED_M_PER_MIN = get_caliber("walking").speed_m_per_min
 
-# 步速：平地步行约 75 m/min（可配置，供 fixture 合成场/文档口径）
-WALK_SPEED_M_PER_MIN = 75.0
+
+def get_mode_params_for_travel_mode(travel_mode: str, sample_profile: str = "standard") -> Dict[str, Any]:
+    """获取指定出行方式 + 采样档位的完整参数（含半径 + grid_n）。
+    
+    步骤 3：按 travel_mode 分档，从 caliber 读取 study_radius_m 和 grid_n。
+    """
+    caliber = get_caliber(travel_mode)
+    base = MODE_PARAMS.get(sample_profile, MODE_PARAMS["standard"])
+    return {
+        **base,
+        "study_radius_m": caliber.study_radius_m,
+        "grid_n": caliber.grid_n_for_standard if sample_profile == "standard" else base["grid_n"],
+    }
 
 
 def _aligned_axis(half: float, n: int) -> List[float]:
@@ -51,11 +66,12 @@ def build_sample_points(
     study_radius_m: float = 2500.0,
     coarse_m: float = 400.0,
     fine_m: Optional[float] = None,
-    fine_band: Tuple[float, float] = (800.0, 1600.0),
+    fine_band: Optional[Tuple[float, float]] = None,
 ) -> List[LngLat]:
     """生成测时采样点：粗网格全覆盖 + 边界环带细网格加密。
 
     返回 (lng, lat) 列表；粗网格用奇数对称格（中心恰落在 (0,0) 采样点）。
+    fine_band 未指定时由口径派生（最内圈半径 → 研究半径），防最内圈坍缩（B8/I10）。
     """
     pts: List[LngLat] = []
     half = study_radius_m
@@ -68,6 +84,9 @@ def build_sample_points(
                 pts.append(xy_to_lnglat(center, x, y))
     # 边界带加密
     if fine_m and fine_m > 0:
+        if fine_band is None:
+            cal = get_caliber("walking")
+            fine_band = cal.fine_band
         lo, hi = fine_band
         n_fine = math.ceil((hi - lo) / fine_m) + 1
         # 以极坐标生成环内点（角度均匀 + 半径分级），避免笛卡尔网格在斜角处的空洞
@@ -141,9 +160,14 @@ def idw_for_points(
 
 
 class IsochroneEngine:
-    """测时-插值-等值线引擎；测时逻辑注入（解耦 baidu 客户端，便于单测）。"""
+    """测时-插值-等值线引擎；测时逻辑注入（解耦 baidu 客户端，便于单测）。
+
+    ⚠️ walk_speed 参数已废弃：实际耗时由调用方注入的 meter_fn 决定，本引擎不读此字段。
+    口径速度在 `caliber.py` 中统一定义（R1/R5）。保留参数仅为向后兼容，将在阶段 3 移除。
+    """
 
     def __init__(self, walk_speed: Optional[float] = None) -> None:
+        # 死参数记录：存了但不用（test_caliber_invariants.py 已挂 xfail 待修复）
         self.walk_speed = walk_speed or WALK_SPEED_M_PER_MIN
 
     def _grid_coords(self, center: LngLat, study_radius_m: float, n: int) -> Tuple[np.ndarray, float]:
