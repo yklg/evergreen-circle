@@ -27,12 +27,14 @@ import type { LivingCircleReport } from '../types'
 const onFlowEvent = __test.onFlowEvent
 
 let fireEvent!: (t: string, d: unknown) => void
+let fireError!: (e: unknown) => void
 beforeEach(() => {
   vi.clearAllMocks()
   useTaskRegistry.setState({ tasks: {} })
   ;(createLivingCircleTask as any).mockResolvedValue({ taskId: 'lc-1' })
   ;(openTaskStream as any).mockImplementation((_id: string, handlers: any) => {
     fireEvent = (t: string, d: unknown) => handlers.onEvent(t, d)
+    fireError = (e: unknown) => handlers.onError?.(e)
     return () => {}
   })
 })
@@ -149,5 +151,34 @@ describe('D·registry 单一事实源写入（subscribeLifeCircleTask 收敛层�
     expect(r.reportId).toBe('r-y')
     expect(r.percent).toBe(55)
     expect(r.stage).toBe('collect')
+  })
+
+  it('D5·done 终态后触发传输层 onError → 不 markFailed、页面不回调（成功态不被覆盖）', () => {
+    const onError = vi.fn()
+    vi.mocked(fetchLifeCircleReport).mockResolvedValue(null)
+    subscribeLifeCircleTask('lc-1', { onError })
+    fireEvent('report_ready', { reportId: 'r-z' })
+    expect(reg().tasks['lc-1'].status).toBe('done')
+    // 流正常关闭等高线场景：终态后漂来的传输层告警 → 忽略，不覆盖成功
+    fireError('SSE 连接中断：连接被重置')
+    expect(reg().tasks['lc-1'].status).toBe('done')
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('D6·未达终态时传输层 onError → markFailed + 页面拿到可读文案（而非 [object Event]）', () => {
+    const onError = vi.fn()
+    subscribeLifeCircleTask('lc-1', { onError })
+    fireError('SSE 连接中断：连接被重置')
+    expect(reg().tasks['lc-1'].status).toBe('failed')
+    expect(onError).toHaveBeenCalledWith('SSE 连接中断：连接被重置')
+    expect(onError).not.toHaveBeenCalledWith('[object Event]')
+  })
+
+  it('D6b·传输层告警未达终态时，事件对象 message 被规整为可读文案（杜绝 DOM Event 直出）', () => {
+    const onError = vi.fn()
+    subscribeLifeCircleTask('lc-1', { onError })
+    fireError({ message: 'NetworkError: Failed to fetch' })
+    expect(reg().tasks['lc-1'].status).toBe('failed')
+    expect(onError).toHaveBeenCalledWith('NetworkError: Failed to fetch')
   })
 })

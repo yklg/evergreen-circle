@@ -90,7 +90,7 @@ describe('openTaskStream 真实分支（传输层契约）', () => {
     expect(seen[1]).toEqual({ type: 'message', data: 'plain-text-not-json' })
   })
 
-  it('FE-3 · 服务端 error 事件透传 onEvent（P0-1 前端就绪），不触发 onError、不自动关闭', () => {
+  it('FE-3 · 服务端 error（域级终态消息）→ 透传 onEvent + 收尾关闭流；不触发传输 onError', () => {
     const seen: { type: string; data: unknown }[] = []
     const onError = vi.fn()
     openTaskStream('lc-abc123', { onEvent: (t, d) => seen.push({ type: t, data: d }), onError })
@@ -98,16 +98,26 @@ describe('openTaskStream 真实分支（传输层契约）', () => {
     es.emitServer('error', JSON.stringify({ message: '配额耗尽' }))
     expect(seen).toEqual([{ type: 'error', data: { message: '配额耗尽' } }])
     expect(onError).not.toHaveBeenCalled()
-    expect(es.closed).toBe(false)
+    expect(es.closed).toBe(true) // 服务端 error 属终态：收尾关闭流，切断后续伪 onerror
   })
 
-  it('FE-4 · 连接失败特征：onEvent("error", undefined) 与 onError 双派发（消费方必须容忍 data 缺失）', () => {
-    const onEvent = vi.fn()
-    const onError = vi.fn()
-    openTaskStream('lc-abc123', { onEvent, onError })
-    MockEventSource.last().emitNativeError()
-    expect(onEvent).toHaveBeenCalledWith('error', undefined)
-    expect(onError).toHaveBeenCalled()
+  it('FE-4 · 原生连接错误（data 缺失）不透传为业务 error（onEvent 不受扰）；经 es.onerror 延迟确认上报可读文案而非 [object Event]', () => {
+    vi.useFakeTimers()
+    try {
+      const onEvent = vi.fn()
+      const onError = vi.fn()
+      openTaskStream('lc-abc123', { onEvent, onError })
+      const es = MockEventSource.last()
+      es.emitNativeError()
+      // 原生 error 不得伪装成业务 error 事件（消费方不再被迫容忍 data 缺失）
+      expect(onEvent).not.toHaveBeenCalledWith('error', undefined)
+      // 延迟确认窗内不上报，避免瞬时抖动误杀
+      expect(onError).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(4000)
+      expect(onError).toHaveBeenCalledWith('SSE 连接中断（网络或服务端不可用），请检查后重试')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('FE-8 · 类型白名单 11 类监听全覆盖（含 error）+ close 幂等', () => {

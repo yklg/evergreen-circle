@@ -397,22 +397,72 @@ export function openTaskStream(
     'done',
     'error',
   ]
-  es.onopen = () => handlers.onOpen?.()
+  // 传输层连接语义与域级任务终态分离——
+  //  - addEventListener 的 'done'/'error' 是服务端推送的**域级终态消息**；
+  //  - es.onerror 是 EventSource 内建**传输事件**（连接被关闭/断网），两者同名不同义，勿混淆。
+  let terminal = false
+  let errorTimer: ReturnType<typeof setTimeout> | null = null
+  let transportFailed = false
+  const abortTimer = () => {
+    if (errorTimer) {
+      clearTimeout(errorTimer)
+      errorTimer = null
+    }
+  }
+  es.onopen = () => {
+    // 重连成功（onopen）→ 清除待确认的传输错误，不把瞬时抖动误报成失败
+    abortTimer()
+    transportFailed = false
+    handlers.onOpen?.()
+  }
   for (const t of types) {
     es.addEventListener(t, (ev) => {
       let parsed: unknown = (ev as MessageEvent).data
       try {
-        parsed = JSON.parse((ev as MessageEvent).data)
+        parsed = JSON.parse(parsed as string)
       } catch {
         /* keep raw */
       }
+      // 原生 ErrorEvent 与自定义 'error' 消息同名冲突：仅当能解析出服务端推送的 JSON
+      // 对象才视为域级终态；data 缺失/解析失败的原生传输错误不透传为业务 error，
+      // 统一交由 es.onerror 的延迟确认处理（否则成功任务会被原生 error 误报为失败）。
+      if (t === 'error') {
+        if (typeof parsed !== 'object' || parsed === null) return
+        terminal = true
+        abortTimer()
+        es.close()
+        handlers.onEvent('error', parsed)
+        return
+      }
       handlers.onEvent(t, parsed)
+      // 域级终态到达即停流，切断 EventSource 自动重连在流正常关闭后触发的伪 onerror
+      if (t === 'done') {
+        terminal = true
+        abortTimer()
+        es.close()
+      }
     })
   }
-  es.onerror = (e) => {
-    handlers.onError?.(e)
+  // 传输层 Event 的可读文案：绝不把 DOM Event 直接 String() 成 [object Event] 暴露给用户
+  const transportMsg = (e: unknown) => {
+    const raw = (e as ErrorEvent | undefined)?.message?.trim()
+    return raw && raw !== 'Script error.'
+      ? `SSE 连接中断：${raw}`
+      : 'SSE 连接中断（网络或服务端不可用），请检查后重试'
   }
-  return () => es.close()
+  es.onerror = (e) => {
+    if (terminal || transportFailed) return // 终态后的连接关闭属正常；已上报过则稳定，不重复
+    // 给 EventSource 自动重连一个确认窗：瞬时抖动会很快 onopen 恢复，不误报失败
+    abortTimer()
+    errorTimer = setTimeout(() => {
+      transportFailed = true
+      handlers.onError?.(transportMsg(e))
+    }, 4000)
+  }
+  return () => {
+    abortTimer()
+    es.close()
+  }
 }
 
 /* 澄清问卷 SSE：CreateTaskResp 不再带问卷，ClarifyPage 挂载后拉取并懒生成。 */

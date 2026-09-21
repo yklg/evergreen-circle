@@ -133,8 +133,16 @@ export function subscribeLifeCircleTask(
       onFlowEvent(type, data, callbacks)
     },
     onError: (e) => {
-      useTaskRegistry.getState().markFailed(taskId, String(e))
-      callbacks.onError?.(String(e))
+      // 终态护栏：域级成功(done)后流正常关闭、或已落 failed 时，传输层告警不得覆盖终态
+      // （否则成功任务在渲染报告后仍被误报「创建失败」）。消息规整为可读文案，杜绝 [object Event]。
+      const cur = useTaskRegistry.getState().tasks[taskId]
+      if (cur?.status === 'done' || cur?.status === 'failed') return
+      const message =
+        (typeof e === 'string' && e) ||
+        (e as { message?: string })?.message?.trim() ||
+        'SSE 连接中断'
+      useTaskRegistry.getState().markFailed(taskId, message)
+      callbacks.onError?.(message)
     },
   })
 }
