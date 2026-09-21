@@ -3,6 +3,8 @@
 三大口径（与前端 F0 契约 / 赛题一致）：
   - 8 类民生类别 → `FacilityCategoryStat[]`（category/total/in_circle/coverage/min_minutes/nearest）
   - 盲区三要素（菜市场/药店/小学）→ 独立 POI 点集，供 blindspot.py 做 1km 判定
+判表唯一事实源 = `category_rule.CATEGORY_RULES`：本模块的 `CATEGORY_DEFS` /
+`TRIAD_KEYWORDS` 由它**派生**（仅补 is_market），不再双写两套判表（rev3 §四A/P1-1）。
 采集策略：每类多关键词查全率（百度 place/v2/search），名称归一 + 50m 聚簇去重。
 """
 from __future__ import annotations
@@ -10,45 +12,48 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.living_circle.category_rule import CATEGORY_RULES, TRIAD_RULES, evaluate_category
 from app.living_circle.geo_utils import haversine_m, point_in_ring, round_lnglat
 from app.living_circle.scope import SpatialScope
 
+
+def _build_category_defs() -> Dict[str, Dict[str, Any]]:
+    """从 `category_rule.CATEGORY_RULES` 派生（键/词表/阈值单一来源，仅补 poi 专有 is_market）。"""
+    defs: Dict[str, Dict[str, Any]] = {}
+    for key, rule in CATEGORY_RULES.items():
+        d: Dict[str, Any] = {
+            "label": rule["label"],
+            "keywords": list(rule["keywords"]),
+            "ideal_circle": rule["ideal_circle"],
+        }
+        if key == "market":
+            d["is_market"] = True
+        defs[key] = d
+    return defs
+
+
+def _build_triad_keywords() -> Dict[str, str]:
+    """从 `category_rule.TRIAD_RULES` 派生 `{key: 检索词}`（盲区三要素兼容视图）。"""
+    out: Dict[str, str] = {}
+    for key, ref in TRIAD_RULES.items():
+        if key.startswith("_"):
+            continue
+        kw = ""
+        if isinstance(ref, dict):
+            kw = (ref.get("keywords") or [""])[0]
+        elif isinstance(ref, str):
+            kw = ref
+        if kw:
+            out[key] = kw
+    return out
+
+
 # ── 民生类别表（category 键与前端 fixture 保持一致）───────
 # keywords：百度 place 检索关键词组（多词查全率）；ideal_circle：圈内理想阈值（评分基准）
-CATEGORY_DEFS: Dict[str, Dict[str, Any]] = {
-    "market": {
-        "label": "菜市场",
-        "keywords": ["菜市场", "农贸市场", "生鲜市场"],
-        "is_market": True,
-        "ideal_circle": 3,
-    },
-    "medical": {
-        "label": "医疗",
-        "keywords": ["社区医院", "诊所", "社区卫生服务中心"],
-        "ideal_circle": 3,
-    },
-    "education": {
-        "label": "教育",
-        "keywords": ["小学", "中学", "幼儿园"],
-        "ideal_circle": 3,
-    },
-    "shopping": {
-        "label": "购物",
-        "keywords": ["超市", "便利店", "综合商场"],
-        "ideal_circle": 3,
-    },
-    "elderly": {"label": "养老", "keywords": ["养老院", "日间照料中心"], "ideal_circle": 1},
-    "finance": {"label": "金融", "keywords": ["银行"], "ideal_circle": 1},
-    "recreation": {"label": "文体", "keywords": ["公园", "健身中心"], "ideal_circle": 1},
-    "service": {"label": "政务", "keywords": ["政务服务中心", "邮政所"], "ideal_circle": 1},
-}
+CATEGORY_DEFS = _build_category_defs()
 
 # 盲区三要素（赛题硬判口径：1km 内无菜市场/药店/小学）
-TRIAD_KEYWORDS: Dict[str, str] = {
-    "market": "菜市场",
-    "pharmacy": "药店",
-    "primary": "小学",
-}
+TRIAD_KEYWORDS = _build_triad_keywords()
 
 
 def norm_name(name: str) -> str:
@@ -193,6 +198,7 @@ def to_points(
             in_reach = point_in_ring((it["lng"], it["lat"]), reach_ring)
             if not in_reach:
                 continue  # 圈外点：不展示、不进报告、不计分
+            conf = _point_confidence(it)
             entries.append({
                 "id": f"poi-{cat}-{idx}",
                 "name": it.get("name") or (CATEGORY_DEFS.get(cat, {}).get("label", cat)),
@@ -201,12 +207,31 @@ def to_points(
                 "minutes": round(t, 1) if t is not None else None,
                 "in_circle": True,
                 "_distance_m": haversine_m((it["lng"], it["lat"]), center),
+                "_confidence": conf,
             })
-        entries.sort(key=lambda p: (p["minutes"] is None, p["_distance_m"]))
+        # 排序键 = 可达→minutes 非空→confidence 高→距中心近（rev3 P1-2 单一排序键；
+        # confidence 由 category_rule 派生，杜绝名称字母序，也不在别处再做一轮排序）。
+        entries.sort(key=lambda p: (p["minutes"] is None, -p["_confidence"], p["_distance_m"]))
         for p in entries[:cap_per_cat]:
             p.pop("_distance_m", None)
+            p.pop("_confidence", None)  # 排序键属内部元数据，不进报告点位契约
             points.append(p)
     return points
+
+
+def _point_confidence(it: Dict[str, Any]) -> float:
+    """点位置信度：偏好采集方显式写入的 ``_confidence``，缺省用判表 `evaluate_category` 派生。
+
+    返回 0..1 数值作为排序键；异常值收敛到 0.5 中性档，保证排序稳定不抛。
+    """
+    raw = it.get("_confidence")
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return max(0.0, min(1.0, float(raw)))
+    try:
+        _cat, conf = evaluate_category(it)
+        return float(conf)
+    except Exception:  # noqa: BLE001  判表异常不应让展示层崩溃
+        return 0.5
 
 
 def nearest_for(point: Tuple[float, float], points: Sequence[Tuple[float, float]]) -> Optional[Dict[str, float]]:

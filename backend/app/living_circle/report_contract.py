@@ -330,6 +330,35 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
                 sites = (affected or {}).get("sampling_sites")
                 if sites is not None and (not isinstance(sites, int) or sites < 0):
                     violations.append(f"盲区 {b.get('id')} sampling_sites 非法（{sites!r}）")
+            # B8 · footprint_meta（可选，旧报告缺它不违规；存在时校验自洽）
+            meta = b.get("footprint_meta")
+            if meta is not None:
+                if not isinstance(meta, dict):
+                    violations.append(f"盲区 {b.get('id')} footprint_meta 非对象")
+                else:
+                    for k_key, k_type in (
+                        ("resolution_m", (int, float)),
+                        ("grid_m", (int, float)),
+                        ("cells", int),
+                        ("refine", int),
+                    ):
+                        v = meta.get(k_key)
+                        if v is not None and not isinstance(v, k_type):
+                            violations.append(f"盲区 {b.get('id')} footprint_meta.{k_key} 类型非法（{v!r}）")
+                    if not isinstance(meta.get("undersampled"), bool):
+                        violations.append(f"盲区 {b.get('id')} footprint_meta.undersampled 必须为布尔")
+            # B9 · polygon_raw（可选，双边界解耦的 raw 档）：存在时须为合法的闭合 Polygon
+            raw = b.get("polygon_raw")
+            if raw is not None:
+                raw_ring = _ring({"polygon": raw})
+                if raw_ring is None:
+                    violations.append(f"盲区 {b.get('id')} polygon_raw 不是合法闭合 Polygon")
+                else:
+                    got = _max_abs_offset(center, raw_ring)
+                    if got > cr * GEOM_TOL:
+                        violations.append(
+                            f"盲区 {b.get('id')} polygon_raw 最远点 {got:.0f}m 越出可达区外接圆 {cr:.0f}m"
+                        )
 
     # B3/B4 · 送达点位必须全部落在可达区内（Q2 核心判据）
     points = _dig(lc, ("poi", "points"))

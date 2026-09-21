@@ -27,7 +27,7 @@ class StubBaidu:
             pts.append({"name": f"{query}-{idx}", "lng": round(lng, 6), "lat": round(lat, 6), "address": ""})
         return pts
 
-    async def place_search(self, query, center, radius_m=2000, scope=2, page_size=20):
+    async def place_search(self, query, center, radius_m=2000, scope=2, page_size=20, max_pages=1):
         self.poi_calls += 1
         return self._poi_set(query, center)
 

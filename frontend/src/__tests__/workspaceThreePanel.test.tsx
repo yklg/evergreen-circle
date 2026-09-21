@@ -17,7 +17,7 @@ import WorkspacePage from '../pages/WorkspacePage'
 
 // framer-motion 在 jsdom 下部分动画 API 需 matchMedia 兜底
 if (!window.matchMedia) {
-  // @ts-expect-error 简化 polyfill，仅满足 framer-motion 读取
+  // @ts-ignore 简化 polyfill，仅满足 framer-motion 读取
   window.matchMedia = (q: string) => ({
     matches: false,
     media: q,
@@ -31,7 +31,7 @@ if (!window.matchMedia) {
 }
 
 // jsdom 的 Element 无 scrollIntoView；VAgentStream 自动滚底 effect 会调用它
-// @ts-expect-error 测试径供电，仅补 jsdom 缺失能力
+// @ts-ignore 测试径供电，仅补 jsdom 缺失能力
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || vi.fn()
 
 afterEach(() => {

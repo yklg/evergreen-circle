@@ -18,10 +18,10 @@ export function VClaimCard({
   claim: Claim
   onCite?: (evidenceIds: string[]) => void
 }) {
-  const byId = useExpertStore((s) => s.byId)
+  const resolveExpert = useExpertStore((s) => s.resolve)
   const meta = CONF_META[claim.confidence] ?? CONF_META.unverified
   const Icon = meta.icon
-  const author = byId(claim.author)
+  const author = resolveExpert(claim.author)
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}

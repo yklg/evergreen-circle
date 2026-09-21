@@ -21,6 +21,29 @@ BASE = "https://api.map.baidu.com"
 # 批量距离矩阵单次上限（百度个人免费额度保守值，M0 探针 4×1 通过）
 MATRIX_CHUNK = 25
 
+# 翻页收益止损：place/search 某页去重后新增条数低于此值即停止翻页（rev3 §2.3）
+PAGE_STOP_MIN_NEW = 3
+
+
+def _default_guard() -> "CallGuard":
+    """按百度 AK 配额档位构造**保守**韧性层。
+
+    个人免费档并发≈3 / QPS≈3。旧默认 ``CallGuard()``（并发 4 / 间隔 0.25s ≈ 4QPS）
+    **已经高于免费档**，是「100/3 超限短信」与后续调研失败的推手之一。
+    现纳入 `Settings.baidu_max_qps/concurrency`：默认并发 ≤ QPS、间隔 ≥ 1/QPS（留余量），
+    升级到付费/商用额度后经 .env 放大换取更高采样精度。
+    """
+    from app.core.config import get_settings
+
+    s = get_settings()
+    qps = max(float(s.baidu_max_qps or 3.0), 1.0)
+    concurrency = max(1, int(s.baidu_max_concurrency or 2))
+    return CallGuard(
+        max_concurrency=concurrency,
+        min_interval_s=round(1.0 / qps, 3),
+        timeout_s=12.0,
+    )
+
 
 class BaiduClient:
     def __init__(
@@ -31,7 +54,7 @@ class BaiduClient:
         base: str = BASE,
     ) -> None:
         self.ak = ak
-        self.guard = guard or CallGuard()
+        self.guard = guard or _default_guard()
         self.base = base.rstrip("/")
         self._transport = transport
         self._client: Optional[httpx.AsyncClient] = None
@@ -132,10 +155,16 @@ class BaiduClient:
         radius_m: int = 2000,
         scope: int = 2,
         page_size: int = 20,
+        max_pages: int = 3,
     ) -> List[Dict[str, Any]]:
-        """place/v2/search 分类检索 → 归一化 POI [{name,lng,lat,address}]。"""
+        """place/v2/search 分类检索 → 归一化 POI [{name,lng,lat,address,tag,type}]。
+
+        - `max_pages` 默认 3（V3 向后兼容全量兜底）；S8 扩词/预算感知采集传更小值或 1。
+        - 保留 `tag`（服务属性）+ `detail_info.type`（别名）—— S2 标签裁决 / S8 扩词来源三的判据。
+        - 收益止损：某页 `num_in_page` 去重后新增 < `min_new`（默认 3）即停止翻页，不再无脑翻满。
+        """
         results: List[Dict[str, Any]] = []
-        for page_num in range(0, 3):  # 最多 3 页兜全
+        for page_num in range(0, max(0, max_pages)):
             params: Dict[str, Any] = {
                 "query": query,
                 "location": f"{center[1]},{center[0]}",
@@ -151,17 +180,30 @@ class BaiduClient:
             items = resp.get("results") or []
             if not items:
                 break
+            new_in_page = 0
             for it in items:
                 loc = it.get("location") or {}
-                results.append({
+                entry = {
                     "name": it.get("name", ""),
                     "lng": float(loc.get("lng", 0.0)),
                     "lat": float(loc.get("lat", 0.0)),
                     "address": it.get("address", ""),
-                })
+                    "tag": it.get("tag", ""),
+                    "type": (it.get("detail_info") or {}).get("type", ""),
+                }
+                # 页内去重收益判定：名称+坐标已存在 → 不计新增（配合翻页止损）
+                if not any(
+                    e["name"] == entry["name"] and abs(e["lng"] - entry["lng"]) < 1e-5
+                    for e in results
+                ):
+                    new_in_page += 1
+                results.append(entry)
             if len(items) < page_size:
                 break
+            if new_in_page < PAGE_STOP_MIN_NEW:
+                break  # 收益止损（rev3 §2.3）
         return results
+
 
     # ── 测时（批量矩阵 + 单点兜底）────────────────────────
     async def _measure_matrix(

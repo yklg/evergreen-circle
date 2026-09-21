@@ -665,15 +665,59 @@ def backfill_evidences_from_reports() -> None:
 
 
 def get_report(report_id: str) -> Optional[Dict[str, Any]]:
-    """读取报告正文，并实时派生 `evidence`（单一真相源，Option B 根因修复）。
+    """统一报告读取入口（Phase 8：双引擎合并到单源）。
 
     行为：
-      - 报告正文其余部分仍来自 reports.data 静态快照。
-      - `evidence` 数组改为按 report_id 实时查 evidences 表并覆盖 data["evidence"]。
-        由于 save_report / backfill 早已把报告证据以正确 report_id 写入该表，
-        存量报告零改动即生效；分配动作（UPDATE report_id）也会自动反映。
-      - 评审 P2 兜底：live 查询异常时回退到 data["evidence"]，绝不丢证据、绝不抛错。
+      - 先查 reports 表（竞品调研报告）；
+      - 若未找到且 report_id 以 "lc-" 开头，查 living_circle_reports 表（生活圈体检报告）；
+      - 实时派生 evidence 数组（单一真相源）；
+      - 生活圈报告自动补齐盲区表征（annotate_blindspots）。
+      
+    此函数是唯一的报告读取入口，所有 API 路由应调用它而非分别调用 get_report/get_living_circle_report。
     """
+    c = _connect()
+    
+    # 1. 先查通用报告表
+    row = c.execute("SELECT data FROM reports WHERE report_id=?", (report_id,)).fetchone()
+    if row:
+        data = json.loads(row["data"])
+        try:
+            evs = list(query_evidences(report_id=report_id))
+        except Exception:
+            evs = []
+        if evs:
+            data["evidence"] = evs
+        return data
+    
+    # 2. 若未找到，尝试生活圈体检报告表
+    row = c.execute("SELECT data FROM living_circle_reports WHERE report_id=?", (report_id,)).fetchone()
+    if not row:
+        return None
+    
+    try:
+        data = json.loads(row["data"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+    
+    # 生活圈报告：补齐盲区表征（幂等，仅对旧 schema 生效）
+    try:
+        from app.living_circle.assemble import annotate_blindspots
+        lc = data.get("living_circle") or {}
+        blindspots = lc.get("blindspots", [])
+        sampling_points = (lc.get("sampling") or {}).get("points", [])
+        if blindspots and sampling_points:
+            annotated = annotate_blindspots(blindspots, sampling_points)
+            if annotated:
+                lc["blindspots"] = annotated
+                data["living_circle"] = lc
+    except Exception:
+        pass  # 补齐失败不影响报告主体返回
+    
+    return data
+
+
+def get_report_legacy(report_id: str) -> Optional[Dict[str, Any]]:
+    """[已废弃] 旧版 get_report，仅查 reports 表。保留用于向后兼容。"""
     c = _connect()
     row = c.execute("SELECT data FROM reports WHERE report_id=?", (report_id,)).fetchone()
     if not row:
@@ -684,7 +728,6 @@ def get_report(report_id: str) -> Optional[Dict[str, Any]]:
     except Exception:
         evs = []
     if evs:
-        # live 有则覆盖快照；否则保留 data["evidence"]（兜底，不丢证据）
         data["evidence"] = evs
     return data
 

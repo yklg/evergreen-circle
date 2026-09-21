@@ -1,10 +1,24 @@
 # -*- coding: utf-8 -*-
 """常青圈专家团重写（按《专家团角色定位与描述调整计划》）。
+
 保留 id/level/avatar/badge_color/gender/status/stats；更换 name/group/nickname/role_title/
 one_liner/skills/knowledge_tags/knowledge_base/domain_icon。
 输出：backend/app/data/experts.json 与 frontend/public/assets/experts.json（同内容）。
+
+注意：本脚本为非幂等迁移产物，每次运行前请确认编纂源（NEW）已更新。
+生成后自动调用 app.data.schema.validate_roster() 校验，有问题拒绝写出。
 """
-import json, sys
+import json
+import sys
+from pathlib import Path
+from typing import Dict, List
+
+# 将脚本所在目录的父目录加入 Python 路径，以便导入 app.data.schema
+_SCRIPT_DIR = Path(__file__).parent.parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from app.data.schema import ALLOWED_ICONS, EXPECTED_IDS, GROUP_REQUIRED_KINDS, validate_roster
 
 NEW = {
   # ── L3 决策 ──
@@ -21,10 +35,10 @@ NEW = {
     "深谙设施覆盖度、可达性、多样性、均衡性四维评分建模，熟悉等时圈面积与 POI 密度等指标口径，负责对体检结论的逻辑严谨性裁定。",
     "scale"),
   "L3-003": ("裴砚秋", "质检总监", "decision", "质检总监 / Chief Quality Officer",
-    "扮演魔鬼代言人：对 POI 溯源、测时成功率、盲区判定逐一复核，决定是否打回重算。",
-    ["溯源复核", "成功率审裁", "闭环裁定"],
-    ["POI溯源", "测时成功率", "盲区复核", "返工闭环"],
-    "精通点位溯源与数据质量核查，掌握测时成功率、POI 去重率等质量指标，对采样点不可达、盲区误判等情况决定返工重算。",
+    "扮演魔鬼代言人：对 POI 溯源、采样点可达率、盲区判定逐一复核，决定是否打回重算。",
+    ["溯源复核", "可达率审裁", "闭环裁定"],
+    ["POI溯源", "采样点可达率", "盲区复核", "返工闭环"],
+    "精通点位溯源与数据质量核查，掌握采样点可达率（reachable_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点不可达、盲区误判等情况决定返工重算。",
     "shield-check"),
   # ── L2 策略（设施类别 × 规划理念） ──
   "L2-001": ("谷穗安", "医疗顾问", "strategy", "基层医疗配置顾问 / Primary-care Planning Advisor",
@@ -301,27 +315,88 @@ NEW = {
     "folder"),
 }
 
-SRC = "backend/app/data/experts.json"
-DST = "frontend/public/assets/experts.json"
+# 呈现层字段（avatar / badge_color / gender / stats）—— 与内容字段分离，使生成幂等。
+PRESENTATION = {
+  "L3-001": dict(avatar="/assets/avatars/L3-001.jpg", badge_color="#F4E2B8", gender="male", stats={"missions": 128, "avg_evidence": 0}),
+  "L3-002": dict(avatar="/assets/avatars/L3-002.jpg", badge_color="#F4E2B8", gender="female", stats={"missions": 119, "avg_evidence": 0}),
+  "L3-003": dict(avatar="/assets/avatars/L3-003.jpg", badge_color="#F4E2B8", gender="male", stats={"missions": 124, "avg_evidence": 0}),
+  "L2-001": dict(avatar="/assets/avatars/L2-001.jpg", badge_color="#FBF6E9", gender="male", stats={"missions": 86, "avg_evidence": 0}),
+  "L2-002": dict(avatar="/assets/avatars/L2-002.jpg", badge_color="#FBF6E9", gender="female", stats={"missions": 92, "avg_evidence": 0}),
+  "L2-003": dict(avatar="/assets/avatars/L2-003.jpg", badge_color="#FBF6E9", gender="female", stats={"missions": 78, "avg_evidence": 0}),
+  "L2-004": dict(avatar="/assets/avatars/L2-004.jpg", badge_color="#FBF6E9", gender="male", stats={"missions": 81, "avg_evidence": 0}),
+  "L2-005": dict(avatar="/assets/avatars/L2-005.jpg", badge_color="#FBF6E9", gender="male", stats={"missions": 74, "avg_evidence": 0}),
+  "L2-006": dict(avatar="/assets/avatars/L2-006.jpg", badge_color="#FBF6E9", gender="male", stats={"missions": 69, "avg_evidence": 0}),
+  "L2-007": dict(avatar="/assets/avatars/L2-007.jpg", badge_color="#FBF6E9", gender="female", stats={"missions": 88, "avg_evidence": 0}),
+  "L2-008": dict(avatar="/assets/avatars/L2-008.jpg", badge_color="#FBF6E9", gender="female", stats={"missions": 95, "avg_evidence": 0}),
+  "L2-009": dict(avatar="/assets/avatars/L2-009.jpg", badge_color="#FBF6E9", gender="male", stats={"missions": 63, "avg_evidence": 0}),
+  "L1-001": dict(avatar="/assets/avatars/L1-001.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 41, "avg_evidence": 0}),
+  "L1-002": dict(avatar="/assets/avatars/L1-002.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 57, "avg_evidence": 0}),
+  "L1-003": dict(avatar="/assets/avatars/L1-003.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 33, "avg_evidence": 0}),
+  "L1-004": dict(avatar="/assets/avatars/L1-004.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 29, "avg_evidence": 0}),
+  "L1-005": dict(avatar="/assets/avatars/L1-005.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 36, "avg_evidence": 0}),
+  "L1-006": dict(avatar="/assets/avatars/L1-006.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 44, "avg_evidence": 0}),
+  "L1-007": dict(avatar="/assets/avatars/L1-007.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 48, "avg_evidence": 0}),
+  "L1-008": dict(avatar="/assets/avatars/L1-008.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 62, "avg_evidence": 0}),
+  "L1-009": dict(avatar="/assets/avatars/L1-009.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 51, "avg_evidence": 0}),
+  "L1-010": dict(avatar="/assets/avatars/L1-010.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 39, "avg_evidence": 0}),
+  "L1-011": dict(avatar="/assets/avatars/L1-011.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 27, "avg_evidence": 0}),
+  "L1-012": dict(avatar="/assets/avatars/L1-012.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 46, "avg_evidence": 0}),
+  "L1-013": dict(avatar="/assets/avatars/L1-013.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 31, "avg_evidence": 0}),
+  "L1-014": dict(avatar="/assets/avatars/L1-014.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 38, "avg_evidence": 0}),
+  "L1-015": dict(avatar="/assets/avatars/L1-015.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 42, "avg_evidence": 0}),
+  "L1-016": dict(avatar="/assets/avatars/L1-016.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 25, "avg_evidence": 0}),
+  "L1-017": dict(avatar="/assets/avatars/L1-017.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 34, "avg_evidence": 0}),
+  "L1-018": dict(avatar="/assets/avatars/L1-018.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 37, "avg_evidence": 0}),
+  "L1-019": dict(avatar="/assets/avatars/L1-019.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 22, "avg_evidence": 0}),
+  "L1-020": dict(avatar="/assets/avatars/L1-020.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 28, "avg_evidence": 0}),
+  "L1-021": dict(avatar="/assets/avatars/L1-021.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 24, "avg_evidence": 0}),
+  "L1-022": dict(avatar="/assets/avatars/L1-022.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 19, "avg_evidence": 0}),
+  "L1-023": dict(avatar="/assets/avatars/L1-023.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 21, "avg_evidence": 0}),
+  "L1-024": dict(avatar="/assets/avatars/L1-024.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 49, "avg_evidence": 0}),
+  "L1-025": dict(avatar="/assets/avatars/L1-025.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 73, "avg_evidence": 0}),
+  "L1-026": dict(avatar="/assets/avatars/L1-026.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 68, "avg_evidence": 0}),
+  "L1-027": dict(avatar="/assets/avatars/L1-027.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 45, "avg_evidence": 0}),
+  "L1-028": dict(avatar="/assets/avatars/L1-028.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 30, "avg_evidence": 0}),
+  "L1-029": dict(avatar="/assets/avatars/L1-029.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 26, "avg_evidence": 0}),
+  "L1-030": dict(avatar="/assets/avatars/L1-030.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 59, "avg_evidence": 0}),
+  "L1-031": dict(avatar="/assets/avatars/L1-031.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 53, "avg_evidence": 0}),
+  "L1-032": dict(avatar="/assets/avatars/L1-032.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 23, "avg_evidence": 0}),
+  "L1-033": dict(avatar="/assets/avatars/L1-033.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 32, "avg_evidence": 0}),
+  "L1-034": dict(avatar="/assets/avatars/L1-034.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 47, "avg_evidence": 0}),
+  "L1-035": dict(avatar="/assets/avatars/L1-035.jpg", badge_color="#EAF1EA", gender="female", stats={"missions": 64, "avg_evidence": 0}),
+  "L1-036": dict(avatar="/assets/avatars/L1-036.jpg", badge_color="#EAF1EA", gender="male", stats={"missions": 71, "avg_evidence": 0}),
+}
 
-ALLOWED_ICONS = {"crown","scale","shield-check","chess","tag","chat-user","radar","candlestick","circuit","funnel","bar-chart","shield-scale","cloud-code","robot","chip","medical-cross","ev-bolt","cloud","brain-chip","cart","gamepad","chain","play","truck","utensils","lipstick","house","graduation","shirt","wheat","plane-pin","umbrella-shield","recycle-leaf","rocket","phone-chip","network","globe-chat","checklist","chat-bubble","mood-wave","stars","lightbulb-shield","user-search","doc-chart","line-bar","folder"}
+# 口径绑定（Phase 4）：专家与真实代码标识符的机器可验证映射。
+# 仅当 ref 存在于 caliber_index.all_refs() 中时才有效；改名/删除即刻导致校验失败。
+CALIBER_REFS: Dict[str, List[dict]] = {
+    "L3-003": [
+        {"ref": "report::reachable_count", "note": "质检可达采样点数"},
+        {"ref": "report::sample_count", "note": "质检总采样点数"},
+        {"ref": "poi::norm_name", "note": "质检名称归一与聚簇去重"},
+        {"ref": "scoring::BLINDSPOT_PENALTY_CAP", "note": "质检盲区惩罚上限"},
+        {"ref": "caliber::walking.reach_full_min", "note": "质检步行可达性满分阈值"},
+    ],
+}
+
+SRC = _SCRIPT_DIR / "app" / "data" / "experts.json"
+DST = _SCRIPT_DIR.parent / "frontend" / "public" / "assets" / "experts.json"
+
 
 def main() -> int:
-    old = json.load(open(SRC, encoding="utf-8"))
-    assert len(old) == 48
-    by_id = {e["id"]: e for e in old}
-
     out = []
-    for eid in [f"L3-{i:03d}" for i in range(1, 4)] + [f"L2-{i:03d}" for i in range(1, 10)] + [f"L1-{i:03d}" for i in range(1, 37)]:
-        base = by_id[eid]
+    for eid in EXPECTED_IDS:
         assert eid in NEW, f"missing {eid}"
-        name, nickname, group, role_title, one_liner, skills, tags, kb, icon = NEW[eid]
+        t = NEW[eid]
+        name, nickname, group, role_title, one_liner, skills, tags, kb, icon = t
         assert icon in ALLOWED_ICONS, f"bad icon {eid} {icon}"
         assert len(skills) == 3 and len(tags) == 4
-        assert group in ("decision", "strategy", "facility", "method")
+        assert group in GROUP_REQUIRED_KINDS, f"bad group {eid} {group}"
+        p = PRESENTATION.get(eid, {})
+        refs = CALIBER_REFS.get(eid, [])
         entry = {
             "id": eid,
-            "level": base["level"],
+            "level": "L3" if eid.startswith("L3") else "L2" if eid.startswith("L2") else "L1",
             "group": group,
             "name": name,
             "nickname": nickname,
@@ -330,12 +405,13 @@ def main() -> int:
             "skills": skills,
             "knowledge_base": kb,
             "knowledge_tags": tags,
-            "avatar": base["avatar"],
-            "badge_color": base["badge_color"],
+            "avatar": p.get("avatar", f"/assets/avatars/{eid}.jpg"),
+            "badge_color": p.get("badge_color", "#EAF1EA"),
             "domain_icon": icon,
-            "gender": base["gender"],
+            "gender": p.get("gender", "male"),
             "status": "idle",
-            "stats": {**base["stats"]},
+            "stats": p.get("stats", {"missions": 0, "avg_evidence": 0}),
+            "caliber_refs": refs,
         }
         out.append(entry)
 
@@ -345,9 +421,39 @@ def main() -> int:
     missing = fallback_ids - ids
     assert not missing, f"fallback ids missing: {missing}"
 
+    # 结构性校验：有问题拒绝写出
+    problems = validate_roster(out)
+    if problems:
+        print("[FAIL] 名册校验未通过，拒绝写出：")
+        for p in problems:
+            print(f"  - {p}")
+        return 1
+
+    # 词表闸校验（Phase 4）：专家画像 prose 中的指标术语必须在允许词表中
+    try:
+        from app.living_circle.caliber_index import validate_vocabulary
+    except ImportError:
+        print("[WARN] caliber_index 尚未就绪，跳过词表闸校验（Phase 4 前置未完成）")
+    else:
+        vocab_problems: List[str] = []
+        for e in out:
+            eid = e.get("id", "?")
+            for field_name in ("one_liner", "knowledge_base"):
+                text = e.get(field_name, "")
+                if text:
+                    field_probs = validate_vocabulary(text)
+                    if field_probs:
+                        vocab_problems.extend([f"[{eid}] {field_name}: {p}" for p in field_probs])
+        if vocab_problems:
+            print("[FAIL] 词表闸校验未通过，拒绝写出：")
+            for p in vocab_problems:
+                print(f"  - {p}")
+            return 1
+
     with open(SRC, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
         f.write("\n")
+    DST.parent.mkdir(parents=True, exist_ok=True)
     with open(DST, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
         f.write("\n")

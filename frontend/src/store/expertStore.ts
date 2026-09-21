@@ -8,6 +8,8 @@ interface ExpertState {
   loading: boolean
   load: () => Promise<void>
   byId: (id: string) => Expert | undefined
+  /** 署名解析：报告里的 author 可能是专家 id（竞品域）也可能是姓名（生活圈 D4），两者都要能查到。 */
+  resolve: (key: string) => Expert | undefined
 }
 
 export const useExpertStore = create<ExpertState>((set, get) => ({
@@ -25,4 +27,6 @@ export const useExpertStore = create<ExpertState>((set, get) => ({
     }
   },
   byId: (id) => get().experts.find((e) => e.id === id),
+  resolve: (key) =>
+    get().experts.find((e) => e.id === key || e.name === key || e.nickname === key),
 }))

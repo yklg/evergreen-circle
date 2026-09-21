@@ -22,17 +22,9 @@ export const LC_CAT_COLOR: Record<string, string> = {
   service: '#7C6670',
 }
 
-/** 类别 label 兜底（与 fixture 的 label 对齐，缺省回退） */
-export const LC_CAT_LABEL: Record<string, string> = {
-  market: '菜市场',
-  medical: '医疗',
-  education: '教育',
-  shopping: '购物',
-  elderly: '养老',
-  finance: '金融',
-  recreation: '文体',
-  service: '政务',
-}
+/** 类别 label 兜底（与 fixture 的 label 对齐，缺省回退）—— 单源在 `lcCatLabel`（rev3 §四I） */
+import { LC_CAT_LABEL } from './lcCatLabel'
+export { LC_CAT_LABEL }
 
 /** 等时圈分级配色（5→20 分钟由深到浅）；报告/地图共用 */
 export const LC_ISO_COLORS = [
@@ -99,6 +91,55 @@ export function fixesOf(b: { fixes?: unknown }): unknown[] {
 export function affectedOf(b: { affected?: unknown }): unknown {
   const af = b?.affected
   return af && typeof af === 'object' && af != null && (af as { provenance?: string }).provenance ? af : null
+}
+
+/** 受影响的显著场景标签（v3：欠采样/粗分辨率时显示「细化边界不可用」入口） */
+export function footprintMetaOf(b: { footprint_meta?: unknown }): {
+  cells: number
+  resolution_m: number
+  grid_m: number
+  refine: number
+  area_m2: number | null
+  undersampled: boolean
+  grid: string
+} | null {
+  const m = b?.footprint_meta
+  if (!m || typeof m !== 'object' || m == null) return null
+  const d = m as Record<string, unknown>
+  const num = (k: string) => (typeof d[k] === 'number' && Number.isFinite(d[k]) ? Number(d[k]) : 0)
+  return {
+    cells: num('cells'),
+    resolution_m: num('resolution_m'),
+    grid_m: num('grid_m'),
+    refine: num('refine'),
+    area_m2: typeof d.area_m2 === 'number' && Number.isFinite(d.area_m2) ? Number(d.area_m2) : null,
+    undersampled: d.undersampled === true,
+    grid: typeof d.grid === 'string' ? d.grid : 'square',
+  }
+}
+
+/** 盲区边界显示档位：精确锯齿（raw）↔ 显示圆角（smoothed）。 */
+export type BlindBoundaryView = 'smoothed' | 'raw'
+
+/** GeoJSON Polygon 的坐标维度（单环，盲区边界/等时圈共用）。 */
+type BlindRingPolygon = { type?: string; coordinates?: LngLat[][] }
+
+/**
+ * 取当前档位对应的盲区多边形。raw 档缺 polygon_raw（老数据）时回退 polygon。
+ * 返回 GeoJSON Polygon（坐标 LngLat[][]；null 不可用时调用方跳过绘制）。
+ */
+export function blindPolygonOf(
+  b: { polygon?: unknown; polygon_raw?: unknown },
+  view: BlindBoundaryView,
+): BlindRingPolygon | null {
+  const p = view === 'raw' ? b.polygon_raw : b.polygon
+  const cand = p ?? b.polygon
+  return cand && typeof cand === 'object' ? (cand as BlindRingPolygon) : null
+}
+
+/** 该档位是否可切（raw 无数据时仅 smoothed 可用 → 前端置灰 toggle）。 */
+export function blindCanRaw(b: { polygon_raw?: unknown }): boolean {
+  return !!b?.polygon_raw
 }
 
 /** blindTitle 用的本地严重度标签（避免与渲染层塞进同一常量造成双向依赖） */

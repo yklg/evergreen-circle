@@ -107,6 +107,19 @@ export interface BMapIconCtor {
   new (url: string, size: BMapPixelSize, opts?: { anchor?: BMapPixelSize }): BMapIcon
 }
 
+/** BMapGL 文字标注（盲区编号/严重度标签），可像普通覆盖层 addOverlay。 */
+export type BMapLabel = BMapMapOverlay
+
+export interface BMapLabelOpts {
+  position: BMapPoint
+  offset?: BMapPixelSize
+  styles?: Record<string, string>
+}
+
+export interface BMapLabelCtor {
+  new (text: string, opts?: BMapLabelOpts): BMapLabel
+}
+
 export interface BMapSizeCtor {
   new (width: number, height: number): BMapPixelSize
 }
@@ -146,6 +159,7 @@ export interface BMapGLNamespace {
   Polygon: BMapPolygonCtor
   Marker: BMapMarkerCtor
   Icon: BMapIconCtor
+  Label: BMapLabelCtor
   Size: BMapSizeCtor
   InfoWindow: BMapInfoWindowCtor
   Geolocation: BMapGeolocationCtor

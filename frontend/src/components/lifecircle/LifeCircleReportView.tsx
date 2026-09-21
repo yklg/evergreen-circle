@@ -24,7 +24,7 @@ import {
   Plus,
   Info as InfoIcon,
 } from 'lucide-react'
-import type { Report, LivingCircleReport, LngLat } from '../../types'
+import type { Report, LivingCircleReport, LngLat, BlindSpot } from '../../types'
 import {
   LC_CANVAS,
   LC_CAT_COLOR,
@@ -34,6 +34,7 @@ import {
   LC_BLIND_FIX_STRATEGY,
   affectedOf,
   fixesOf,
+  footprintMetaOf,
   gapScoreOf,
   severityOf,
   lcPolyPts,
@@ -48,10 +49,10 @@ import { MiniRadar } from './MiniRadar'
 import ShareModal from './ShareModal'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
-import { LC_EXPERT } from '../../mocks/livingCircleReports'
+import { useExpertStore } from '../../store/expertStore'
 
 /* ── 地图快照（静态投影，非交互） ─────────────────────────── */
-function IsochroneSnapshot({ lc }: { lc: LivingCircleReport }) {
+function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; shared?: boolean }) {
   const { W, H } = LC_CANVAS
   const center: LngLat = lc.scene.center
   const isoZones = lc.isochrones
@@ -79,7 +80,12 @@ function IsochroneSnapshot({ lc }: { lc: LivingCircleReport }) {
       })}
       {lc.blindspots.map((b) => (
         <g key={b.id}>
-          <polygon points={lcPolyPts(center, b.polygon.coordinates[0])} fill="rgba(120,120,120,0.16)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="5 4" />
+          {shared ? (
+            /* 分享脱敏（口径 ③-A）：不绘精确多边形，只画概略片区（面积等价圆，缺 meta 时用判定格距近似） */
+            <BlindCoarseCircle lc={lc} b={b} />
+          ) : (
+            <polygon points={lcPolyPts(center, b.polygon.coordinates[0])} fill="rgba(120,120,120,0.16)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="5 4" />
+          )}
           <circle cx={lcToPx(center, b.center[0], b.center[1])[0]} cy={lcToPx(center, b.center[0], b.center[1])[1]} r={5} fill="#E8B54D" stroke="#fff" strokeWidth={1.5} />
         </g>
       ))}
@@ -103,6 +109,57 @@ function IsochroneSnapshot({ lc }: { lc: LivingCircleReport }) {
         )
       })()}
     </svg>
+  )
+}
+
+/** 分享脱敏的概略片区（口径 ③-A）：不暴露精确多边形的逐格边界，只画「面积等价圆」+ 概略面积。
+ *  缺 footprint_meta 时退化为判定格距近似圆。 */
+function BlindCoarseCircle({ lc, b }: { lc: LivingCircleReport; b: BlindSpot }) {
+  const { W, H, R } = LC_CANVAS
+  const pxPerMx = (W / 2) / R
+  const pxPerMy = (H / 2) / R
+  const [cx, cy] = lcToPx(lc.scene.center, b.center[0], b.center[1])
+  const fm = footprintMetaOf(b)
+  const gridM = fm?.grid_m ?? 200
+  const area = fm?.area_m2 ?? Math.PI * gridM * gridM
+  const r = area > 0 ? Math.sqrt(area / Math.PI) : gridM
+  const rx = Math.max(r * pxPerMx, 6)
+  const ry = Math.max(r * pxPerMy, 6)
+  const label = fm?.area_m2 != null ? `概略 ${(fm.area_m2 / 1e4).toFixed(1)}公顷` : '概略片区'
+  return (
+    <g>
+      <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="rgba(120,120,120,0.10)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="4 3" />
+      <text x={cx} y={cy - ry - 4} fontSize={10} fill="#8a8a8a" textAnchor="middle">
+        {label}
+      </text>
+    </g>
+  )
+}
+
+/** 分享报告页级水印：出处 + 生成日期，半透明、斜排铺满、不拦截交互（share=1 触发）。 */
+function ShareWatermark({ lc }: { lc: LivingCircleReport }) {
+  const source = lc.scene?.name || '生活圈'
+  const originLabel: Record<string, string> = {
+    live: '真实路网测时',
+    offline: '离线估算',
+    fixture_sample: '演示数据',
+  }
+  const gen = lc.generated_at ? new Date(lc.generated_at) : null
+  const dateStr =
+    gen && !Number.isNaN(gen.getTime())
+      ? `${gen.getFullYear()}-${String(gen.getMonth() + 1).padStart(2, '0')}-${String(gen.getDate()).padStart(2, '0')}`
+      : ''
+  const line = `常青圈 · 生活圈体检 · 出处：${source}（${originLabel[lc.data_origin] ?? lc.data_origin}）${dateStr ? ` · 生成：${dateStr}` : ''}`
+  return (
+    <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden" aria-hidden="true">
+      <div className="grid h-full grid-cols-3 gap-x-16 gap-y-10 p-10 opacity-[0.08]">
+        {Array.from({ length: 15 }).map((_, i) => (
+          <div key={i} className="-rotate-12 truncate whitespace-nowrap text-sm font-semibold text-ink">
+            {line}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -160,6 +217,7 @@ function emptyBlindspotNote(lc: LivingCircleReport): string {
 export default function LifeCircleReportView({ report }: { report: Report }) {
   const navigate = useNavigate()
   const [shareOpen, setShareOpen] = useState(false)
+  const resolveExpert = useExpertStore((s) => s.resolve)
   const lc = report.living_circle as LivingCircleReport
   const grade = scoreGrade(lc.scores.total)
   // 报告 id 形如 lc-{sceneId}，反推样区路由参数（如 lc-kaili → kaili）
@@ -189,6 +247,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
       {/* 顶部条：面包屑 + 数据徽标 + 右侧操作（章节导航已迁至左侧 aside） */}
+      {isShared && <ShareWatermark lc={lc} />}
       <header className="z-30 shrink-0 border-b border-line bg-card/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-2.5">
           <button
@@ -305,7 +364,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
             {/* 左：地图快照 + 图例 */}
             <div className="relative overflow-hidden rounded-card border border-line bg-card shadow-card">
-              <IsochroneSnapshot lc={lc} />
+              <IsochroneSnapshot lc={lc} shared={isShared} />
               <div className="absolute left-3 top-3 flex max-w-[150px] flex-col gap-1 rounded-btn border border-line bg-card/90 p-2.5 backdrop-blur">
                 <span className="text-tag font-medium text-ink-2">图层</span>
                 {Object.entries(LC_CAT_COLOR).map(([k, v]) => (
@@ -408,13 +467,13 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                           {b.id.replace(/^bs-/, '盲区 ')}
                         </span>
                         <span className="text-tag text-ink-3">
-                          {b.center[0].toFixed(4)},{b.center[1].toFixed(4)}
+                          {isShared ? '概略片区' : `${b.center[0].toFixed(4)},${b.center[1].toFixed(4)}`}
                         </span>
                       </div>
                       <div className="mt-1 text-tag text-ink-3">
                         缺失：{b.missing_facilities.join(' / ')}
                         {sevSpec?.label ? <> · <span style={{ color: sevSpec.stroke }}>{sevSpec.label}</span></> : ''}
-                        {gap != null ? <> · 缺口 {gap}</> : ''}
+                        {!isShared && gap != null ? <> · 缺口 {gap}</> : ''}
                       </div>
                       {b.nearest[0] && (
                         <div className="mt-0.5 text-tag text-ink-3">
@@ -431,6 +490,17 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                           受估 {affected.estimated_residents ?? '?'} 人 · 采样 {affected.sampling_sites} 点
                         </div>
                       )}
+                      {(() => {
+                        const fm = footprintMetaOf(b)
+                        if (!fm) return null
+                        return (
+                          <div className="mt-0.5 text-tag text-ink-3">
+                            {fm.grid}网格 {fm.grid_m}m · 边界分辨率 {fm.resolution_m}m · 覆盖 {fm.cells} 格
+                            {fm.area_m2 != null ? <> · 面积 {(fm.area_m2 / 1e4).toFixed(1)} 公顷</> : ''}
+                            {fm.undersampled && <span className="ml-1 font-medium text-warn">欠采样</span>}
+                          </div>
+                        )
+                      })()}
                       {fix && (
                         <div className="mt-0.5 text-tag font-medium" style={{ color: '#1f9e63' }}>
                           <Plus size={11} className="mr-0.5 inline-block" />
@@ -544,10 +614,12 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   )}
                   <span className="text-tag text-ink-3">本章署名：</span>
                   {(sec.claims ?? []).slice(0, 1).map((c) => {
-                    const e = LC_EXPERT[c.author] ?? { name: c.author, role: '规划专家' }
+                    // D4 报告里 author 存的是姓名（竞品域报告存 id），resolve 两侧都容错
+                    const e = resolveExpert(c.author)
+                    const role = e ? e.role_title.split(' / ')[0] || '规划专家' : '规划专家'
                     return (
                       <span key={c.claim_id} className="rounded-chip bg-bg px-2 py-0.5 text-tag text-ink-2">
-                        {e.name} · {e.role}
+                        {e?.name ?? c.author} · {role}
                       </span>
                     )
                   })}

@@ -584,6 +584,8 @@ export interface BlindSpot {
   }[]
   /** 灰色区域多边形 */
   polygon: GeojsonPolygon
+  /** 精确锯齿原始多边形（双边界解耦的 raw 档，供严格点内判断；smoothed 用于显示。老数据缺失时回退 polygon） */
+  polygon_raw?: GeojsonPolygon
   /** 严重度分级：heavy / medium / light（v2 新字段，老数据可能缺失） */
   severity?: 'heavy' | 'medium' | 'light'
   /** 连续缺口指数 ∈ [0,1] */
@@ -594,6 +596,31 @@ export interface BlindSpot {
   reach?: BlindReach
   /** 受影响人群（估算代理；离线/无采样为 null） */
   affected?: BlindAffected | null
+  /** 盲区边界几何元数据（v3 起 marching-squares 平滑边界；老数据可能缺失） */
+  footprint_meta?: BlindFootprintMeta
+}
+
+/**
+ * 盲区边界几何元数据（v3：连续场+ marching-squares 抽取平滑边界的自描述信息，
+ * 可供前端判断边界分辨率、是否欠采样，并在「细化/原始」视图间做取舍）。
+ */
+export interface BlindFootprintMeta {
+  /** 判定簇覆盖的网格格数 */
+  cells: number
+  /** 判定网格距(m) */
+  grid_m: number
+  /** 细分后边界采样分辨率(m) */
+  resolution_m: number
+  /** marching-squares 采样细化倍率（每判定格细分 refine² 个点） */
+  refine: number
+  /** 多边形面积(m²) */
+  area_m2?: number
+  /** 欠采样：格数过少，边界为包围盒近似 */
+  undersampled: boolean
+  /** 判定网格形态（当前 square，阶段2 切换 H3 后可为 hex） */
+  grid: string
+  /** 本几何 schema 版本 */
+  schema_version: number
 }
 
 /** 盲区三要素覆盖结论 */

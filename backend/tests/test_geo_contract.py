@@ -135,6 +135,8 @@ def _patch_ak(monkeypatch, ak: str) -> None:
 
     class _S:
         baidu_server_ak = ak
+        baidu_max_qps = 3.0  # 镜像 Settings 配额档位契约（`_default_guard` 消费）
+        baidu_max_concurrency = 2
 
     monkeypatch.setattr(cfg, "get_settings", lambda: _S())
 

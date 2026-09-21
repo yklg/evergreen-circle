@@ -26,7 +26,6 @@ from app.living_circle.geo_index.offline_geocoder import OfflineGeocoder
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.caliber import get_caliber, caliber_payload_key
 from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes
-from app.living_circle.poi import CATEGORY_DEFS, TRIAD_KEYWORDS, clean
 from app.living_circle.repository import Repository
 from app.living_circle.scope import SpatialScope
 
@@ -38,24 +37,17 @@ async def load_poi(
     client: BaiduClient,
     center: Tuple[float, float],
     radius_m: float,
+    scope: Optional["SpatialScope"] = None,
 ) -> Tuple[Dict[str, list], Dict[str, list]]:
-    """采集 8 类民生 POI + 三要素 POI（多关键词查全 + 清洗）—— **全项目唯一实现**。
+    """POI 采集（8 类 + 三要素）**全项目唯一实现** —— 门面，逻辑收敛到 `poi_collector.collect_poi`。
 
-    ``radius_m`` 必须**由调用方从 :class:`SpatialScope` 取**（``scope.collect_radius_m``），
-    本函数不再自带默认值：旧版 live 管线硬编码 ``radius_m=2000``、数据源读 caliber 的
-    ``study_radius_m=2500``，两条路径同时存在且数值不同——同一个「采集半径」有两个真相，
-    圈外点与整片盲区两个症状都由它派生。去默认值是让「谁决定采集半径」变成编译期可见的问题。
+    ``radius_m`` 必须**由调用方从 :class:`SpatialScope` 取**（``scope.collect_radius_m``）：
+    让「谁决定采集半径」保持编译期可见。预算由 `quota` 唯一来源导出；S8 扩词达标判定
+    复用 ``scope`` 的圈内计数。未传 scope 时按离退出扩词（保留旧行为兼容）。
     """
-    per_category: Dict[str, list] = {}
-    for cat, defn in CATEGORY_DEFS.items():
-        items: list = []
-        for kw in defn["keywords"]:
-            items += await client.place_search(kw, center, radius_m=radius_m)
-        per_category[cat] = clean(items)
-    triads: Dict[str, list] = {}
-    for key, kw in TRIAD_KEYWORDS.items():
-        triads[key] = clean(await client.place_search(kw, center, radius_m=radius_m))
-    return per_category, triads
+    from app.living_circle.poi_collector import collect_poi
+
+    return await collect_poi(client, center, radius_m, scope=scope)
 
 
 @dataclass
@@ -160,7 +152,7 @@ class LiveDataSource(DataSource):
         scope.invariant()
 
         # 3) POI 采集（半径唯一来自 scope.collect_radius_m）
-        per_category, triads = await load_poi(self.client, center, scope.collect_radius_m)
+        per_category, triads = await load_poi(self.client, center, scope.collect_radius_m, scope=scope)
 
         # 4) 组装（唯一实现，与 pipeline 共用）
         report = assemble_living_circle(params, iso, per_category, triads, scope)
@@ -304,3 +296,50 @@ def get_data_source(
 
     logging.getLogger(__name__).warning("baidu AK 缺失：先查历史实时缓存，未命中走离线估算（data_origin=offline）")
     return CachingDataSource(OfflineDataSource(geocoder=geocoder), repo=repo, data_mode="live", read_only=True)
+
+
+async def degrade_to_offline(params: CheckParams) -> Dict[str, Any]:
+    """配额/网络耗尽时的**诚实降级**：产出一份离线估算报告（data_origin='offline'）。
+
+    复用 `OfflineDataSource.compute`：无可比评分/盲区（P0-2 语义），几何契约豁免，
+    前端已有「离线估算 · 未联网采集 POI」渲染 —— 让实时体检**永远以任务成功收尾，
+    绝不因百度配额演变成「调研失败」**。调用方再叠加 degraded/quota 标记上报。
+    """
+    source = OfflineDataSource()
+    return await source.compute(params)
+
+
+async def refine_live_with_profile(
+    check: CheckParams,
+    client: BaiduClient,
+    repo: Repository,
+    sample_profile: str = "standard",
+    engine: Optional[IsochroneEngine] = None,
+) -> Dict[str, Any]:
+    """后台**精报**（粗报即时之后的升级）：按给定采样档位 + 全量 POI 重算并回填缓存。
+
+    - 用 `sample_profile`（standard/precise）精采样等时圈 + `load_poi` 全量采集；
+    - 结果写 `repo.cache_report('live', …)`，供之后 LiveDataSource / 读路径取精报；
+    - 返回 `living_circle` 节点 dict（与 pipeline 用的 `assemble_living_circle` 同构），
+      由调用方再 `assemble_report` + `db.save_living_circle_report`。
+    独立函数（不并入 `LiveDataSource.compute`）：流水线实时分支保持 O(1) 入口，精报可被
+    asyncio 后台任务以最低耦合调用，且调用方掌握 scene_key / quota 判定。
+    """
+    engine = engine or IsochroneEngine()
+    center = check.center
+
+    async def meter_fn(pts: List[Tuple[float, float]]) -> List[Optional[float]]:
+        return await client.measure_matrix(check.travel_mode, pts, center)
+
+    iso = await engine.compute(center, meter_fn, study_radius_m=check.study_radius_m, mode=sample_profile)
+    caliber = get_caliber(check.travel_mode)
+    scope = SpatialScope.from_iso(caliber, center, check.study_radius_m, iso)
+    scope.invariant()
+    per_category, triads = await load_poi(client, center, scope.collect_radius_m, scope=scope)
+
+    report_data = assemble_living_circle(check, iso, per_category, triads, scope)
+    payload_key = caliber_payload_key(
+        check.scene_name, center, check.study_radius_m, sample_profile, check.travel_mode
+    )
+    repo.cache_report("live", payload_key, report_data)
+    return report_data

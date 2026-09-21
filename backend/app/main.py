@@ -291,6 +291,14 @@ def get_expert(eid: str):
     return {**e, "stats": stat or {"missions": 0, "claims_authored": 0, "evidence_collected": 0, "last_active": ""}}
 
 
+@app.get("/api/experts/integrity")
+def experts_integrity():
+    """名册结构性自检端点 —— 返回问题清单，不影响其他专家端点可用性。"""
+    from app.data.schema import validate_roster
+    problems = validate_roster(load_experts())
+    return {"ok": len(problems) == 0, "problems": problems}
+
+
 # ── 任务 / 澄清 ─────────────────────────────────────────
 class CreateTaskBody(BaseModel):
     query: str
@@ -492,11 +500,12 @@ def list_reports():
 
 
 @app.get("/api/reports/{report_id}")
-def get_report(report_id: str):
+def get_report_endpoint(report_id: str):
+    """统一报告读取入口（Phase 8：双引擎合并）。
+    
+    自动识别报告类型（竞品调研 / 生活圈体检），返回完整报告数据。
+    """
     rep = db.get_report(report_id)
-    if not rep and report_id.startswith("lc-"):
-        # 生活圈体检报告（A1 独立文档）：渲染适配器统一读取路径
-        rep = db.get_living_circle_report(report_id)
     if not rep:
         return {"ok": False, "message": "report not ready"}
     return rep
@@ -575,10 +584,11 @@ def compare_life_circle(ids: str = ""):
 
 @app.get("/api/life-circle/{report_id}/share")
 def share_life_circle_report(report_id: str):
-    """报告分享直达信息（E1）：返回分享链接元数据；报告页本身公开可读，无需鉴权。"""
-    rep = db.get_living_circle_report(report_id)
+    """报告分享直达信息（E1，Phase 8：统一读取入口）：返回分享链接元数据；报告页本身公开可读，无需鉴权。"""
+    rep = db.get_report(report_id)
     if not rep:
         raise HTTPException(status_code=404, detail="体检报告不存在")
+    
     lc = rep.get("living_circle") or {}
     scene = lc.get("scene") or {}
     return {
@@ -591,10 +601,15 @@ def share_life_circle_report(report_id: str):
 
 @app.get("/api/life-circle/{report_id}")
 def get_life_circle_report(report_id: str):
-    """完整体检报告（report_type='living_circle' + living_circle 挂载）。"""
-    rep = db.get_living_circle_report(report_id)
+    """完整体检报告（Phase 8：统一读取入口）。"""
+    rep = db.get_report(report_id)
     if not rep:
         raise HTTPException(status_code=404, detail="体检报告不存在")
+    
+    # 验证报告类型
+    if rep.get("report_type") != "living_circle":
+        raise HTTPException(status_code=404, detail="非生活圈体检报告")
+    
     return rep
 
 

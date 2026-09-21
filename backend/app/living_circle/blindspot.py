@@ -33,7 +33,14 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from app.living_circle.contour import mask_connect_center, smooth_ring, trace_exterior
+from app.living_circle.contour import (
+    blob_area,
+    marching_squares_binary,
+    mask_connect_center,
+    smooth_ring,
+    trace_exterior,
+)
+from app.living_circle.field import BlindnessField
 from app.living_circle.geo_utils import (
     LngLat,
     direction_word,
@@ -41,6 +48,7 @@ from app.living_circle.geo_utils import (
     haversine_m,
     point_in_ring,
     round_lnglat,
+    to_local_xy,
     xy_to_lnglat,
 )
 from app.living_circle.scope import SpatialScope
@@ -50,6 +58,10 @@ _logger = logging.getLogger(__name__)
 # 盲区判定半径（赛题标准）与判定网格
 BLIND_RADIUS_M = 1000.0
 BLIND_GRID_M = 200.0
+
+# marching-squares 采样细化倍率：把每个判定格细分为 refine² 个子采样，
+# 使边界能贴合设施真实覆盖（破除规则四边形）。取值平衡精度与开销。
+MS_REFINE = 4
 
 # 三要素键 → 前端缺位名（与契约 missing_facilities 一致）
 TRIAD_LABEL: Dict[str, str] = {
@@ -279,6 +291,10 @@ def find_blindspots_with_stats(
     miss, step, stats = cover_matrix(center, scope, point_sets, grid_m)
     scan = float(scope.reach_circumradius_m)
 
+    # 盲区连续缺失场：以真实设施坐标建，供 marching-squares 按任意亚格点采样
+    # （破除矩形伪象的边界层 —— 评审 P0 ①，field 与判定网格解耦）。
+    blindness_field = BlindnessField.build(center, triads)
+
     if not miss.any():
         if stats["cells_unknown"]:
             _logger.info(
@@ -343,10 +359,19 @@ def find_blindspots_with_stats(
                 served = _cluster_served(cluster, step)
                 fixes = _fixes_for(miss_keys, miss_nearest, cluster_center, served, gap)
 
-                # 灰区多边形 = 簇掩码外边界（同样只用真实格距 step）
-                xy_ring = smooth_ring(trace_exterior(cluster, step))
-                ring_lnglat = [xy_to_lnglat(center, v[0] - scan, v[1] - scan) for v in xy_ring]
-                closed = ensure_closed(ring_lnglat)
+                # 灰区多边形：从连续缺失场抽取 smooth 边界（破除矩形伪象）
+                # marching-squares 建于 field 之上（grid-agnostic），stage2 换 H3 不动这里。
+                raw_xy = _cluster_footprint_ring(
+                    blindness_field, cluster, step, scan, refine=MS_REFINE
+                )
+                # 双边界解耦（需求 §二·1 / §7.1.3）：raw=精确锯齿（供严格点内判断），
+                # smoothed=显示圆角（默认渲染）。raw_xy 已是「相对 center 的米」坐标系，
+                # 直投 xy_to_lnglat（勿再减 scan，否则双重偏移错位）。
+                raw_lnglat = [xy_to_lnglat(center, v[0], v[1]) for v in raw_xy]
+                sm_lnglat = [xy_to_lnglat(center, v[0], v[1]) for v in smooth_ring(raw_xy)]
+                closed = ensure_closed(sm_lnglat)
+                raw_closed = ensure_closed(raw_lnglat)
+                cells_n = int(cluster.sum())
                 idx += 1
                 result.append({
                     "id": f"bs-{prefix}-{idx}",
@@ -358,6 +383,17 @@ def find_blindspots_with_stats(
                     "gap_score": gap,
                     "fixes": fixes,
                     "polygon": {"type": "Polygon", "coordinates": [closed]},
+                    "polygon_raw": {"type": "Polygon", "coordinates": [raw_closed]},
+                    "footprint_meta": {
+                        "cells": cells_n,
+                        "grid_m": round(step, 3),
+                        "resolution_m": round(step / MS_REFINE, 3),
+                        "refine": MS_REFINE,
+                        "area_m2": round(blob_area(raw_xy), 1),
+                        "undersampled": cells_n <= 3,
+                        "grid": "square",
+                        "schema_version": 1,
+                    },
                 })
     # 全局排序：给全部补点处方分配连续唯一 priority（gap↓、serves↓）
     _fixes_all = [f for b in result for f in b.get("fixes", [])]
@@ -393,3 +429,84 @@ def _has_in_cluster(
         if _has_within(x_m, y_m, arr, BLIND_RADIUS_M):
             return True
     return False
+
+
+def _cluster_footprint_ring(
+    field: "BlindnessField",
+    cluster: np.ndarray,
+    step: float,
+    scan: float,
+    refine: int = MS_REFINE,
+) -> List[List[float]]:
+    """簇的连续边界环（物理米坐标，相对场地中心）。
+
+    在簇的像素 bbox **外扩 1 判定格** 内，每个判定格按 ``refine`` 细分，对 ``field``
+    采样后跑 marching-squares → 返回含簇质心的主环。
+
+    外扩原因：marching-squares 在「内侧区域被采样窗完整包围」时才能闭合。若直接把
+    采样窗取成簇 bbox，簇填满窗口（如整片可达区皆盲）时四角全是内侧、无 served 环
+    ⇒ 不产生任何线段 ⇒ 环为空。外扩 1 格让簇外的 served 格进入窗内，正常闭合。
+
+    **兜底**：若簇在采样窗内仍无界（整片可达区全盲），marching-squares 无环可闭合，
+    退化为 ``trace_exterior`` 沿簇掩码外边界走环（保证闭合，边界沿格边、仍为方形）。
+    既保证每个盲区必有多边形，又让「有 served 邻居」的主流场景吃到平滑边界。
+    像素→米沿用判定约定：``x = col*step - scan``、``y = row*step - scan``。
+    """
+    rows, cols = np.where(cluster)
+    if len(rows) == 0:
+        return []
+    c_min, c_max = int(cols.min()), int(cols.max())
+    r_min, r_max = int(rows.min()), int(rows.max())
+    pad = 1  # 判定格外扩单元数，保证簇外有 served 环 → marching 可闭合
+    # 采样原点（米）：外扩后的 bbox 左上角，含每个判定格 refine 个子采样
+    x0 = float(c_min - pad) * step - scan
+    y0 = float(r_min - pad) * step - scan
+    nx = (c_max - c_min + 1 + 2 * pad) * refine
+    ny = (r_max - r_min + 1 + 2 * pad) * refine
+    # 实际采样步长 = 判定格距 / refine
+    h = step / refine if refine > 0 else step
+    loops = marching_squares_binary(field.read, x0, y0, nx, ny, h, level=0.5)
+    if not loops:
+        # 无 served 环可闭合（整片皆盲）→ 沿簇掩码外边界兜底，保证闭合
+        return [
+            [px * step - scan, py * step - scan] for px, py in trace_exterior(cluster, 1.0)
+        ]
+    # 簇质心（米坐标）用于选主环
+    cy = float(rows.mean()) * step - scan
+    cx = float(cols.mean()) * step - scan
+    cx_off, cy_off = cx - x0, cy - y0
+    return loose_pick_ring(loops, cx_off, cy_off)
+
+
+def loose_pick_ring(
+    loops: List[List[List[float]]], px: float, py: float
+) -> List[List[float]]:
+    """在环族中选包含 (px,py) 者（物理米坐标，点相对采样原点）；缺测时返回最大环。"""
+    # 每环面积（鞋带）
+    best = None
+    best_area = -1.0
+    for ring in loops:
+        area = blob_area(ring)
+        contained = _point_in_xy_ring(ring, px, py)
+        if contained or area > best_area:
+            if area > best_area:
+                best_area = area
+                best = ring
+    return best or (loops[0] if loops else [])
+
+
+def _point_in_xy_ring(ring: Sequence[Sequence[float]], x: float, y: float) -> bool:
+    """点 (x,y) 是否在多边形内（物理米坐标，首尾一致）。"""
+    pts = [(float(p[0]), float(p[1])) for p in ring]
+    if len(pts) < 3:
+        return False
+    inside = False
+    n = len(pts)
+    for i in range(n - 1):
+        xi, yi = pts[i]
+        xj, yj = pts[i + 1]
+        if (yi > y) != (yj > y):
+            x_cross = (xj - xi) * (y - yi) / (yj - yi) + xi
+            if x < x_cross:
+                inside = not inside
+    return inside

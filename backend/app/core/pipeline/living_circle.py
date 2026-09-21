@@ -26,7 +26,12 @@ from app.core import db
 from app.core.config import get_settings
 from app.living_circle.assemble import assemble_living_circle
 from app.living_circle.caliber import caliber_payload_key, get_caliber
-from app.living_circle.data_source import CheckParams, load_poi
+from app.living_circle.data_source import (
+    CheckParams,
+    degrade_to_offline,
+    load_poi,
+    refine_live_with_profile,
+)
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.isochrone import IsochroneEngine
 from app.living_circle.report_contract import assess_geometry
@@ -211,13 +216,21 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     yield _ev("progress", {"stage": "intake", "percent": STAGE_PERCENT["intake"], "stage_seq": 1, "evidence_count": 0})
 
     # ── plan（专家队编排）────────────────────────────────
-    dispatch = [
-        "L3-001", "L3-002", "L3-003", "L2-001", "L2-002", "L2-003",
-        "L2-004", "L2-005", "L2-008", "L1-001", "L1-004", "L1-005", "L1-008",
-    ]
+    from app.core.pipeline.lc_team import select_living_circle_team
+
+    # 从 params 中提取设施类别信息（若有）
+    facility_cats = params.get("facility_categories", [])
+    scene_name = params.get("scene_name", "未命名社区")
+
+    dispatch_ids, dispatch_reasons = select_living_circle_team(
+        scene_name=scene_name,
+        facility_categories=facility_cats if isinstance(facility_cats, list) else [],
+        travel_mode=travel_mode,
+    )
+
     yield _ev("node_update", {"stage": "plan", "node": {"id": "n-plan", "label": "专家队编排", "status": "working", "expert": "L3-002"}})
-    yield _ev("node_update", {"stage": "plan", "node": {"id": "n-dispatch", "label": f"按域指派 {len(dispatch)} 位专家", "status": "done", "expert": "L3-002"}})
-    yield _ev("message", {"stage": "plan", "percent": STAGE_PERCENT["plan"], "text": "编排完成：医疗/教育/购物/养老各域顾问就位，慢行可达性分析师负责等时圈核验"})
+    yield _ev("node_update", {"stage": "plan", "node": {"id": "n-dispatch", "label": f"按域指派 {len(dispatch_ids)} 位专家", "status": "done", "expert": "L3-002"}})
+    yield _ev("message", {"stage": "plan", "percent": STAGE_PERCENT["plan"], "text": f"编排完成：{len(dispatch_ids)} 位专家就位，覆盖医疗/教育/购物/养老等核心民生领域"})
     yield _ev("progress", {"stage": "plan", "percent": STAGE_PERCENT["plan"], "stage_seq": 2, "evidence_count": 0})
 
     engine = IsochroneEngine()
@@ -258,17 +271,25 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         scope.invariant()
 
         # collect：POI 采集（半径唯一来自 scope.collect_radius_m；不再硬编码 2000）
-        per_category, triads = await load_poi(live_client, center, scope.collect_radius_m)
-        yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"8 类民生设施采集完成：总量 {sum(len(v) for v in per_category.values())} 处"})
-        yield _ev("evidence", {"stage": "collect", "evidence": {
-            "evidence_id": f"ev-{task_id}-collect", "source_url": "live://poi", "source_type": "poi_search",
-            "title": "POI 采集", "excerpt": f"共 {sum(len(v) for v in per_category.values())} 处",
-            "credibility": 0.92, "collected_by": "L2-004", "captured_at": _now_iso(),
-        }})
-        yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 2})
+        per_category, triads = await load_poi(live_client, center, scope.collect_radius_m, scope=scope)
+        # 总量熔断降级（rev3 §四G / v3 §3.5）：预算耗尽时产出诚实离线报告（data_origin=offline,
+        # 可视化占位、评分/盲区留待实时重检），**绝不**拿空 POI 硬算后被几何质检拦成「调研失败」。
+        guard = getattr(live_client, "guard", None)
+        if guard is not None and getattr(guard, "total_meltdown", False):
+            report_data = await degrade_to_offline(check)
+            report_data["degraded"] = {"reason": "baidu_quota_exhausted", "note": "百度调用预算耗尽，实时采集被熔断，已降级为离线估算"}
+            yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": "百度配额已用尽（总量熔断）：降级为离线估算，评分与盲区需配额恢复后实时重检"})
+        else:
+            yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"8 类民生设施采集完成：总量 {sum(len(v) for v in per_category.values())} 处"})
+            yield _ev("evidence", {"stage": "collect", "evidence": {
+                "evidence_id": f"ev-{task_id}-collect", "source_url": "live://poi", "source_type": "poi_search",
+                "title": "POI 采集", "excerpt": f"共 {sum(len(v) for v in per_category.values())} 处",
+                "credibility": 0.92, "collected_by": "L2-004", "captured_at": _now_iso(),
+            }})
+            yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 2})
 
-        # diagnose：统计/盲区/评分（确定性）—— 组装走全项目唯一实现
-        report_data = assemble_living_circle(check, iso, per_category, triads, scope, intake_meta=intake_meta)
+            # diagnose：统计/盲区/评分（确定性）—— 组装走全项目唯一实现
+            report_data = assemble_living_circle(check, iso, per_category, triads, scope, intake_meta=intake_meta)
     else:
         # fixture：整包加载（含场景缓存）
         report_data = await source.compute(check)
@@ -311,11 +332,14 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         yield _ev("message", {"stage": "report", "percent": STAGE_PERCENT["report"], "text": "离线估算报告已组装（骨架章节，评分/盲区留待实时体检）"})
     else:
         yield _ev("message", {"stage": "report", "percent": STAGE_PERCENT["report"], "text": "按 GB50180 生活圈标准撰写章节报告：养老配置与盲区整改优先级已标注"})
-    report_id = _report_id(_scene_key(params))
-    report = assemble_report(report_data, report_id, _scene_key(params), "")
-    yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report["evidence"])})
+    
+    # Phase 6：将动态选中的专家团队注入报告数据
+    report_data["team"] = {
+        "expert_ids": dispatch_ids,
+        "reasons": dispatch_reasons,
+    }
 
-    # ── 落库前守卫：不合几何契约 ⇒ 置 failed，不得签收（阶段 3 + 阶段 4 强化）────
+    # ── 落库前守卫：不合几何契约 ⇒ 置 failed，不得签收（同精报共用 _finalize_living_report）──
     # 实测 lc-c796c62d（迤栖村）：status=done / stage=audit / percent=100 / error=None，
     # 报告 isochrones=[] 且 poi.points=[]，scores.total=0、blindspots=1（面积=整张网格）。
     # ⇒ 用户读到「0 分 / 1 处盲区」，真实含义是「什么都没查到」。且顶层 7 个契约字段
@@ -323,11 +347,12 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     # 判据**唯一实现**在 `living_circle.report_contract.assess_geometry`（与读路径同源）：
     #   · Tier A 内容缺件（live 无等时圈/无 POI）        → 报告不成立
     #   · Tier B 几何不自洽（盲区越出可达区、圈外点混入） → 报告会误导，同样不签发
-    # offline 的空白是**有意降级**（已有 P0-2 标注）→ 契约内部豁免，不受此守卫影响。
-    # 处置一律复用既有 status/error 字段，零 schema 迁移。
-    issues = assess_geometry(report_data)
-    if not issues.ok:
-        reason = issues.reason
+    # 配额降级为 offline 的空白是**有意降级**（已有 P0-2 标注）→ 契约内部豁免，不受此守卫影响。
+    _scene_key_ = _scene_key(params)
+    report_id, reason, report = _finalize_living_report(report_data, _scene_key_, replace_scene=False)
+    yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report.get("evidence") or [])})
+
+    if reason is not None:
         msg = f"质检未通过：{reason}。请更换中心点或检查配额"
         db.set_task_failed(task_id, msg)
         yield _ev("message", {"stage": "audit", "percent": 100, "text": msg})
@@ -335,13 +360,52 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         yield _ev("done", {"reportId": None, "report_id": None, "status": "failed", "error": msg})
         return
 
-    # ── audit（质检 + 落库独立文档）────────────────────────
-    db.save_living_circle_report(report, scene_key=_scene_key(params))
+    # ── audit（报告已由 _finalize_living_report 落库，此处标记任务终态 + 广播）────────
     db.mark_task_done(task_id, report_id)
     yield _ev("message", {"stage": "audit", "percent": STAGE_PERCENT["audit"], "text": "质检通过：证据溯源完整，报告已签发并归档"})
-    yield _ev("progress", {"stage": "audit", "percent": 100, "stage_seq": 7, "evidence_count": len(report["evidence"])})
+    yield _ev("progress", {"stage": "audit", "percent": 100, "stage_seq": 7, "evidence_count": len(report.get("evidence") or [])})
     yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report["title"]})
     yield _ev("done", {"reportId": report_id, "report_id": report_id})
+
+
+def _finalize_living_report(report_data, scene_key, replace_scene: bool = False):
+    """组装外层 Report + 几何质检 + 落库；返回 `(report_id, 不合规原因或 None, Report)`。
+
+    写路径**唯一收口**（粗报与后台精报共用）：避免两处各自拼报告 / 判契约 / 落库而漂移。
+    ``replace_scene=True`` 时先清掉同 ``scene_key`` 旧报告（精报替换粗报，同场景仅保留最新）。
+    """
+    report_id = _report_id(scene_key)
+    report = assemble_report(report_data, report_id, scene_key, "")
+    issues = assess_geometry(report_data)
+    if not issues.ok:
+        return report_id, issues.reason, report
+    if replace_scene:
+        db.delete_living_circle_reports_for_scene(scene_key)
+    db.save_living_circle_report(report, scene_key=scene_key)
+    return report_id, None, report
+
+
+def _schedule_refine(client, check, repo, scene_key, dispatch_ids, sample_profile):
+    """后台精报：以 ``sample_profile`` 精采样 + 全量 POI 重算，产出精报**替换**粗报。
+
+    fire-and-forget：出错只记日志，绝不带崩已交付的粗报/任务（粗报在进入此函数前已由
+    尾部 ``_finalize_living_report`` 落库并 done）。精报结果写同 ``scene_key``，前端再取即得。
+    """
+    import asyncio
+
+    async def _run():
+        try:
+            refined = await refine_live_with_profile(check, client, repo, sample_profile)
+            refined["team"] = {"expert_ids": dispatch_ids, "reasons": []}
+            _, reason, _ = _finalize_living_report(refined, scene_key, replace_scene=True)
+            if reason is not None:
+                logger.warning("[living_circle] 精报几何不成立，保留粗报：%s", reason)
+            else:
+                logger.info("[living_circle] 精报已替换粗报（scene_key=%s, profile=%s）", scene_key, sample_profile)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[living_circle] 后台精报失败，保留粗报：%s", e)
+
+    return asyncio.create_task(_run())
 
 
 def _now_iso() -> str:

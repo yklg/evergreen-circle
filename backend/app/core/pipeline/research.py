@@ -212,7 +212,7 @@ def _fallback_team(subject: str) -> Tuple[List[str], List[str]]:
         e = roster.get(eid)
         if not e:
             continue
-        label = (e.get("role") or e.get("title") or e.get("name") or "调研专家").strip()
+        label = ((e.get("role_title") or "").split(" / ")[0] or e.get("name") or "调研专家").strip()
         reason = f"承担「{subject}」调研的{label}分工与线索核查。"
         ids.append(eid)
         reasons.append(reason)
@@ -226,6 +226,8 @@ def _dispatch_destination(subject: str, angles: List[str], purpose: str) -> Tupl
 
     返回 (member_ids, reasons)；ids 均经 load_experts() 名册校验，杜绝悬空头像。
     """
+    from app.core.expert_prompt import roster_payload
+
     roster = _roster_index()
     picked: List[Tuple[str, str]] = []
     try:
@@ -238,7 +240,7 @@ def _dispatch_destination(subject: str, angles: List[str], purpose: str) -> Tupl
                 )},
                 {"role": "user", "content": (
                     f"目的地：{subject}\n调研体裁：{purpose}\n重点角度：{'、'.join(angles)}\n"
-                    f"名册专家 id：{','.join(sorted(roster.keys()))}"
+                    f"{roster_payload(list(roster.values()))}"
                 )},
             ],
             temperature=0.3, purpose="目的地调研编排专家团",

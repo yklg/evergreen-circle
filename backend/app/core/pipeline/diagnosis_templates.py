@@ -11,22 +11,24 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-# 专家署名表（与 backend/app/data/experts.json 与 api 副本 id 对齐）
-LC_EXPERT: Dict[str, Dict[str, str]] = {
-    "L3-001": {"name": "温叙白", "role": "社区体检总检"},
-    "L3-002": {"name": "许映川", "role": "首席规划分析师"},
-    "L3-003": {"name": "裴砚秋", "role": "质检总监"},
-    "L2-001": {"name": "谷穗安", "role": "基层医疗配置顾问"},
-    "L2-002": {"name": "郑启才", "role": "基础教育设施规划师"},
-    "L2-003": {"name": "叶知暖", "role": "养老托育关怀顾问"},
-    "L2-004": {"name": "苏堤春", "role": "菜市与商业配套分析师"},
-    "L2-005": {"name": "路遥川", "role": "慢行可达性分析师"},
-    "L2-008": {"name": "方守正", "role": "生活圈标准专家"},
-    "L1-001": {"name": "车满仓", "role": "农贸市场顾问"},
-    "L1-004": {"name": "秦济世", "role": "社区药房规划师"},
-    "L1-005": {"name": "周启蒙", "role": "小学校区规划师"},
-    "L1-008": {"name": "温鹤年", "role": "机构养老顾问"},
-}
+from app.data import expert_by_id
+
+
+def _expert(eid: str) -> Dict[str, str]:
+    """署名由权威名册 experts.json 派生（不再有第二份姓名表）。
+
+    role 取 role_title 首段中文；名册缺该 id 时回落 id 本身 + 通用职位而非抛 KeyError，
+    避免一个专家条目问题打断整份 D4 报告装配。
+    """
+    e = expert_by_id(eid) or {}
+    return {
+        "name": e.get("name") or eid,
+        "role": (e.get("role_title") or "").split(" / ")[0] or "规划专家",
+    }
+
+
+def _expert_name(eid: str) -> str:
+    return _expert(eid)["name"]
 
 
 def _fmt_min(m) -> str:
@@ -188,7 +190,7 @@ def _sec_medical(lc: dict) -> dict:
         "claims": [{
             "claim_id": f"c-lc-medical-1", "text": f"医疗配置{('达标' if cov >= 0.75 else '存在缺口')}：圈内 {cov and round(cov * 100)}% 覆盖",
             "field": "coverage", "evidence_ids": [f"ev-lc-poi-medical"],
-            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": "谷穗安",
+            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-001"),
         }],
         "source_evidence_ids": [f"ev-lc-poi-medical"],
     }
@@ -209,7 +211,7 @@ def _sec_education(lc: dict) -> dict:
             "claim_id": "c-lc-education-1",
             "text": f"教育设施{'覆盖达标' if covered else '覆盖不足'}：小学{'1km 内缺失' if not covered else '可达'}",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-education"],
-            "confidence": "high" if _cov_score(e) >= 0.75 else "medium", "cross_validated": True, "author": "郑启才",
+            "confidence": "high" if _cov_score(e) >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-002"),
         }],
         "source_evidence_ids": ["ev-lc-poi-education"],
     }
@@ -231,7 +233,7 @@ def _sec_market(lc: dict) -> dict:
             "claim_id": "c-lc-market-1",
             "text": f"菜市场三要素{('覆盖达标' if covered else '1km 内覆盖缺位')}；购物覆盖 {_pct(_cov_score(sp))}",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-market"],
-            "confidence": "high" if _cov_score(mk) >= 0.75 else "medium", "cross_validated": True, "author": "苏堤春",
+            "confidence": "high" if _cov_score(mk) >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-004"),
         }],
         "source_evidence_ids": ["ev-lc-poi-market"],
     }
@@ -252,7 +254,7 @@ def _sec_elderly(lc: dict) -> dict:
             "claim_id": "c-lc-elderly-1",
             "text": f"养老配置{'严重不足（圈内 0 处）' if missing else '覆盖正常'}",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-elderly"],
-            "confidence": "high" if missing else "medium", "cross_validated": False, "author": "叶知暖",
+            "confidence": "high" if missing else "medium", "cross_validated": False, "author": _expert_name("L2-003"),
         }],
         "source_evidence_ids": ["ev-lc-poi-elderly"],
     }
@@ -274,7 +276,7 @@ def _sec_isochrone(lc: dict, ev_id: str) -> dict:
             "claim_id": "c-lc-isochrone-1",
             "text": f"15 分钟步行可达圈约 {next((a for m_, a in areas if m_ == 15), 0):.2f} km²，{len(lc.get('blindspots', []))} 处盲区均位于圈内覆盖空洞",
             "field": "reachability", "evidence_ids": [ev_id],
-            "confidence": "high", "cross_validated": True, "author": "路遥川",
+            "confidence": "high", "cross_validated": True, "author": _expert_name("L2-005"),
         }],
         "charts": [{"chart_id": "chart-isochrone-area", "type": "bar", "title": "分级步行等时圈面积（km²）", "option": _chart_isochrone(lc)}],
         "source_evidence_ids": [ev_id],
@@ -317,7 +319,7 @@ def _sec_blindspot(lc: dict) -> dict:
                 f"建议 {_fix_short(r['fix'])}"
             ),
             "field": "blindspot", "evidence_ids": [f"ev-lc-bs-{r['id']}"],
-            "confidence": "high", "cross_validated": True, "author": "许映川",
+            "confidence": "high", "cross_validated": True, "author": _expert_name("L3-002"),
         }
         for r in rows
     ]
@@ -354,7 +356,7 @@ def _sec_conclusion(lc: dict) -> dict:
             "claim_id": "c-lc-conclusion-1",
             "text": f"样区综合 {total} 分（{_grade(total)}），首要整改方向：{suggestions[0].lstrip('· ') if suggestions else '持续监测'}",
             "field": "conclusion", "evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
-            "confidence": "high", "cross_validated": True, "author": "温叙白",
+            "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
         }],
         "source_evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
     }
@@ -446,7 +448,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
                 "claim_id": "c-lc-offline-1",
                 "text": "离线估算模式：不产出可比评分/盲区，待实时体检",
                 "field": "conclusion", "evidence_ids": [],
-                "confidence": "high", "cross_validated": True, "author": "温叙白",
+                "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
             }],
             "source_evidence_ids": [],
         },
@@ -474,13 +476,22 @@ def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dic
             _sec_conclusion(lc),
         ]
     subtitle = lc_subtitle(lc)
-    experts = [
-        "L3-001", "L3-002", "L3-003", "L2-001", "L2-002", "L2-003",
-        "L2-004", "L2-005", "L2-008", "L1-001", "L1-004", "L1-005", "L1-008",
-    ]
+    
+    # Phase 6：从报告数据中读取动态选中的专家团队，若无则回退到保底名单
+    team_info = lc.get("team", {})
+    experts = team_info.get("expert_ids") if isinstance(team_info, dict) else None
+    
+    if not experts:
+        # 保底：决策层 + 核心策略顾问 + 关键方法专家
+        experts = [
+            "L3-001", "L3-002", "L3-003", "L2-001", "L2-002", "L2-003",
+            "L2-004", "L2-005", "L2-008", "L1-001", "L1-004", "L1-005", "L1-008",
+        ]
+    
+    reasons = team_info.get("reasons", []) if isinstance(team_info, dict) else []
     dispatch = [
-        {"id": eid, "reason": f"{LC_EXPERT[eid]['role']}负责本节评审与结论签发（D4 专家出诊断）"}
-        for eid in experts
+        {"id": eid, "reason": reasons[i] if i < len(reasons) else f"{_expert(eid)['role']}负责本节评审与结论签发（D4 专家出诊断）"}
+        for i, eid in enumerate(experts)
     ]
     evidence = build_evidence(lc)
     report = {

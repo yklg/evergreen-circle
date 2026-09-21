@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 from app.living_circle.caliber import get_caliber
 
 WEIGHTS = {"coverage": 0.40, "reachability": 0.25, "diversity": 0.20, "balance": 0.15}
+BLINDSPOT_PENALTY_CAP = 12.0  # 盲区扣分上限（赛题口径）
 
 REACH_FULL_MIN = get_caliber("walking").reach_full_min  # 20min 内步行可达视为可达性满分
 
@@ -61,8 +62,8 @@ def compute_scores(
         ),
         1,
     )
-    # 盲区惩罚（赛题口径：盲区多则总分扣减，封顶 12 分）
-    total -= min(12.0, max(0.0, blindspot_count - 1) * 4.0)
+    # 盲区惩罚（赛题口径：盲区多则总分扣减，封顶 BLINDSPOT_PENALTY_CAP 分）
+    total -= min(BLINDSPOT_PENALTY_CAP, max(0.0, blindspot_count - 1) * 4.0)
     total = max(0.0, min(100.0, round(total, 1)))
 
     radar = [

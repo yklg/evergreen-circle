@@ -27,7 +27,8 @@
     "stats": {
       "missions": 128,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L3-002",
@@ -57,7 +58,8 @@
     "stats": {
       "missions": 119,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L3-003",
@@ -66,16 +68,16 @@
     "name": "裴砚秋",
     "nickname": "质检总监",
     "role_title": "质检总监 / Chief Quality Officer",
-    "one_liner": "扮演魔鬼代言人：对 POI 溯源、测时成功率、盲区判定逐一复核，决定是否打回重算。",
+    "one_liner": "扮演魔鬼代言人：对 POI 溯源、采样点可达率、盲区判定逐一复核，决定是否打回重算。",
     "skills": [
       "溯源复核",
-      "成功率审裁",
+      "可达率审裁",
       "闭环裁定"
     ],
-    "knowledge_base": "精通点位溯源与数据质量核查，掌握测时成功率、POI 去重率等质量指标，对采样点不可达、盲区误判等情况决定返工重算。",
+    "knowledge_base": "精通点位溯源与数据质量核查，掌握采样点可达率（reachable_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点不可达、盲区误判等情况决定返工重算。",
     "knowledge_tags": [
       "POI溯源",
-      "测时成功率",
+      "采样点可达率",
       "盲区复核",
       "返工闭环"
     ],
@@ -87,7 +89,29 @@
     "stats": {
       "missions": 124,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": [
+      {
+        "ref": "report::reachable_count",
+        "note": "质检可达采样点数"
+      },
+      {
+        "ref": "report::sample_count",
+        "note": "质检总采样点数"
+      },
+      {
+        "ref": "poi::norm_name",
+        "note": "质检名称归一与聚簇去重"
+      },
+      {
+        "ref": "scoring::BLINDSPOT_PENALTY_CAP",
+        "note": "质检盲区惩罚上限"
+      },
+      {
+        "ref": "caliber::walking.reach_full_min",
+        "note": "质检步行可达性满分阈值"
+      }
+    ]
   },
   {
     "id": "L2-001",
@@ -117,7 +141,8 @@
     "stats": {
       "missions": 86,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-002",
@@ -147,7 +172,8 @@
     "stats": {
       "missions": 92,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-003",
@@ -177,7 +203,8 @@
     "stats": {
       "missions": 78,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-004",
@@ -207,7 +234,8 @@
     "stats": {
       "missions": 81,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-005",
@@ -237,7 +265,8 @@
     "stats": {
       "missions": 74,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-006",
@@ -267,7 +296,8 @@
     "stats": {
       "missions": 69,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-007",
@@ -297,7 +327,8 @@
     "stats": {
       "missions": 88,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-008",
@@ -327,7 +358,8 @@
     "stats": {
       "missions": 95,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L2-009",
@@ -357,7 +389,8 @@
     "stats": {
       "missions": 63,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-001",
@@ -387,7 +420,8 @@
     "stats": {
       "missions": 41,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-002",
@@ -417,7 +451,8 @@
     "stats": {
       "missions": 57,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-003",
@@ -447,7 +482,8 @@
     "stats": {
       "missions": 33,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-004",
@@ -477,7 +513,8 @@
     "stats": {
       "missions": 29,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-005",
@@ -507,7 +544,8 @@
     "stats": {
       "missions": 36,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-006",
@@ -537,7 +575,8 @@
     "stats": {
       "missions": 44,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-007",
@@ -567,7 +606,8 @@
     "stats": {
       "missions": 48,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-008",
@@ -597,7 +637,8 @@
     "stats": {
       "missions": 62,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-009",
@@ -627,7 +668,8 @@
     "stats": {
       "missions": 51,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-010",
@@ -657,7 +699,8 @@
     "stats": {
       "missions": 39,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-011",
@@ -687,7 +730,8 @@
     "stats": {
       "missions": 27,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-012",
@@ -717,7 +761,8 @@
     "stats": {
       "missions": 46,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-013",
@@ -747,7 +792,8 @@
     "stats": {
       "missions": 31,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-014",
@@ -777,7 +823,8 @@
     "stats": {
       "missions": 38,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-015",
@@ -807,7 +854,8 @@
     "stats": {
       "missions": 42,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-016",
@@ -837,7 +885,8 @@
     "stats": {
       "missions": 25,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-017",
@@ -867,7 +916,8 @@
     "stats": {
       "missions": 34,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-018",
@@ -897,7 +947,8 @@
     "stats": {
       "missions": 37,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-019",
@@ -927,7 +978,8 @@
     "stats": {
       "missions": 22,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-020",
@@ -957,7 +1009,8 @@
     "stats": {
       "missions": 28,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-021",
@@ -987,7 +1040,8 @@
     "stats": {
       "missions": 24,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-022",
@@ -1017,7 +1071,8 @@
     "stats": {
       "missions": 19,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-023",
@@ -1047,7 +1102,8 @@
     "stats": {
       "missions": 21,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-024",
@@ -1077,7 +1133,8 @@
     "stats": {
       "missions": 49,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-025",
@@ -1107,7 +1164,8 @@
     "stats": {
       "missions": 73,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-026",
@@ -1137,7 +1195,8 @@
     "stats": {
       "missions": 68,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-027",
@@ -1167,7 +1226,8 @@
     "stats": {
       "missions": 45,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-028",
@@ -1197,7 +1257,8 @@
     "stats": {
       "missions": 30,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-029",
@@ -1227,7 +1288,8 @@
     "stats": {
       "missions": 26,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-030",
@@ -1257,7 +1319,8 @@
     "stats": {
       "missions": 59,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-031",
@@ -1287,7 +1350,8 @@
     "stats": {
       "missions": 53,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-032",
@@ -1317,7 +1381,8 @@
     "stats": {
       "missions": 23,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-033",
@@ -1347,7 +1412,8 @@
     "stats": {
       "missions": 32,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-034",
@@ -1377,7 +1443,8 @@
     "stats": {
       "missions": 47,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-035",
@@ -1407,7 +1474,8 @@
     "stats": {
       "missions": 64,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   },
   {
     "id": "L1-036",
@@ -1437,6 +1505,7 @@
     "stats": {
       "missions": 71,
       "avg_evidence": 0
-    }
+    },
+    "caliber_refs": []
   }
 ]

@@ -48,8 +48,8 @@ const NEW: BlindSpot = {
   gap_score: 0.82,
   reach: { real_walk_min: 21.4, isochrone_based: true },
   fixes: [
-    { facility: '菜市场', strategy: 'build', priority: 1, point: CENTER, served: 6 },
-    { facility: '药店', strategy: 'mobile_service', priority: 2, point: CENTER, served: 4 },
+    { facility: '菜市场', strategy: 'build', priority: 1, point: CENTER, served: 6, nearest_alt_m: 1500 },
+    { facility: '药店', strategy: 'mobile_service', priority: 2, point: CENTER, served: 4, nearest_alt_m: null },
   ],
   affected: { sampling_sites: 3, estimated_households: 1200, estimated_residents: 3120, provenance: 'proxy', note: '按规划基准估算' },
 }

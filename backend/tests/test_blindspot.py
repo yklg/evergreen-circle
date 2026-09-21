@@ -92,7 +92,7 @@ def test_blindspot_contract_fields():
     # 既有字段必须全部保留（A6 兼容），且新增 严重度/缺口/补点处方 为增量
     assert {"id", "center", "radius_m", "missing_facilities", "nearest", "polygon"} <= set(first.keys())
     assert frozenset(first) == frozenset(
-        {"id", "center", "radius_m", "missing_facilities", "nearest", "polygon", "severity", "gap_score", "fixes"}
+        {"id", "center", "radius_m", "missing_facilities", "nearest", "polygon", "polygon_raw", "severity", "gap_score", "fixes", "footprint_meta"}
     )
     assert first["id"].startswith("bs-t2-")
     assert len(first["center"]) == 2

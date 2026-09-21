@@ -608,12 +608,20 @@ export default function LifeCirclePage() {
               <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'linear-gradient(135deg,#8fbfa2,#2c5a3f)' }} />
               采样点耗时热力（0→20min）
             </span>
-            {LC_BLIND_SEV_ORDER.map((sev) => (
-              <span key={sev} className="flex items-center gap-1.5 text-tag text-ink-3">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: LC_BLIND_SEV[sev].dot }} />
-                {LC_BLIND_SEV[sev].label}盲区 · 缺口≥0.6/0.33/其余
-              </span>
-            ))}
+            {LC_BLIND_SEV_ORDER.map((sev) => {
+              const n = report.blindspots.filter((b) => severityOf(b) === sev).length
+              return (
+                <span key={sev} className="flex items-center gap-1.5 text-tag text-ink-3">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: LC_BLIND_SEV[sev].dot }} />
+                  {LC_BLIND_SEV[sev].label}盲区 · 缺口≥0.6/0.33/其余
+                  {n > 0 && (
+                    <span className="ml-auto rounded-full px-1.5 text-tag font-medium" style={{ backgroundColor: `color-mix(in srgb, ${LC_BLIND_SEV[sev].dot} 16%, transparent)`, color: '#555' }}>
+                      {n}
+                    </span>
+                  )}
+                </span>
+              )
+            })}
             <span className="flex items-center gap-1.5 text-tag text-ink-3">
               <span className="inline-block h-3 w-3" style={{ background: 'transparent', border: '1.5px solid #1f9e63', position: 'relative' }}>
                 <span className="absolute left-1/2 top-1/2 block h-[2px] w-2 -translate-x-1/2 -translate-y-1/2 bg-[#1f9e63]" />

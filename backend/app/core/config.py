@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     # 空则前端回退内置 S2 低饱和浅色 styleJson 模板。
     baidu_map_style_id: str = ""
 
+    # ── 百度 AK 配额档位（根治「单次体检打爆个人免费额度 → 调研失败」的限流参数）──
+    # 个人免费档并发≈3、QPS≈3。`CallGuard` 默认并发 4 / 间隔 0.25s（≈4QPS）**已经高于免费档**，
+    # 是 100/3 超限短信与「调研失败」的推手之一。此处纳入配置：默认保守到免费档
+    # （并发 2 ≈ 2QPS，留足余量），升级付费/商用额度后可在 .env 放大换取更高采样精度。
+    baidu_max_qps: float = 3.0
+    baidu_max_concurrency: int = 2
+
     # 澄清问卷：竞品发现超时（秒）与发现结果缓存 TTL（天）。
     # 发现走 LLM（_discover_scope），设短超时 + 正则兜底，确保基础题不被阻塞（P0-①/②）。
     clarify_discover_timeout_s: float = 4.0

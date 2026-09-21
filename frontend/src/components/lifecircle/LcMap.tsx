@@ -25,7 +25,9 @@ import {
   LC_ISO_COLORS,
   LC_ISO_COLORS_B,
   affectedOf,
+  blindCanRaw,
   blindHeatFill,
+  blindPolygonOf,
   blindSevSpec,
   fixesOf,
   gapScoreOf,
@@ -36,6 +38,7 @@ import {
   lcSnapshotPoiLayer,
   severityOf,
 } from '../../lib/livingCircle'
+import type { BlindBoundaryView } from '../../lib/livingCircle'
 
 export type LcMapMode = 'boot' | 'live' | 'fallback'
 
@@ -132,6 +135,44 @@ function centerIcon(bmap: BMapGLNamespace) {
   return new bmap.Icon(url, new bmap.Size(22, 22), { anchor: new bmap.Size(11, 11) })
 }
 
+/** 盲区边界显示档位切换（双边界解耦的 raw/smoothed toggle，需求 §二·1 / §7.1.3）。 */
+function BoundaryToggle({
+  value,
+  onChange,
+}: {
+  value: BlindBoundaryView
+  onChange: (v: BlindBoundaryView) => void
+}) {
+  const opts: { key: BlindBoundaryView; label: string; tip: string }[] = [
+    { key: 'smoothed', label: '平滑', tip: '显示圆角边界（默认，用于地图展示）' },
+    { key: 'raw', label: '原始', tip: '精确锯齿边界（供严格的点内判断）' },
+  ]
+  return (
+    <div
+      className="absolute left-2 top-2 z-10 flex items-center gap-0.5 rounded-full border border-ink-1/10 bg-white/95 px-1 py-0.5 shadow-sm"
+      role="group"
+      aria-label="盲区边界显示档位"
+    >
+      {opts.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          title={o.tip}
+          onClick={() => onChange(o.key)}
+          aria-pressed={value === o.key}
+          className={
+            'rounded-full px-3 py-1 text-tag font-medium transition-colors ' +
+            (value === o.key ? 'text-white' : 'text-ink-2 hover:bg-ink-1/5')
+          }
+          style={value === o.key ? { backgroundColor: '#1677ff' } : undefined}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode },
   ref,
@@ -141,6 +182,9 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   const bmapRef = useRef<BMapGLNamespace | null>(null)
   const overlaysRef = useRef<BMapMapOverlay[]>([])
   const [mode, setMode] = useState<LcMapMode>('boot')
+  /** 双边界档位：显示圆角（smoothed）↔ 精确锯齿（raw）。打开/切换后按需重绘覆盖层。 */
+  const [boundaryView, setBoundaryView] = useState<BlindBoundaryView>('smoothed')
+  const canToggleRaw = (report.blindspots ?? []).some((b) => blindCanRaw(b))
 
   /* 初始化：取 AK/样式配置 → 注入 BMapGL → 建图 + 个性化底图样式；失败降级静态画布 */
   useEffect(() => {
@@ -240,7 +284,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // 盲区：连续缺口热力填充（C1）+ 严重度语义色描边/标号（C2）+ 补点处方（C3）+ 详情（C4）。仅主报告。
     if (!compareReport) {
       report.blindspots.forEach((b, bi) => {
-        const ring = b.polygon.coordinates[0] ?? []
+        const ring = blindPolygonOf(b, boundaryView)?.coordinates?.[0] ?? []
         const pts = ring.map((p) => pt([p[0], p[1]]))
         fitPts.push(...pts)
         const sev = severityOf(b)
@@ -361,7 +405,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       map.centerAndZoom(pt(center), 15)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, report, compareReport, customCenter, draggableCenter])
+  }, [mode, report, compareReport, customCenter, draggableCenter, boundaryView])
 
   useEffect(() => {
     onMapMode?.(mode)
@@ -470,11 +514,12 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               const sev = severityOf(b)
               const spec = blindSevSpec(sev || undefined)
               const gap = gapScoreOf(b)
+              const ring = blindPolygonOf(b, boundaryView)?.coordinates?.[0] ?? []
               const [cx, cy] = lcToPx(center, b.center[0], b.center[1])
               return (
                 <g key={b.id}>
                   <polygon
-                    points={lcPolyPts(center, b.polygon.coordinates[0])}
+                    points={lcPolyPts(center, ring)}
                     fill={blindHeatFill(gap)}
                     stroke={gap == null ? '#8a8a8a' : spec.stroke}
                     strokeWidth={1.2}
@@ -542,12 +587,16 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
         <div className="absolute right-2 top-2 rounded-chip border border-warn/50 bg-warn/10 px-2.5 py-1 text-tag font-medium text-ink-2">
           地图降级 · 静态画布（无 AK / 离线）
         </div>
+        {canToggleRaw && <BoundaryToggle value={boundaryView} onChange={setBoundaryView} />}
       </div>
     )
   }
 
   return (
-    <div ref={containerRef} className="h-full w-full" role="img" aria-label="生活圈真实地图" data-lc-map="true" />
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" role="img" aria-label="生活圈真实地图" data-lc-map="true" />
+      {canToggleRaw && <BoundaryToggle value={boundaryView} onChange={setBoundaryView} />}
+    </div>
   )
 })
 
