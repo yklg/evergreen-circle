@@ -807,54 +807,37 @@ def _regex_brands(query: str) -> List[str]:
 
 # ── 编排：LLM 动态指派专家（含理由）─────────────────────────
 def _dispatch_experts(query: str, brands: List[str], focus: List[str]) -> Dict[str, Any]:
-    experts = load_experts()
-    roster = [
-        {"id": e["id"], "name": e["name"], "level": e["level"],
-         "role": e["role_title"], "skills": e.get("skills", [])[:3]}
-        for e in experts
+    """目的地/竞品调研任务：委托给 research._dispatch_destination()。
+
+    架构边界：orchestrator 负责竞品/目的地调研，应使用 research 模块的专家派遣逻辑；
+    生活圈体检由 living_circle 管道独立处理，不得混入此路径。
+    """
+    from app.core.pipeline.research import _dispatch_destination
+
+    # 构建调研角度（从 focus 列表提取）
+    angles = focus if focus else ["综合评估"]
+    purpose = "竞品/目的地调研"
+
+    # 委托给 research 模块的正确函数
+    expert_ids, reasons = _dispatch_destination(
+        subject=query,
+        angles=angles,
+        purpose=purpose,
+    )
+
+    # 转换为 orchestrator 期望的 dict 格式
+    if not expert_ids:
+        # 极端兜底：确保至少有专家可用
+        expert_ids = ["L3-001", "L2-007", "L1-025"]
+        reasons = ["统筹调研全流程", "负责竞品分析维度", "执行数据采集与核验"]
+
+    lead = expert_ids[0]
+    members = [
+        {"id": eid, "reason": reason}
+        for eid, reason in zip(expert_ids, reasons)
     ]
-    try:
-        data = chat_json(
-            [
-                {"role": "system", "content": (
-                    "你是 Verda 首席指挥官。从专家名册中为本次调研挑选最合适的团队。"
-                    "规则：必须含 1 位 L3 决策层统筹、1-2 位 L2 策略顾问、3-6 位 L1 执行专家。"
-                    "为每位被选专家给出一句具体的指派理由（说明他/她负责什么、为什么适合）。"
-                    '只输出 JSON：{"lead":"专家id","members":[{"id":"专家id","reason":"指派理由"}]}。'
-                )},
-                {"role": "user", "content": (
-                    f"调研主题：{query}\n竞品：{'、'.join(brands)}\n重点维度：{'、'.join(focus)}\n"
-                    f"专家名册：{json.dumps(roster, ensure_ascii=False)}"
-                )},
-            ],
-            max_tokens=2000,
-            temperature=0.4,
-            model=_model("fast"),
-            purpose="动态指派专家团队",
-        )
-        if isinstance(data, dict) and data.get("members"):
-            valid_ids = {e["id"] for e in experts}
-            members = [
-                {"id": m["id"], "reason": m.get("reason", "")}
-                for m in data["members"]
-                if isinstance(m, dict) and m.get("id") in valid_ids
-            ]
-            lead = data.get("lead") if data.get("lead") in valid_ids else None
-            if members:
-                if not lead:
-                    lead = members[0]["id"]
-                return {"lead": lead, "members": members}
-    except Exception:
-        pass
-    fallback = [
-        {"id": "L3-001", "reason": "决策层统筹体检全流程与终审签发"},
-        {"id": "L2-001", "reason": "基层医疗配置顾问负责就医可达判断"},
-        {"id": "L2-002", "reason": "教育设施规划师负责学位覆盖判断"},
-        {"id": "L1-025", "reason": "空间定位师负责中心点定位与坐标解析"},
-        {"id": "L1-030", "reason": "POI 核验官负责设施点位检索核验"},
-        {"id": "L3-003", "reason": "质检负责点位溯源与盲区复核审裁"},
-    ]
-    return {"lead": "L3-001", "members": fallback}
+
+    return {"lead": lead, "members": members}
 
 
 DAG_NODES = [
