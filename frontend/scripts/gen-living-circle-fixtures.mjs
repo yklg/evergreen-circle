@@ -12,7 +12,7 @@
  *
  * 运行：node scripts/gen-living-circle-fixtures.mjs
  */
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -325,6 +325,22 @@ for (const study of studies) {
   }
 
   const file = resolve(OUT, id === 'kaili-laojie' ? 'kaili.json' : 'beijing-jinsong.json')
+  // P0-B · 写前防覆盖：目标已是 live/真实快照（snapshot_live.py 权威双写产物）时拒绝覆写，
+  // 避免 F0 模板脚本把权威 live 夹具退回 fixture_sample、制造镜像漂移——只保留一个权威写入口。
+  if (existsSync(file)) {
+    let existing = null
+    try {
+      existing = JSON.parse(readFileSync(file, 'utf8'))
+    } catch { /* 损坏则放行重生成 */ }
+    if (existing && typeof existing === 'object' && existing.data_origin !== 'fixture_sample') {
+      throw new Error(
+        `[gen-living-circle-fixtures] 拒绝覆写 ${file.split('/').pop()}: ` +
+        `data_origin=${existing.data_origin}（应为 fixture_sample）。该文件已是 ` +
+        `${existing.data_origin} 快照，属 snapshot_live.py 权威双写产物；如需真实采样请用 ` +
+        `backend/scripts/snapshot_live.py，勿用本 F0 模板脚本覆写真实夹具。`
+      )
+    }
+  }
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, JSON.stringify(report, null, 2) + '\n')
   console.log('[ok]', file, '· POI', report.poi.total, '· 盲区', report.blindspots.length, '· 总分', report.scores.total)
