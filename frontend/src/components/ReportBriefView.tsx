@@ -1,38 +1,76 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Sparkles, Lightbulb, ChevronDown, ChevronUp } from 'lucide-react'
-import { generateReportBrief } from '../lib/api'
+import { generateReportBrief, openTaskStream } from '../lib/api'
 import { VChart } from './VChart'
+import { ChapterContentMap } from './ChapterContentMap'
 import type { Report, ReportBrief } from '../types'
-
-const COOLDOWN_MS = 30_000
 
 /**
  * 简报视图（只读快览）：一页纸精炼（AI 生成四段）+ 逐节核心判断/亮点/图表 + 展开全文折叠。
- * 原则：纯文本渲染（禁 dangerouslySetInnerHTML，防注入）；空章节自动过滤；亮点 ≤4 条；
- * 失败显式：展示错误并按 brief_failed_at 冷却 30s 禁用重新生成。
+ * 原则：纯文本渲染（禁 dangerouslySetInnerHTML，防注入）；空章节自动过滤；亮点 ≤4 条。
+ * G7 演进：生成走 kind='brief' 后台任务（POST 得 taskId → SSE 订阅 progress/done/error），
+ * done 信号触发父级重载（onBriefDone）以落地持久化 brief；失败显式展示原因，可立即重试。
  */
-export default function ReportBriefView({ report }: { report: Report }) {
+export default function ReportBriefView({
+  report,
+  onBriefDone,
+}: {
+  report: Report
+  onBriefDone?: () => void
+}) {
   const [brief, setBrief] = useState<ReportBrief | undefined>(report.brief)
   const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState<{ percent: number; stage: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const failedAt = report.brief_failed_at ? new Date(report.brief_failed_at).getTime() : 0
-  const cooling = Date.now() - failedAt < COOLDOWN_MS
-  const canGenerate = !loading && !cooling && !brief
+  // 父级重载后（done → load）新 brief 随 report 落地，同步本地渲染态。
+  useEffect(() => {
+    setBrief(report.brief)
+    if (report.brief) {
+      setLoading(false)
+      setProgress(null)
+      setError(null)
+    }
+  }, [report.brief])
 
   const onGenerate = async () => {
+    if (loading) return
     setLoading(true)
+    setProgress({ percent: 0, stage: '创建任务…' })
     setError(null)
+    let res: { taskId: string }
     try {
-      const res = await generateReportBrief(report.id)
-      if (res.brief) setBrief(res.brief)
-      else setError(res.message || '生成失败，请稍后重试')
+      res = await generateReportBrief(report.id)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '生成失败，请稍后重试')
-    } finally {
       setLoading(false)
+      setProgress(null)
+      setError(e instanceof Error ? e.message : '生成启动失败，请重试')
+      return
     }
+    const close = openTaskStream(res.taskId, {
+      onEvent: (type, data: unknown) => {
+        const d = data as { percent?: number; stage?: string; message?: string }
+        if (type === 'progress') {
+          setProgress({ percent: d.percent ?? 0, stage: d.stage ?? '' })
+        } else if (type === 'done') {
+          close()
+          onBriefDone?.() // 父级重载报告，brief 随响应落地
+        } else if (type === 'error') {
+          close()
+          setLoading(false)
+          setProgress(null)
+          setError(d.message || '生成失败，请重试')
+        }
+      },
+      onError: () => {
+        // 连接断开不代表任务失败（runner 后台继续跑）：任务终态由二期轮询/重连补齐，
+        // 此处仅收起本地进度态，不伪装成功也不伪装失败。
+        setLoading(false)
+        setProgress(null)
+        setError(null)
+      },
+    })
   }
 
   const toggle = (id: string) => {
@@ -69,14 +107,30 @@ export default function ReportBriefView({ report }: { report: Report }) {
           </>
         ) : (
           <div className="mt-3 flex items-center justify-between gap-3">
-            <p className="text-tag text-ink-3">
-              未生成一页纸精炼。点击右侧按钮由 AI 压缩整份报告，生成后随报告持久保存。
-              {cooling && <span className="text-warn"> · 上次失败不足 30 秒，请稍后再试</span>}
-            </p>
+            <div className="min-w-0 flex-1">
+              <p className="text-tag text-ink-3">
+                未生成一页纸精炼。点击右侧按钮由 AI 压缩整份报告，生成后随报告持久保存。
+              </p>
+              {progress && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between text-tag text-ink-3">
+                    <span className="truncate">{progress.stage || '生成中…'}</span>
+                    <span className="shrink-0 pl-2">{progress.percent}%</span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-chip bg-line">
+                    <div
+                      className="h-full rounded-chip bg-primary transition-all duration-200"
+                      style={{ width: `${progress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={onGenerate}
-              disabled={!canGenerate}
+              disabled={loading}
+              title={loading ? '生成进行中' : 'AI 压缩整份报告为一页纸精炼'}
               className="inline-flex shrink-0 items-center gap-1.5 rounded-btn bg-primary px-4 h-9 text-sm font-medium text-white shadow-card transition-all hover:bg-primary-deep disabled:opacity-50"
             >
               <Sparkles size={14} />
@@ -113,6 +167,11 @@ export default function ReportBriefView({ report }: { report: Report }) {
                   <p className="text-aux leading-relaxed text-ink-2">{sec.key_takeaway}</p>
                 </div>
               )}
+
+              {/* 本章内容结构图 */}
+              <div className="mx-5 mt-3">
+                <ChapterContentMap section={sec} mode="summary" collapsed={true} />
+              </div>
               {(sec.highlights ?? []).slice(0, 4).length > 0 && (
                 <ul className="mx-5 mt-3 space-y-1.5">
                   {(sec.highlights ?? []).slice(0, 4).map((h, i) => (

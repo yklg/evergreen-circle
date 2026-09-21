@@ -1,7 +1,7 @@
 """青野 Verda 后端入口（FastAPI）。
 
 挂载：48 专家 API + 任务创建/澄清 + SSE 思维流 + 报告/历史 + 仪表盘统计
-+ 全局证据溯源库 + 竞品监控订阅 + 专家工作量看板 + 健康/验证接口。
++ 全局证据溯源库 + 目的地持续追踪订阅 + 专家工作量看板 + 健康/验证接口。
 真实 LLM（智谱 GLM）+ 真实搜索（博查 Bocha）+ 真实抓取 + SQLite 持久化，绝不 demo。
 """
 from __future__ import annotations
@@ -23,9 +23,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core import db
+from app.core import research_types as rt
 from app.core.config import get_settings
 from app.core.llm import LLMNotConfigured, chat
 from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section
+from app.core.research_types import DEFAULT_RESEARCH_TYPE
 from app.core.search import search
 from app.data import expert_by_id, load_experts
 
@@ -118,11 +120,19 @@ def get_expert(eid: str):
 class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"
+    type: str = DEFAULT_RESEARCH_TYPE  # guide（游玩攻略）| assessment（调研评估）
+    model: Optional[str] = None  # 用户选择的分析模型；空/'Auto'/None 表示按 settings 编排
+
+
+@app.get("/api/research-types")
+def research_types():
+    """调研类型选择器数据源（首页卡片），与后端注册表单一真相源。"""
+    return rt.research_type_options()
 
 
 @app.post("/api/tasks")
 def post_task(body: CreateTaskBody):
-    return create_task(body.query, mode=body.mode)
+    return create_task(body.query, mode=body.mode, model=body.model, research_type=body.type)
 
 
 class ClarifyBody(BaseModel):
@@ -228,19 +238,22 @@ def dashboard():
 # ── 全局证据溯源库 ──────────────────────────────────────
 @app.get("/api/evidences")
 def evidences(
-    brand: Optional[str] = None,
+    destination: Optional[str] = None,
     source_type: Optional[str] = None,
     min_cred: float = 0.0,
     limit: int = 200,
 ):
-    items = db.query_evidences(brand=brand, source_type=source_type, min_cred=min_cred, limit=limit)
+    items = db.query_evidences(
+        destination=destination, source_type=source_type, min_cred=min_cred, limit=limit,
+    )
     return {"items": items, "facets": db.evidence_facets()}
 
 
-# ── 竞品监控订阅 ────────────────────────────────────────
+# ── 目的地持续追踪订阅 ──────────────────────────────────
 class SubscriptionBody(BaseModel):
     query: str
-    brands: List[str] = []
+    destinations: List[str] = []
+    type: str = DEFAULT_RESEARCH_TYPE
 
 
 @app.get("/api/subscriptions")
@@ -252,7 +265,7 @@ def list_subscriptions():
 def create_subscription(body: SubscriptionBody):
     import uuid
     sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-    return db.create_subscription(sub_id, body.query, body.brands)
+    return db.create_subscription(sub_id, body.query, body.destinations, body.type)
 
 
 @app.delete("/api/subscriptions/{sub_id}")

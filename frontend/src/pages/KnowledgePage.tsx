@@ -139,7 +139,7 @@ export default function KnowledgePage() {
                         <span className={`inline-flex items-center gap-1 rounded-chip px-2 h-6 text-tag font-medium ${meta.cls}`}>
                           <meta.icon size={12} /> {meta.label}
                         </span>
-                        {k.brand && <span className="text-tag text-ink-3">{k.brand}</span>}
+                        {k.destination && <span className="text-tag text-ink-3">{k.destination}</span>}
                         <button
                           onClick={() => removeFromKB(k.id)}
                           className="ml-auto text-ink-3 opacity-0 transition-opacity hover:text-risk group-hover:opacity-100"

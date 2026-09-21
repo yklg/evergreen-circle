@@ -33,6 +33,15 @@ export interface ClarifyQuestion {
 }
 export interface CreateTaskResp {
   taskId: string
+  /** 归一化后的调研类型 key（后端 type_key() 回落 guide） */
+  researchType: string
+}
+
+/* 调研类型（GET /api/research-types —— 注册表为唯一真相源，前端不复制文案） */
+export interface ResearchTypeOption {
+  key: string
+  label: string
+  subtitle: string
 }
 
 /* SSE 事件 */
@@ -105,9 +114,15 @@ export interface Evidence {
   captured_at: string
   credibility: number
   collected_by: string
-  brand?: string
+  destination?: string
   domain?: string
   freshness_days?: number | null
+  /* v2.1 客观性加固元数据（信源组 / 舆论过热，均可选兼容旧数据） */
+  content_hash?: string
+  source_group?: string
+  republished_from?: string[]
+  viral?: boolean
+  viral_reason?: string
 }
 
 export interface Claim {
@@ -118,6 +133,7 @@ export interface Claim {
   confidence: 'high' | 'medium' | 'low' | 'unverified'
   cross_validated: boolean
   author: string
+  claim_type?: 'fact' | 'opinion' | 'mixed'
 }
 
 export interface ChartSpec {
@@ -149,9 +165,13 @@ export interface DataGrid {
   }[]
 }
 
-/* 结构化竞品知识 */
+/* 结构化调研知识（键集由后端 research_types 注册表按类型下发） */
+export type StructuredBlockType =
+  | 'route_plan' | 'stay_options' | 'cost_breakdown'
+  | 'access_matrix' | 'amenity_checklist' | 'risk_profile'
+
 export interface StructuredBlock {
-  type: 'feature_tree' | 'pricing_model' | 'user_persona'
+  type: StructuredBlockType
   data: Record<string, unknown>[]
 }
 
@@ -183,6 +203,7 @@ export interface SentimentResult {
   overall: { pos: number; neu: number; neg: number }
   overall_count?: { pos: number; neu: number; neg: number }
   by_platform: Record<string, { pos: number; neu: number; neg: number }>
+  by_destination?: { destination: string; sample: number; pos: number; neu: number; neg: number }[]
   timeline: { date: string; pos: number; neu: number; neg: number }[]
   camps: { title: string; ratio: number; summary: string; quotes: { text: string; url: string; platform?: string }[] }[]
   voices?: { platform: string; platform_label: string; text: string; sentiment: string; url: string; title?: string }[]
@@ -195,7 +216,9 @@ export interface Report {
   title: string
   subtitle: string
   query?: string
-  brands?: string[]
+  destinations?: string[]
+  /** 调研类型（guide 游玩攻略 / assessment 调研评估；旧报告缺省视为 guide） */
+  research_type?: string
   mode?: string
   created_at: string
   experts: string[]
@@ -215,10 +238,32 @@ export interface Report {
   quality_after?: Record<string, unknown>
   audit_review?: AuditReview
   trace?: TraceSpan[]
+  /* v2.1 客观性：方法论与局限 + 矛盾陈述（正式契约字段，均可选） */
+  methodology?: ReportMethodology
+  contradictions?: ReportContradiction[]
   /** 一页纸精炼（派生数据，懒生成落库；报告内容变更后失效） */
   brief?: ReportBrief
   /** LLM 生成失败时间戳（ISO）；距今 <30s 时前端冷却防止重复触发 */
   brief_failed_at?: string
+}
+
+/** v2.1 方法论与局限披露 */
+export interface ReportMethodology {
+  window?: string
+  evidence_count?: number
+  unique_groups?: number
+  dup_skipped?: number
+  viral_evidence?: number
+  viral_checked_ratio?: number
+  sentiment_samples?: number
+  note?: string
+}
+
+/** v2.1 来源间存在分歧/矛盾的陈述 */
+export interface ReportContradiction {
+  claim_text: string
+  evidence_ids: string[]
+  note?: string
 }
 
 /** 一页纸精炼简报：把整份报告压缩为汇报要点 */
@@ -251,7 +296,7 @@ export interface ReportFigure {
   source_url: string
   domain?: string
   source_type?: string
-  brand?: string
+  destination?: string
   evidence_id?: string
 }
 
@@ -262,7 +307,8 @@ export interface ReportCard {
   title: string
   subtitle: string
   query: string
-  brands: string[]
+  destinations: string[]
+  research_type?: string
   experts: string[]
   cover_image?: string
   evidence_count: number
@@ -276,7 +322,7 @@ export interface ResearchCard {
   id: string
   title: string
   query: string
-  brands: string[]
+  destinations: string[]
   evidence_count: number
   claim_count: number
   high_conf_count: number
@@ -296,7 +342,7 @@ export interface DashboardStats {
   avg_evidence_per_report: number
   fact_accuracy: number
   platform_distribution: Record<string, number>
-  brand_distribution: Record<string, number>
+  destination_distribution: Record<string, number>
   // 业务闭环聚合（真实，来自各报告 metrics）
   minutes_saved?: number
   avg_efficiency?: number
@@ -316,24 +362,25 @@ export interface EvidenceRecord {
   excerpt: string
   credibility: number
   collected_by: string
-  brand: string
+  destination: string
   captured_at: string
 }
 export interface EvidenceFacets {
   total: number
   by_type: Record<string, number>
-  by_brand: Record<string, number>
+  by_destination: Record<string, number>
 }
 export interface EvidenceQueryResp {
   items: EvidenceRecord[]
   facets: EvidenceFacets
 }
 
-/* 竞品监控订阅 */
+/* 目的地监控订阅 */
 export interface Subscription {
   sub_id: string
   query: string
-  brands: string[]
+  destinations: string[]
+  type: string
   created_at: string
   last_run_at: string
   last_report_id: string
@@ -381,6 +428,23 @@ export interface SettingsResp {
 }
 
 export type SaveSettingsResp = Omit<SettingsResp, 'secrets' | 'groups'>
+
+/* ── 用户级偏好（prefs：昵称 / 公司 / 界面选择）─────────────
+   与 SettingsResp 的边界：settings 是系统级运行时配置（密钥 GET 脱敏）；
+   prefs 是用户级偏好，明文、无密钥、原样返回，且**只回库中实际存在的键**
+   （前端靠 stored 判定"是否首次"，见 src/lib/persist.ts）。 */
+export type PrefValue = string | number | boolean
+export type PrefsValues = Record<string, PrefValue>
+
+export interface PrefsResp {
+  ok: boolean
+  /** 库中实际存在的偏好（不合成默认值 —— 缺失即代表"服务端还没有这一项"） */
+  values: PrefsValues
+  /** 库中存在的键列表；空数组 = 远端为空（首次） */
+  stored: string[]
+  /** 分组 → 键列表 */
+  groups: Record<string, string[]>
+}
 
 /** 连接测试（/api/llm/ping）响应。reason=model_unavailable 时携带建议迁移模型。 */
 export interface PingLLMResp {

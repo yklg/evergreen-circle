@@ -14,7 +14,7 @@ export interface ImageItem {
   src: string
   alt?: string
   source_url?: string
-  brand?: string
+  destination?: string
 }
 
 export interface StreamMessage {

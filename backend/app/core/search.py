@@ -33,21 +33,21 @@ def _now() -> str:
 def _is_relevant(query: str, title: str, snippet: str) -> bool:
     """简易相关性过滤：检查搜索 query 的核心词是否出现在标题或摘要中。
 
-    避免搜 "Notion 功能对比" 返回汽水音乐之类完全不相关的结果。
-    提取 query 中的英文品牌词/中文关键词做匹配。
+    避免搜 "京都 交通攻略" 返回汽水音乐之类完全不相关的结果。
+    提取 query 中的英文目的地词/中文关键词做匹配。
     """
     if not query:
         return True
     text = f"{title} {snippet}".lower()
     q = query.lower()
 
-    # 提取英文单词（品牌名等），3 个字符以上的都要在结果中出现至少一个
+    # 提取英文单词（目的地名等），3 个字符以上的都要在结果中出现至少一个
     english_words = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", q)
     # 提取中文关键词（2 个字以上的中文字符串）
     chinese_words = re.findall(r"[\u4e00-\u9fa5]{2,}", q)
 
     must_match = []
-    # 英文品牌词（第一个英文词通常是品牌名，必须匹配）
+    # 英文目的地词（第一个英文词通常是目的地名，必须匹配）
     if english_words:
         must_match.append(english_words[0])
     # 中文第一个名词短语也尽量匹配

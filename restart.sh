@@ -4,8 +4,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT=8010
-FRONTEND_PORT=3400
+BACKEND_PORT=8020
+FRONTEND_PORT=3500
 LOG_DIR="$ROOT/.run-logs"
 mkdir -p "$LOG_DIR"
 

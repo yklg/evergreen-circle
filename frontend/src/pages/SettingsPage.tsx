@@ -58,7 +58,7 @@ const GROUP_META: Record<
   },
   search: {
     title: '搜索提供方',
-    desc: '联网检索能力，用于采集竞品证据',
+    desc: '联网检索能力，用于采集目的地证据',
     icon: Search,
   },
   platform: {

@@ -17,6 +17,7 @@ import SettingsPage from './pages/SettingsPage'
 import TaskFloatBar from './components/TaskFloatBar'
 import { useExpertStore } from './store/expertStore'
 import { useSettingsStore } from './store/settingsStore'
+import { hydrateAllPrefs } from './lib/persist'
 
 export default function App() {
   const load = useExpertStore((s) => s.load)
@@ -27,6 +28,11 @@ export default function App() {
   useEffect(() => {
     loadSettings()
   }, [loadSettings])
+  // 用户偏好（昵称/公司/模型选择）水合：localStorage 已在 store 初始化时同步喂给首屏，
+  // 这里异步拉服务端真相（远端为准；远端空则把本地存量资料上推迁移）。
+  useEffect(() => {
+    void hydrateAllPrefs()
+  }, [])
 
   return (
     <BrowserRouter>

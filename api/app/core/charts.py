@@ -45,20 +45,50 @@ def feature_radar(title: str, dimensions: List[str], series: List[Dict[str, Any]
     }
 
 
-def pricing_bar(title: str, products: List[str], values: List[float]) -> Dict[str, Any]:
+def pricing_bar(title: str, products: List[str], values: List[float],
+                y_name: str = "￥/月") -> Dict[str, Any]:
+    """分类柱状图（花费/成本对比）；y 轴单位由调用方按调研类型传入。"""
     return {
         "title": {"text": title, "left": "center", "textStyle": {"color": MORANDI["ink"], "fontSize": 15}},
         "tooltip": {"trigger": "axis"},
         "grid": _grid(),
         "xAxis": {"type": "category", "data": products, "axisLine": {"lineStyle": {"color": MORANDI["line"]}},
                   "axisLabel": {"color": MORANDI["ink2"]}},
-        "yAxis": {"type": "value", "name": "￥/月", "splitLine": {"lineStyle": {"color": MORANDI["line"]}},
+        "yAxis": {"type": "value", "name": y_name, "splitLine": {"lineStyle": {"color": MORANDI["line"]}},
                   "axisLabel": {"color": MORANDI["ink2"]}},
         "series": [{
             "type": "bar", "data": values, "barWidth": "46%",
             "itemStyle": {"color": MORANDI["primary"], "borderRadius": [8, 8, 0, 0]},
         }],
     }
+
+
+def season_heat(title: str, months: List[str], destinations: List[str],
+                matrix: List[List[int]], note: str = "") -> Dict[str, Any]:
+    """逐月适宜度热力图（ECharts heatmap）：x=月份，y=目的地，值=0-100 适宜度。"""
+    data: List[List[Any]] = []
+    for yi, row in enumerate(matrix):
+        for xi, v in enumerate(row):
+            data.append([xi, yi, v])
+    option: Dict[str, Any] = {
+        "title": {"text": title, "left": "center", "textStyle": {"color": MORANDI["ink"], "fontSize": 15}},
+        "tooltip": {"position": "top"},
+        "grid": {"left": 90, "right": 24, "top": 56, "bottom": 56, "containLabel": True},
+        "xAxis": {"type": "category", "data": months, "splitArea": {"show": True},
+                  "axisLabel": {"color": MORANDI["ink2"]}, "axisLine": {"lineStyle": {"color": MORANDI["line"]}}},
+        "yAxis": {"type": "category", "data": destinations, "splitArea": {"show": True},
+                  "axisLabel": {"color": MORANDI["ink2"]}, "axisLine": {"lineStyle": {"color": MORANDI["line"]}}},
+        "visualMap": {"min": 0, "max": 100, "calculable": True, "orient": "horizontal",
+                      "left": "center", "bottom": 0,
+                      "inRange": {"color": ["#ECEFF1", "#A8C0A8", "#7C9885", "#E0B775", "#CE9A92"]}},
+        "series": [{"type": "heatmap", "data": data,
+                    "label": {"show": True, "color": MORANDI["ink"], "fontSize": 10},
+                    "emphasis": {"itemStyle": {"shadowBlur": 8, "shadowColor": "rgba(0,0,0,0.25)"}}}],
+    }
+    if note:
+        option["graphic"] = [{"type": "text", "right": 16, "bottom": 30,
+                              "style": {"text": note[:60], "fill": MORANDI["ink2"], "fontSize": 11}}]
+    return option
 
 
 def market_donut(title: str, shares: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -139,6 +169,7 @@ def trend_line(title: str, x: List[str], series: List[Dict[str, Any]],
     }
 
 
+# deprecated：五力雷达已随竞品语义下线（保留函数以维持镜像签名面，不再被编排层调用）
 _FORCE_LABEL = {
     "rivalry": "现有竞争激烈度",
     "new_entrants": "新进入者威胁",
@@ -150,7 +181,7 @@ _FORCE_ORDER = ["rivalry", "new_entrants", "substitutes", "buyer_power", "suppli
 
 
 def five_forces_radar(title: str, forces: Dict[str, Any]) -> Dict[str, Any]:
-    """波特五力雷达（0-100，越高代表该方向竞争压力越大）。"""
+    """deprecated：波特五力雷达（竞品时代产物）。保留以维持图表能力面与镜像签名稳定。"""
     keys = [k for k in _FORCE_ORDER if isinstance(forces.get(k), (int, float))]
     indicator = [{"name": _FORCE_LABEL[k], "max": 100} for k in keys]
     values = [forces[k] for k in keys]

@@ -12,18 +12,25 @@ from typing import Any, Dict, List, Optional
 class Evidence:
     evidence_id: str
     source_url: str
-    source_type: str  # official|news|douyin|xiaohongshu|bilibili|weibo|zhihu|review|financial_report
+    source_type: str  # official|news|douyin|xiaohongshu|bilibili|weibo|zhihu|ctrip|review|financial_report
     title: str
     excerpt: str
     captured_at: str
     credibility: float  # 0-100 整数（由 credibility.score_evidence 计算，精确到个位、有差异）
     collected_by: str
+    report_id: str = ""  # 证据统一归属具体报告；'' 表示尚未挂载（旧数据兜底，正常路径恒非空）
     screenshot_path: str = ""
     image_urls: List[str] = field(default_factory=list)
     lang: str = "zh"
-    brand: str = ""
+    destination: str = ""
     domain: str = ""
     freshness_days: Optional[int] = None  # 距今天数，None=无法解析
+    # ── 客观性加固（信源组 / 舆论过热）────────────────────────
+    content_hash: str = ""  # 内容指纹（dedup.content_fingerprint；短文本为 ""）
+    source_group: str = ""  # 信源组 id（同质转载归并为一组；空=未分组/短文本）
+    republished_from: List[str] = field(default_factory=list)  # 与代表 URL 同质化的转载地址
+    viral: bool = False  # 舆论过热标记（credibility.assess_viral 单点判定）
+    viral_reason: str = ""  # 过热原因（如"评论量超阈值"）
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -33,11 +40,16 @@ class Evidence:
 class Claim:
     claim_id: str
     text: str
-    field: str  # feature_tree|pricing_model|user_persona|swot|sentiment|overview
+    # 见 research_types.FIELD_KEYWORDS：共用 overview|trend|risk|sentiment；
+    # 攻略 transport|stay|route|food|budget|season|tips；
+    # 评估 accessibility|amenities|safety|value|livelihood|verdict；
+    # 结构化 route_plan|stay_options|cost_breakdown|access_matrix|amenity_checklist|risk_profile
+    field: str
     evidence_ids: List[str]
     confidence: str  # high|medium|low|unverified
     cross_validated: bool
     author: str
+    claim_type: str = "mixed"  # fact|opinion|mixed（分析层客观性标注，默认 mixed 兼容旧数据）
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -72,16 +84,21 @@ def make_claim(
     field_name: str,
     evidence_ids: List[str],
     author: str,
-    independent_domains: int = 0,
+    independent_groups: int = 0,
+    claim_type: str = "mixed",
 ) -> Claim:
-    """按四铁律计算置信度：无证据→unverified；≥2 独立来源→high。"""
+    """按四铁律计算置信度：无证据→unverified；≥2 个独立信源组→high。
+
+    独立信源以「信源组（Evidence.source_group）」计：同一事实/转载文无论多少个
+    URL 都算一组，杜绝转载冒充多源（架构根因修复，替换原 independent_domains 域名近似）。
+    """
     if not evidence_ids:
-        return Claim(claim_id, text, field_name, [], "unverified", False, author)
-    cross = independent_domains >= 2
+        return Claim(claim_id, text, field_name, [], "unverified", False, author, claim_type)
+    cross = independent_groups >= 2
     if cross:
         conf = "high"
     elif len(evidence_ids) >= 2:
         conf = "medium"
     else:
         conf = "low"
-    return Claim(claim_id, text, field_name, evidence_ids, conf, cross, author)
+    return Claim(claim_id, text, field_name, evidence_ids, conf, cross, author, claim_type)

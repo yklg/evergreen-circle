@@ -2,9 +2,13 @@
 
 节点：intake → orchestrator → collect → analyze → write → audit →(pass/rework)→ done
 
+调研类型（research_types 注册表，单一真相源）：
+- guide 游玩攻略：交通 / 住宿 / 路线 / 美食 / 预算
+- assessment 调研评估：可达性 / 配套 / 安全 / 性价比
+
 核心原则（按用户要求）：
-- 真实联网：每个竞品多角度多轮真实搜索（博查 Bocha），真实抓取正文。
-- 真实舆情：site:抖音/小红书/B站/知乎 搜真实评论与真实链接。
+- 真实联网：每个目的地多角度多轮真实搜索（博查 Bocha），真实抓取正文。
+- 真实舆情：site:抖音/小红书/B站/知乎/携程等（平台集按类型白名单）搜真实评论与真实链接。
 - 真实 LLM 分析：调研计划、专家指派、论点、舆情、报告正文、图表数据全部由 LLM 基于真实证据生成。
 - 绝不 demo：没有任何写死的假数据/假评论/假图表。搜不到就如实标注"未采集到"，尽力而为不中断。
 - 真实持久化：任务/报告/证据/专家工作量/trace 全部落 SQLite。
@@ -32,15 +36,18 @@ from app.core import db
 from app.core import trace
 from app.core.audit import evaluate_quality, decide_rework, llm_quality_review
 from app.core.runtime_config import get_effective_settings
-from app.core.credibility import score_evidence, freshness_days
+from app.core.credibility import score_evidence, freshness_days, assess_viral
+from app.core.dedup import content_fingerprint, group_new_text, tokenize
 from app.core.fetcher import domain_of, fetch_page
-from app.core.platforms import classify_platform
+from app.core.platforms import PLATFORMS, classify_platform
 from app.core.llm import chat, chat_json, LLMNotConfigured, TOKEN_USAGE
 from app.core.metrics import compute_report_metrics, merge_quality_into_metrics
 from app.core.models import Evidence, Envelope, make_claim
-from app.core.schemas import coerce_feature_tree, coerce_pricing_model, coerce_user_persona
+from app.core import research_types as RT
+from app.core.research_types import DEFAULT_RESEARCH_TYPE
+from app.core.schemas import _filter_eids, coerce_structured
 from app.core.search import multi_search
-from app.core.sentiment import analyze_sentiment, PLATFORM_LABEL, PLATFORM_SITES
+from app.core.sentiment import analyze_sentiment, PLATFORM_LABEL
 from app.core.textquality import is_relevant_content
 from app.data import expert_by_id, load_experts
 
@@ -54,42 +61,44 @@ def _sid(prefix: str) -> str:
 
 
 # ── 调研模式三档（对应需求 3）─────────────────────────────
-# 按「搜索角度数 + 每角度抓取数 + 章节集 + 模型 + freshness + 写作深度」分档
+# 只管**规模**（搜索量/篇幅/返工轮次/模型档）；章节集属语义，查 research_types.sections_for()。
 MODE_CONFIG = {
     "quick": {
         "label": "快速模式",
-        "max_angles": 4, "fetch_per_brand": 6, "platform_per": 6,
-        "sections": ["summary", "overview", "feature", "pricing", "conclusion"],
+        "max_angles": 4, "fetch_per_destination": 6, "platform_per": 6,
         "freshness": "oneYear", "rework_rounds": 0,
         # 写作深度：段落数下限 / 每段字数 / 单章 token 预算
         "min_paragraphs": 3, "para_words": "120-200", "section_max_tokens": 3500,
         "analyze_max_tokens": 6000, "structured_max_tokens": 6000,
-        # 舆情覆盖：取口碑的竞品数 / 每平台每查询取条数
-        "sentiment_brands": 2, "platform_take": 5,
+        # 舆情覆盖：取口碑的目的地数 / 每平台每查询取条数
+        "sentiment_destinations": 2, "platform_take": 5,
     },
     "deep": {
         "label": "深度模式",
-        "max_angles": 6, "fetch_per_brand": 12, "platform_per": 8,
-        "sections": ["summary", "overview", "feature", "pricing", "persona",
-                     "trend", "swot", "conclusion", "risk"],
+        "max_angles": 6, "fetch_per_destination": 12, "platform_per": 8,
         "freshness": "oneYear", "rework_rounds": 1,
         "min_paragraphs": 5, "para_words": "180-280", "section_max_tokens": 6000,
         "analyze_max_tokens": 8000, "structured_max_tokens": 8000,
-        "sentiment_brands": 3, "platform_take": 8,
+        "sentiment_destinations": 3, "platform_take": 8,
     },
     "expert": {
         "label": "专家级模式",
-        "max_angles": 9, "fetch_per_brand": 16, "platform_per": 10,
-        "sections": ["summary", "overview", "feature", "pricing", "persona",
-                     "trend", "swot", "moat", "inflection", "contrarian",
-                     "conclusion", "risk"],
+        "max_angles": 9, "fetch_per_destination": 16, "platform_per": 10,
         "freshness": "oneYear", "rework_rounds": 2,
         # 专家级：篇幅最长、最详尽（券商行研/MBB 深度报告级别）
         "min_paragraphs": 7, "para_words": "260-420", "section_max_tokens": 9000,
         "analyze_max_tokens": 9000, "structured_max_tokens": 9000,
-        "sentiment_brands": 4, "platform_take": 10,
+        "sentiment_destinations": 4, "platform_take": 10,
     },
 }
+
+# 核心章用质量最高的模型档，其余用辅助档（属「模型分配」旋钮，与 MODE_CONFIG 同类，
+# 故留在编排层而非语义注册表）。覆盖两类型各自最吃分析的章节。
+CORE_SECTIONS = frozenset({
+    "summary", "conclusion", "contrarian",
+    "route", "budget",            # 游玩攻略
+    "safety", "value", "verdict",  # 调研评估
+})
 
 
 # 单条调研任务的「用户指定分析模型」覆盖（仅 core/aux 档生效，fast 杂务不动）。
@@ -123,28 +132,29 @@ def _model(tier: str) -> str:
 
 
 # ── 任务创建 / 澄清（落库）─────────────────────────────────
-def create_task(query: str, mode: str = "deep", model: Optional[str] = None) -> Dict[str, Any]:
+def create_task(query: str, mode: str = "deep", model: Optional[str] = None,
+                research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
     """快路径：只落库 task_id + meta，不调 LLM，毫秒级返回。
 
     澄清问卷改为 ClarifyPage 挂载后通过 SSE 懒生成（见 async generate_clarify），
     从而把 LLM 推理移出 HTTP 关键路径——这是根治「提交后等好久」的架构根因。
     """
     task_id = _sid("t")
-    # 用户指定的分析模型仅在非空且非 'Auto' 时记录覆盖（跟随 _mode 写入 task meta，
+    # 用户指定的分析模型仅在非空且非 'Auto' 时记录覆盖（跟随 _mode/_type 写入 task meta，
     # 经 submit_clarify 透传进 clarifications，run_pipeline 双源读取）。
-    meta: Dict[str, Any] = {"_mode": mode}
+    meta: Dict[str, Any] = {"_mode": mode, "_type": RT.type_key(research_type)}
     if model and model != "Auto":
         meta["_model_override"] = model
     db.save_task(task_id, query, meta)
-    return {"taskId": task_id}
+    return {"taskId": task_id, "researchType": meta["_type"]}
 
 
 def submit_clarify(task_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
-    # 保留已存的 _mode 与 _model_override（用户在 HomePage 选的模型跟随澄清透传）
+    # 保留已存的 _mode / _type / _model_override（HomePage 选的类型与模型跟随澄清透传）
     task = db.get_task(task_id) or {}
     prev = task.get("clarifications", {}) or {}
     merged = {**answers}
-    for key in ("_mode", "_model_override"):
+    for key in ("_mode", "_type", "_model_override"):
         if key in prev and key not in merged:
             merged[key] = prev[key]
     db.update_task_clarify(task_id, merged)
@@ -156,37 +166,28 @@ def submit_clarify(task_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
 _GEN_INFLIGHT: Dict[str, "asyncio.Future"] = {}
 
 
-def _fallback_clarify_questions(query: str) -> List[Dict[str, Any]]:
-    """LLM 生成失败时的降级静态问卷（不含竞品发现，但流程可继续，P1#5）。"""
-    return [
-        {"id": "focus", "question": "本次调研最看重哪些维度？（可多选）", "type": "multi",
-         "options": ["功能对比", "定价策略", "用户口碑", "市场份额", "SWOT", "舆情趋势",
-                     "技术架构", "增长趋势", "商业模式", "生态壁垒"]},
-        {"id": "perspective", "question": "你希望以什么视角来产出这份报告？", "type": "single",
-         "options": ["产品经理（PM）", "运营（OPS）", "销售", "用户/消费者", "投资人", "通用/综合"]},
-        {"id": "market", "question": "希望聚焦的目标市场或地区？", "type": "single",
-         "options": ["中国大陆", "全球", "北美", "东南亚", "欧洲", "不限"]},
-        {"id": "user", "question": "目标用户群体是？", "type": "single",
-         "options": ["个人用户", "中小团队", "大型企业", "开发者", "学生教育", "不限"]},
-        {"id": "freshness", "question": "是否优先关注最新动态？", "type": "single",
-         "options": ["优先最新（近一月）", "近一年即可", "不限时间"]},
-        {"id": "extra", "question": "有哪些特定竞品、背景或纠正需要我们关注？（选填）",
-         "type": "text", "options": []},
-    ]
+def _fallback_clarify_questions(query: str, research_type: str = DEFAULT_RESEARCH_TYPE
+                                ) -> List[Dict[str, Any]]:
+    """LLM 生成失败时的降级静态问卷（不含目的地发现，但流程可继续，P1#5）。
+
+    题目集来自类型注册表（spec["clarify"]）——本函数只做渲染，不写类型分支。
+    """
+    return [dict(q) for q in RT.type_spec(research_type)["clarify"]]
 
 
-def _baseline_questions(query: str = "") -> List[Dict[str, Any]]:
-    """即时基础题（不依赖 LLM），竞品发现完成前即可作答（P0-① 修复核心）。"""
-    return _fallback_clarify_questions(query)
+def _baseline_questions(query: str = "", research_type: str = DEFAULT_RESEARCH_TYPE
+                        ) -> List[Dict[str, Any]]:
+    """即时基础题（不依赖 LLM），目的地发现完成前即可作答（P0-① 修复核心）。"""
+    return _fallback_clarify_questions(query, research_type)
 
 
 def _build_enhanced_questions(
     scope: Dict[str, Any], baseline: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """把领域识别 + 竞品发现结果作为增强题追加到基础题末尾（P0-②：增量而非阻塞）。"""
+    """把领域识别 + 目的地发现结果作为增强题追加到基础题末尾（P0-②：增量而非阻塞）。"""
     subject = scope.get("subject") or ""
     domain = scope.get("domain") or ""
-    competitors = scope.get("competitors") or []
+    candidates = scope.get("candidates") or scope.get("competitors") or []
     if subject:
         txt = f"我们识别到你要调研的是「{subject}」"
         txt += f"，所属领域：{domain}。" if domain else "。"
@@ -202,13 +203,13 @@ def _build_enhanced_questions(
         "options": ["准确，继续", "大致准确，下面补充", "不准确，我在下方说明"],
         "hint": "若不准确，请在最后一题补充说明真实的调研对象与领域。",
     }]
-    if competitors:
+    if candidates:
         extra.append({
-            "id": "competitors",
-            "question": f"为「{subject or '该主题'}」自动发现了以下候选竞品，请勾选你希望重点对比的对象（可多选）：",
+            "id": "destinations",
+            "question": f"为「{subject or '该主题'}」自动发现了以下候选目的地，请勾选你希望重点调研的对象（可多选）：",
             "type": "multi",
-            "options": competitors[:12],
-            "hint": "勾选后我们会确保每个竞品都被充分调研；如有遗漏可在最后一题补充。",
+            "options": candidates[:12],
+            "hint": "勾选后我们会确保每个目的地都被充分调研；如有遗漏可在最后一题补充。",
         })
     return list(baseline) + extra
 
@@ -216,12 +217,12 @@ def _build_enhanced_questions(
 async def _discover_and_build(
     task_id: str, query: str, baseline: List[Dict[str, Any]], timeout_s: float
 ) -> Dict[str, Any]:
-    """竞品发现 + 增强题构建（带缓存命中 / 4s 超时 / 异常兜底）。
+    """目的地发现 + 增强题构建（带缓存命中 / 超时 / 异常兜底）。
 
     返回可直接作为 SSE clarify_update 载荷的字典：
-    {"questions": [...], "competitors_fallback": bool, "complete": True}。
+    {"questions": [...], "destinations_fallback": bool, "complete": True}。
     - 缓存命中（仅成功发现才缓存）→ 零 LLM 调用。
-    - 超时 / 异常 → 正则兜底（competitors_fallback=True），绝不卡死。
+    - 超时 / 异常 → 正则兜底（destinations_fallback=True），绝不卡死。
     - 仅完整问卷落库（complete=1），绝不落 partial（P0-③ 重连完整性）。
     """
     qhash = db._query_hash(query)
@@ -235,27 +236,34 @@ async def _discover_and_build(
                 asyncio.to_thread(_discover_scope, query), timeout=timeout_s
             )
         except Exception:
-            # 超时或 LLM 抛错 → 正则兜底（competitors_fallback），绝不卡死。
+            # 超时或 LLM 抛错 → 正则兜底（destinations_fallback），绝不卡死。
             # 不捕获 CancelledError（BaseException），保证外部取消能正常透传。
             scope = _discover_scope_fallback(query)
         fallback = bool(scope.get("fallback", False))
         # 仅缓存真实（非兜底）发现结果，避免把兜底噪声写进缓存
-        if not fallback and (scope.get("competitors") or scope.get("domain")):
+        if not fallback and (scope.get("candidates") or scope.get("domain")):
             ttl = int(get_effective_settings().get("discovery_cache_ttl_d", 7) or 7)
             db.save_discovery_cache(qhash, scope, ttl_days=ttl)
     enhanced = _build_enhanced_questions(scope, baseline)
     db.save_clarify_questions(task_id, enhanced, complete=True)
-    return {"questions": enhanced, "competitors_fallback": fallback, "complete": True}
+    return {"questions": enhanced, "destinations_fallback": fallback, "complete": True}
+
+
+def _task_research_type(task_id: str) -> str:
+    """从任务 meta 读调研类型（澄清问卷与发现都按类型渲染；缺失一律回落默认）。"""
+    task = db.get_task(task_id) or {}
+    clar = task.get("clarifications", {}) or {}
+    return RT.type_key(task.get("_type") or clar.get("_type") or DEFAULT_RESEARCH_TYPE)
 
 
 async def generate_clarify(task_id: str, query: str) -> AsyncIterator[Dict[str, Any]]:
-    """懒生成澄清问卷，SSE 逐事件推送（分阶段：基础题即时 → 竞品发现增量）。
+    """懒生成澄清问卷，SSE 逐事件推送（分阶段：基础题即时 → 目的地发现增量）。
 
-    - asyncio.to_thread 把同步阻塞的 _discover_scope（含 DeepSeek HTTP）移出事件循环。
+    - asyncio.to_thread 把同步阻塞的 _discover_scope（含 LLM HTTP）移出事件循环。
     - 并发重入防护（P1#7）：首个协程把完整载荷塞进 _GEN_INFLIGHT future，其余协程
       await 同一 future 复用结果，绝不重复调 LLM。
-    - 阶段 0/1 即时（无 LLM）：先推基础题（partial），竞品发现完再推 clarify_update。
-    - 生成失败降级为正则兜底（competitors_fallback），流程不卡死（P1#5）。
+    - 阶段 0/1 即时（无 LLM）：先推基础题（partial），目的地发现完再推 clarify_update。
+    - 生成失败降级为正则兜底（destinations_fallback），流程不卡死（P1#5）。
     """
     # 重连/刷新：完整问卷已落库 → 直接推送，避免重复 LLM 调用
     existing, complete = db.get_clarify_questions(task_id)
@@ -263,6 +271,7 @@ async def generate_clarify(task_id: str, query: str) -> AsyncIterator[Dict[str, 
         yield {"type": "clarify_ready", "data": existing}
         return
 
+    research_type = _task_research_type(task_id)
     loop = asyncio.get_running_loop()
     inflight = _GEN_INFLIGHT.get(task_id)
     if inflight is not None:
@@ -276,11 +285,11 @@ async def generate_clarify(task_id: str, query: str) -> AsyncIterator[Dict[str, 
     try:
         # 阶段 0：理解阶段（即时，无阻塞）
         yield {"type": "clarify_stage", "data": {"stage": "understanding", "message": "正在理解你的需求…"}}
-        # 阶段 1：基础题即时渲染（P0-① 修复：不等竞品发现）
-        baseline = _baseline_questions(query)
+        # 阶段 1：基础题即时渲染（P0-① 修复：不等目的地发现）
+        baseline = _baseline_questions(query, research_type)
         yield {"type": "clarify_ready", "data": {"questions": baseline, "partial": True}}
-        # 阶段 2：竞品发现（带超时 + 缓存 + 异常兜底，P0-②/③）
-        yield {"type": "clarify_stage", "data": {"stage": "discovering", "message": "正在发现竞品…"}}
+        # 阶段 2：目的地发现（带超时 + 缓存 + 异常兜底，P0-②/③）
+        yield {"type": "clarify_stage", "data": {"stage": "discovering", "message": "正在发现候选目的地…"}}
         timeout_s = float(get_effective_settings().get("clarify_discover_timeout_s", 4) or 4)
         payload = await _discover_and_build(task_id, query, baseline, timeout_s)
         if not fut.done():
@@ -309,7 +318,7 @@ def _rewrite_section(section: Dict[str, Any], extra_context: Dict[str, Any],
             [
                 {"role": "system", "content": (
                     system_prompt or
-                    "你是资深竞品分析师。请基于已有证据与补充材料，把该章节重写得更深、更厚、更有针对性——"
+                    "你是资深旅游调研分析师。请基于已有证据与补充材料，把该章节重写得更深、更厚、更有针对性——"
                     "补充论证、数据、对比与独立判断。"
                     '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
                 )},
@@ -377,13 +386,13 @@ def generate_brief(report_id: str) -> Optional[Dict[str, Any]]:
             data = chat_json(
                 [
                     {"role": "system", "content": (
-                        "你是资深竞品分析汇报官。请把整份报告压缩成可直接用于汇报的一页纸精炼。"
+                        "你是资深旅游调研汇报官。请把整份报告压缩成可直接用于汇报的一页纸精炼。"
                         "输出 JSON：{\"summary\":\"一句话概括(≤40字)\",\"judgments\":[\"全局核心判断(3-5条，结论先行)\"],"
                         "\"key_data\":[\"关键数据(3-5条，带数字)\"],\"actions\":[\"行动建议(3-5条)\"]}。只输出 JSON。"
                     )},
                     {"role": "user", "content": (
                         f"报告标题：{rep.get('title', '')}\n副标题：{rep.get('subtitle', '')}\n"
-                        f"品牌：{rep.get('brands') or []}\n证据数：{len(rep.get('evidence', []))} "
+                        f"目的地：{rep.get('destinations') or []}\n证据数：{len(rep.get('evidence', []))} "
                         f"结论数：{len(rep.get('claims', []))}\n\n{summary_block}\n\n各章核心判断：\n"
                         + "\n".join(f"- {t}" for t in takeaways[:12])
                         + f"\n\n效能指标：{metric_block}\n舆情概览：{senti_block}"
@@ -442,7 +451,7 @@ def refine_section(report_id: str, section_id: str, annotations: List[str]) -> D
         return {"ok": False, "message": "section not found"}
 
     query = rep.get("query", "")
-    brands = rep.get("brands", [])
+    destinations = rep.get("destinations") or rep.get("brands") or []
     evidence = rep.get("evidence", [])
     digest_lines = []
     for e in evidence[:24]:
@@ -450,12 +459,12 @@ def refine_section(report_id: str, section_id: str, annotations: List[str]) -> D
     digest = "\n".join(digest_lines)
     note_text = "\n".join(f"- {a}" for a in annotations if a)
     system_prompt = (
-        "你是资深竞品分析师。用户对报告某章节提出了批注/进一步调研诉求，"
+        "你是资深旅游调研分析师。用户对报告某章节提出了批注/进一步调研诉求，"
         "请基于已有证据与批注，把该章节重写得更深、更厚、更有针对性——补充论证、数据、对比与独立判断。"
         '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
     )
     user_digest = (
-        f"调研主题：{query}\n竞品：{'、'.join(brands)}\n"
+        f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n"
         f"用户批注/诉求：\n{note_text}\n\n现有章节内容：\n"
         + "\n".join(target.get("paragraphs", []))
         + f"\n\n可用证据：\n{digest}"
@@ -490,6 +499,60 @@ def create_refine_task(report_id: str, evidence_ids: Optional[List[str]] = None,
         kind="refine",
     )
     return {"taskId": tid}
+
+
+def create_brief_task(report_id: str) -> Dict[str, Any]:
+    """创建「生成一页纸精炼」的后台任务（kind='brief'，G7）。
+
+    复用 runner 的「任务即一等实体」机制：前端拿返回 taskId 订阅
+    GET /api/tasks/{taskId}/stream，消解旧同步端点的 30s 冷却 hack。
+    """
+    tid = _sid("bt")
+    db.save_task(
+        tid,
+        query=report_id,
+        clarifications={"report_id": report_id},
+        kind="brief",
+    )
+    return {"taskId": tid}
+
+
+async def brief_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]":
+    """异步生成器：生成/复用报告的一页纸精炼。
+
+    幂等：data.brief 已存在 → progress(100) + done 快路径，不再调 LLM；
+    失败 → DB failed 终态 + error 事件（前端显式展示、可随时重试）。
+    阻塞 LLM 调用经 asyncio.to_thread 包裹，不冻结事件循环（与 refine 同策略）。
+    """
+    full = db.get_task_full(task_id) or {}
+    clar = full.get("clarifications", {}) or {}
+    report_id = clar.get("report_id") or full.get("query")
+    try:
+        rep = db.get_report(report_id)
+        if not rep:
+            msg = "报告不存在或未就绪"
+            db.set_task_failed(task_id, msg)
+            yield _ev("error", {"message": msg})
+            return
+        if rep.get("brief"):
+            yield _ev("progress", {"percent": 100, "stage": "brief", "evidence_count": 0})
+            yield _ev("done", {"reportId": report_id})
+            return
+        yield _ev("progress", {"percent": 10, "stage": "brief", "evidence_count": 0})
+        brief = await asyncio.to_thread(generate_brief, report_id)
+        if brief:
+            yield _ev("done", {"reportId": report_id})
+        else:
+            msg = "生成失败，请稍后重试"
+            db.set_task_failed(task_id, msg)
+            yield _ev("error", {"message": msg})
+    except LLMNotConfigured as e:
+        msg = f"LLM 未配置：{e}"
+        db.set_task_failed(task_id, msg)
+        yield _ev("error", {"message": msg})
+    except Exception as e:  # noqa: BLE001
+        db.set_task_failed(task_id, str(e))
+        yield _ev("error", {"message": str(e)})
 
 
 async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]":
@@ -527,7 +590,7 @@ async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]
         )
     digest = "\n".join(digest_lines)[:3000]
     system_prompt = (
-        "你是资深竞品分析师。报告已归属了一批新的高可信度证据，请基于这些证据把章节重写得更深、更厚、"
+        "你是资深旅游调研分析师。报告已归属了一批新的高可信度证据，请基于这些证据把章节重写得更深、更厚、"
         "更有针对性——补充论证、数据、对比与独立判断。"
         '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
     )
@@ -551,53 +614,77 @@ async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]
     yield _ev("done", {"reportId": report_id})
 
 
-# ── 竞品发现（LLM 路径 + 正则兜底）────────────────────────
-# 正则兜底用的静态竞品映射（按常见关键词命中，毫秒级、无需 LLM）。
-_FALLBACK_COMPETITOR_MAP: Dict[str, List[str]] = {
-    "trae": ["Cursor", "VS Code", "Windsurf", "Claude Code", "GitHub Copilot"],
-    "cursor": ["Trae", "VS Code", "Windsurf", "Claude Code", "GitHub Copilot"],
-    "vscode": ["Cursor", "Trae", "Windsurf", "JetBrains IDEA"],
-    "windsurf": ["Cursor", "Trae", "VS Code", "Claude Code"],
-    "copilot": ["Cursor", "Trae", "Claude Code", "通义灵码"],
-    "chatgpt": ["Claude", "Gemini", "文心一言", "通义千问", "DeepSeek"],
-    "claude": ["ChatGPT", "Gemini", "文心一言", "通义千问"],
-    "deepseek": ["ChatGPT", "Claude", "Gemini", "通义千问", "豆包"],
-    "gemini": ["ChatGPT", "Claude", "DeepSeek", "文心一言"],
-    "doubao": ["DeepSeek", "文心一言", "通义千问", "豆包"],
-    "notion": ["飞书文档", "语雀", "Confluence", "Obsidian"],
-    "feishu": ["钉钉", "企业微信", "Slack", "Microsoft Teams"],
-    "钉钉": ["飞书", "企业微信", "Slack", "Microsoft Teams"],
-    "企业微信": ["飞书", "钉钉", "Slack"],
-    "slack": ["飞书", "钉钉", "Microsoft Teams", "Discord"],
-    "zoom": ["腾讯会议", "飞书会议", "Microsoft Teams"],
-    "spotify": ["Apple Music", "网易云音乐", "QQ音乐"],
-    "netflix": ["Disney+", "爱奇艺", "腾讯视频", "优酷"],
+# ── 目的地发现（LLM 路径 + 正则兜底）──────────────────────
+# 正则兜底用的静态候选目的地映射（按常见关键词命中，毫秒级、无需 LLM）。
+_FALLBACK_DESTINATION_MAP: Dict[str, List[str]] = {
+    "三亚": ["海口", "陵水", "万宁", "厦门"],
+    "大理": ["丽江", "香格里拉", "腾冲", "西双版纳"],
+    "丽江": ["大理", "香格里拉", "泸沽湖", "腾冲"],
+    "成都": ["重庆", "西安", "昆明", "长沙"],
+    "重庆": ["成都", "贵阳", "西安", "武汉"],
+    "杭州": ["苏州", "南京", "绍兴", "上海"],
+    "上海": ["杭州", "苏州", "南京", "厦门"],
+    "北京": ["西安", "南京", "洛阳", "天津"],
+    "西安": ["洛阳", "南京", "北京", "成都"],
+    "厦门": ["泉州", "福州", "平潭", "青岛"],
+    "青岛": ["大连", "威海", "烟台", "厦门"],
+    "广州": ["深圳", "佛山", "珠海", "厦门"],
+    "深圳": ["广州", "珠海", "香港", "厦门"],
+    "长沙": ["武汉", "南昌", "重庆", "广州"],
+    "昆明": ["大理", "贵阳", "南宁", "成都"],
+    "桂林": ["阳朔", "贵阳", "张家界", "黔东南"],
+    "贵阳": ["昆明", "重庆", "桂林", "黔东南"],
+    "哈尔滨": ["长春", "沈阳", "漠河", "雪乡"],
+    "乌鲁木齐": ["喀纳斯", "伊犁", "敦煌", "兰州"],
+    "拉萨": ["林芝", "日喀则", "西宁", "香格里拉"],
+    "西宁": ["兰州", "张掖", "敦煌", "拉萨"],
+    "东京": ["大阪", "京都", "札幌", "首尔"],
+    "大阪": ["东京", "京都", "福冈", "首尔"],
+    "首尔": ["釜山", "济州", "东京", "大阪"],
+    "曼谷": ["清迈", "普吉岛", "吉隆坡", "新加坡"],
+    "新加坡": ["吉隆坡", "曼谷", "巴厘岛", "香港"],
+    "巴厘岛": ["普吉岛", "长滩岛", "苏梅岛", "龙目岛"],
+    "香港": ["澳门", "深圳", "台北", "新加坡"],
+    "巴黎": ["罗马", "巴塞罗那", "伦敦", "柏林"],
+    "伦敦": ["巴黎", "阿姆斯特丹", "柏林", "爱丁堡"],
+    "纽约": ["洛杉矶", "芝加哥", "多伦多", "波士顿"],
+    "悉尼": ["墨尔本", "奥克兰", "布里斯班", "黄金海岸"],
 }
 _FALLBACK_DOMAIN_MAP: Dict[str, str] = {
-    "代码": "AI 编程工具", "编程": "AI 编程工具", "ide": "AI 编程工具", "ai 编程": "AI 编程工具",
-    "大模型": "大模型/生成式 AI", "生成式": "大模型/生成式 AI", "llm": "大模型/生成式 AI",
-    "调研": "竞品调研/咨询", "竞品": "竞品调研/咨询", "分析": "竞品调研/咨询",
-    "协作文档": "协同办公", "文档": "协同办公", "办公": "协同办公", "im": "协同办公", "即时通讯": "协同办公",
-    "会议": "视频会议", "视频": "视频会议",
-    "音乐": "流媒体音乐", "音频": "流媒体音乐",
+    "海岛": "海岛度假", "海滩": "海岛度假", "冲浪": "海岛度假",
+    "古镇": "古镇水乡", "水乡": "古镇水乡", "古城": "古镇水乡",
+    "自驾": "自驾公路", "公路": "自驾公路",
+    "宜居": "移居/宜居", "移居": "移居/宜居", "长居": "移居/宜居", "养老": "移居/宜居",
+    "徒步": "山岳徒步", "登山": "山岳徒步", "雪山": "山岳徒步",
+    "亲子": "亲子研学", "带娃": "亲子研学", "研学": "亲子研学",
+    "美食": "美食之旅", "小吃": "美食之旅",
+    "滑雪": "冰雪运动", "冰雪": "冰雪运动",
+    "摄影": "摄影采风", "出片": "摄影采风", "机位": "摄影采风",
+    "温泉": "康养温泉", "康养": "康养温泉",
+    "避暑": "避暑度假", "避寒": "避寒度假",
+    "古建": "古建人文", "人文": "古建人文", "博物馆": "古建人文",
+    "出境": "出境游", "签证": "出境游", "海外": "出境游",
+    "预算": "预算与成本", "性价比": "预算与成本",
+    "交通": "交通可达性", "高铁": "交通可达性", "航班": "交通可达性",
 }
 
 
 def _discover_scope(query: str) -> Dict[str, Any]:
-    """领域识别 + 竞品自动发现（前置侦察，LLM 路径）。
+    """领域识别 + 目的地自动发现（前置侦察，LLM 路径）。
 
-    返回 {"subject", "domain", "competitors", "fallback"}。
-    用 aux 模型（glm-5.1，已关思考、JSON 稳定）；失败重试一次，
+    返回 {"subject", "domain", "candidates", "fallback"}。
+    用 aux 模型（已关思考、JSON 稳定）；失败重试一次，
     仍失败则交由 _discover_scope_fallback 返回正则兜底（fallback=True），绝不抛错。
     """
     msgs = [
         {"role": "system", "content": (
-            "你是竞品分析调研总监，负责开题前的『领域识别 + 竞品发现』。"
-            "根据用户一句话需求，判断：①真正的调研对象是什么（产品/公司/品类全称）；"
-            "②它属于什么细分领域/赛道；③在该赛道里，尽可能多地列出与之直接竞争的真实竞品（8-12 个，"
-            "必须是真实存在、可搜索的产品/公司名，按知名度从高到低排列，不要编造）。"
-            '只输出 JSON：{"subject":"调研对象全称","domain":"细分领域/赛道","competitors":["竞品1","竞品2"]}。'
-            "competitors 不要包含调研对象自身。只输出 JSON，不要任何解释或思考过程。"
+            "你是旅游调研总监，负责开题前的『主题识别 + 候选目的地发现』。"
+            "根据用户一句话需求，判断：①真正要调研的目的地/主题是什么（城市/景区/区域全称）；"
+            "②它属于什么旅游细分领域（如 海岛度假、古镇水乡、自驾公路、移居宜居、亲子研学）；"
+            "③围绕该主题，尽可能多地列出值得一并调研的真实候选目的地（8-12 个，"
+            "必须是真实存在、可搜索的城市/景区，按可对比性与知名度从高到低排列，不要编造）。"
+            '只输出 JSON：{"subject":"目的地/主题全称","domain":"细分领域","candidates":["候选目的地1","候选目的地2"]}。'
+            "candidates 不要包含调研对象自身。只输出 JSON，不要任何解释或思考过程。"
         )},
         {"role": "user", "content": query},
     ]
@@ -605,20 +692,20 @@ def _discover_scope(query: str) -> Dict[str, Any]:
         try:
             data = chat_json(
                 msgs, max_tokens=1500, temperature=0.3,
-                model=_model("aux"), purpose="领域识别+竞品自动发现",
+                model=_model("aux"), purpose="主题识别+目的地自动发现",
             )
-            if isinstance(data, dict) and (data.get("subject") or data.get("competitors")):
+            if isinstance(data, dict) and (data.get("subject") or data.get("candidates")):
                 subject = str(data.get("subject") or "").strip()
                 domain = str(data.get("domain") or "").strip()
                 comps = [
-                    str(c).strip() for c in (data.get("competitors") or [])
+                    str(c).strip() for c in (data.get("candidates") or [])
                     if str(c).strip() and str(c).strip() != subject
                 ]
                 seen = set()
                 comps = [c for c in comps if not (c in seen or seen.add(c))]
                 return {
                     "subject": subject, "domain": domain,
-                    "competitors": comps[:12], "fallback": False,
+                    "candidates": comps[:12], "fallback": False,
                 }
         except Exception:
             pass
@@ -629,21 +716,21 @@ def _discover_scope(query: str) -> Dict[str, Any]:
 def _discover_scope_fallback(query: str) -> Dict[str, Any]:
     """纯正则 / 静态映射兜底：无 LLM 调用，毫秒级返回。
 
-    命中已知产品 → 给出其常见竞品与推测主体；否则尝试从引号抽取候选。
+    命中已知目的地 → 给出其常见候选对比目的地与推测主体；否则尝试从引号抽取候选。
     始终返回 fallback=True（提示前端这是自动识别候选，需用户核对）。
     """
     q = (query or "").strip()
     low = q.lower()
-    competitors: List[str] = []
+    candidates: List[str] = []
     subject = ""
-    for key, vals in _FALLBACK_COMPETITOR_MAP.items():
+    for key, vals in _FALLBACK_DESTINATION_MAP.items():
         if key in low:
-            competitors = [v for v in vals if v.lower() != key]
-            subject = key.title() if key.islower() else key
+            candidates = [v for v in vals if v.lower() != key]
+            subject = key
             break
-    if not competitors:
+    if not candidates:
         cand = re.findall(r"[‘’'\"\“\”]([^‘’'\"\“\”]{2,20})[‘’'\"\“\”]", q)
-        competitors = [c.strip() for c in cand if c.strip()]
+        candidates = [c.strip() for c in cand if c.strip()]
     domain = ""
     for kw, dom in _FALLBACK_DOMAIN_MAP.items():
         if kw in low:
@@ -651,89 +738,94 @@ def _discover_scope_fallback(query: str) -> Dict[str, Any]:
             break
     return {
         "subject": subject, "domain": domain,
-        "competitors": competitors[:12], "fallback": True,
+        "candidates": candidates[:12], "fallback": True,
     }
 
 
-def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7) -> Dict[str, Any]:
+def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7,
+                   research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
     clar = clar or {}
+    spec = RT.type_spec(research_type)
     clar_text = "；".join(f"{k}: {v}" for k, v in clar.items()
                          if v and not str(k).startswith("_"))
-    # 用户在问卷里勾选/补充的竞品（最高优先级，必须全部纳入）
-    user_brands = clar.get("competitors") or []
-    if isinstance(user_brands, str):
-        user_brands = [user_brands]
-    user_brands = [str(b).strip() for b in user_brands if str(b).strip()]
+    # 用户在问卷里勾选/补充的目的地（最高优先级，必须全部纳入）
+    user_destinations = clar.get("destinations") or []
+    if isinstance(user_destinations, str):
+        user_destinations = [user_destinations]
+    user_destinations = [str(b).strip() for b in user_destinations if str(b).strip()]
+    default_angles = list(spec["angles"])
     try:
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是竞品分析调研总监。拆解用户的调研需求，输出 JSON："
-                    '{"subject":"本次调研的核心对象全称",'
-                    '"category":"该对象所属的细分品类/领域（用于消歧，如 AI编程工具、知识管理软件、新能源汽车）",'
-                    '"brands":["竞品全称1","竞品全称2"],'
-                    '"focus":["本次重点维度，如 定价/功能/口碑"],'
-                    '"search_angles":["针对每个竞品的搜索角度短语，如 产品功能、定价方案、用户评测、最新动态2025、市场份额、财报营收"]}。'
-                    "brands 必须是真实可搜索的产品/公司名，且【必须同时包含调研对象本身与它的主要竞品】（3-6 个），"
-                    "确保对比维度完整，绝不能只调研对象自身而忽略竞品。"
-                    "category 要给一个能精准消歧的品类短语（避免品牌名歧义，如 Trae 应识别为「AI编程工具/AI代码编辑器」）。"
-                    f"search_angles 给 {max_angles} 个角度，务必包含「最新动态」「2025 2026 最新」等时效性角度以抓取最新数据。只输出 JSON。"
+                    f"你是旅游调研总监，本次任务类型是「{spec['label']}」（{spec['subtitle']}）。"
+                    "拆解用户的调研需求，输出 JSON："
+                    '{"subject":"本次调研的核心目的地/主题全称",'
+                    '"region":"目的地所属省份/国家（用于消歧，如 云南省、海南省、日本）",'
+                    '"destinations":["目的地全称1","目的地全称2"],'
+                    '"focus":["本次重点维度，如 交通/住宿/预算/口碑"],'
+                    '"search_angles":["针对每个目的地的搜索角度短语，如 交通攻略、住宿推荐、门票与价格、避坑指南、最新攻略2026"]}。'
+                    "destinations 必须是真实可搜索的城市/景区名，且【必须同时包含调研对象本身与它的主要候选对比目的地】（3-6 个），"
+                    "确保横向对比维度完整，绝不能只调研单个目的地而失去可比性。"
+                    f"region 要给一个能精准消歧的行政区/国家短语（避免同名地歧义，如「凤凰」应识别为「湖南省湘西州」）。"
+                    f"search_angles 给 {max_angles} 个角度，务必包含「最新攻略2026」「官方公告」等时效性角度以抓取最新信息。只输出 JSON。"
                 )},
                 {"role": "user", "content": (
                     f"调研需求：{query}\n用户补充：{clar_text or '无'}\n"
-                    f"用户已勾选/指定的竞品（必须全部纳入 brands）：{('、'.join(user_brands)) or '无'}"
+                    f"用户已勾选/指定的目的地（必须全部纳入 destinations）：{('、'.join(user_destinations)) or '无'}"
                 )},
             ],
             max_tokens=2000,
             temperature=0.3,
             model=_model("fast"),
-            purpose="拆解调研计划（竞品/维度/搜索角度）",
+            purpose="拆解调研计划（目的地/维度/搜索角度）",
         )
-        if isinstance(data, dict) and (data.get("brands") or user_brands):
-            llm_brands = [b for b in (data.get("brands") or []) if isinstance(b, str) and b.strip()]
+        if isinstance(data, dict) and (data.get("destinations") or user_destinations):
+            llm_destinations = [b for b in (data.get("destinations") or []) if isinstance(b, str) and b.strip()]
             subject = str(data.get("subject") or "").strip()
-            # subject 仅当像「单个产品名」才作为品牌纳入：排除对比短语/过长描述
-            # （如「Notion与Obsidian的对比分析」不能当成一个品牌）
+            # subject 仅当像「单个目的地名」才作为目的地纳入：排除对比短语/过长描述
+            # （如「成都与杭州长期居住对比」不能当成一个目的地）
             subject_ok = bool(subject) and len(subject) <= 16 and not any(
-                k in subject for k in ("对比", "竞争", "分析", "调研", "格局", "与", "和", "、", "vs", "VS", "/")
+                k in subject for k in ("对比", "比较", "评估", "调研", "攻略", "路线", "与", "和", "、", "vs", "VS", "/")
             )
-            # 合并：用户勾选优先 → （合格的）调研对象 → LLM 拆出的竞品；去重保序，上限 6
+            # 合并：用户勾选优先 → （合格的）调研主体 → LLM 拆出的候选目的地；去重保序，上限 6
             merged: List[str] = []
-            for b in user_brands + ([subject] if subject_ok else []) + llm_brands:
+            for b in user_destinations + ([subject] if subject_ok else []) + llm_destinations:
                 b = b.strip()
                 if b and b not in merged:
                     merged.append(b)
-            brands = merged[:6]
+            destinations = merged[:6]
             angles = [a for a in data.get("search_angles", []) if isinstance(a, str)][:max_angles]
             focus = [f for f in data.get("focus", []) if isinstance(f, str)]
-            category = str(data.get("category") or "").strip()
-            if brands:
+            region = str(data.get("region") or "").strip()
+            if destinations:
                 return {
-                    "brands": brands,
-                    "focus": focus or ["产品", "定价", "口碑"],
-                    "angles": angles or ["产品功能", "定价方案", "用户评测", "最新动态2025", "市场份额"],
-                    "category": category,
+                    "destinations": destinations,
+                    "focus": focus or ["交通", "住宿", "预算", "口碑"],
+                    "angles": angles or default_angles[:max_angles],
+                    "region": region,
                 }
     except Exception:
         pass
-    fallback_brands = user_brands or _regex_brands(query)
+    fallback_destinations = user_destinations or _regex_destinations(query)
     return {
-        "brands": fallback_brands[:6],
-        "focus": ["产品", "定价", "口碑"],
-        "angles": ["产品功能", "定价方案", "用户评测", "最新动态2025", "市场份额"][:max_angles],
-        "category": str((clar.get("_category") or "")).strip(),
+        "destinations": fallback_destinations[:6],
+        "focus": ["交通", "住宿", "预算", "口碑"],
+        "angles": default_angles[:max_angles],
+        "region": str((clar.get("_region") or "")).strip(),
     }
 
 
-def _regex_brands(query: str) -> List[str]:
+def _regex_destinations(query: str) -> List[str]:
     tokens = re.split(r"[、,，/\s]+", query)
-    stop = {"分析", "对比", "竞争", "格局", "调研", "报告", "产品", "定价", "的", "与", "和"}
+    stop = {"攻略", "对比", "比较", "评估", "调研", "报告", "旅游", "旅行", "自由行",
+            "的", "与", "和", "怎么", "如何", "几月", "天"}
     cand = [t for t in tokens if 2 <= len(t) <= 12 and t not in stop and not t.isdigit()]
-    return cand[:4] if cand else ["目标竞品"]
+    return cand[:4] if cand else ["目标目的地"]
 
 
 # ── 编排：LLM 动态指派专家（含理由）─────────────────────────
-def _dispatch_experts(query: str, brands: List[str], focus: List[str]) -> Dict[str, Any]:
+def _dispatch_experts(query: str, destinations: List[str], focus: List[str]) -> Dict[str, Any]:
     experts = load_experts()
     roster = [
         {"id": e["id"], "name": e["name"], "level": e["level"],
@@ -744,13 +836,13 @@ def _dispatch_experts(query: str, brands: List[str], focus: List[str]) -> Dict[s
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是 Verda 首席指挥官。从专家名册中为本次调研挑选最合适的团队。"
+                    "你是 Verda 首席指挥官。从专家名册中为本次旅游调研挑选最合适的团队。"
                     "规则：必须含 1 位 L3 决策层统筹、1-2 位 L2 策略顾问、3-6 位 L1 执行专家。"
                     "为每位被选专家给出一句具体的指派理由（说明他/她负责什么、为什么适合）。"
                     '只输出 JSON：{"lead":"专家id","members":[{"id":"专家id","reason":"指派理由"}]}。'
                 )},
                 {"role": "user", "content": (
-                    f"调研主题：{query}\n竞品：{'、'.join(brands)}\n重点维度：{'、'.join(focus)}\n"
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点维度：{'、'.join(focus)}\n"
                     f"专家名册：{json.dumps(roster, ensure_ascii=False)}"
                 )},
             ],
@@ -775,8 +867,8 @@ def _dispatch_experts(query: str, brands: List[str], focus: List[str]) -> Dict[s
         pass
     fallback = [
         {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-        {"id": "L2-001", "reason": "战略顾问负责竞争格局判断"},
-        {"id": "L2-002", "reason": "定价顾问负责价格策略拆解"},
+        {"id": "L2-001", "reason": "策略顾问负责目的地横向对比研判"},
+        {"id": "L2-002", "reason": "预算顾问负责成本拆解与性价比判断"},
         {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
         {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
         {"id": "L3-003", "reason": "质检负责四铁律审裁"},
@@ -817,7 +909,7 @@ def _source_type(url: str) -> str:
         return "news"
     if not d:
         return "web"
-    # 仅当域名形态像「品牌官网」（短主域、无新闻/博客特征）时才判 official；
+    # 仅当域名形态像「官方站点」（短主域、无新闻/博客特征）时才判 official；
     # 其余一律归为普通网页，避免把不权威的新闻/博客误判为官网（对应需求：置信度修正）。
     if _looks_official(d):
         return "official"
@@ -832,63 +924,69 @@ _NON_OFFICIAL_HINTS = (
 
 
 def _looks_official(domain: str) -> bool:
-    """粗略判断是否像品牌官网：层级浅（主域+顶级域）、不含博客/新闻/社区特征。"""
+    """粗略判断是否像官方站点：层级浅（主域+顶级域）、不含博客/新闻/社区特征。"""
     if any(h in domain for h in _NON_OFFICIAL_HINTS):
         return False
     parts = [p for p in domain.split(".") if p]
-    # 形如 brand.com / brand.cn / brand.io / brand.com.cn —— 2-3 段且主体不太长
+    # 形如 gov.cn / dali.gov.cn / example.com —— 2-3 段且主体不太长
     if len(parts) <= 3 and parts and len(parts[0]) <= 18:
         return True
     return False
 
 
-def _category_keywords(category: str) -> List[str]:
-    """把品类短语拆成关键词，用于舆情相关性消歧（如『AI编程工具/AI代码编辑器』→ [ai, 编程, 工具, 代码, 编辑器]）。"""
-    if not category:
+def _region_keywords(region: str) -> List[str]:
+    """把行政区/国家短语拆成关键词，用于舆情相关性消歧（如『云南省大理州』→ [云南省, 大理州, 云南, 大理]）。"""
+    if not region:
         return []
     kws: List[str] = []
-    for w in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{1,}", category.lower()):
+    for w in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{1,}", region.lower()):
         kws.append(w)
-    for w in re.findall(r"[\u4e00-\u9fff]{2,}", category):
+    for w in re.findall(r"[\u4e00-\u9fff]{2,}", region):
         kws.append(w.lower())
     # 去重保序
     seen: set = set()
     return [k for k in kws if not (k in seen or seen.add(k))]
 
 
-def _sentiment_relevant(brand: str, cat_keywords: List[str], title: str, text: str) -> bool:
-    """舆情结果相关性判定：必须命中品牌名，或同时带有品类关键词（消歧）。
+def _sentiment_relevant(destination: str, region_keywords: List[str], title: str, text: str) -> bool:
+    """舆情结果相关性判定：必须命中目的地名，或同时带有地区关键词（消歧）。
 
-    解决「调研 Trae 抓到美甲」：品牌名命中即相关；若品牌名未命中，
-    则要求至少命中 1 个品类关键词，否则判为题不对版丢弃。
+    解决「调研大理抓到同名内容」：目的地名命中即相关；若目的地名未命中，
+    则要求至少命中 1 个地区关键词，否则判为题不对版丢弃。
     """
     blob = f"{title} {text}".lower()
-    b = (brand or "").lower().strip()
+    b = (destination or "").lower().strip()
     if not b:
         return True
-    # 品牌名（英文或≥2字中文）直接命中
+    # 目的地名（英文或≥2字中文）直接命中
     if len(b) >= 2 and b in blob:
         return True
-    # 品牌名未命中 → 必须有品类关键词背书，否则大概率跑题
-    if cat_keywords:
-        return any(k in blob for k in cat_keywords)
-    # 没有品类信息时退回宽松：要求品牌名出现（上面已判），到这里说明没命中 → 丢弃
+    # 目的地名未命中 → 必须有地区关键词背书，否则大概率跑题
+    if region_keywords:
+        return any(k in blob for k in region_keywords)
+    # 没有地区信息时退回宽松：要求目的地名出现（上面已判），到这里说明没命中 → 丢弃
     return False
 
 
-# ── 采集单品牌（抽出供补采复用）─────────────────────────────
-def _collect_brand(brand: str, angles: List[str], collector: str,
-                   fetch_limit: int, freshness: str,
-                   existing_urls: set) -> Dict[str, Any]:
-    """采集单个品牌：搜索 + 抓取 + 构造 Evidence。返回 {evidences, images, figures_events}。
+# ── 采集单目的地（抽出供补采复用）───────────────────────────
+def _collect_destination(destination: str, angles: List[str], collector: str,
+                         fetch_limit: int, freshness: str,
+                         existing_urls: set,
+                         groups: Optional[List[Dict]] = None) -> Dict[str, Any]:
+    """采集单个目的地：搜索 + 抓取 + 构造 Evidence。返回 {evidences, images, found, dup_skipped, groups}。
 
-    纯同步函数，供 asyncio.to_thread 调用；existing_urls 用于跨轮去重。
+    纯同步函数，供 asyncio.to_thread 调用；existing_urls 用于跨轮 URL 去重；
+    groups 用于内容级信源组归一化（v2.1：同质转载归并为一组，杜绝转载冒充多源），
+    由 run_pipeline 跨目的地/跨轮维护（docstring 注明：groups 池由 run_pipeline 主线程独占维护）。
     """
-    queries = [f"{brand} {a}" for a in angles]
+    queries = [f"{destination} {a}" for a in angles]
     results = multi_search(queries, num=10, freshness=freshness)
     out_ev: List[Evidence] = []
     out_img: List[Dict[str, Any]] = []
     fetched = 0
+    dup_skipped = 0
+    groups = groups or []
+    seen_gids = {g["id"] for g in groups if g.get("id")}
     for r in results:
         if fetched >= fetch_limit:
             break
@@ -901,7 +999,16 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
         if not text:
             continue
         # 正文二次相关性校验（剔除题不对版）
-        if not is_relevant_content(text, [brand], brand):
+        if not is_relevant_content(text, [destination], destination):
+            continue
+        # 内容级信源组归一化：同质转载 → 归并既有组、跳过取证（不冒充独立信源）
+        gid, _rep = group_new_text(text, groups)
+        if gid:
+            dup_skipped += 1
+            for g in groups:
+                if g.get("id") == gid:
+                    g.setdefault("urls", []).append(url)
+                    break
             continue
         existing_urls.add(url)
         stype = _source_type(url)
@@ -913,19 +1020,27 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
             has_publish_date=bool(pub_date), ok_fetch=bool(ok), excerpt=text[:280],
         )
         fdays = freshness_days(pub_date or captured)
+        # 开新信源组（指纹为空/短文本也独立成组）
+        gid2 = _sid("g")
+        while gid2 in seen_gids:
+            gid2 = _sid("g")
+        seen_gids.add(gid2)
+        groups.append({"id": gid2, "tokens": tokenize(text), "urls": [url]})
         ev = Evidence(
             evidence_id=_sid("e"),
             source_url=url,
             source_type=stype,
-            title=r.get("title", brand),
+            title=r.get("title", destination),
             excerpt=text[:280],
             captured_at=pub_date or captured,
             credibility=cred,
             collected_by=collector,
             image_urls=[im["src"] for im in page.get("images", [])][:3],
-            brand=brand,
+            destination=destination,
             domain=domain_of(url),
             freshness_days=fdays,
+            content_hash=content_fingerprint(text),
+            source_group=gid2,
         )
         ev._full_text = text[:1500]  # type: ignore[attr-defined]
         out_ev.append(ev)
@@ -936,30 +1051,36 @@ def _collect_brand(brand: str, angles: List[str], collector: str,
         if fig_src:
             fig_alt = "" if og else (pics[0].get("alt", "") if pics else "")
             out_img.append({
-                "src": fig_src, "alt": fig_alt, "title": r.get("title", brand),
+                "src": fig_src, "alt": fig_alt, "title": r.get("title", destination),
                 "source_url": url, "domain": domain_of(url),
-                "source_type": stype, "brand": brand, "evidence_id": ev.evidence_id,
+                "source_type": stype, "destination": destination, "evidence_id": ev.evidence_id,
             })
         fetched += 1
-    return {"evidences": out_ev, "images": out_img, "found": len(results)}
+    return {"evidences": out_ev, "images": out_img, "found": len(results),
+            "dup_skipped": dup_skipped, "groups": groups}
 
 
 # ── 主流程 ───────────────────────────────────────────────
 async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str, Any]]:
-    task = db.get_task(task_id) or {"query": "竞品分析", "clarifications": {}}
+    task = db.get_task(task_id) or {"query": "旅游调研", "clarifications": {}}
     clar = task.get("clarifications", {}) or {}
     # 双源读取用户指定的分析模型（task meta 顶层 或 clarifications，与 _mode 同处理），
     # 消除「跳过澄清直接跑」时 override 丢失的脆弱点。set 覆盖式写入：asyncio 每个
     # pipeline 协程有独立 context，且每次 set 覆盖旧值，不同任务之间无串扰。
     override = task.get("_model_override") or clar.get("_model_override") or ""
     _pipeline_model_override.set(override)
-    query = task.get("query", "竞品分析")
+    query = task.get("query", "旅游调研")
     mode = clar.get("_mode", "deep")
     if mode not in MODE_CONFIG:
         mode = "deep"
     cfg = MODE_CONFIG[mode]
-    # 调研视角（PM/运营/销售/用户/投资人/通用）→ 报告追加针对性专属板块
-    perspective = _normalize_perspective(clar.get("perspective", ""))
+    # 调研类型（guide 游玩攻略 / assessment 调研评估）：章节集/图表/结构化键/舆情平台全部查表
+    rtype = RT.type_key(task.get("_type") or clar.get("_type") or DEFAULT_RESEARCH_TYPE)
+    spec = RT.type_spec(rtype)
+    # 调研视角（亲子/情侣/独行/摄影/长辈 或 自住/投资/求学/养老/数字游民）→ 追加专属板块
+    persp_qid, persp_key = spec["perspective_source"]
+    perspective = str(clar.get(persp_key) or clar.get(persp_qid) or "")
+    section_ids = RT.sections_for(rtype, mode, perspective)
 
     t_start = time.monotonic()
     token_start = TOKEN_USAGE["total"]
@@ -977,24 +1098,25 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         return [_ev("trace", sp) for sp in trace.drain(task_id)]
 
     yield _ev("node_update", {"nodes": [{**n, "status": "idle"} for n in DAG_NODES]})
-    yield _ev("message", {"id": _sid("m"), "kind": "mode", "text": f"调研模式：{cfg['label']}",
-                          "mode": mode})
+    yield _ev("message", {"id": _sid("m"), "kind": "mode",
+                          "text": f"调研类型：{spec['label']} · {cfg['label']}",
+                          "mode": mode, "research_type": rtype})
     await asyncio.sleep(0.15)
 
     # ---- 1. intake：LLM 拆解调研计划 ----
     yield _ev("node_update", {"node": "intake", "status": "working", "expert": "L3-001"})
     yield _ev("thought", {"id": _sid("th"), "kind": "plan", "expert": "L3-001",
-                          "text": f"收到调研需求：{query}（{cfg['label']}）。正在拆解竞品对象与调研维度……", "ts": _now()})
+                          "text": f"收到调研需求：{query}（{spec['label']} · {cfg['label']}）。正在拆解目的地与调研维度……", "ts": _now()})
     trace.set_context(task_id, "L3-001", "intake", "拆解调研计划")
-    plan = await asyncio.to_thread(_plan_research, query, clar, cfg["max_angles"])
+    plan = await asyncio.to_thread(_plan_research, query, clar, cfg["max_angles"], rtype)
     for e in _drain_trace():
         yield e
-    brands = plan["brands"]
+    destinations = plan["destinations"]
     focus = plan["focus"]
     angles = plan["angles"]
-    category = plan.get("category", "")
+    region = plan.get("region", "")
     yield _ev("thought", {"id": _sid("th"), "kind": "plan", "expert": "L3-001",
-                          "text": f"锁定竞品：{'、'.join(brands)}；重点维度：{'、'.join(focus)}；"
+                          "text": f"锁定目的地：{'、'.join(destinations)}；重点维度：{'、'.join(focus)}；"
                                   f"将从「{'、'.join(angles)}」等角度展开多轮联网检索。", "ts": _now()})
     yield _ev("progress", prog(7, "intake", 0))
     yield _ev("node_update", {"node": "intake", "status": "done"})
@@ -1002,7 +1124,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     # ---- 2. orchestrator：LLM 动态指派专家 ----
     yield _ev("node_update", {"node": "orchestrator", "status": "working", "expert": "L3-001"})
     trace.set_context(task_id, "L3-001", "orchestrator", "指派专家团队")
-    dispatch = await asyncio.to_thread(_dispatch_experts, query, brands, focus)
+    dispatch = await asyncio.to_thread(_dispatch_experts, query, destinations, focus)
     for e in _drain_trace():
         yield e
     member_ids = [m["id"] for m in dispatch["members"]]
@@ -1019,7 +1141,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     # 结构化消息：编排→采集 PRODUCE 信封
     env_collect = Envelope(msg_id="env_" + uuid.uuid4().hex[:8], sender="L3-001",
                            receiver="collect", task_type="PRODUCE",
-                           payload={"brands": brands, "angles": angles})
+                           payload={"destinations": destinations, "angles": angles})
     yield _ev("message", {"id": _sid("m"), "kind": "team", "expert": "L3-001",
                           "members": member_ids, "text": "专家队已就位，开始深度采集。",
                           "dispatch": dispatch["members"],
@@ -1040,38 +1162,48 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     ev_by_collector: Counter = Counter()
     collect_notes: List[str] = []
     seen_urls: set = set()
+    # v2.1 客观性：信源组池（内容级去重唯一生产点）与客观性统计
+    groups: List[Dict] = []  # [{"id","fingerprint","urls":[...]}]，主线程独占维护
+    stats = {"dup_skipped": 0, "viral_count": 0, "viral_checked": 0}
 
-    for brand in brands:
+    def _to_int(v) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    for destination in destinations:
         yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": collector,
-                              "text": f"开始深度检索「{brand}」：{'、'.join(angles)}。", "ts": _now()})
-        trace.set_context(task_id, collector, "collect", f"采集竞品「{brand}」证据")
-        res = await asyncio.to_thread(_collect_brand, brand, angles, collector,
-                                      cfg["fetch_per_brand"], cfg["freshness"], seen_urls)
+                              "text": f"开始深度检索「{destination}」：{'、'.join(angles)}。", "ts": _now()})
+        trace.set_context(task_id, collector, "collect", f"采集目的地「{destination}」证据")
+        res = await asyncio.to_thread(_collect_destination, destination, angles, collector,
+                                      cfg["fetch_per_destination"], cfg["freshness"], seen_urls, groups)
+        stats["dup_skipped"] += res.get("dup_skipped", 0)
         for e in _drain_trace():
             yield e
         if not res["evidences"]:
-            collect_notes.append(f"「{brand}」未通过搜索获得有效结果（可能限流或不相关），已如实标注。")
+            collect_notes.append(f"「{destination}」未通过搜索获得有效结果（可能限流或不相关），已如实标注。")
             # 记录可观测 span：本次检索动作即便无果也可追溯
             trace.record_manual_span(
-                task_id, collector, "collect", f"采集竞品「{brand}」证据",
+                task_id, collector, "collect", f"采集目的地「{destination}」证据",
                 detail=f"检索角度：{('、'.join(angles))}\n搜索引擎：博查 Bocha（freshness={cfg['freshness']}）",
-                decision=f"「{brand}」未返回有效结果，已如实标注、不中断。",
+                decision=f"「{destination}」未返回有效结果，已如实标注、不中断。",
             )
             for e in _drain_trace():
                 yield e
             yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": collector,
-                                  "text": f"「{brand}」本轮搜索未返回有效结果，继续其余竞品（尽力而为，不中断）。",
+                                  "text": f"「{destination}」本轮搜索未返回有效结果，继续其余目的地（尽力而为，不中断）。",
                                   "ts": _now()})
             continue
         yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": collector,
-                              "text": f"「{brand}」聚合到 {res['found']} 条去重链接，已取证 {len(res['evidences'])} 条。",
+                              "text": f"「{destination}」聚合到 {res['found']} 条去重链接，已取证 {len(res['evidences'])} 条。",
                               "ts": _now()})
         for ev in res["evidences"]:
             evidences.append(ev)
             ev_by_collector[collector] += 1
             d = ev.to_dict()
             d["domain"] = domain_of(ev.source_url)
-            d["brand"] = ev.brand
+            d["destination"] = ev.destination
             d["full_text"] = getattr(ev, "_full_text", "")
             yield _ev("evidence", {**d})
             yield _ev("progress", prog(min(14 + len(evidences), 50), "collect", len(evidences)))
@@ -1080,49 +1212,51 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
             images.append(fig)
             yield _ev("image", fig)
         # 可观测 span：把「检索→去重→取证」这步非 LLM 动作写进决策链路（不再空白）
-        brand_evs = [ev for ev in res["evidences"]]
-        brand_domains = {domain_of(ev.source_url) for ev in brand_evs}
-        brand_domains.discard("")
+        destination_evs = [ev for ev in res["evidences"]]
+        destination_domains = {domain_of(ev.source_url) for ev in destination_evs}
+        destination_domains.discard("")
         trace.record_manual_span(
-            task_id, collector, "collect", f"采集竞品「{brand}」证据",
+            task_id, collector, "collect", f"采集目的地「{destination}」证据",
             detail=(f"检索角度（{len(angles)}个）：{('、'.join(angles))}\n"
                     f"搜索引擎：博查 Bocha Web Search（freshness={cfg['freshness']}）"),
-            decision=(f"聚合 {res['found']} 条去重链接 → 抓取取证 {len(brand_evs)} 条，"
-                      f"覆盖 {len(brand_domains)} 个独立域名。"),
-            evidence_ids=[ev.evidence_id for ev in brand_evs[:8]],
+            decision=(f"聚合 {res['found']} 条去重链接 → 抓取取证 {len(destination_evs)} 条，"
+                      f"覆盖 {len(destination_domains)} 个独立域名。"),
+            evidence_ids=[ev.evidence_id for ev in destination_evs[:8]],
         )
         for e in _drain_trace():
             yield e
         yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": collector,
-                              "text": f"「{brand}」累计证据库 {len(evidences)} 条。", "ts": _now()})
+                              "text": f"「{destination}」累计证据库 {len(evidences)} 条。", "ts": _now()})
 
-    # 真实舆情采集（多品牌 × 多平台 × 多角度，大幅提升样本量与平台多样性）
+    # 真实舆情采集（多目的地 × 类型白名单平台 × 多角度，大幅提升样本量与平台多样性）
+    sentiment_platforms = [p for p in spec["sentiment_platforms"] if p in PLATFORMS]
+    platform_names = "、".join(PLATFORM_LABEL.get(p, p) for p in sentiment_platforms) or "主流平台"
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
-                          "text": "舆情采集：在抖音/小红书/B站/微博/知乎多平台站内检索真实口碑（站内受限时自动回退全网定向检索），覆盖对象与主要竞品。",
+                          "text": f"舆情采集：在{platform_names}等平台站内检索真实口碑（站内受限时自动回退全网定向检索），覆盖对象与主要候选目的地。",
                           "ts": _now()})
     sentiment_comments: List[Dict[str, Any]] = []
-    # 取口碑的品牌：对象 + 主要竞品（按 mode 档位决定覆盖几个）
-    sentiment_brands = brands[:cfg.get("sentiment_brands", 3)]
-    primary_brand = brands[0]
+    # 取口碑的目的地：对象 + 主要候选（按 mode 档位决定覆盖几个）
+    sentiment_destinations = destinations[:cfg.get("sentiment_destinations", 3)]
+    primary_destination = destinations[0]
     take = cfg.get("platform_take", cfg.get("platform_per", 6))
-    # 品类关键词（用于消歧 + 相关性过滤，如 Trae→AI编程工具，避免抓到「美甲」等同名内容）
-    cat_kw = _category_keywords(category)
-    cat_q = (" " + category) if category else ""
-    for sb in sentiment_brands:
+    # 地区关键词（用于消歧 + 相关性过滤，如 大理→云南省，避免抓到同名内容）
+    region_kw = _region_keywords(region)
+    region_q = (" " + region) if region else ""
+    sentiment_angle_tpl = list(spec["sentiment_angles"])
+    for sb in sentiment_destinations:
         trace.set_context(task_id, sentiment_expert, "collect", f"采集「{sb}」全平台舆情")
         plat_counts: Counter = Counter()
         dropped = 0
-        for plat, site in PLATFORM_SITES.items():
+        for plat in sentiment_platforms:
+            site = PLATFORMS[plat].search_site
             plat_label = PLATFORM_LABEL.get(plat, plat)
-            # 多角度口碑检索词，带上品类消歧（覆盖评价/优缺点/吐槽/真实体验）
-            site_q = [f"{sb}{cat_q} 评价", f"{sb}{cat_q} 怎么样",
-                      f"{sb}{cat_q} 优缺点", f"{sb}{cat_q} 测评"]
+            # 多角度口碑检索词（查表渲染），带上地区消歧（覆盖体验/优缺点/踩坑/真实评价）
+            site_q = [t.replace("{d}", sb) + region_q for t in sentiment_angle_tpl[:2]]
             plat_results = await asyncio.to_thread(multi_search, site_q, num=8, site=site,
                                                    freshness=cfg["freshness"])
             # 站内受限（如抖音/小红书常被 include 过滤掉）→ 回退：全网检索 + 平台关键词
             if not plat_results:
-                fb_q = [f"{sb}{cat_q} {plat_label} 评价", f"{sb}{cat_q} {plat_label} 怎么样",
-                        f"{sb}{cat_q} {plat_label} 体验"]
+                fb_q = [f"{t.replace('{d}', sb)}{region_q} {plat_label}" for t in sentiment_angle_tpl]
                 plat_results = await asyncio.to_thread(multi_search, fb_q, num=8,
                                                        freshness=cfg["freshness"])
             for e in _drain_trace():
@@ -1133,8 +1267,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                 text = (r.get("snippet") or title or "").strip()
                 if not url or not text or url in seen_urls:
                     continue
-                # 相关性过滤：标题/正文必须命中品牌名或品类关键词，否则丢弃（题不对版）
-                if not _sentiment_relevant(sb, cat_kw, title, text):
+                # 相关性过滤：标题/正文必须命中目的地名或地区关键词，否则丢弃（题不对版）
+                if not _sentiment_relevant(sb, region_kw, title, text):
                     dropped += 1
                     continue
                 seen_urls.add(url)
@@ -1142,30 +1276,36 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                 detected = _source_type(url)
                 plat_final = plat if detected in ("web", "official", "news") else detected
                 sentiment_comments.append({"text": text, "platform": plat_final, "url": url,
-                                           "title": title, "brand": sb})
+                                           "title": title, "destination": sb})
                 plat_counts[plat_final] += 1
                 pub = r.get("captured_at", "")
+                # 舆论过热单点判定（有信号才判；当前博查 snippet 无互动字段 → checked=False 如实标注）
+                vv = assess_viral({"likes": _to_int(r.get("likes")),
+                                   "comments": _to_int(r.get("comments"))})
+                stats["viral_checked"] += 1 if vv["checked"] else 0
+                stats["viral_count"] += 1 if vv["viral"] else 0
                 cred = score_evidence(url, detected, captured_at=pub, has_publish_date=bool(pub),
                                       ok_fetch=False, excerpt=text[:280],
-                                      signals={"platform": plat_final})
+                                      signals={"platform": plat_final}, viral=vv["viral"])
                 ev = Evidence(
                     evidence_id=_sid("e"), source_url=url, source_type=detected,
                     title=title or f"{sb} 口碑", excerpt=text[:280],
                     captured_at=pub or _now(), credibility=cred, collected_by=sentiment_expert,
-                    brand=sb, domain=domain_of(url),
+                    destination=sb, domain=domain_of(url),
+                    viral=vv["viral"], viral_reason=vv["reason"],
                 )
                 evidences.append(ev)
                 ev_by_collector[sentiment_expert] += 1
                 d = ev.to_dict()
                 d["domain"] = domain_of(url)
-                d["brand"] = sb
+                d["destination"] = sb
                 yield _ev("evidence", {**d})
-        kept = len([c for c in sentiment_comments if c['brand'] == sb])
+        kept = len([c for c in sentiment_comments if c['destination'] == sb])
         yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": sentiment_expert,
                               "text": f"「{sb}」舆情有效 {kept} 条（已剔除 {dropped} 条题不对版），"
                                       f"平台分布：{dict(plat_counts)}。", "ts": _now()})
     yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": sentiment_expert,
-                          "text": f"舆情共采集到 {len(sentiment_comments)} 条带真实链接的多平台口碑（覆盖 {len(sentiment_brands)} 个品牌）。",
+                          "text": f"舆情共采集到 {len(sentiment_comments)} 条带真实链接的多平台口碑（覆盖 {len(sentiment_destinations)} 个目的地）。",
                           "ts": _now()})
 
     yield _ev("node_update", {"node": "collect", "status": "done"})
@@ -1181,8 +1321,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": analyst,
                           "text": "对证据去重并做交叉验证：同一结论需 ≥2 个独立域名支撑方判为高置信。", "ts": _now()})
     trace.set_context(task_id, analyst, "analyze", "交叉验证产出结构化论点")
-    analysis = await asyncio.to_thread(_analyze, query, brands, focus, evidences, member_ids,
-                                       cfg["analyze_max_tokens"])
+    analysis = await asyncio.to_thread(_analyze, query, destinations, focus, evidences, member_ids,
+                                       rtype, cfg["analyze_max_tokens"])
     for e in _drain_trace():
         yield e
     claims = analysis["claims"]
@@ -1190,13 +1330,13 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         yield _ev("message", {"id": _sid("m"), "kind": "claim", "claim": cl})
         await asyncio.sleep(0.03)
 
-    # 结构化知识 Schema（功能树/定价/画像）
+    # 结构化知识 Schema（三类对象按调研类型查表）
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": analyst,
-                          "text": "构建结构化竞品知识：功能树 / 定价模型 / 用户画像（字段完整、引用强制）……",
+                          "text": f"构建结构化目的地知识：{' / '.join(spec['structured_keys'])}（字段完整、引用强制）……",
                           "ts": _now()})
-    trace.set_context(task_id, analyst, "analyze", "产出结构化竞品知识Schema")
-    structured = await asyncio.to_thread(_analyze_structured, query, brands, focus, evidences,
-                                         cfg["structured_max_tokens"])
+    trace.set_context(task_id, analyst, "analyze", "产出结构化目的地知识Schema")
+    structured = await asyncio.to_thread(_analyze_structured, query, destinations, focus, evidences,
+                                         rtype, cfg["structured_max_tokens"])
     for e in _drain_trace():
         yield e
     analysis["structured"] = structured
@@ -1204,7 +1344,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
                           "text": "舆情专家对真实评论做情感分类与观点阵营聚类（占比归一化）……", "ts": _now()})
     trace.set_context(task_id, sentiment_expert, "analyze", "舆情情感分类与阵营聚类")
-    sentiment = await asyncio.to_thread(analyze_sentiment, primary_brand, sentiment_comments)
+    sentiment = await asyncio.to_thread(analyze_sentiment, primary_destination, sentiment_comments)
     for e in _drain_trace():
         yield e
     yield _ev("progress", prog(64, "analyze", len(evidences)))
@@ -1215,11 +1355,13 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("node_update", {"node": "audit", "status": "working", "expert": auditor})
     yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": auditor,
                           "text": "质检官评估证据覆盖度、维度完整性与置信度，决定是否打回返工。", "ts": _now()})
-    quality_before = evaluate_quality(brands, focus, claims, evidences, structured)
+    quality_before = evaluate_quality(destinations, focus, claims, evidences, structured,
+                                      research_type=rtype)
     # 质检官 LLM 真实审阅（逐维度打分 + 问题 + 改进建议）——让质检有对比、有审阅、可观测
     trace.set_context(task_id, auditor, "audit", "质检官审阅：逐维度打分+问题+改进建议")
     review_before = await asyncio.to_thread(
-        llm_quality_review, query, brands, focus, claims, structured, quality_before, _model("aux"))
+        llm_quality_review, query, destinations, focus, claims, structured, quality_before,
+        _model("aux"), rtype)
     for e in _drain_trace():
         yield e
     yield _ev("message", {"id": _sid("m"), "kind": "audit_review", "expert": auditor,
@@ -1232,7 +1374,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     rework_rounds_done = 0
     issues_resolved = 0
     if cfg["rework_rounds"] > 0:
-        envelopes = decide_rework(quality_before)
+        envelopes = decide_rework(quality_before, evidences)
         # 规则未触发但质检官 LLM 判定需返工 → 合成一个 analyze 返工信封，
         # 让反馈闭环真实可触发（且复审后能看到改善），对齐评分维度。
         if not envelopes and review_before.get("verdict") == "rework":
@@ -1249,19 +1391,21 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                 break
             for env in envelopes:
                 if env.receiver == "collect":
-                    recollect_brands = env.payload.get("brands", [])
+                    recollect = env.payload.get("destinations", [])
                     yield _ev("node_update", {"node": "audit", "status": "rework"})
                     yield _ev("node_update", {"node": "collect", "status": "rework"})
                     yield _ev("message", {"id": _sid("m"), "kind": "rework", "expert": auditor,
-                                          "reason": f"证据不足，打回采集补充：{('、'.join(recollect_brands)) or '相关品牌'}",
+                                          "reason": f"证据不足，打回采集补充：{('、'.join(recollect)) or '相关目的地'}",
                                           "envelope": {"sender": env.sender, "receiver": env.receiver,
                                                        "task_type": env.task_type, "issues": env.issues}})
-                    # 用更多角度补采（追加最新动态角度）
-                    extra_angles = angles + ["最新进展2026", "官方公告", "行业报告"]
-                    for b in recollect_brands[:3]:
+                    # 用更多角度补采（追加类型化的时效性角度）
+                    extra_angles = angles + list(spec["rework_angles"])
+                    for b in recollect[:3]:
                         trace.set_context(task_id, collector, "collect", f"返工补采「{b}」")
-                        res = await asyncio.to_thread(_collect_brand, b, extra_angles[:cfg["max_angles"]],
-                                                      collector, cfg["fetch_per_brand"], cfg["freshness"], seen_urls)
+                        res = await asyncio.to_thread(_collect_destination, b, extra_angles[:cfg["max_angles"]],
+                                                      collector, cfg["fetch_per_destination"], cfg["freshness"],
+                                                      seen_urls, groups)
+                        stats["dup_skipped"] += res.get("dup_skipped", 0)
                         for e in _drain_trace():
                             yield e
                         for ev in res["evidences"]:
@@ -1269,7 +1413,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                             ev_by_collector[collector] += 1
                             d = ev.to_dict()
                             d["domain"] = domain_of(ev.source_url)
-                            d["brand"] = ev.brand
+                            d["destination"] = ev.destination
                             d["full_text"] = getattr(ev, "_full_text", "")
                             yield _ev("evidence", {**d})
                         for fig in res["images"]:
@@ -1291,20 +1435,22 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                         rework_fb += "\n" + "\n".join(
                             f"- 建议：{x}" for x in review_before.get("suggestions", [])[:5]
                         )
-                    analysis = await asyncio.to_thread(_analyze, query, brands, focus, evidences, member_ids,
-                                                       cfg["analyze_max_tokens"], rework_fb)
+                    analysis = await asyncio.to_thread(_analyze, query, destinations, focus, evidences,
+                                                       member_ids, rtype, cfg["analyze_max_tokens"], rework_fb)
                     for e in _drain_trace():
                         yield e
                     claims = analysis["claims"]
-                    structured = await asyncio.to_thread(_analyze_structured, query, brands, focus, evidences,
-                                                         cfg["structured_max_tokens"])
+                    structured = await asyncio.to_thread(_analyze_structured, query, destinations, focus,
+                                                         evidences, rtype, cfg["structured_max_tokens"])
                     analysis["structured"] = structured
                     yield _ev("node_update", {"node": "analyze", "status": "done"})
             rework_rounds_done += 1
-            quality_after_round = evaluate_quality(brands, focus, claims, evidences, structured)
+            quality_after_round = evaluate_quality(destinations, focus, claims, evidences, structured,
+                                                   research_type=rtype)
             issues_resolved = max(0, len(quality_before.issues) - len(quality_after_round.issues))
-            envelopes = decide_rework(quality_after_round)
-        quality_after = evaluate_quality(brands, focus, claims, evidences, structured)
+            envelopes = decide_rework(quality_after_round, evidences)
+        quality_after = evaluate_quality(destinations, focus, claims, evidences, structured,
+                                         research_type=rtype)
     else:
         quality_after = quality_before
 
@@ -1313,7 +1459,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     if rework_rounds_done > 0:
         trace.set_context(task_id, auditor, "audit", "质检官复审：返工后复核改善情况")
         review_after = await asyncio.to_thread(
-            llm_quality_review, query, brands, focus, claims, structured, quality_after, _model("aux"))
+            llm_quality_review, query, destinations, focus, claims, structured, quality_after,
+            _model("aux"), rtype)
         for e in _drain_trace():
             yield e
         # 解决问题数：综合「规则侧 issue 减少」「质检官 issue 减少」「评分提升的维度数」
@@ -1342,26 +1489,20 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     # ---- 6. write：多模型并行逐章撰写 ----
     writer = next((m["id"] for m in dispatch["members"] if m["id"] == "L3-002"), dispatch["lead"])
     yield _ev("node_update", {"node": "write", "status": "working", "expert": writer})
-    section_ids = list(cfg["sections"])
-    # 视角专属板块：插在结论之前（如 销售→销售话术与卖点 / 投资人→增长与壁垒研判）
-    persp_sid = PERSPECTIVE_SECTION.get(perspective)
-    if persp_sid and persp_sid not in section_ids:
-        insert_pos = section_ids.index("conclusion") if "conclusion" in section_ids else len(section_ids)
-        section_ids.insert(insert_pos, persp_sid)
     yield _ev("thought", {"id": _sid("th"), "kind": "plan", "expert": writer,
-                          "text": f"首席分析师启动 {len(section_ids)} 章并行撰写（核心章 {_model('core')} / 辅助章 {_model('aux')}）。",
+                          "text": f"调研总监启动 {len(section_ids)} 章并行撰写（核心章 {_model('core')} / 辅助章 {_model('aux')}）。",
                           "ts": _now()})
 
     # 并行生成各章
     sections_text: Dict[str, Dict[str, Any]] = {}
 
     async def _write_one(sid: str):
-        title = dict(SECTION_PLAN).get(sid, sid)
+        title = RT.SECTION_PLAN.get(sid, sid)
         model = _model("core") if sid in CORE_SECTIONS else _model("aux")
         trace.set_context(task_id, writer, "write", f"撰写章节「{title}」")
         return sid, await asyncio.to_thread(
-            _write_single_section, sid, title, query, brands, focus,
-            evidences, claims, analysis, model,
+            _write_single_section, sid, title, query, destinations, focus,
+            evidences, claims, analysis, model, rtype,
             cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"]
         )
 
@@ -1374,7 +1515,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         done_count += 1
         for e in _drain_trace():
             yield e
-        title = dict(SECTION_PLAN).get(sid, sid)
+        title = RT.SECTION_PLAN.get(sid, sid)
         yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": writer,
                               "text": f"第 {done_count}/{total} 章「{title}」撰写完成。", "ts": _now()})
         yield _ev("progress", prog(70 + int(16 * done_count / total), "write", len(evidences)))
@@ -1384,13 +1525,13 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     if sentiment.get("sample_size"):
         trace.set_context(task_id, sentiment_expert, "write", "撰写章节「全网舆情与观点阵营」")
         sentiment_text = await asyncio.to_thread(
-            _write_sentiment_narrative, query, brands, sentiment, _model("aux"),
+            _write_sentiment_narrative, query, destinations, sentiment, _model("aux"),
             cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"],
         )
         for e in _drain_trace():
             yield e
 
-    chart_specs = _build_charts(brands, analysis, sentiment, claims)
+    chart_specs = _build_charts(destinations, analysis, sentiment, claims, rtype)
     for ch in chart_specs:
         yield _ev("chart", ch)
         await asyncio.sleep(0.05)
@@ -1404,18 +1545,33 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     elapsed = time.monotonic() - t_start
     tokens_used = TOKEN_USAGE["total"] - token_start
     metrics = compute_report_metrics(
-        brands=brands, focus=focus, claims=claims, evidences=evidences,
+        destinations=destinations, focus=focus, claims=claims, evidences=evidences,
         structured=structured, elapsed_seconds=elapsed, tokens_used=tokens_used,
         rework_rounds=rework_rounds_done, issues_resolved=issues_resolved,
+        objective_stats=stats, research_type=rtype,
     )
     metrics = merge_quality_into_metrics(metrics, quality_after.to_dict())
 
     trace_spans = trace.get_trace(task_id)
-    report = _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
+
+    # v2.1 客观性：把组内转载地址回填到代表证据（供溯源/披露），并组装 methodology 数据
+    groups_by_id = {g["id"]: g for g in groups}
+    for ev in evidences:
+        g = groups_by_id.get(ev.source_group or "")
+        if g:
+            ev.republished_from = [u for u in g.get("urls", []) if u != ev.source_url]
+    objective_meta = {
+        "stats": stats,
+        "unique_groups": len({ev.source_group for ev in evidences if ev.source_group}),
+        "sentiment_samples": sentiment.get("sample_size", 0),
+        "freshness": cfg["freshness"],
+    }
+
+    report = _assemble_report(query, destinations, focus, dispatch, claims, evidences, images,
                               sentiment, chart_specs, sections_text, collect_notes,
                               analysis, metrics, quality_before.to_dict(),
                               quality_after.to_dict(), trace_spans, mode, section_ids,
-                              sentiment_text)
+                              sentiment_text, objective_meta, rtype)
     # 质检审阅意见（before/after）随报告下发，供报告页「质检审裁」展示
     report["audit_review"] = {"before": review_before, "after": review_after,
                               "rework_rounds": rework_rounds_done,
@@ -1445,11 +1601,173 @@ def _evidence_digest(evidences: List[Evidence], limit: int = 28) -> str:
     return "\n".join(lines)
 
 
-def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str],
+# 分析产出各键的 JSON 片段：提示词按 spec["analysis_keys"] 动态拼装，
+# 新增/替换分析对象只需改注册表 + 在此加一条片段，分析与图表链路无需改代码。
+_ANALYSIS_KEY_SCHEMA: Dict[str, str] = {
+    "comparison": '"comparison":{"dimensions":["对比维度,5-6个"],"scores":[{"destination":"目的地","values":[0-100整数,与dimensions等长]}]}',
+    "livability": '"livability":{"dimensions":["评估维度,5-6个"],"scores":[{"destination":"目的地","values":[0-100整数,与dimensions等长]}]}',
+    "budget": '"budget":[{"destination":"目的地","per_capita_3d":数字或null,"tier":"经济|舒适|品质|高端","note":"花费结构与省钱空间一句话","evidence_ids":["真实id"]}]',
+    "cost": '"cost":[{"destination":"目的地","monthly_rent":数字或null,"monthly_living":数字或null,"note":"居住成本结构一句话","evidence_ids":["真实id"]}]',
+    "safety_index": '"safety_index":[{"destination":"目的地","safety_score":0-100整数,"note":"治安/灾害/医疗风险研判一句话","evidence_ids":["真实id"]}]',
+    "season": '"season":{"best_months":["最佳月份"],"avoid":["需避开的时段"],"matrix":[{"destination":"目的地","values":[12个0-100整数,依次对应1月到12月的出行适宜度]}]}',
+    "share_estimate": '"share_estimate":[{"name":"目的地","value":百分比整数}]',
+    "trends": '"trends":{"x":["时间点,如2022/2023/2024等"],"unit":"指标单位,如 接待游客(万人次)/热度指数/房价(元/㎡)","series":[{"name":"目的地","values":[数字,与x等长]}],"note":"趋势研判一句话"}',
+    "contradictions": '"contradictions":[{"claim_text":"来源间存在分歧的陈述","evidence_ids":["真实id"],"note":"为什么存疑/尚未证实"}]}',
+}
+
+# 结构化键 → 展示用中文名（写入章节提示时给 LLM 一个可读标签）
+_STRUCTURED_LABEL: Dict[str, str] = {
+    "route_plan": "逐日路线", "stay_options": "住宿选项", "cost_breakdown": "花费拆解",
+    "access_matrix": "可达性矩阵", "amenity_checklist": "配套清单", "risk_profile": "风险画像",
+}
+
+# 结构化键 → JSON 片段（提示词按 spec["structured_keys"] 拼装，与 schemas.coerce_structured 同键）
+_STRUCTURED_SCHEMA: Dict[str, str] = {
+    "route_plan": '"route_plan":[{"destination":"目的地","days":[{"day":第几天整数,"spots":[{"name":"景点/活动","transport":"交通方式","duration":"建议停留","tip":"实操提示","evidence_ids":["真实id"]}]}]}]',
+    "stay_options": '"stay_options":[{"destination":"目的地","areas":[{"area":"住宿区域","price_range":"价格区间","for_whom":"适合人群","pros":["优点"],"cons":["缺点"],"evidence_ids":["真实id"]}]}]',
+    "cost_breakdown": '"cost_breakdown":[{"destination":"目的地","items":[{"category":"交通|住宿|餐饮|门票|购物|其他","amount":数字或null,"unit":"元/人","share":占比百分数或null,"note":"说明","evidence_ids":["真实id"]}]}]',
+    "access_matrix": '"access_matrix":[{"destination":"目的地","routes":[{"mode":"飞机|高铁|自驾|大巴|轮渡","duration":"耗时","cost":"费用区间","frequency":"班次频次","note":"换乘/购票要点","evidence_ids":["真实id"]}]}]',
+    "amenity_checklist": '"amenity_checklist":[{"destination":"目的地","items":[{"category":"医疗|教育|商业|政务|网络","item":"具体配套","coverage":"full|partial|none","note":"说明","evidence_ids":["真实id"]}]}]',
+    "risk_profile": '"risk_profile":[{"destination":"目的地","items":[{"dimension":"治安|自然灾害|医疗应急|其他","level":"low|medium|high","note":"说明","evidence_ids":["真实id"]}]}]',
+}
+
+
+def _clamp_int(v, lo: int = 0, hi: int = 100) -> Optional[int]:
+    try:
+        n = int(round(float(v)))
+    except (TypeError, ValueError):
+        return None
+    return max(lo, min(hi, n))
+
+
+def _num_or_none(v) -> Optional[float]:
+    if isinstance(v, str):
+        v = (v.replace("￥", "").replace("¥", "").replace("元", "")
+             .replace(",", "").replace("/月", "").strip())
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_name(it: Dict[str, Any]) -> str:
+    """行主键：目的地名（兼容 LLM 偶发写成 name/brand 的情况，避免整行丢失）。"""
+    return str(it.get("destination") or it.get("brand") or it.get("name") or "").strip()
+
+
+def _sanitize_radar(raw, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """雷达对比：维度与各目的地分值必须等长；维度非法时回落注册表维度。"""
+    data = raw if isinstance(raw, dict) else {}
+    raw_dims = data.get("dimensions")
+    dims = [str(d).strip() for d in raw_dims if str(d).strip()] if isinstance(raw_dims, list) else []
+    if len(dims) < 3:
+        dims = list(spec["radar_dims"])
+    scores: List[Dict[str, Any]] = []
+    for s in (data.get("scores") or []):
+        if not isinstance(s, dict):
+            continue
+        name = _row_name(s)
+        vals = s.get("values")
+        vals = [_clamp_int(v) for v in vals] if isinstance(vals, list) else []
+        if not name or len(vals) != len(dims) or any(v is None for v in vals):
+            continue
+        scores.append({"destination": name, "values": vals})
+    return {"dimensions": dims, "scores": scores[:4]}
+
+
+def _sanitize_evidence_rows(raw, valid_ids: set, fields: Tuple[str, ...]) -> List[Dict[str, Any]]:
+    """数据型行（花费/成本/安全分）：`fields` 的数值字段保留原名，**无有效证据则丢行**。"""
+    out: List[Dict[str, Any]] = []
+    for it in (raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        name = _row_name(it)
+        eids = _filter_eids(it.get("evidence_ids"), valid_ids)
+        if not name or not eids:
+            continue
+        row: Dict[str, Any] = {"destination": name}
+        for f in fields:
+            row[f] = _clamp_int(it.get(f)) if f.endswith("_score") else _num_or_none(it.get(f))
+        if all(row[f] is None for f in fields):
+            continue
+        row["note"] = str(it.get("note") or "")[:200]
+        row["evidence_ids"] = eids
+        out.append(row)
+    return out[:6]
+
+
+def _sanitize_season(raw) -> Dict[str, Any]:
+    """季节矩阵：逐月适宜度必须 12 个整数（1-12 月），否则丢该行（不猜月份）。"""
+    data = raw if isinstance(raw, dict) else {}
+    matrix: List[Dict[str, Any]] = []
+    for m in (data.get("matrix") or []):
+        if not isinstance(m, dict):
+            continue
+        name = _row_name(m)
+        vals = m.get("values")
+        vals = [_clamp_int(v) for v in vals] if isinstance(vals, list) else []
+        if not name or len(vals) != 12 or any(v is None for v in vals):
+            continue
+        matrix.append({"destination": name, "values": vals})
+
+    def _months(key: str) -> List[str]:
+        return [str(x)[:20] for x in (data.get(key) or []) if str(x).strip()][:8]
+
+    return {"best_months": _months("best_months"), "avoid": _months("avoid"), "matrix": matrix[:6]}
+
+
+def _sanitize_trends(raw) -> Dict[str, Any]:
+    """趋势序列：x 轴与各序列必须等长且为数值，否则整块留空（不编造）。"""
+    tr = raw if isinstance(raw, dict) else {}
+    tx = tr.get("x") if isinstance(tr.get("x"), list) else []
+    series: List[Dict[str, Any]] = []
+    for s in (tr.get("series") or []):
+        if not isinstance(s, dict):
+            continue
+        name = _row_name(s)
+        vals = s.get("values")
+        if not name or not tx or not isinstance(vals, list) or len(vals) != len(tx):
+            continue
+        nums = [_num_or_none(v) for v in vals]
+        if any(n is None for n in nums):
+            continue
+        series.append({"name": name, "values": nums})
+    if not tx or not series:
+        return {}
+    return {"x": [str(x)[:20] for x in tx], "unit": str(tr.get("unit") or "")[:40],
+            "series": series[:5], "note": str(tr.get("note") or "")[:200]}
+
+
+def _sanitize_contradictions(raw, valid_ids: set) -> List[Dict[str, Any]]:
+    """矛盾检测容错：非 list 置空，防单条坏输出拖垮整章。"""
+    out: List[Dict[str, Any]] = []
+    for ct in (raw if isinstance(raw, list) else [])[:8]:
+        if not isinstance(ct, dict) or not ct.get("claim_text"):
+            continue
+        out.append({
+            "claim_text": str(ct["claim_text"])[:200],
+            "evidence_ids": _filter_eids(ct.get("evidence_ids"), valid_ids),
+            "note": str(ct.get("note", ""))[:200],
+        })
+    return out
+
+
+def _analyze(query, destinations, focus, evidences: List[Evidence], members: List[str],
+             research_type: str = DEFAULT_RESEARCH_TYPE,
              max_tokens_param: int = 8000, review_feedback: str = "") -> Dict[str, Any]:
+    spec = RT.type_spec(research_type)
+    keys = [k for k in spec["analysis_keys"] if k in _ANALYSIS_KEY_SCHEMA]
+    schema = ",\n".join(_ANALYSIS_KEY_SCHEMA[k] for k in keys)
+    allowed_fields = set(RT.claim_fields_for(research_type))
+    cb = spec.get("cost_bar") or {}
+    cost_line = (f"成本/花费数组放在 {cb['key']} 键，金额字段用 {cb['value_field']}"
+                 f"（单位 {cb['unit']}）。" if cb else "")
+    share_line = "share_estimate 各项之和不得超过 100；" if "share_estimate" in keys else ""
     digest = _evidence_digest(evidences)
     ev_ids = [e.evidence_id for e in evidences]
-    domains_by_id = {e.evidence_id: domain_of(e.source_url) for e in evidences}
+    valid_ids = set(ev_ids)
+    # v2.1 客观性：独立信源以「信源组」计（同质转载归并为一组，杜绝冒充多源）
+    _sg_of = {e.evidence_id: (e.source_group or e.evidence_id) for e in evidences}
     authors = [m for m in members if m.startswith(("L1", "L2"))] or ["L2-001"]
     # 返工时把质检官的具体意见注入提示，让重分析真正针对短板调优（而非重抽一遍）
     rework_directive = ""
@@ -1461,38 +1779,44 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
             "至少一条有证据支撑的结论；③让结论更精准、更有区分度。"
         )
 
-    fallback = {
-        "claims": _fallback_claims(brands, ev_ids, domains_by_id, authors),
-        "comparison": {"dimensions": ["功能完整度", "易用性", "性价比", "生态", "口碑"],
-                       "scores": [{"brand": b, "values": []} for b in brands[:4]]},
-        "pricing": [{"brand": b, "entry_price": None} for b in brands[:4]],
-        "market_share": [],
-        "five_forces": {},
+    fallback: Dict[str, Any] = {
+        "claims": _fallback_claims(destinations, ev_ids, _sg_of, authors),
         "trends": {},
+        "contradictions": [],
     }
+    for k in keys:
+        if k in ("comparison", "livability"):
+            fallback[k] = {"dimensions": list(spec["radar_dims"]),
+                           "scores": [{"destination": d, "values": []} for d in destinations[:4]]}
+        elif k == "season":
+            fallback[k] = {"best_months": [], "avoid": [], "matrix": []}
+        else:
+            fallback[k] = []
     try:
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖投行/券商行研级别的资深竞品分析师，对标高盛、麦肯锡、字节战略部的分析深度。"
-                    "基于给定证据（每条带 evidence_id），提炼结构化、有锋芒、敢下判断的竞争洞察。"
+                    "你是顶尖旅游研究机构（对标 Lonely Planet、马蜂窝研究院、文旅数据中心）的资深旅游调研分析师。"
+                    f"本次调研类型是「{spec['label']}」（{spec['subtitle']}）。"
+                    "基于给定证据（每条带 evidence_id），提炼结构化、有锋芒、敢下判断的调研洞察。"
                     "严格要求：每条结论的 evidence_ids 必须来自给定证据的真实 id；无证据支撑的结论不要输出；数字尽量带来源。"
+                    f"claims 的 field 只能取：{'|'.join(RT.claim_fields_for(research_type))}。"
                     "输出 JSON：{"
-                    '"claims":[{"text":"一句话锐利结论（要有判断不要套话）","field":"overview|feature_tree|pricing_model|user_persona|swot|trend","evidence_ids":["真实id"],"author":"专家id"}],'
-                    '"comparison":{"dimensions":["能力维度,5-6个"],"scores":[{"brand":"竞品","values":[0-100整数,与dimensions等长]}]},'
-                    '"pricing":[{"brand":"竞品","entry_price":数字或null,"note":"定价模式与策略解读"}],'
-                    '"market_share":[{"name":"竞品","value":百分比整数}],'
-                    '"five_forces":{"rivalry":0-100,"new_entrants":0-100,"substitutes":0-100,"buyer_power":0-100,"supplier_power":0-100,"note":"波特五力总体研判一句话"},'
-                    '"trends":{"x":["时间点,如2021/2022/H1等"],"unit":"指标单位,如 版本数/月活(百万)/营收增速(%)","series":[{"name":"竞品","values":[数字,与x等长]}],"note":"趋势研判一句话"}}。'
-                    "five_forces 用 0-100 量化各方向竞争压力（越高压力越大），基于证据合理研判。"
-                    "trends 给出可比的时间序列（产品迭代节奏/用户规模/营收增速等任一可由证据支撑的维度），无依据则留空对象 {}，不要编造。"
-                    "comparison/pricing/market_share 必须基于证据合理推断，无依据则留空数组或 null。"
+                    '"claims":[{"text":"一句话锐利结论（要有判断不要套话）","field":"见上述枚举","evidence_ids":["真实id"],"author":"专家id","claim_type":"fact|opinion|mixed"}],'
+                    + schema + ","
+                    "claim_type 定义与客观性铁律：fact=证据可直接支撑的客观事实；opinion=分析判断（用词体现观点）；mixed=事实与推断混合。"
+                    "每条 claim 必须明确 claim_type；不得把单一信源或存在矛盾的资讯写成定论；"
+                    "当不同证据对同一事实说法不一致时，如实输出到 contradictions 而非掩盖。"
+                    f"雷达对比的维度请围绕本次类型的重点：{'、'.join(spec['radar_dims'])}。" + cost_line +
+                    "trends 给出可比的时间序列（客流/热度/房价/成本等任一可由证据支撑的维度），无依据则留空对象 {}，不要编造。"
+                    "所有数组/对象必须基于证据合理推断，无依据则留空数组或 null；每项数据型结论都要挂 evidence_ids。"
                     "【数据真实性铁律】所有评分/数值必须精确、可信、有区分度：严禁清一色用 5 或 10 的整数倍（如 80/85/90），"
-                    "要给出精确到个位的真实评分（如 83、77、91、68），不同竞品、不同维度的分数要有真实差异，体现你基于证据的细腻判断；"
-                    "market_share 各项之和不得超过 100；任何百分比不得超过 100。只输出 JSON。"
+                    "要给出精确到个位的真实评分（如 83、77、91、68），不同目的地、不同维度的分数要有真实差异，"
+                    "体现你基于证据的细腻判断；"
+                    f"{share_line}任何百分比不得超过 100。只输出 JSON。"
                 )},
                 {"role": "user", "content": (
-                    f"调研主题：{query}\n竞品：{'、'.join(brands)}\n重点：{'、'.join(focus)}\n"
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点：{'、'.join(focus)}\n"
                     f"可用作者专家id：{authors}\n证据：\n{digest}{rework_directive}"
                 )},
             ],
@@ -1503,70 +1827,94 @@ def _analyze(query, brands, focus, evidences: List[Evidence], members: List[str]
         )
         if isinstance(data, dict) and data.get("claims"):
             claims = []
-            valid_ids = set(ev_ids)
             for c in data["claims"]:
                 if not isinstance(c, dict) or not c.get("text"):
                     continue
-                eids = [i for i in c.get("evidence_ids", []) if i in valid_ids]
-                indep = len({domains_by_id.get(i, "") for i in eids if domains_by_id.get(i)})
+                eids = _filter_eids(c.get("evidence_ids"), valid_ids)
+                # v2.1 独立信源 = 所属「信源组」去重计数（同质转载只算一组）
+                indep = len({_sg_of.get(i, i) for i in eids}) if eids else 0
                 author = c.get("author") if c.get("author") in members else authors[0]
-                claims.append(make_claim(_sid("c"), c["text"], c.get("field", "overview"),
-                                         eids, author, indep).to_dict())
+                ct = c.get("claim_type", "mixed") if c.get("claim_type") in ("fact", "opinion", "mixed") else "mixed"
+                fld = str(c.get("field") or "overview").strip()
+                if fld not in allowed_fields:
+                    fld = "overview"
+                claims.append(make_claim(_sid("c"), c["text"], fld, eids, author, indep, ct).to_dict())
             if claims:
-                comp = data.get("comparison") or fallback["comparison"]
-                ff = data.get("five_forces") if isinstance(data.get("five_forces"), dict) else {}
-                tr = data.get("trends") if isinstance(data.get("trends"), dict) else {}
-                share = _sanitize_share(data.get("market_share") or [])
-                return {
-                    "claims": claims,
-                    "comparison": comp,
-                    "pricing": data.get("pricing") or [],
-                    "market_share": share,
-                    "five_forces": ff,
-                    "trends": tr,
-                }
+                result: Dict[str, Any] = {"claims": claims}
+                for k in keys:
+                    raw_k = data.get(k)
+                    if k in ("comparison", "livability"):
+                        result[k] = _sanitize_radar(raw_k, spec)
+                    elif k in ("budget", "cost", "safety_index"):
+                        fields = ("per_capita_3d",) if k == "budget" else (
+                            ("safety_score",) if k == "safety_index" else ("monthly_rent", "monthly_living"))
+                        result[k] = _sanitize_evidence_rows(raw_k, valid_ids, fields)
+                        if k == "budget":  # 档位标签非数值，单独带上
+                            tiers = {_row_name(x): str(x.get("tier") or "")[:20]
+                                     for x in (raw_k if isinstance(raw_k, list) else [])
+                                     if isinstance(x, dict)}
+                            for row in result[k]:
+                                row["tier"] = tiers.get(row["destination"], "")
+                    elif k == "season":
+                        result[k] = _sanitize_season(raw_k)
+                    elif k == "share_estimate":
+                        result[k] = _sanitize_share(raw_k or [])
+                    elif k == "trends":
+                        result[k] = _sanitize_trends(raw_k)
+                    elif k == "contradictions":
+                        result[k] = _sanitize_contradictions(raw_k, valid_ids)
+                    else:
+                        result[k] = raw_k if isinstance(raw_k, (list, dict)) else []
+                return {**fallback, **result}
     except Exception:
         pass
     return fallback
 
 
-def _analyze_structured(query, brands, focus, evidences: List[Evidence],
+def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
+                        research_type: str = DEFAULT_RESEARCH_TYPE,
                         max_tokens_param: int = 8000) -> Dict[str, Any]:
-    """产出结构化竞品知识：功能树 / 定价模型 / 用户画像（严格 Schema + 引用强制）。"""
+    """产出结构化目的地知识（严格 Schema + 引用强制）。
+
+    对象集来自 spec["structured_keys"]（guide：逐日路线/住宿选项/花费拆解；
+    assessment：可达性矩阵/配套清单/风险画像），提示词片段同样按类型查表。
+    """
+    spec = RT.type_spec(research_type)
+    keys = list(spec["structured_keys"])
+    fragments = [_STRUCTURED_SCHEMA.get(k) for k in keys]
+    if any(f is None for f in fragments):
+        return {k: [] for k in keys}
     digest = _evidence_digest(evidences, limit=24)
     valid_eids = {e.evidence_id for e in evidences}
-    out = {"feature_tree": [], "pricing_model": [], "user_persona": []}
+    out: Dict[str, Any] = {k: [] for k in keys}
     try:
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是竞品知识结构化专家。基于给定证据（每条带 evidence_id），为每个竞品输出严格结构化的 JSON。"
-                    "字段必须完整、格式一致。evidence_ids 必须来自给定证据真实 id（无则留空数组）。输出 JSON：{"
-                    '"feature_tree":[{"brand":"竞品","modules":[{"category":"模块分类","name":"模块名","sub_features":[{"name":"子功能","support":"full|partial|none","note":"说明","evidence_ids":["id"]}]}]}],'
-                    '"pricing_model":[{"brand":"竞品","currency":"CNY|USD","model_type":"subscription|usage|freemium|one_time|free","free_tier":true/false,"tiers":[{"name":"档位名","price":数字或null,"period":"月|年","unit":"人/席","target_user":"目标用户","includes":["权益"],"evidence_ids":["id"]}]}],'
-                    '"user_persona":[{"brand":"竞品","personas":[{"name":"画像名","segment":"细分人群","needs":["需求"],"scenarios":["场景"],"pain_points":["痛点"],"decision_factors":["决策因素"],"migration_cost":"迁移成本描述","evidence_ids":["id"]}]}]}。'
-                    "只输出 JSON，不要解释。"
+                    "你是旅游知识结构化专家。基于给定证据（每条带 evidence_id），为每个目的地输出严格结构化的 JSON。"
+                    "字段必须完整、格式一致。evidence_ids 必须来自给定证据真实 id（无则留空数组）；"
+                    "每个叶子项都必须挂载支撑它的 evidence_ids，无证据的项不要输出。输出 JSON：{"
+                    + ",".join(fragments) + "}。只输出 JSON，不要解释。"
                 )},
                 {"role": "user", "content": (
-                    f"调研主题：{query}\n竞品：{'、'.join(brands)}\n重点：{'、'.join(focus)}\n证据：\n{digest}"
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点：{'、'.join(focus)}\n证据：\n{digest}"
                 )},
             ],
             max_tokens=max_tokens_param,
             temperature=0.3,
             model=_model("core"),
-            purpose="结构化竞品知识（功能树/定价/画像）",
+            purpose=f"结构化目的地知识（{'/'.join(keys)}）",
         )
         if isinstance(data, dict):
-            out["feature_tree"] = coerce_feature_tree(data, valid_eids)
-            out["pricing_model"] = coerce_pricing_model(data, valid_eids)
-            out["user_persona"] = coerce_user_persona(data, valid_eids)
+            coerced = coerce_structured(data, research_type, valid_eids)
+            out.update(coerced)
     except Exception:
         pass
     return out
 
 
 def _sanitize_share(share: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """市场份额防越界：剔除非法值，总和 >100 时按比例归一化，避免出现百分之几千。"""
+    """热度/客流份额估算防越界：剔除非法值，总和 >100 时按比例归一化。"""
     clean = [s for s in share
              if isinstance(s, dict) and isinstance(s.get("value"), (int, float)) and s["value"] > 0]
     total = sum(s["value"] for s in clean)
@@ -1576,90 +1924,26 @@ def _sanitize_share(share: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return clean
 
 
-def _fallback_claims(brands, ev_ids, domains_by_id, authors) -> List[Dict[str, Any]]:
-    """LLM 不可用时，仍只输出挂真实证据的结论（不编造内容主张，仅做归纳陈述）。"""
-    indep = len({domains_by_id.get(i, "") for i in ev_ids[:3] if domains_by_id.get(i)})
+def _fallback_claims(destinations, ev_ids, groups_by_id, authors) -> List[Dict[str, Any]]:
+    """LLM 不可用时，仍只输出挂真实证据的结论（不编造内容主张，仅做归纳陈述）。
+
+    groups_by_id（v2.1）：evidence_id → source_group（空组按证据自身），
+    用于独立信源组数判定。
+    """
+    indep = len({groups_by_id.get(i, i) for i in ev_ids[:3]})
     out = [make_claim(_sid("c"),
-                      f"已就 {'、'.join(brands)} 采集到多源公开证据，下列结论均挂载真实来源以供溯源。",
-                      "overview", ev_ids[:3], authors[0], indep).to_dict()]
+                      f"已就 {'、'.join(destinations)} 采集到多源公开证据，下列结论均挂载真实来源以供溯源。",
+                      "overview", ev_ids[:3], authors[0], indep, "mixed").to_dict()]
     return out
 
 
-# ── 撰写：LLM 逐章产出正文（券商行研/MBB 咨询级深度）─────────────
-SECTION_PLAN = [
-    ("summary", "执行摘要 · 核心判断"),
-    ("overview", "一、竞争格局总览（SCP × 波特五力）"),
-    ("feature", "二、功能矩阵与战略意图解码"),
-    ("pricing", "三、商业模式与定价博弈"),
-    ("persona", "四、目标用户与场景画像"),
-    ("trend", "五、发展轨迹与趋势研判"),
-    ("swot", "六、SWOT 与战略选择"),
-    # 创新板块（专家级）
-    ("moat", "护城河深度与壁垒拆解"),
-    ("inflection", "关键拐点时间线与变量"),
-    ("contrarian", "反共识洞察 · 敢下判断"),
-    ("conclusion", "结论与行动建议"),
-    ("risk", "风险提示与不确定性"),
-    # 视角专属板块（按问卷「调研视角」择一插入）
-    ("persp_pm", "产品经理视角 · 功能策略与迭代启示"),
-    ("persp_ops", "运营视角 · 增长打法与活动机会"),
-    ("persp_sales", "销售视角 · 卖点提炼与竞品话术"),
-    ("persp_user", "用户视角 · 选型决策与避坑指南"),
-    ("persp_investor", "投资人视角 · 增长壁垒与价值研判"),
-]
-
-# 视角 → 专属章节 id
-PERSPECTIVE_SECTION = {
-    "pm": "persp_pm",
-    "ops": "persp_ops",
-    "sales": "persp_sales",
-    "user": "persp_user",
-    "investor": "persp_investor",
-}
+# ── 撰写：LLM 逐章产出正文（行研/咨询级深度）─────────────
+# 章节标题 / 章节提示 / 视角映射 / 字段归属全部由 research_types 单一真相源提供，
+# 本模块只做渲染与编排（新增调研类型无需改这里）。
 
 
-def _normalize_perspective(raw: str) -> str:
-    """把问卷里的视角文案归一化为内部 key。"""
-    s = (raw or "").lower()
-    if "产品" in raw or "pm" in s:
-        return "pm"
-    if "运营" in raw or "ops" in s:
-        return "ops"
-    if "销售" in raw or "sales" in s:
-        return "sales"
-    if "投资" in raw or "investor" in s:
-        return "investor"
-    if "用户" in raw or "消费" in raw or "user" in s:
-        return "user"
-    return ""  # 通用/综合：不加专属板块
-
-# 核心章用 glm-5.2（质量最高），其余用 glm-5.1
-CORE_SECTIONS = {"summary", "feature", "pricing", "conclusion", "contrarian", "moat"}
-
-SECTION_PROMPTS = {
-    "summary": "全局执行摘要，给出最核心的3-4条判断，要求结论先行、观点锐利，让读者 30 秒抓住全貌。",
-    "overview": "用 SCP(结构-行为-绩效) 与波特五力解构行业格局，分析市场结构、竞争烈度、玩家行为模式与绩效结果。",
-    "feature": "功能矩阵背后的战略意图解码——不只罗列功能，更要解读对手为什么这么做、各自的取舍与护城河在哪里。",
-    "pricing": "商业模式与定价博弈，分析各玩家的定价策略、营收结构、单位经济、免费与付费边界的博弈逻辑。",
-    "persona": "目标用户与典型场景画像，描述不同品牌的核心用户群、使用场景、决策路径与迁移成本。",
-    "trend": "发展轨迹与未来趋势研判，基于历史迭代与当前信号，预判未来 1-2 年的走向与关键变量。",
-    "swot": "SWOT 与战略选择建议，系统梳理各玩家的优势/劣势/机会/威胁，并给出针对性战略选择。",
-    "moat": "护城河深度拆解：从网络效应、转换成本、规模经济、品牌、数据壁垒等维度，量化评估各玩家护城河的深与浅，并指出最脆弱的一环。",
-    "inflection": "关键拐点时间线：梳理行业与各玩家发展史上的关键转折点，识别未来可能引爆格局变化的变量与触发条件。",
-    "contrarian": "反共识洞察：提出 2-3 个与市场主流认知相反、但有证据支撑的大胆判断，敢于下结论，解释为什么大多数人看错了。",
-    "conclusion": "给决策者的明确行动建议，分优先级排序（高/中/低），要敢拍板、有具体动作，不要空泛的套话。",
-    "risk": "本报告结论的风险提示与不确定性，券商式风险披露——说明结论可能在哪些条件下失效、有哪些未知因素。",
-    # 视角专属板块
-    "persp_pm": "以产品经理视角输出：各竞品的功能取舍与产品哲学、值得借鉴/规避的设计、功能空白与差异化机会、对自身产品路线图与迭代优先级的具体启示。",
-    "persp_ops": "以运营视角输出：各竞品的增长打法（拉新/激活/留存/裂变）、内容与社区运营、活动与渠道策略，并给出可立即复用的运营机会清单与打法建议。",
-    "persp_sales": "以销售视角输出：逐个竞品提炼差异化卖点与价值主张，给出『我方 vs 竞品』的对比话术、常见异议应对话术与一句话杀手锏，便于一线销售直接使用。",
-    "persp_user": "以用户/消费者视角输出：不同人群该如何选型、各竞品最适合谁、真实使用中的优点与坑、性价比与迁移成本，给出清晰的选型决策建议与避坑指南。",
-    "persp_investor": "以投资人视角输出：赛道空间与增长性、各玩家的护城河与壁垒强度、商业模式健康度与单位经济、关键风险与潜在拐点，给出价值研判与重点关注信号。",
-}
-
-
-def _write_single_section(sid: str, title: str, query, brands, focus,
-                          evidences, claims, analysis, model: str,
+def _write_single_section(sid: str, title: str, query, destinations, focus,
+                          evidences, claims, analysis, model: str, research_type: str = DEFAULT_RESEARCH_TYPE,
                           min_paragraphs: int = 5, para_words: str = "180-280",
                           section_max_tokens: int = 6000) -> Dict[str, Any]:
     """单章独立生成：每章独立 token 预算 + 独立模型，失败不影响其他章节。
@@ -1667,27 +1951,9 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
     篇幅深度由 min_paragraphs/para_words/section_max_tokens 三档动态控制
     （快速/深度/专家级越来越长、越来越详尽）。
     """
-    field_map = {
-        "summary": ["overview", "feature_tree", "pricing_model"],
-        "overview": ["overview"],
-        "feature": ["feature_tree"],
-        "pricing": ["pricing_model"],
-        "persona": ["user_persona"],
-        "trend": ["trend"],
-        "swot": ["swot"],
-        "moat": ["overview", "feature_tree", "swot"],
-        "inflection": ["trend", "overview"],
-        "contrarian": ["overview", "swot", "trend"],
-        "conclusion": ["overview", "feature_tree", "pricing_model", "swot"],
-        "risk": ["overview", "trend", "swot"],
-        "persp_pm": ["feature_tree", "overview", "trend"],
-        "persp_ops": ["overview", "trend", "user_persona"],
-        "persp_sales": ["feature_tree", "pricing_model", "swot"],
-        "persp_user": ["user_persona", "feature_tree", "pricing_model"],
-        "persp_investor": ["overview", "trend", "swot"],
-    }
-    fields = field_map.get(sid, ["overview"])
-    rel_claims = [c for c in claims if c.get("field") in fields]
+    spec = RT.type_spec(research_type)
+    fields, chart_types = RT.section_fields(sid)
+    rel_claims = [c for c in claims if c.get("field") in set(fields)]
     digest = _evidence_digest(evidences, limit=20)
     claim_text = "\n".join(
         f"- [{','.join(c.get('evidence_ids', [])) or '无'}] {c['text']}（{c['confidence']}）"
@@ -1695,47 +1961,51 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
     ) or "（无直接相关论点，请基于证据自行提炼）"
 
     extra = ""
-    ff = analysis.get("five_forces") or {}
-    if ff.get("note") and sid in ("summary", "overview", "moat"):
-        extra += f"\n波特五力研判：{ff['note']}"
     tr = analysis.get("trends") or {}
-    if tr.get("note") and sid in ("summary", "trend", "inflection"):
+    if tr.get("note") and ("trend" in chart_types or "trend" in fields):
         extra += f"\n趋势研判：{tr['note']}"
-    comp = analysis.get("comparison") or {}
-    if comp.get("dimensions") and sid in ("summary", "feature", "moat"):
-        extra += f"\n能力维度对比：{', '.join(comp['dimensions'][:6])}"
-    pricing = analysis.get("pricing") or []
-    if pricing and sid in ("summary", "pricing"):
-        extra += f"\n定价信息：{json.dumps(pricing[:3], ensure_ascii=False)}"
+    comp = analysis.get(spec["radar_key"]) or {}
+    if comp.get("dimensions") and "radar" in chart_types:
+        extra += f"\n对比维度：{', '.join(comp['dimensions'][:6])}"
+    cb = spec.get("cost_bar") or {}
+    cost_rows = analysis.get(cb.get("key")) or []
+    if cost_rows and "cost_bar" in chart_types:
+        extra += f"\n成本数据：{json.dumps(cost_rows[:3], ensure_ascii=False)}"
+    if sid == "season":
+        season = analysis.get("season") or {}
+        if season.get("note") or season.get("best_months"):
+            extra += f"\n季节研判：{json.dumps(season, ensure_ascii=False)[:600]}"
     structured = analysis.get("structured") or {}
-    if sid == "feature" and structured.get("feature_tree"):
-        extra += f"\n功能树结构：{json.dumps(structured['feature_tree'][:2], ensure_ascii=False)[:800]}"
-    if sid == "pricing" and structured.get("pricing_model"):
-        extra += f"\n定价模型结构：{json.dumps(structured['pricing_model'][:3], ensure_ascii=False)[:800]}"
-    if sid == "persona" and structured.get("user_persona"):
-        extra += f"\n用户画像结构：{json.dumps(structured['user_persona'][:2], ensure_ascii=False)[:800]}"
+    for key in spec["structured_keys"]:
+        if key in fields and structured.get(key):
+            label = _STRUCTURED_LABEL.get(key, key)
+            extra += f"\n{label}结构：{json.dumps(structured[key][:2], ensure_ascii=False)[:800]}"
 
-    section_role = SECTION_PROMPTS.get(sid, "深度竞争分析章节")
+    section_role = RT.SECTION_PROMPTS.get(sid, "深度旅游调研章节")
     try:
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖券商首席分析师 + MBB 咨询合伙人级别的报告撰稿人。"
-                    "你正在写一份有锋芒、有独到观点、敢于下判断的竞争分析报告，对标高盛行研、麦肯锡战略报告。\n"
+                    "你是顶尖旅游媒体主编 + 资深旅行顾问级别的报告撰稿人。"
+                    f"你正在写一份「{spec['label']}」（{spec['subtitle']}）报告，"
+                    "要求有锋芒、有独到观点、敢于下判断，对标 Lonely Planet 深度指南与专业调研报告。\n"
                     f"本章定位：{section_role}\n"
                     "写作要求（务必做到）：\n"
-                    "1) 结论先行：先给一句最锐利、最有信息量的『核心判断』（key_takeaway），可以是反共识的、大胆的判断；\n"
-                    "2) 有观点：正文要解读『为什么』而非罗列『是什么』，揭示对手的战略意图与取舍，给出你的独立判断；\n"
-                    "3) 有数据：尽量引用证据中的具体数字、事实、对比；避免空话套话和正确的废话；\n"
+                    "1) 结论先行：先给一句最锐利、最有信息量的『核心判断』（key_takeaway），可以直接给出推荐/劝退结论；\n"
+                    "2) 有观点：正文要解读『为什么』而非罗列『是什么』，给出行程/居住的取舍与你的独立判断；\n"
+                    "3) 有数据：尽量引用证据中的具体数字、价格、班次、耗时、对比；避免空话套话和正确的废话；\n"
                     f"4) 有深度：正文不少于 {min_paragraphs} 段，每段 {para_words} 字，要有层次、有递进的论证链、有洞察，"
-                    "段落之间要有逻辑推进（现象→机理→影响→判断），不要并列堆砌；\n"
+                    "段落之间要有逻辑推进（现象→机理→影响→建议），不要并列堆砌；\n"
                     "5) 有亮点：给 2-3 条 highlights（最有冲击力的发现/反差/独特洞察，每条一句话）；\n"
-                    "6) 溯源：在正文关键结论后用方括号标注支撑它的 evidence_id，形如 [e_xxxx]（必须来自给定证据/论点的真实 id）。\n"
+                    "6) 溯源：在正文关键结论后用方括号标注支撑它的 evidence_id，形如 [e_xxxx]（必须来自给定证据/论点的真实 id）；\n"
+                    "7) 客观性铁律：区分事实陈述与观点研判——事实须有可溯源证据；观点用『我们建议/有待验证』等措辞，"
+                    "不得写成定论；单一信源组或存在矛盾的结论须标注『据报道/单方说法/存在争议』，禁止直接断言；"
+                    "情绪化社媒证据只能作『口碑感知』描述，不得转述为客观事实（如把单条差评写成『普遍宰客』）。\n"
                     '输出 JSON：{"paragraphs":["第一段","第二段",...],"key_takeaway":"核心判断一句话","highlights":["亮点1","亮点2","亮点3"]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
                     f"章节标题：{title}\n"
-                    f"调研主题：{query}\n竞品：{'、'.join(brands)}\n重点：{'、'.join(focus)}\n"
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点：{'、'.join(focus)}\n"
                     f"相关论点（含支撑 evidence_id）：\n{claim_text}\n{extra}\n\n证据摘要：\n{digest}"
                 )},
             ],
@@ -1761,10 +2031,10 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
         retry = chat(
             [
                 {"role": "system", "content": (
-                    f"你是资深竞品分析师，针对给定章节写不少于 {min_paragraphs} 段深度分析，"
+                    f"你是资深旅游调研分析师，针对给定章节写不少于 {min_paragraphs} 段深度分析，"
                     f"每段约 {para_words} 字，论证层层递进，直接输出正文（不要 JSON、不要标题）。"
                 )},
-                {"role": "user", "content": f"章节：{title}\n主题：{query}\n竞品：{'、'.join(brands)}\n证据：\n{digest[:2000]}"},
+                {"role": "user", "content": f"章节：{title}\n主题：{query}\n目的地：{'、'.join(destinations)}\n证据：\n{digest[:2000]}"},
             ],
             max_tokens=section_max_tokens, temperature=0.7, model=model, purpose=f"重试撰写章节：{title}",
         )
@@ -1777,7 +2047,7 @@ def _write_single_section(sid: str, title: str, query, brands, focus,
             "key_takeaway": "", "highlights": []}
 
 
-def _write_sentiment_narrative(query, brands, sentiment: Dict[str, Any], model: str,
+def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], model: str,
                                min_paragraphs: int = 5, para_words: str = "180-280",
                                section_max_tokens: int = 6000) -> Dict[str, Any]:
     """基于真实舆情数据生成多段深度解读（绝不在无数据时编造）。
@@ -1811,19 +2081,22 @@ def _write_sentiment_narrative(query, brands, sentiment: Dict[str, Any], model: 
         data = chat_json(
             [
                 {"role": "system", "content": (
-                    "你是顶尖社媒舆情分析师 + 品牌战略顾问。基于给定的【真实舆情统计与原声】，"
+                    "你是顶尖社媒舆情分析师 + 旅游目的地顾问。基于给定的【真实舆情统计与原声】，"
                     "写一段有锋芒、有洞察的全网口碑深度解读。\n"
                     "硬性要求：\n"
                     "1) 只能基于给定的真实数据与原声做解读，严禁编造任何不存在的数字、平台或评论；\n"
                     f"2) 正文不少于 {min_paragraphs} 段，每段 {para_words} 字，"
-                    "逐层递进：整体情感盘面→平台差异→观点阵营博弈→真实原声印证→对品牌的战略启示；\n"
-                    "3) 要解读『为什么』——不同平台/人群为何呈现这种口碑差异，背后的产品与定位原因；\n"
+                    "逐层递进：整体情感盘面→平台差异→观点阵营博弈→真实原声印证→对出行/居住决策的启示；\n"
+                    "3) 要解读『为什么』——不同平台/人群为何呈现这种口碑差异，背后的体验与客流原因；\n"
                     "4) 给 2-3 条 highlights（最有冲击力的口碑发现或反差，每条一句话）；\n"
-                    "5) 若样本量偏小，需在解读中如实点明『样本有限、结论为方向性参考』，不得掩盖。\n"
+                    "4.5) 全程区分『舆情感知』与『客观事实』：社媒评论/热度隶属口碑感知，不得转述为客观属性"
+                    "（如把个别吐槽写成『普遍宰客』），避免把少数/高热声音写成共识；\n"
+                    "5) 开头必须交代真实样本规模与平台分布（来自给定统计，不得编造）；样本量偏小时如实在解读中点明"
+                    "『样本有限、结论为方向性参考』，不得掩盖。\n"
                     '输出 JSON：{"paragraphs":["段1","段2",...],"key_takeaway":"一句话核心口碑判断","highlights":["亮点1","亮点2"]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
-                    f"调研主题：{query}\n竞品：{'、'.join(brands)}\n"
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n"
                     f"真实样本量：{sample} 条带链接评论\n"
                     f"整体情感占比：正面 {overall.get('pos',0)}% / 中性 {overall.get('neu',0)}% / 负面 {overall.get('neg',0)}%\n"
                     f"平台分布：{plat_lines}\n"
@@ -1852,7 +2125,20 @@ def _write_sentiment_narrative(query, brands, sentiment: Dict[str, Any], model: 
 
 
 # ── 图表：全部来自真实分析数据（无 random）─────────────────────
-def _build_charts(brands, analysis, sentiment, claims=None) -> List[Dict[str, Any]]:
+def _fields_for_chart(chart_type: str) -> List[str]:
+    """章节字段表反查：哪些 claim 字段支撑该图表（图表挂 evidence_ids 用）。"""
+    out: List[str] = []
+    for fields, ctypes in RT.SECTION_FIELDS.values():
+        if chart_type in ctypes:
+            out.extend(fields)
+    return out
+
+
+def _build_charts(destinations, analysis, sentiment, claims=None,
+                  research_type: str = DEFAULT_RESEARCH_TYPE) -> List[Dict[str, Any]]:
+    """按 spec["charts"] 出图：类型决定图集，某图无真实数据则整图跳过（不占位造假）。"""
+    spec = RT.type_spec(research_type)
+    allowed = set(spec["charts"])
     specs: List[Dict[str, Any]] = []
     ev_by_field: Dict[str, List[str]] = {}
     for c in (claims or []):
@@ -1865,54 +2151,66 @@ def _build_charts(brands, analysis, sentiment, claims=None) -> List[Dict[str, An
         seen = set()
         return [x for x in out if not (x in seen or seen.add(x))][:6]
 
-    comp = analysis.get("comparison") or {}
-    dims = comp.get("dimensions") or []
-    scores = [s for s in (comp.get("scores") or [])
-              if isinstance(s.get("values"), list) and len(s["values"]) == len(dims) and dims]
-    if dims and scores:
-        series = [{"name": s["brand"], "values": s["values"]} for s in scores[:4]]
-        specs.append({"chart_id": _sid("ch"), "type": "radar", "title": "竞品能力雷达对比",
-                      "option": C.feature_radar("竞品能力雷达对比", dims, series),
-                      "evidence_ids": eids("feature_tree", "overview")})
+    def chart_eids(chart_type: str) -> List[str]:
+        return eids(*_fields_for_chart(chart_type))
 
-    pricing = [p for p in (analysis.get("pricing") or []) if p.get("entry_price") is not None]
-    if pricing:
-        specs.append({"chart_id": _sid("ch"), "type": "bar", "title": "入门档定价对比",
-                      "option": C.pricing_bar("入门档定价对比", [p["brand"] for p in pricing],
-                                              [float(p["entry_price"]) for p in pricing]),
-                      "evidence_ids": eids("pricing_model")})
+    radar = analysis.get(spec["radar_key"]) or {}
+    dims = radar.get("dimensions") or []
+    scores = [s for s in (radar.get("scores") or [])
+              if dims and isinstance(s.get("values"), list) and len(s["values"]) == len(dims)]
+    if "radar" in allowed and dims and scores:
+        series = [{"name": s["destination"], "values": s["values"]} for s in scores[:4]]
+        specs.append({"chart_id": _sid("ch"), "type": "radar", "title": spec["radar_title"],
+                      "option": C.feature_radar(spec["radar_title"], dims, series),
+                      "evidence_ids": chart_eids("radar")})
 
-    share = [s for s in (analysis.get("market_share") or []) if isinstance(s.get("value"), (int, float))]
-    if share:
-        specs.append({"chart_id": _sid("ch"), "type": "donut", "title": "市场份额估算（分析师推断）",
-                      "option": C.market_donut("市场份额估算（分析师推断）",
+    cb = spec.get("cost_bar") or {}
+    rows = ([r for r in (analysis.get(cb["key"]) or [])
+             if isinstance(r.get(cb["value_field"]), (int, float))] if cb else [])
+    if "cost_bar" in allowed and rows:
+        specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": cb["title"],
+                      "option": C.pricing_bar(cb["title"], [r["destination"] for r in rows],
+                                              [float(r[cb["value_field"]]) for r in rows],
+                                              y_name=cb["unit"]),
+                      "evidence_ids": chart_eids("cost_bar")})
+
+    season = analysis.get("season") or {}
+    matrix = [m for m in (season.get("matrix") or [])
+              if isinstance(m.get("values"), list) and len(m["values"]) == 12]
+    if "season_heat" in allowed and matrix:
+        title = "逐月出行适宜度（1-12 月）"
+        specs.append({"chart_id": _sid("ch"), "type": "season_heat", "title": title,
+                      "option": C.season_heat(title, [f"{i}月" for i in range(1, 13)],
+                                              [m["destination"] for m in matrix],
+                                              [m["values"] for m in matrix],
+                                              str(season.get("note") or "")),
+                      "evidence_ids": chart_eids("season_heat")})
+
+    share = [s for s in (analysis.get("share_estimate") or [])
+             if isinstance(s.get("value"), (int, float))]
+    if "donut" in allowed and share:
+        specs.append({"chart_id": _sid("ch"), "type": "donut", "title": spec["share_title"],
+                      "option": C.market_donut(spec["share_title"],
                                                [{"name": s["name"], "value": s["value"]} for s in share]),
-                      "evidence_ids": eids("overview")})
-
-    ff = analysis.get("five_forces") or {}
-    if any(isinstance(ff.get(k), (int, float)) for k in
-           ("rivalry", "new_entrants", "substitutes", "buyer_power", "supplier_power")):
-        specs.append({"chart_id": _sid("ch"), "type": "five_forces", "title": "波特五力·竞争压力研判",
-                      "option": C.five_forces_radar("波特五力·竞争压力研判", ff),
-                      "evidence_ids": eids("overview")})
+                      "evidence_ids": chart_eids("donut")})
 
     tr = analysis.get("trends") or {}
     tx = tr.get("x") if isinstance(tr.get("x"), list) else []
     tseries = [s for s in (tr.get("series") or [])
-               if isinstance(s.get("values"), list) and len(s["values"]) == len(tx) and tx]
-    if tx and tseries:
+               if tx and isinstance(s.get("values"), list) and len(s["values"]) == len(tx)]
+    if "trend" in allowed and tx and tseries:
         title = f"发展轨迹趋势（{tr.get('unit', '')}）".replace("（）", "")
         specs.append({"chart_id": _sid("ch"), "type": "trend", "title": title,
                       "option": C.trend_line(title, tx,
                                              [{"name": s["name"], "values": s["values"]} for s in tseries[:5]],
                                              y_name=tr.get("unit", "")),
-                      "evidence_ids": eids("trend", "overview")})
+                      "evidence_ids": chart_eids("trend")})
 
-    if sentiment.get("sample_size"):
+    if "sentiment_donut" in allowed and sentiment.get("sample_size"):
         specs.append({"chart_id": _sid("ch"), "type": "sentiment_donut", "title": "整体舆情情感分布",
                       "option": C.sentiment_donut("整体舆情情感分布", sentiment["overall_count"]),
                       "evidence_ids": []})
-        if sentiment.get("by_platform"):
+        if "platform_bar" in allowed and sentiment.get("by_platform"):
             specs.append({"chart_id": _sid("ch"), "type": "platform_bar", "title": "各平台声量（抖音优先）",
                           "option": C.platform_bar("各平台声量（抖音优先）", sentiment["by_platform"]),
                           "evidence_ids": []})
@@ -1922,7 +2220,7 @@ def _build_charts(brands, analysis, sentiment, claims=None) -> List[Dict[str, An
 # ── 数据空间：把数据密集章节的数据汇总成可导出 CSV 的表格 ────────
 def _build_data_grid(section_id: str, analysis: Dict[str, Any],
                      evidences: List[Evidence]) -> Optional[Dict[str, Any]]:
-    """对数据密集章（pricing/feature/trend/overview）生成数据网格。"""
+    """对数据密集章（section 集由 spec["data_grid_sections"] 决定）生成数据网格。"""
     ev_by_id = {e.evidence_id: e for e in evidences}
 
     def _src(eids):
@@ -1932,41 +2230,50 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
                 return domain_of(e.source_url), e.source_url, eid
         return "", "", ""
 
+    def _row(name: str, value: Any, metric: str, eids=None, fallback_src: str = ""):
+        src, url, eid = _src(eids)
+        return {"name": name, "value": value, "metric": metric,
+                "source": src or fallback_src, "source_url": url, "evidence_id": eid}
+
     columns = ["数据名", "值", "指标", "来源", "来源网址"]
     rows: List[Dict[str, Any]] = []
     structured = analysis.get("structured") or {}
 
-    if section_id == "pricing":
-        for pm in structured.get("pricing_model", []):
-            brand = pm.get("brand", "")
-            for t in pm.get("tiers", []):
-                src, url, eid = _src(t.get("evidence_ids"))
-                price = t.get("price")
-                rows.append({
-                    "name": f"{brand} · {t.get('name','')}",
-                    "value": (f"{price}{pm.get('currency','')}/{t.get('period','')}" if price is not None else "未公开"),
-                    "metric": "定价档位",
-                    "source": src, "source_url": url, "evidence_id": eid,
-                })
-    elif section_id == "feature":
-        comp = analysis.get("comparison") or {}
-        dims = comp.get("dimensions") or []
-        for s in (comp.get("scores") or []):
-            vals = s.get("values") or []
-            for i, dim in enumerate(dims):
-                if i < len(vals):
-                    rows.append({
-                        "name": f"{s.get('brand','')} · {dim}",
-                        "value": vals[i], "metric": "能力评分(0-100)",
-                        "source": "分析师综合研判", "source_url": "", "evidence_id": "",
-                    })
-    elif section_id == "overview":
-        for sh in (analysis.get("market_share") or []):
-            rows.append({
-                "name": f"{sh.get('name','')} 市场份额",
-                "value": f"{sh.get('value','')}%", "metric": "市场份额估算",
-                "source": "分析师推断", "source_url": "", "evidence_id": "",
-            })
+    if section_id == "budget":            # guide：预算拆解
+        for cb in structured.get("cost_breakdown", []):
+            dest = str(cb.get("destination", ""))
+            for it in cb.get("items", []):
+                amount = it.get("amount")
+                val = f"{amount}{it.get('unit') or '元/人'}" if amount is not None else "未公开"
+                if isinstance(it.get("share"), (int, float)):
+                    val += f"（占比 {it['share']}%）"
+                rows.append(_row(f"{dest} · {it.get('category', '')}", val, "花费项",
+                                 it.get("evidence_ids")))
+    elif section_id == "route":           # guide：逐日路线
+        for rp in structured.get("route_plan", []):
+            dest = str(rp.get("destination", ""))
+            for d in rp.get("days", []):
+                day = d.get("day", "")
+                for sp in d.get("spots", []):
+                    plan = f"{sp.get('transport', '')} / {sp.get('duration', '')}".strip(" /")
+                    rows.append(_row(f"{dest} · D{day} {sp.get('name', '')}", plan or "—",
+                                     "行程安排", sp.get("evidence_ids")))
+    elif section_id == "value":           # assessment：性价比与成本
+        for c in (analysis.get("cost") or []):
+            dest = str(c.get("destination", ""))
+            if isinstance(c.get("monthly_rent"), (int, float)):
+                rows.append(_row(f"{dest} 月租", f"{c['monthly_rent']}元/月", "居住成本",
+                                 c.get("evidence_ids")))
+            if isinstance(c.get("monthly_living"), (int, float)):
+                rows.append(_row(f"{dest} 月均生活费", f"{c['monthly_living']}元/月", "生活成本",
+                                 c.get("evidence_ids")))
+    elif section_id == "accessibility":   # assessment：可达性
+        for am in structured.get("access_matrix", []):
+            dest = str(am.get("destination", ""))
+            for rt in am.get("routes", []):
+                plan = f"{rt.get('duration', '')} / {rt.get('cost', '')}".strip(" /")
+                rows.append(_row(f"{dest} · {rt.get('mode', '')}", plan or "—",
+                                 "可达性", rt.get("evidence_ids")))
     elif section_id == "trend":
         tr = analysis.get("trends") or {}
         tx = tr.get("x") or []
@@ -1974,11 +2281,8 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
             vals = s.get("values") or []
             for i, x in enumerate(tx):
                 if i < len(vals):
-                    rows.append({
-                        "name": f"{s.get('name','')} · {x}",
-                        "value": vals[i], "metric": tr.get("unit", "趋势值"),
-                        "source": "分析师推断", "source_url": "", "evidence_id": "",
-                    })
+                    rows.append(_row(f"{s.get('name', '')} · {x}", vals[i],
+                                     tr.get("unit", "趋势值"), None, "分析师推断"))
 
     if len(rows) < 2:
         return None
@@ -1986,19 +2290,21 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
 
 
 # ── 组装报告 ─────────────────────────────────────────────
-def _make_cover_svg(title: str, brands: List[str]) -> str:
+def _make_cover_svg(title: str, destinations: List[str],
+                    research_type: str = DEFAULT_RESEARCH_TYPE) -> str:
     """本地生成报告封面（SVG data URL），零外部依赖、永不失败。
 
     根因修复：原先封面写入 copilot-cn.bytedance.net 外部 AI 生图 URL，
     浏览器端鉴权/跨域失败 → 列表只显示灰色占位。改为后端确定性生成
-    SVG 封面（品牌色渐变 + 标题 + 品牌行），直接以 data URL 入库，
+    SVG 封面（主题色渐变 + 标题 + 目的地行），直接以 data URL 入库，
     前端 <img> 直接渲染，无网络、无失败。
     """
-    safe_title = (title or "竞品调研").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    byline = RT.type_spec(research_type)["cover_byline"]
+    safe_title = (title or "旅游调研").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     if len(safe_title) > 20:
         safe_title = safe_title[:20] + "…"
-    brand_line = " · ".join(brands[:3]) if brands else "Verda AI"
-    safe_brand = brand_line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    dest_line = " · ".join(destinations[:3]) if destinations else "Verda AI"
+    safe_dest = dest_line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">'
         '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
@@ -2007,63 +2313,41 @@ def _make_cover_svg(title: str, brands: List[str]) -> str:
         '<rect width="800" height="450" fill="url(#g)"/>'
         '<circle cx="650" cy="80" r="150" fill="#ffffff" opacity="0.06"/>'
         '<circle cx="110" cy="390" r="90" fill="#ffffff" opacity="0.05"/>'
-        '<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">VERDA · 竞品调研</text>'
+        f'<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">VERDA · {byline}</text>'
         f'<text x="46" y="225" fill="#ffffff" font-family="sans-serif" font-size="40" font-weight="700">{safe_title}</text>'
-        f'<text x="48" y="272" fill="#ccfbf1" font-family="sans-serif" font-size="22">{safe_brand}</text>'
+        f'<text x="48" y="272" fill="#ccfbf1" font-family="sans-serif" font-size="22">{safe_dest}</text>'
         '<text x="48" y="410" fill="#99f6e4" font-family="sans-serif" font-size="16" opacity="0.85">结论可溯源 · 证据可沉淀</text>'
         '</svg>'
     )
     return "data:image/svg+xml," + urllib.parse.quote(svg)
 
 
-def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
+def _assemble_report(query, destinations, focus, dispatch, claims, evidences, images,
                      sentiment, charts, sections_text, collect_notes,
                      analysis, metrics, quality_before, quality_after,
-                     trace_spans, mode, section_ids, sentiment_text=None) -> Dict[str, Any]:
+                     trace_spans, mode, section_ids, sentiment_text=None,
+                     objective_meta: Optional[Dict] = None,
+                     research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
     rid = _sid("r")
+    spec = RT.type_spec(research_type)
     members = [m["id"] for m in dispatch["members"]]
-    title = f"{'、'.join(brands)} 竞争格局深度分析报告"
+    title = RT.report_title(destinations, research_type)
     indep_domains = len({domain_of(e.source_url) for e in evidences if e.source_url})
     subtitle = (f"基于 {len(evidences)} 条联网证据 · {indep_domains} 个独立来源 · "
                 f"{len(members)} 位专家协作生成 · {MODE_CONFIG.get(mode,{}).get('label','深度模式')}")
 
-    def claims_for(*fields: str):
-        fs = set(fields)
-        return [c for c in claims if c["field"] in fs]
-
     chart_by_type = {c["type"]: c for c in charts}
 
-    # 章节标题（带序号）映射
-    title_map = dict(SECTION_PLAN)
-
-    # 章节 → (fields, chart_types) 映射
-    sec_meta = {
-        "summary": (("overview",), ()),
-        "overview": (("overview",), ("five_forces", "donut")),
-        "feature": (("feature_tree",), ("radar",)),
-        "pricing": (("pricing_model",), ("bar",)),
-        "persona": (("user_persona",), ()),
-        "trend": (("trend",), ("trend",)),
-        "swot": (("swot",), ()),
-        "moat": (("overview", "feature_tree", "swot"), ()),
-        "inflection": (("trend", "overview"), ()),
-        "contrarian": (("overview", "swot", "trend"), ()),
-        "conclusion": (("conclusion",), ()),
-        "risk": ((), ()),
-        "persp_pm": (("feature_tree", "overview"), ()),
-        "persp_ops": (("overview", "trend"), ()),
-        "persp_sales": (("feature_tree", "pricing_model"), ()),
-        "persp_user": (("user_persona", "feature_tree"), ()),
-        "persp_investor": (("overview", "trend", "swot"), ()),
-    }
-    data_grid_sections = {"pricing", "feature", "overview", "trend"}
+    # 章节标题（类型白名单内的章节加中文序号）
+    title_map = {**RT.SECTION_PLAN, **RT.numbered_titles(section_ids, research_type)}
+    data_grid_sections = set(spec["data_grid_sections"])
 
     def _section(sid: str):
-        fields, chart_types = sec_meta.get(sid, ((), ()))
+        fields, chart_types = RT.section_fields(sid)
         st = sections_text.get(sid, {}) if isinstance(sections_text, dict) else {}
         if not isinstance(st, dict):
             st = {"paragraphs": st if isinstance(st, list) else [str(st)], "key_takeaway": "", "highlights": []}
-        sec_claims = claims_for(*fields)
+        sec_claims = [c for c in claims if c["field"] in set(fields)]
         sec_charts = [chart_by_type[t] for t in chart_types if t in chart_by_type]
         src: List[str] = []
         for c in sec_claims:
@@ -2083,14 +2367,12 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
             "structured": None,
             "data_grid": None,
         }
-        # 结构化对象挂到对应章节
+        # 结构化对象挂到承载它的章节（该章字段含此结构化键）
         structured = analysis.get("structured") or {}
-        if sid == "feature" and structured.get("feature_tree"):
-            sec["structured"] = {"type": "feature_tree", "data": structured["feature_tree"]}
-        elif sid == "pricing" and structured.get("pricing_model"):
-            sec["structured"] = {"type": "pricing_model", "data": structured["pricing_model"]}
-        elif sid == "persona" and structured.get("user_persona"):
-            sec["structured"] = {"type": "user_persona", "data": structured["user_persona"]}
+        for key in spec["structured_keys"]:
+            if key in fields and structured.get(key):
+                sec["structured"] = {"type": key, "data": structured[key]}
+                break
         # 数据空间
         if sid in data_grid_sections:
             sec["data_grid"] = _build_data_grid(sid, analysis, evidences)
@@ -2098,7 +2380,7 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
 
     sections = [_section(sid) for sid in section_ids if sid != "sentiment"]
 
-    # 舆情专章（始终插入，置于 swot 之后或末尾前）
+    # 舆情专章（始终插入，置于结论章之前）
     sent_charts = [c for c in (chart_by_type.get("sentiment_donut"), chart_by_type.get("platform_bar")) if c]
     st = sentiment_text or {}
     has_sample = bool(sentiment.get("sample_size"))
@@ -2142,13 +2424,14 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
 
     toc = [{"id": s["id"], "title": s["title"], "level": 1} for s in sections]
     glossary = [
-        {"term": "交叉验证", "definition": "同一结论由 ≥2 个独立来源支撑，判为高置信。", "source": "Verda 四铁律"},
+        {"term": "交叉验证", "definition": "同一结论由 ≥2 个独立信源组支撑，判为高置信。", "source": "Verda 四铁律"},
         {"term": "无证据不立论", "definition": "任何数据型结论必须挂载 evidence_ids，否则标记待验证。", "source": "Verda 四铁律"},
+        {"term": "同质内容去重（信源组）", "definition": "同一内容被多站转载时归并为一个信源组，转载不冒充独立来源。", "source": "客观性加固 v2.1"},
+        {"term": "舆论过热", "definition": "互动量超阈值的高热社媒内容，可信度扣分并如实标注，不代表普遍共识。", "source": "客观性加固 v2.1"},
         {"term": "观点阵营", "definition": "将相同立场的真实用户观点聚类，输出归一化占比与代表评论。", "source": "舆情管线"},
-        {"term": "SCP 框架", "definition": "结构(Structure)-行为(Conduct)-绩效(Performance)，产业经济学经典分析范式。", "source": "Bain/Scherer"},
-        {"term": "波特五力", "definition": "从现有竞争、新进入者、替代品、买方与供应商议价五个方向量化行业竞争压力。", "source": "Michael Porter"},
     ]
-    cover = _make_cover_svg(title, brands)
+    glossary += [dict(g) for g in spec.get("glossary", ())]
+    cover = _make_cover_svg(title, destinations, research_type)
 
     evidence_dicts = []
     for e in evidences:
@@ -2175,7 +2458,8 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
         "title": title,
         "subtitle": subtitle,
         "query": query,
-        "brands": brands,
+        "destinations": destinations,
+        "research_type": research_type,
         "mode": mode,
         "created_at": _now(),
         "experts": members,
@@ -2194,25 +2478,48 @@ def _assemble_report(query, brands, focus, dispatch, claims, evidences, images,
         "quality_before": quality_before,
         "quality_after": quality_after,
         "trace": trace_lite,
+        # v2.1 方法论与局限（正式契约字段；标准合规声明）
+        "methodology": _build_methodology(objective_meta, evidences),
+        "contradictions": [c for c in (analysis.get("contradictions") or []) if isinstance(c, dict)],
+    }
+
+
+def _build_methodology(objective_meta: Optional[Dict], evidences: List[Evidence]) -> Dict[str, Any]:
+    """组装方法论与局限披露（v2.1）。objective_meta 缺失时返回空结构（兼容旧调用）。"""
+    om = objective_meta or {}
+    ost = om.get("stats") or {}
+    total_ev = len(evidences) or 1
+    checked_ratio = round((ost.get("viral_checked", 0) or 0) / total_ev, 4)
+    return {
+        "window": om.get("freshness", "noLimit"),
+        "evidence_count": len(evidences),
+        "unique_groups": int(om.get("unique_groups", 0)),
+        "dup_skipped": int(ost.get("dup_skipped", 0)),
+        "viral_evidence": int(ost.get("viral_count", 0)),
+        "viral_checked_ratio": checked_ratio,
+        "sentiment_samples": int(om.get("sentiment_samples", 0)),
+        "note": ("信息来源于公开网络搜索，已做内容级去重（同质转载归并为信源组）与舆论过热标注；"
+                 f"过热判定覆盖率 {round(checked_ratio * 100)}%（低覆盖率即多数证据无互动信号、未做过度推断）；"
+                 "报告可能存在舆论偏好与时效局限，仅供参考，不作事实认证。"),
     }
 
 
 def _curate_figures(images: List[Dict[str, Any]], limit: int = 12) -> List[Dict[str, Any]]:
-    """从采集到的配图中精选：URL 去重，按品牌轮询保证均衡，封顶 limit 张。"""
+    """从采集到的配图中精选：URL 去重，按目的地轮询保证均衡，封顶 limit 张。"""
     seen: set = set()
-    by_brand: Dict[str, List[Dict[str, Any]]] = {}
+    by_destination: Dict[str, List[Dict[str, Any]]] = {}
     for im in images:
         src = (im.get("src") or "").strip()
         if not src or src in seen:
             continue
         seen.add(src)
-        by_brand.setdefault(im.get("brand", ""), []).append(im)
+        by_destination.setdefault(im.get("destination", ""), []).append(im)
     out: List[Dict[str, Any]] = []
     idx = 0
     while len(out) < limit:
         added = False
-        for brand in list(by_brand.keys()):
-            lst = by_brand[brand]
+        for dest in list(by_destination.keys()):
+            lst = by_destination[dest]
             if idx < len(lst):
                 out.append(lst[idx])
                 added = True

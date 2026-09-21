@@ -70,7 +70,7 @@ export default function ExpertsPage() {
     <div className="mx-auto max-w-content px-8 py-8">
       <header className="flex flex-col gap-1">
         <h1 className="font-serif text-h1 text-ink">专家公会</h1>
-        <p className="text-aux text-ink-2">48 位 AI 竞品分析专家 · 三层协作架构 · 决策 / 策略 / 执行</p>
+        <p className="text-aux text-ink-2">48 位 AI 旅游调研专家 · 三层协作架构 · 决策 / 策略 / 执行</p>
       </header>
 
       {/* 搜索 + tab */}

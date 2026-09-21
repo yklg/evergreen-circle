@@ -41,12 +41,12 @@ def _make_report(rid, evidence_ids):
         "excerpt": "摘要内容",
         "credibility": 70.0,
         "collected_by": "tester",
-        "brand": "品牌A",
+        "destination": "目的地A",
         "captured_at": db._now(),
     } for eid in evidence_ids]
     report = {
         "id": rid, "title": "报告 " + rid, "subtitle": "", "query": "测试查询",
-        "brands": ["品牌A"], "experts": [], "cover_image": "",
+        "destinations": ["目的地A"], "experts": [], "cover_image": "",
         "created_at": db._now(), "evidence": evidence, "claims": [], "metrics": {},
     }
     db.save_report(report, task_id="")
@@ -99,6 +99,24 @@ def test_runner_dispatch_research_unchanged(monkeypatch):
     assert db.get_task_full("t_disp_research_1")["status"] == "done"
 
 
+def test_runner_dispatch_brief(monkeypatch):
+    """kind='brief' → _drive 路由到 brief_report_pipeline；run/refine 均不应被调用（G7/B-01）。"""
+    runner._running.clear()
+    refine_calls, research_calls, brief_calls = [], [], []
+    monkeypatch.setattr(orchestrator, "run_pipeline", _fake_pipeline("research", research_calls), raising=False)
+    monkeypatch.setattr(orchestrator, "refine_report_pipeline", _fake_pipeline("refine", refine_calls), raising=False)
+    monkeypatch.setattr(orchestrator, "brief_report_pipeline", _fake_pipeline("brief", brief_calls), raising=False)
+
+    async def _scenario():
+        _insert_task("t_disp_brief_1", "brief", query="r_db_1")
+        runner.ensure_running("t_disp_brief_1")
+        await asyncio.sleep(0.25)
+    asyncio.run(_scenario())
+    assert brief_calls == ["brief"], "应路由到 brief_report_pipeline"
+    assert research_calls == [] and refine_calls == [], "run/refine 不应被调用"
+    assert db.get_task_full("t_disp_brief_1")["status"] == "done"
+
+
 def test_refine_cancel_no_partial_corruption(monkeypatch):
     """启动 refine → 中途取消 → 任务 failed；报告未被部分 save（原子性，P2-7）。"""
     runner._running.clear()
@@ -122,6 +140,54 @@ def test_refine_cancel_no_partial_corruption(monkeypatch):
     # 报告段落不应被标 refined（未走到 done 的 save）
     rep = db.get_report("r_cancel_1")
     assert not any(s.get("refined") for s in rep.get("sections", [])), "取消后报告不应被部分写坏"
+
+
+def test_runner_subscribe_terminal_done_no_rerun():
+    """B-03：终态(done)任务重连订阅 → subscribe 首条即补 done{reportId}，不重跑原 pipeline。"""
+    runner._running.clear()
+    _conn().execute(
+        "INSERT INTO tasks(task_id,query,clarifications,status,report_id,created_at,kind)"
+        " VALUES(?,?,?,?,?,?,?)",
+        ("t_terminal_1", "r_term_1", "{}", "done", "r_term_1", db._now(), "brief"),
+    )
+    _conn().commit()
+
+    async def _scenario():
+        events = []
+        async for ev in runner.subscribe("t_terminal_1"):
+            events.append(ev)
+            break  # 只取首帧验证补帧路径
+        return events
+    events = asyncio.run(_scenario())
+    assert events[0]["type"] == "done", "终态补帧首条应为 done"
+    assert events[0]["data"]["reportId"] == "r_term_1"
+    # 只读终态句柄：无活 asyncio.Task（不重跑）
+    assert runner._running["t_terminal_1"].alive is False
+    # DB 任务不新增运行：status/report_id 保持终态
+    full = db.get_task_full("t_terminal_1")
+    assert full["status"] == "done" and full["report_id"] == "r_term_1"
+
+
+def test_runner_subscribe_terminal_failed_no_rerun():
+    """B-03（失败侧）：终态(failed)任务重连 → 首条补 error{message}，不重跑。"""
+    runner._running.clear()
+    _conn().execute(
+        "INSERT INTO tasks(task_id,query,clarifications,status,error,report_id,created_at,kind)"
+        " VALUES(?,?,?,?,?,?,?,?)",
+        ("t_terminal_2", "r_term_2", "{}", "failed", "LLM 未配置", None, db._now(), "brief"),
+    )
+    _conn().commit()
+
+    async def _scenario():
+        events = []
+        async for ev in runner.subscribe("t_terminal_2"):
+            events.append(ev)
+            break
+        return events
+    events = asyncio.run(_scenario())
+    assert events[0]["type"] == "error", "终态补帧失败侧首条应为 error"
+    assert events[0]["data"]["message"] == "LLM 未配置"
+    assert runner._running["t_terminal_2"].alive is False
 
 
 if __name__ == "__main__":

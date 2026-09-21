@@ -46,7 +46,7 @@ export default function LibraryPage() {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="font-serif text-h1 text-ink">我的调研</h1>
-          <p className="mt-1 text-aux text-ink-2">所有已完成的竞品分析报告 · 结论可溯源、证据可沉淀</p>
+          <p className="mt-1 text-aux text-ink-2">所有已完成的旅游调研报告 · 结论可溯源、证据可沉淀</p>
         </div>
         <button
           onClick={() => navigate('/')}
@@ -68,7 +68,7 @@ export default function LibraryPage() {
           />
           <div>
             <div className="text-h3 text-ink">还没有调研记录</div>
-            <p className="mt-1 text-aux text-ink-2">发起你的第一次竞品分析，48 位专家即刻就位</p>
+            <p className="mt-1 text-aux text-ink-2">发起你的第一次旅游调研，48 位专家即刻就位</p>
           </div>
           <button
             onClick={() => navigate('/')}

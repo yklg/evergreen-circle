@@ -17,8 +17,10 @@ PLATFORM_SITES = {k: p.search_site for k, p in PLATFORMS.items()}
 PLATFORM_ORDER = list(PLATFORMS.keys())
 PLATFORM_LABEL = {k: p.label for k, p in PLATFORMS.items()}
 
-_POS = ["好", "强", "喜欢", "推荐", "优秀", "值得", "香", "爱了", "性价比", "流畅", "丝滑", "靠谱"]
-_NEG = ["差", "贵", "卡", "失望", "垃圾", "退", "坑", "难用", "bug", "缺点", "拉胯", "翻车"]
+_POS = ["好", "强", "喜欢", "推荐", "优秀", "值得", "值得去", "香", "爱了", "性价比",
+        "流畅", "丝滑", "靠谱", "出片", "惊艳", "vlog", "美", "舒服", "不虚此行"]
+_NEG = ["差", "贵", "卡", "失望", "垃圾", "退", "坑", "难用", "bug", "缺点", "拉胯", "翻车",
+        "不值", "宰客", "踩坑", "排队", "人挤", "照骗", "劝退", "避雷", "排队久"]
 
 
 def _empty_result() -> Dict[str, Any]:
@@ -45,7 +47,7 @@ def _rule_sentiment(text: str) -> str:
     return "neu"
 
 
-def _llm_classify(brand: str, comments: List[Dict[str, Any]]) -> bool:
+def _llm_classify(destination: str, comments: List[Dict[str, Any]]) -> bool:
     """用 LLM 给每条真实评论打 pos/neu/neg，写回 comment["sentiment"]。
 
     成功返回 True，失败返回 False（调用方走规则兜底）。
@@ -55,10 +57,10 @@ def _llm_classify(brand: str, comments: List[Dict[str, Any]]) -> bool:
     items = [{"i": i, "text": (c.get("text") or "")[:200]} for i, c in enumerate(comments)]
     data = chat_json(
         [
-            {"role": "system", "content": "你是资深舆情分析师，对每条用户评论判断它对目标品牌的情感倾向。"},
+            {"role": "system", "content": "你是资深旅游舆情分析师，对每条用户评论判断它对目标目的地/城市的情感倾向。"},
             {"role": "user", "content": (
-                f"目标品牌：{brand}\n\n下面是若干条真实用户评论，请逐条判断情感，"
-                f"只能是 pos（正面/看好）、neu（中立/观望）、neg（负面/质疑）三选一。\n"
+                f"目标目的地：{destination}\n\n下面是若干条真实用户评论，请逐条判断情感，"
+                f"只能是 pos（正面/推荐）、neu（中立/观望）、neg（负面/劝退）三选一。\n"
                 f"严格输出 JSON 数组，每项形如 {{\"i\": 0, \"s\": \"pos\"}}，i 与输入对应，不要多余文字。\n\n"
                 f"评论列表：\n{items}"
             )},
@@ -79,13 +81,13 @@ def _llm_classify(brand: str, comments: List[Dict[str, Any]]) -> bool:
     return True
 
 
-def analyze_sentiment(brand: str, comments: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyze_sentiment(destination: str, comments: List[Dict[str, Any]]) -> Dict[str, Any]:
     """comments: [{text, platform, url, title}]（均为真实检索结果）。返回 SentimentResult 结构。"""
     if not comments:
         return _empty_result()
 
     # 逐条打情感：LLM 优先，失败规则兜底
-    if not _llm_classify(brand, comments):
+    if not _llm_classify(destination, comments):
         for c in comments:
             c["sentiment"] = _rule_sentiment(c.get("text", ""))
 
@@ -102,11 +104,11 @@ def analyze_sentiment(brand: str, comments: List[Dict[str, Any]]) -> Dict[str, A
     overall_pct = _normalize_pct(overall, total)
 
     # 观点阵营（占比基于真实计数，归一化到 100%）
-    camps = _build_camps(brand, comments, total)
+    camps = _build_camps(destination, comments, total)
 
     # 平台原声墙（各平台代表性真实评论，抖音优先）+ LLM 金句摘抄
     voices = _build_voices(comments)
-    highlights = _extract_highlights(brand, comments)
+    highlights = _extract_highlights(destination, comments)
 
     # 平台排序：抖音永远第一
     ordered_platform = {}
@@ -117,14 +119,14 @@ def analyze_sentiment(brand: str, comments: List[Dict[str, Any]]) -> Dict[str, A
         if p not in ordered_platform:
             ordered_platform[p] = by_platform[p]
 
-    # 按品牌聚合：不同竞品的口碑对比（支持「不同平台/竞品观点聚类」）
-    by_brand = _build_by_brand(comments)
+    # 按目的地聚合：不同目的地的口碑对比（支持「不同平台/目的地观点聚类」）
+    by_destination = _build_by_destination(comments)
 
     return {
         "overall": overall_pct,
         "overall_count": overall,
         "by_platform": ordered_platform,
-        "by_brand": by_brand,
+        "by_destination": by_destination,
         "timeline": [],  # 评论无可靠日期，不伪造时间线
         "camps": camps,
         "voices": voices,
@@ -133,11 +135,11 @@ def analyze_sentiment(brand: str, comments: List[Dict[str, Any]]) -> Dict[str, A
     }
 
 
-def _build_by_brand(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """按品牌聚合情感分布与样本量（不同竞品口碑横向对比）。"""
+def _build_by_destination(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按目的地聚合情感分布与样本量（不同目的地口碑横向对比）。"""
     agg: Dict[str, Dict[str, int]] = {}
     for c in comments:
-        b = (c.get("brand") or "").strip()
+        b = (c.get("destination") or "").strip()
         if not b:
             continue
         s = c.get("sentiment", "neu")
@@ -149,7 +151,7 @@ def _build_by_brand(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not n:
             continue
         pct = _normalize_pct(counts, n)
-        out.append({"brand": b, "sample": n, "pos": pct["pos"], "neu": pct["neu"], "neg": pct["neg"]})
+        out.append({"destination": b, "sample": n, "pos": pct["pos"], "neu": pct["neu"], "neg": pct["neg"]})
     out.sort(key=lambda x: x["sample"], reverse=True)
     return out
 
@@ -179,7 +181,7 @@ def _build_voices(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return voices
 
 
-def _extract_highlights(brand: str, comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _extract_highlights(destination: str, comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """LLM 从真实评论中摘出最有代表性的『金句短语』，每条挂回真实来源链接（可溯源）。"""
     pool = [c for c in comments if c.get("url") and (c.get("text") or "").strip()]
     if not pool:
@@ -192,12 +194,12 @@ def _extract_highlights(brand: str, comments: List[Dict[str, Any]]) -> List[Dict
             [
                 {"role": "system", "content": (
                     "你是资深社媒舆情分析师。从真实用户评论中挑选/提炼最有代表性、最有信息量、"
-                    "最能反映真实口碑的『金句短语』（可直接摘抄原句中的关键片段，保持真实口吻）。"
-                    "只挑 4-6 条最有冲击力或最具代表性的，覆盖正面与负面不同声音。"
+                    "最能反映目的地真实口碑的『金句短语』（可直接摘抄原句中的关键片段，保持真实口吻）。"
+                    "只挑 4-6 条最有冲击力或最具代表性的，覆盖推荐与劝退不同声音。"
                     "严格输出 JSON 数组，每项 {\"i\": 原评论序号, \"phrase\": \"金句短语(不超过30字)\"}，"
                     "phrase 必须忠于原评论含义，不得编造。不要多余文字。"
                 )},
-                {"role": "user", "content": f"目标品牌：{brand}\n评论列表：\n{items}"},
+                {"role": "user", "content": f"目标目的地：{destination}\n评论列表：\n{items}"},
             ],
             temperature=0.3,
             max_tokens=800,
@@ -237,15 +239,15 @@ def _normalize_pct(counts: Dict[str, int], total: int) -> Dict[str, int]:
     return floored
 
 
-def _build_camps(brand: str, comments: List[Dict[str, Any]], total: int) -> List[Dict[str, Any]]:
+def _build_camps(destination: str, comments: List[Dict[str, Any]], total: int) -> List[Dict[str, Any]]:
     pos = [c for c in comments if c.get("sentiment") == "pos"]
     neg = [c for c in comments if c.get("sentiment") == "neg"]
     neu = [c for c in comments if c.get("sentiment") == "neu"]
 
     groups = [
-        (pos, f"看好派：认可{brand}的产品力", f"该阵营用户普遍认可{brand}在体验、性价比或口碑上的优势。"),
-        (neg, f"质疑派：担忧{brand}的短板", f"该阵营用户对{brand}的价格、稳定性或服务存在明确顾虑。"),
-        (neu, "观望派：理性比较中", "该阵营尚在多方对比、未形成明确倾向，关注后续表现。"),
+        (pos, f"推荐派：认可{destination}的体验", f"该阵营用户普遍认可{destination}在景色、体验或性价比上的优势。"),
+        (neg, f"劝退派：点出{destination}的短板", f"该阵营用户对{destination}的价格、人流或服务存在明确顾虑。"),
+        (neu, "观望派：理性比较中", "该阵营尚在多方对比、未形成明确倾向，关注后续体验反馈。"),
     ]
     # 占比归一化：先各自取百分比，再用最大余数法保证总和 = 100
     counts = {"pos": len(pos), "neg": len(neg), "neu": len(neu)}

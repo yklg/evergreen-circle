@@ -40,8 +40,8 @@ const CATEGORY_COLOR: Record<string, string> = {
   权威一手: 'bg-primary', 媒体报道: 'bg-info', 社媒口碑: 'bg-sun',
 }
 
-interface BrandIntel {
-  brand: string
+interface DestinationIntel {
+  destination: string
   count: number
   sourceTypes: number
   avgCred: number
@@ -51,12 +51,12 @@ interface BrandIntel {
 export default function DashboardPage() {
   const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [ev, setEv] = useState<EvidenceQueryResp>({ items: [], facets: { total: 0, by_type: {}, by_brand: {} } })
+  const [ev, setEv] = useState<EvidenceQueryResp>({ items: [], facets: { total: 0, by_type: {}, by_destination: {} } })
   const [subs, setSubs] = useState<Subscription[]>([])
   const [workload, setWorkload] = useState<ExpertWorkload[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [brandFilter, setBrandFilter] = useState<string>('')
+  const [destinationFilter, setDestinationFilter] = useState<string>('')
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [subQuery, setSubQuery] = useState('')
   const [subDelError, setSubDelError] = useState<string | null>(null)
@@ -84,11 +84,11 @@ export default function DashboardPage() {
 
   const items = useMemo(() => (Array.isArray(ev.items) ? ev.items : []), [ev])
 
-  /* 竞品情报图谱：跨全部报告聚合每个竞品的情报厚度 */
-  const brandIntel = useMemo<BrandIntel[]>(() => {
+  /* 目的地情报图谱：跨全部报告聚合每个目的地的情报厚度 */
+  const destinationIntel = useMemo<DestinationIntel[]>(() => {
     const map = new Map<string, { count: number; types: Set<string>; cred: number; last: string }>()
     for (const it of items) {
-      const b = (it.brand || '').trim()
+      const b = (it.destination || '').trim()
       if (!b) continue
       const cur = map.get(b) ?? { count: 0, types: new Set<string>(), cred: 0, last: '' }
       cur.count += 1
@@ -98,8 +98,8 @@ export default function DashboardPage() {
       map.set(b, cur)
     }
     return Array.from(map.entries())
-      .map(([brand, v]) => ({
-        brand,
+      .map(([destination, v]) => ({
+        destination,
         count: v.count,
         sourceTypes: v.types.size,
         avgCred: v.count ? v.cred / v.count : 0,
@@ -108,9 +108,9 @@ export default function DashboardPage() {
       .sort((a, b) => b.count - a.count)
   }, [items])
 
-  const maxBrandCount = useMemo(
-    () => brandIntel.reduce((m, b) => Math.max(m, b.count), 1),
-    [brandIntel],
+  const maxDestinationCount = useMemo(
+    () => destinationIntel.reduce((m, b) => Math.max(m, b.count), 1),
+    [destinationIntel],
   )
 
   /* 信源结构：一手 / 媒体 / 社媒 三类占比 + 一句话研判 */
@@ -131,22 +131,22 @@ export default function DashboardPage() {
     if (firstHand >= 40) {
       insight = `一手权威信源占 ${firstHand}%，情报根基扎实，结论可信度高。`
     } else if (firstHand >= 20) {
-      insight = `当前以「${top.label}」为主（${top.pct}%），一手信源占 ${firstHand}%，建议追加官网/财报以加固关键结论。`
+      insight = `当前以「${top.label}」为主（${top.pct}%），一手信源占 ${firstHand}%，建议追加官方文旅站点/平台公告以加固关键结论。`
     } else {
-      insight = `情报偏向「${top.label}」（${top.pct}%），一手信源仅 ${firstHand}%，重要结论需补充官方与财报佐证。`
+      insight = `情报偏向「${top.label}」（${top.pct}%），一手信源仅 ${firstHand}%，重要结论需补充官方文旅站点与平台公告佐证。`
     }
     return { segs, insight }
   }, [items])
 
-  /* 证据列表：按品牌 / 信源类型客户端筛选（与图谱联动） */
+  /* 证据列表：按目的地 / 信源类型客户端筛选（与图谱联动） */
   const filteredEv = useMemo<EvidenceRecord[]>(() => {
     return items.filter(
-      (it) => (!brandFilter || it.brand === brandFilter) && (!typeFilter || it.source_type === typeFilter),
+      (it) => (!destinationFilter || it.destination === destinationFilter) && (!typeFilter || it.source_type === typeFilter),
     )
-  }, [items, brandFilter, typeFilter])
+  }, [items, destinationFilter, typeFilter])
 
-  const facetBrands = useMemo(
-    () => Object.entries(ev.facets.by_brand).slice(0, 6),
+  const facetDestinations = useMemo(
+    () => Object.entries(ev.facets.by_destination).slice(0, 6),
     [ev],
   )
   const facetTypes = useMemo(
@@ -178,15 +178,15 @@ export default function DashboardPage() {
   }
 
   const empty = !loading && (!stats || stats.reports === 0)
-  const coveredBrands = brandIntel.length
+  const coveredDestinations = destinationIntel.length
   const researchCards = stats?.research_cards ?? []
 
   return (
     <div className="mx-auto max-w-content px-8 py-8">
       <header>
-        <h1 className="font-serif text-h1 text-ink">竞争情报中心</h1>
+        <h1 className="font-serif text-h1 text-ink">目的地情报中心</h1>
         <p className="mt-1 text-aux text-ink-2">
-          把每一次调研沉淀为可复用的竞争记忆 —— 竞品情报厚度、信源结构、全局溯源与持续追踪
+          把每一次调研沉淀为可复用的旅行记忆 —— 目的地情报厚度、信源结构、全局溯源与持续追踪
         </p>
       </header>
 
@@ -195,7 +195,7 @@ export default function DashboardPage() {
       ) : empty ? (
         <div className="mt-16 flex flex-col items-center gap-3 text-center">
           <div className="text-h3 text-ink">情报库还是空的</div>
-          <p className="text-aux text-ink-2">完成第一次调研后，这里会自动沉淀竞品情报、证据溯源与信源结构</p>
+          <p className="text-aux text-ink-2">完成第一次调研后，这里会自动沉淀目的地情报、证据溯源与信源结构</p>
           <button
             onClick={() => navigate('/')}
             className="mt-2 inline-flex items-center gap-2 rounded-btn bg-primary px-6 h-11 font-medium text-white shadow-card hover:bg-primary-deep"
@@ -208,8 +208,8 @@ export default function DashboardPage() {
           {/* 1. 情报资产总览 */}
           <motion.div variants={stagger} initial="initial" animate="animate"
             className="mt-6 grid grid-cols-2 gap-5 sm:grid-cols-4">
-            <StatCard icon={Target} value={coveredBrands} label="覆盖竞品"
-              tip="已有情报沉淀的竞品数量，覆盖越广战场视野越全" />
+            <StatCard icon={Target} value={coveredDestinations} label="覆盖目的地"
+              tip="已有情报沉淀的目的地数量，覆盖越广旅行视野越全" />
             <StatCard icon={Database} value={stats!.evidence_total} label="情报证据"
               tip={`累计联网取证，平均每篇报告 ${stats!.avg_evidence_per_report} 条`} />
             <StatCard icon={Sparkles} value={stats!.claim_total} label="产出结论"
@@ -223,7 +223,7 @@ export default function DashboardPage() {
             <VCard hover={false}>
               <div className="flex items-center gap-2 text-aux font-semibold text-ink">
                 <Gauge size={16} className="text-primary" /> 业务闭环价值
-                <span className="ml-1 text-tag text-ink-3">相比传统人工竞品分析的真实可量化提升 · 公式透明可解释</span>
+                <span className="ml-1 text-tag text-ink-3">相比传统人工旅游调研的真实可量化提升 · 公式透明可解释</span>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-5 sm:grid-cols-4">
                 <ImpactCard icon={Clock} color="text-primary"
@@ -265,9 +265,9 @@ export default function DashboardPage() {
                           {rc.title}
                         </button>
                       </div>
-                      {rc.brands.length > 0 && (
+                      {rc.destinations.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
-                          {rc.brands.slice(0, 4).map((b) => (
+                          {rc.destinations.slice(0, 4).map((b) => (
                             <span key={b} className="rounded-chip bg-primary-tint px-2 py-0.5 text-tag text-primary-deep">{b}</span>
                           ))}
                         </div>
@@ -297,35 +297,35 @@ export default function DashboardPage() {
             </motion.div>
           )}
 
-          {/* 2. 竞品情报图谱 + 信源结构分析 */}
+          {/* 2. 目的地情报图谱 + 信源结构分析 */}
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
             <motion.div variants={fadeUp} initial="initial" animate="animate" className="lg:col-span-2">
               <VCard hover={false}>
                 <div className="flex items-center gap-2 text-aux font-semibold text-ink">
-                  <Radar size={16} className="text-primary" /> 竞品情报图谱
+                  <Radar size={16} className="text-primary" /> 目的地情报图谱
                   <span className="ml-1 text-tag text-ink-3">按情报厚度排序 · 点击下钻溯源</span>
                 </div>
                 <p className="mt-1 text-tag text-ink-3">
                   情报厚度 = 证据数量（深度）× 信源种类（广度）× 平均可信度（质量），帮你识别「了如指掌」与「认知盲区」
                 </p>
 
-                {brandIntel.length === 0 ? (
-                  <div className="py-10 text-center text-tag text-ink-3">尚无带竞品标注的证据</div>
+                {destinationIntel.length === 0 ? (
+                  <div className="py-10 text-center text-tag text-ink-3">尚无带目的地标注的证据</div>
                 ) : (
                   <div className="mt-4 space-y-3">
-                    {brandIntel.slice(0, 8).map((b) => {
-                      const active = brandFilter === b.brand
+                    {destinationIntel.slice(0, 8).map((b) => {
+                      const active = destinationFilter === b.destination
                       return (
                         <button
-                          key={b.brand}
-                          onClick={() => setBrandFilter(active ? '' : b.brand)}
+                          key={b.destination}
+                          onClick={() => setDestinationFilter(active ? '' : b.destination)}
                           className={`block w-full rounded-card border p-3 text-left transition-all ${
                             active ? 'border-primary-soft bg-primary-tint/50' : 'border-line/60 bg-bg hover:border-primary-soft hover:bg-card'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-3">
                             <span className="flex items-center gap-1.5 text-aux font-medium text-ink">
-                              <Crosshair size={13} className="text-primary" /> {b.brand}
+                              <Crosshair size={13} className="text-primary" /> {b.destination}
                             </span>
                             <span className="text-tag text-ink-3">
                               {b.count} 条 · {b.sourceTypes} 类信源 · 可信 {Math.round(b.avgCred * 100)}%
@@ -334,7 +334,7 @@ export default function DashboardPage() {
                           <div className="mt-2 h-2 w-full overflow-hidden rounded-chip bg-line">
                             <div
                               className="h-full rounded-chip bg-primary transition-all"
-                              style={{ width: `${Math.max(6, (b.count / maxBrandCount) * 100)}%` }}
+                              style={{ width: `${Math.max(6, (b.count / maxDestinationCount) * 100)}%` }}
                             />
                           </div>
                         </button>
@@ -379,7 +379,7 @@ export default function DashboardPage() {
             </motion.div>
           </div>
 
-          {/* 3. 全局证据溯源库 + 竞品持续追踪 */}
+          {/* 3. 全局证据溯源库 + 目的地持续追踪 */}
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
             <motion.div variants={fadeUp} initial="initial" animate="animate" className="lg:col-span-2">
               <VCard hover={false}>
@@ -389,11 +389,11 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <FilterChip active={!brandFilter && !typeFilter}
-                    onClick={() => { setBrandFilter(''); setTypeFilter('') }} label="全部" />
-                  {facetBrands.map(([b, n]) => (
-                    <FilterChip key={b} active={brandFilter === b}
-                      onClick={() => setBrandFilter(brandFilter === b ? '' : b)} label={`${b} ${n}`} />
+                  <FilterChip active={!destinationFilter && !typeFilter}
+                    onClick={() => { setDestinationFilter(''); setTypeFilter('') }} label="全部" />
+                  {facetDestinations.map(([b, n]) => (
+                    <FilterChip key={b} active={destinationFilter === b}
+                      onClick={() => setDestinationFilter(destinationFilter === b ? '' : b)} label={`${b} ${n}`} />
                   ))}
                   {facetTypes.map(([t, n]) => (
                     <FilterChip key={t} active={typeFilter === t}
@@ -421,7 +421,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-tag text-ink-3">
                         <span className="rounded-chip bg-primary-tint px-2 py-0.5 text-primary-deep">{sourceLabel(it.source_type)}</span>
-                        {it.brand && <span className="rounded-chip bg-sun-soft/50 px-2 py-0.5">{it.brand}</span>}
+                        {it.destination && <span className="rounded-chip bg-sun-soft/50 px-2 py-0.5">{it.destination}</span>}
                         <span className="truncate">{it.domain}</span>
                         <span className="ml-auto">可信度 {Math.round(it.credibility * 100)}%</span>
                       </div>
@@ -434,16 +434,16 @@ export default function DashboardPage() {
             <motion.div variants={fadeUp} initial="initial" animate="animate">
               <VCard hover={false}>
                 <div className="flex items-center gap-2 text-aux font-semibold text-ink">
-                  <Bell size={16} className="text-primary" /> 竞品持续追踪
+                  <Bell size={16} className="text-primary" /> 目的地持续追踪
                 </div>
-                <p className="mt-1 text-tag text-ink-3">订阅一个赛道，一键复跑获取最新动态</p>
+                <p className="mt-1 text-tag text-ink-3">订阅一个目的地主题，一键复跑获取最新动态</p>
 
                 <div className="mt-3 flex gap-2">
                   <input
                     value={subQuery}
                     onChange={(e) => setSubQuery(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleCreateSub()}
-                    placeholder="如：TikTok Shop 竞品监控"
+                    placeholder="如：三亚 亲子游攻略"
                     className="h-10 flex-1 rounded-btn border border-line bg-bg px-3 text-aux text-ink outline-none focus:border-primary-soft"
                   />
                   <button

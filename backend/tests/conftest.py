@@ -23,9 +23,11 @@ import app.core.runtime_config as rc  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolate():
-    """每用例前清空 settings 表并重置进程级迁移标记/缓存。"""
+    """每用例前清空 settings/prefs 表并重置进程级迁移标记/缓存。"""
     db.clear_settings()
+    db.clear_prefs()
     db.clear_discovery_cache()
+    db.invalidate_aggregates()          # G5：聚合读缓存与库文件解耦，隔离库切换必须显式失效
     rc._MODEL_MIGRATED = False
     rc._MIGRATED = False
     rc.invalidate_cache()

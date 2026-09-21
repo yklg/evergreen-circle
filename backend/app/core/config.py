@@ -83,9 +83,8 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     frontend_origin: str = "http://localhost:5173"
-    enable_demo_fallback: bool = True
 
-    # 澄清问卷：竞品发现超时（秒）与发现结果缓存 TTL（天）。
+    # 澄清问卷：候选目的地发现超时（秒）与发现结果缓存 TTL（天）。
     # 发现走 LLM（_discover_scope），设短超时 + 正则兜底，确保基础题不被阻塞（P0-①/②）。
     clarify_discover_timeout_s: float = 4.0
     discovery_cache_ttl_d: int = 7

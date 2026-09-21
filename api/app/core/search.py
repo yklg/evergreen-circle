@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import httpx
 
-from app.core.config import get_settings
+from app.core.runtime_config import get_effective_settings
 
 # 博查异常码 → 人话提示
 _BOCHA_ERR = {
@@ -33,21 +33,21 @@ def _now() -> str:
 def _is_relevant(query: str, title: str, snippet: str) -> bool:
     """简易相关性过滤：检查搜索 query 的核心词是否出现在标题或摘要中。
 
-    避免搜 "Notion 功能对比" 返回汽水音乐之类完全不相关的结果。
-    提取 query 中的英文品牌词/中文关键词做匹配。
+    避免搜 "京都 交通攻略" 返回汽水音乐之类完全不相关的结果。
+    提取 query 中的英文目的地词/中文关键词做匹配。
     """
     if not query:
         return True
     text = f"{title} {snippet}".lower()
     q = query.lower()
 
-    # 提取英文单词（品牌名等），3 个字符以上的都要在结果中出现至少一个
+    # 提取英文单词（目的地名等），3 个字符以上的都要在结果中出现至少一个
     english_words = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", q)
     # 提取中文关键词（2 个字以上的中文字符串）
     chinese_words = re.findall(r"[\u4e00-\u9fa5]{2,}", q)
 
     must_match = []
-    # 英文品牌词（第一个英文词通常是品牌名，必须匹配）
+    # 英文目的地词（第一个英文词通常是目的地名，必须匹配）
     if english_words:
         must_match.append(english_words[0])
     # 中文第一个名词短语也尽量匹配
@@ -82,9 +82,9 @@ def search_bocha(
     - 返回的每条都带 title + url + snippet + source + captured_at，便于后续抓取正文。
     - 自动做相关性过滤，剔除明显不相关的结果。
     """
-    settings = get_settings()
-    if not settings.bocha_api_key:
-        raise RuntimeError("未配置 BOCHA_API_KEY，搜索暂不可用")
+    settings = get_effective_settings()
+    if not settings.get("bocha_api_key"):
+        raise RuntimeError("未配置 BOCHA_API_KEY，请在「模型配置」页面填写后重试")
 
     # count 取值范围 1-50
     count = max(1, min(int(num), 50))
@@ -100,14 +100,14 @@ def search_bocha(
         # 博查用 include 限定网站范围（多个用 | 分隔）
         payload["include"] = site
 
-    endpoint = f"{settings.bocha_base_url.rstrip('/')}/web-search"
+    endpoint = f"{str(settings.get('bocha_base_url') or '').rstrip('/')}/web-search"
     headers = {
-        "Authorization": f"Bearer {settings.bocha_api_key}",
+        "Authorization": f"Bearer {settings.get('bocha_api_key')}",
         "Content-Type": "application/json",
     }
 
     timeout = httpx.Timeout(
-        connect=8, read=settings.search_timeout, write=5, pool=5
+        connect=8, read=float(settings.get("search_timeout") or 30), write=5, pool=5
     )
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         r = client.post(endpoint, headers=headers, json=payload)

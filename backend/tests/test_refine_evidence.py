@@ -35,12 +35,12 @@ def _make_report(rid, evidence_ids):
         "excerpt": "摘要内容",
         "credibility": 70.0,
         "collected_by": "tester",
-        "brand": "品牌A",
+        "destination": "目的地A",
         "captured_at": db._now(),
     } for eid in evidence_ids]
     report = {
         "id": rid, "title": "报告 " + rid, "subtitle": "", "query": "测试查询",
-        "brands": ["品牌A"], "experts": [], "cover_image": "",
+        "destinations": ["目的地A"], "experts": [], "cover_image": "",
         "created_at": db._now(),
         "evidence": evidence,
         # 精修/refine_section 都按 sections 重写，种子必须含章节

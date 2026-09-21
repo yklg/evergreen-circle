@@ -23,19 +23,20 @@ def _clear_gen_lock():
 # ── P0：create_task 不调 LLM（根因守卫）─────────────────────
 def test_ct2_create_task_no_llm():
     with patch.object(O, "_discover_scope", MagicMock()) as m:
-        resp = O.create_task("分析特斯拉竞品", mode="deep", model=None)
+        resp = O.create_task("大理 5 天亲子游攻略", mode="deep", model=None)
     m.assert_not_called()
     assert "taskId" in resp
     assert "needClarify" not in resp
     task = db.get_task(resp["taskId"])
     assert task is not None
-    assert task["query"] == "分析特斯拉竞品"
+    assert task["query"] == "大理 5 天亲子游攻略"
     assert task["clarifications"].get("_mode") == "deep"
 
 
 def test_ct1_create_task_shape():
     resp = O.create_task("q", "quick", "glm-5.2")
-    assert set(resp.keys()) == {"taskId"}
+    assert set(resp.keys()) == {"taskId", "researchType"}
+    assert resp["researchType"] == "guide"          # 缺省类型回落到 guide
     task = db.get_task(resp["taskId"])
     assert task["clarifications"].get("_model_override") == "glm-5.2"
 
@@ -57,7 +58,7 @@ def test_gc1_generate_uses_to_thread():
 
     # 显式持有 mock 引用（补丁退出后 O._discover_scope 会还原为真实函数）
     mock_scope = MagicMock(
-        return_value={"subject": "X", "domain": "Y", "competitors": ["A", "B"], "fallback": False}
+        return_value={"subject": "X", "domain": "Y", "candidates": ["A", "B"], "fallback": False}
     )
 
     async def impl():
@@ -68,12 +69,12 @@ def test_gc1_generate_uses_to_thread():
                 return [ev async for ev in O.generate_clarify(tid, "q")]
 
     events = asyncio.run(impl())
-    # P0#1：必须经由 asyncio.to_thread 调用同步阻塞的 _discover_scope（竞品发现 LLM）
+    # P0#1：必须经由 asyncio.to_thread 调用同步阻塞的 _discover_scope（候选目的地发现 LLM）
     assert captured.get("func") is mock_scope
     ready = [e for e in events if e["type"] == "clarify_ready"]
     assert ready, "应产出 clarify_ready（partial 基础题）"
     assert ready[0]["data"]["questions"]
-    # 阶段 2：竞品发现完成后应有 clarify_update
+    # 阶段 2：候选目的地发现完成后应有 clarify_update
     assert any(e["type"] == "clarify_update" for e in events), "应产出 clarify_update"
 
 
@@ -89,10 +90,10 @@ def test_gc2_fallback_on_discover_error():
     # 基础题仍即时产出（partial），不卡 loading
     ready = [e for e in events if e["type"] == "clarify_ready" and e["data"].get("partial")]
     assert ready, "基础题应即时产出 clarify_ready(partial)"
-    # 竞品发现失败时走正则兜底，而非整份降级
+    # 候选目的地发现失败时走正则兜底，而非整份降级
     upd = [e for e in events if e["type"] == "clarify_update"]
     assert upd, "兜底仍应产出 clarify_update"
-    assert upd[0]["data"]["competitors_fallback"] is True
+    assert upd[0]["data"]["destinations_fallback"] is True
     assert upd[0]["data"]["questions"]  # 兜底问卷非空
 
 
@@ -107,7 +108,7 @@ def test_gc3_inflight_prevents_double_gen():
         fut = loop.create_future()
         fut.set_result({
             "questions": [{"id": "a", "question": "a", "type": "text", "options": []}],
-            "competitors_fallback": False,
+            "destinations_fallback": False,
             "complete": True,
         })
         O._GEN_INFLIGHT[tid] = fut
@@ -125,7 +126,7 @@ def test_gc4_concurrent_no_double_gen():
 
     def fake_scope(q):
         counter["n"] += 1
-        return {"subject": "S", "domain": "D", "competitors": ["A"], "fallback": False}
+        return {"subject": "S", "domain": "D", "candidates": ["A"], "fallback": False}
 
     async def drain(gen):
         out = []
@@ -151,7 +152,7 @@ def test_gc4_concurrent_no_double_gen():
 def test_gc5_cache_hit_avoids_llm():
     tid = O._sid("t")
     db.save_task(tid, "q", {})
-    cached = {"subject": "S", "domain": "D", "competitors": ["A", "B"], "fallback": False}
+    cached = {"subject": "S", "domain": "D", "candidates": ["A", "B"], "fallback": False}
     db.save_discovery_cache(db._query_hash("q"), cached)
     mock_scope = MagicMock(return_value=cached)
 
@@ -163,7 +164,7 @@ def test_gc5_cache_hit_avoids_llm():
     mock_scope.assert_not_called()  # 缓存命中，零 LLM 调用
     upd = [e for e in events if e["type"] == "clarify_update"]
     assert upd, "应产出 clarify_update"
-    assert upd[0]["data"]["competitors_fallback"] is False
+    assert upd[0]["data"]["destinations_fallback"] is False
     opts = upd[0]["data"]["questions"][-1]["options"]
     assert "A" in opts and "B" in opts
 
@@ -220,7 +221,7 @@ def test_api1_post_tasks_fast():
         t0 = time.perf_counter()
         resp = client.post(
             "/api/tasks",
-            json={"query": "分析 A 与 B 竞争", "mode": "deep", "model": None},
+            json={"query": "评估成都和杭州哪个更适合长期居住", "mode": "deep", "model": None},
         )
         dt = time.perf_counter() - t0
 

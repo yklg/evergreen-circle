@@ -14,6 +14,7 @@ import {
 import { fetchDashboard } from '../lib/api'
 import { useTaskRegistry, selectRunning } from '../store/taskRegistry'
 import { useProfileStore } from '../store/profileStore'
+import { BRAND } from '../lib/brand'
 import { VModal, VButton } from '../components/ui'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -22,7 +23,7 @@ const navItems = [
   { to: '/library', label: '我的调研', icon: BarChart3 },
   { to: '/knowledge', label: '知识库', icon: Library },
   { to: '/experts', label: '专家公会', icon: Users },
-  { to: '/dashboard', label: '竞争情报中心', icon: Radar },
+  { to: '/dashboard', label: '目的地情报中心', icon: Radar },
 ]
 
 export default function VSidebar() {
@@ -77,7 +78,7 @@ export default function VSidebar() {
           <Sprout size={22} strokeWidth={1.8} />
         </span>
         <span className="text-[20px] font-semibold tracking-tight text-ink">
-          Verda
+          {BRAND.en}
         </span>
       </button>
 

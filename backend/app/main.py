@@ -1,7 +1,7 @@
 """青野 Verda 后端入口（FastAPI）。
 
 挂载：48 专家 API + 任务创建/澄清 + SSE 思维流 + 报告/历史 + 仪表盘统计
-+ 全局证据溯源库 + 竞品监控订阅 + 专家工作量看板 + 健康/验证接口。
++ 全局证据溯源库 + 目的地持续追踪订阅 + 专家工作量看板 + 健康/验证接口。
 真实 LLM（智谱 GLM）+ 真实搜索（博查 Bocha）+ 真实抓取 + SQLite 持久化，绝不 demo。
 """
 from __future__ import annotations
@@ -19,9 +19,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core import db
+from app.core import research_types as rt
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
+from app.core.research_types import DEFAULT_RESEARCH_TYPE
 import logging
-from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task
+from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task
 from app.core import runner
 from app.core.runtime_config import (
     GROUP_FIELDS,
@@ -35,6 +37,11 @@ from app.core.runtime_config import (
     migrate_model_values,
 )
 from app.core.search import search
+from app.core.user_prefs import (
+    PrefsValidationError,
+    apply_prefs,
+    prefs_doc,
+)
 from app.data import expert_by_id, load_experts
 
 _logger = logging.getLogger(__name__)
@@ -206,6 +213,37 @@ def put_settings_api(body: SettingsPatch):
     }
 
 
+# ── 用户级偏好（昵称 / 公司 / 界面选择）────────────────────
+# 与 /api/settings 的边界：settings 是系统级运行时配置（脱敏、受 CONFIG_SCHEMA 约束）；
+# prefs 是用户级偏好（明文、无密钥、原样返回）。分表分域，见 core/user_prefs.py。
+class PrefsPatch(BaseModel):
+    patch: Dict[str, Any] = {}
+
+
+@app.get("/api/prefs")
+def get_prefs_api():
+    """返回用户偏好全量（**仅库中实际存在的键**）+ 分组元信息。
+
+    刻意不合成默认值：前端首次启动需要靠 `stored` 区分「远端为空（新库）→
+    保留本地并上推」与「远端有值 → 以远端为准」，否则会误清用户已有资料。
+    """
+    return {"ok": True, **prefs_doc()}
+
+
+@app.put("/api/prefs")
+def put_prefs_api(body: PrefsPatch):
+    """保存用户偏好：校验 → 落库（单事务）→ 回全量。
+
+    - 未知键被忽略（跨版本兼容）。
+    - 类型错误 / 超长：整包 422，附字段级错误，任何键都不落库（不做半写）。
+    """
+    try:
+        values = apply_prefs(body.patch or {})
+    except PrefsValidationError as e:
+        raise HTTPException(status_code=422, detail={"errors": e.errors})
+    return {"ok": True, "values": values, "stored": sorted(values.keys())}
+
+
 @app.get("/api/search")
 def search_endpoint(q: str, num: int = 10, site: Optional[str] = None):
     try:
@@ -256,12 +294,19 @@ def get_expert(eid: str):
 class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"  # quick | deep | expert
+    type: str = DEFAULT_RESEARCH_TYPE  # guide（游玩攻略）| assessment（调研评估）
     model: Optional[str] = None  # 用户选择的分析模型；空/'Auto'/None 表示按 settings 编排
+
+
+@app.get("/api/research-types")
+def research_types():
+    """调研类型选择器数据源（首页卡片），与后端注册表单一真相源。"""
+    return rt.research_type_options()
 
 
 @app.post("/api/tasks")
 def post_task(body: CreateTaskBody):
-    return create_task(body.query, mode=body.mode, model=body.model)
+    return create_task(body.query, mode=body.mode, model=body.model, research_type=body.type)
 
 
 class ClarifyBody(BaseModel):
@@ -414,24 +459,18 @@ def post_feedback(report_id: str, body: FeedbackBody):
     return {"ok": True}
 
 
-# ── 简报一页纸精炼（派生数据，懒生成落库）──────────────────
+# ── 简报一页纸精炼（派生数据，kind='brief' 后台任务 + SSE 订阅）──
 @app.post("/api/reports/{report_id}/brief")
 def post_brief(report_id: str):
-    """生成（或复用）报告的"一页纸精炼"简报。
+    """创建「生成一页纸精炼」的后台任务（G7，已从同步端点迁移）。
 
-    幂等：库中已有 brief 直接返回；LLM 未配置 → 503；报告不存在 → 404。
-    同步端点（线程池执行）：单次 LLM 调用 5-20s，前端 loading + 30s 失败冷却兜底。
+    不再同步阻塞 HTTP：返回 {taskId}，前端订阅 GET /api/tasks/{taskId}/stream
+    消费 progress→done（幂等：已有 brief 走 done 快路径）/ error 事件。
+    报告不存在 → 404；LLM 未配置由 brief_report_pipeline 转为 error 事件。
     """
     if not db.get_report(report_id):
         raise HTTPException(status_code=404, detail="报告不存在或未就绪")
-    from app.core.orchestrator import generate_brief  # 内联：与端点同批落地，避免 import 行被并发覆盖丢失
-    try:
-        brief = generate_brief(report_id)
-    except LLMNotConfigured as e:
-        raise HTTPException(status_code=503, detail=f"LLM 未配置：{e}") from e
-    if not brief:
-        return {"ok": False, "brief": None, "message": "生成失败，请稍后重试"}
-    return {"ok": True, "brief": brief}
+    return create_brief_task(report_id)
 
 
 # ── 按批注深化章节（人工介入二次调研）────────────────────
@@ -479,7 +518,7 @@ def dashboard():
 # ── 全局证据溯源库 ──────────────────────────────────────
 @app.get("/api/evidences")
 def evidences(
-    brand: Optional[str] = None,
+    destination: Optional[str] = None,
     source_type: Optional[str] = None,
     min_cred: float = 0.0,
     limit: int = 200,
@@ -487,16 +526,17 @@ def evidences(
 ):
     # report_id 过滤：不传 → 全部证据；'<rid>' → 仅该报告证据。
     items = db.query_evidences(
-        brand=brand, source_type=source_type, min_cred=min_cred,
+        destination=destination, source_type=source_type, min_cred=min_cred,
         limit=limit, report_id=report_id,
     )
     return {"items": items, "facets": db.evidence_facets()}
 
 
-# ── 竞品监控订阅 ────────────────────────────────────────
+# ── 目的地持续追踪订阅 ──────────────────────────────────
 class SubscriptionBody(BaseModel):
     query: str
-    brands: List[str] = []
+    destinations: List[str] = []
+    type: str = DEFAULT_RESEARCH_TYPE
 
 
 @app.get("/api/subscriptions")
@@ -508,7 +548,7 @@ def list_subscriptions():
 def create_subscription(body: SubscriptionBody):
     import uuid
     sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-    return db.create_subscription(sub_id, body.query, body.brands)
+    return db.create_subscription(sub_id, body.query, body.destinations, body.type)
 
 
 @app.delete("/api/subscriptions/{sub_id}")

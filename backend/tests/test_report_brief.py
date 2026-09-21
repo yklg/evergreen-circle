@@ -4,7 +4,9 @@
 - `orchestrator.generate_brief(report_id)`：幂等（已存在不重复调 LLM）、失败记 brief_failed_at、
   成功清 brief_failed_at、并发经 db._LOCK 串行 + 写回前重读校验、无 summary/metrics 时降级组装。
 - `db.invalidate_report_brief(report_id)`：清除 data.brief / brief_failed_at，幂等（brief 不存在不报错）。
-- `POST /api/reports/{id}/brief`：已生成/新生成均 200 + {ok,brief}；不存在 404；LLM 未配置 503。
+- `POST /api/reports/{id}/brief`（G7 迁移）：创建 kind='brief' 后台任务并返回 {taskId}；404 不变；
+  幂等/失败语义移入 brief_report_pipeline（已有 brief → done 快路径；失败 → error 事件 + 任务 failed 终态）。
+- `brief_report_pipeline`：事件协议 progress→done{reportId} / error；阻塞 LLM 走 asyncio.to_thread。
 - 失效挂点：post_refine、post_feedback、refine_report_pipeline 成功出口各清除一次 brief。
 
 依赖真实逻辑的注入点：
@@ -20,7 +22,7 @@ from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from app.core import db, orchestrator
+from app.core import db, orchestrator, runner
 from app.main import app
 
 
@@ -40,7 +42,7 @@ def _make_report(rid, with_summary: bool = True):
     sections = [summary_section] if with_summary else []
     report = {
         "id": rid, "title": "报告 " + rid, "subtitle": "副标题", "query": "测试查询",
-        "brands": ["品牌A"], "experts": [], "cover_image": "",
+        "destinations": ["目的地A"], "experts": [], "cover_image": "",
         "created_at": db._now(),
         "evidence": [], "claims": [], "metrics": {},
         "sections": sections,
@@ -78,10 +80,10 @@ def _seed_brief_with_evidence(rid, specs, monkeypatch):
     for eid, cred in specs:
         _conn().execute(
             "INSERT OR REPLACE INTO evidences(evidence_id,report_id,source_url,source_type,domain,"
-            "title,excerpt,credibility,collected_by,brand,captured_at)"
+            "title,excerpt,credibility,collected_by,destination,captured_at)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (eid, rid, "https://example.com/" + eid, "web", "example.com", "证据 " + eid,
-             "内容", cred, "tester", "品牌A", db._now()),
+             "内容", cred, "tester", "目的地A", db._now()),
         )
     _conn().commit()
     monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
@@ -122,37 +124,140 @@ def test_brief_idempotent_no_llm_call(monkeypatch):
     assert second == first
 
 
-# ── 端点：200 / 404 / 503 ──────────────────────────────────
-def test_brief_endpoint_ok(monkeypatch):
-    """POST brief → 200 + {ok:true, brief:{四段}}。"""
+# ── 端点：创建任务 {taskId} / 404 ─────────────────────────
+def test_brief_endpoint_creates_task(monkeypatch):
+    """POST brief（G7 迁移后）→ 200 + {taskId}；不再同步返回 brief。"""
     monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
     _make_report("r_ep_ok")
-    client = TestClient(app)
-    r = client.post("/api/reports/r_ep_ok/brief")
+    r = TestClient(app).post("/api/reports/r_ep_ok/brief")
     assert r.status_code == 200
     j = r.json()
-    assert j.get("ok") is True
-    b = j.get("brief") or {}
-    assert b.get("summary") and b.get("judgments") and b.get("key_data") and b.get("actions")
+    assert j.get("taskId"), "迁移后端点应返回 {taskId}"
+    assert db.get_task_full(j["taskId"])["kind"] == "brief"
 
 
 def test_brief_endpoint_not_found_404():
-    """不存在的 report_id → 404。"""
+    """不存在的 report_id → 404（创建任务前置守卫）。"""
     client = TestClient(app)
     r = client.post("/api/reports/r_missing_404/brief")
     assert r.status_code == 404
 
 
-def test_brief_endpoint_unconfigured_503(monkeypatch):
-    """LLM 未配置（chat_json 抛 LLMNotConfigured）→ 503 + 可读消息。"""
+def test_brief_endpoint_creates_task_returns_json_with_detail_on_missing():
+    """404 响应体含可读 detail（前端显式抛错契约）。"""
+    r = TestClient(app).post("/api/reports/r_m404d/brief")
+    assert r.status_code == 404
+    assert r.json().get("detail")
+
+
+# ── brief_report_pipeline：事件协议 / 终态 ─────────────────
+def test_brief_pipeline_generates_and_done(monkeypatch):
+    """新建报告 → pipeline 产出 progress+done；brief 四段落库。"""
+    calls = []
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    _make_report("r_pl_ok")
+    tid = orchestrator.create_brief_task("r_pl_ok")["taskId"]
+
+    async def _real():
+        return await _drain(orchestrator.brief_report_pipeline(tid))
+    events = asyncio.run(_real())
+    types = [e["type"] for e in events]
+    assert types == ["progress", "done"], f"事件协议应为 progress→done，实际 {types}"
+    assert events[-1]["data"]["reportId"] == "r_pl_ok"
+    assert db.get_report("r_pl_ok")["brief"]["summary"]
+
+
+def test_brief_full_chain_via_runner(monkeypatch):
+    """全链路：runner.ensure_running(drive brief pipeline) → 任务 done + brief 落库（DB 终态由 _drive 落账）。"""
+    calls = []
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    _make_report("r_chain")
+    tid = orchestrator.create_brief_task("r_chain")["taskId"]
+
+    async def _scenario():
+        runner.ensure_running(tid)
+        await asyncio.sleep(0.35)  # 让后台 _drive 跑完 brief pipeline
+        return db.get_task_full(tid)["status"]
+    status = asyncio.run(_scenario())
+    assert status == "done", "runner 全链路应以 done 收尾"
+    assert db.get_report("r_chain")["brief"]["summary"]
+
+
+def test_brief_pipeline_idempotent_no_llm_call(monkeypatch):
+    """已有 brief → pipeline 只走 done 快路径，不再调 LLM。"""
+    calls = []
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    _seed_brief("r_pl_idem", calls_holder=calls, monkeypatch=monkeypatch)
+    n_before = len(calls)
+    tid = orchestrator.create_brief_task("r_pl_idem")["taskId"]
+
+    async def _real():
+        events = await _drain(orchestrator.brief_report_pipeline(tid))
+        return events
+    events = asyncio.run(_real())
+    assert len(calls) == n_before, "已有 brief 时 pipeline 不应再调 LLM"
+    assert [e["type"] for e in events] == ["progress", "done"]
+
+
+def test_brief_pipeline_report_missing_error_failed(monkeypatch):
+    """报告不存在 → error 事件 + 任务 failed 终态（不再 503/404 混合语义）。"""
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
+    tid = orchestrator.create_brief_task("r_pl_missing")["taskId"]
+
+    async def _real():
+        return await _drain(orchestrator.brief_report_pipeline(tid))
+    events = asyncio.run(_real())
+    assert [e["type"] for e in events] == ["error"]
+    assert "报告不存在" in events[-1]["data"]["message"]
+    assert db.get_task_full(tid)["status"] == "failed"
+
+
+def test_brief_pipeline_unconfigured_error_failed(monkeypatch):
+    """LLM 未配置 → error 事件（含可读消息）+ 任务 failed 终态。"""
     def _raise(*args, **kwargs):
         raise orchestrator.LLMNotConfigured("LLM 未配置")
     monkeypatch.setattr(orchestrator, "chat_json", _raise)
-    _make_report("r_503")
-    client = TestClient(app)
-    r = client.post("/api/reports/r_503/brief")
-    assert r.status_code == 503
-    assert r.json().get("detail"), "503 应携带可读 detail 消息"
+    _make_report("r_pl_503")
+    tid = orchestrator.create_brief_task("r_pl_503")["taskId"]
+
+    async def _real():
+        return await _drain(orchestrator.brief_report_pipeline(tid))
+    events = asyncio.run(_real())
+    assert events[-1]["type"] == "error", "最后事件应为 error"
+    assert "LLM 未配置" in events[-1]["data"]["message"]
+    assert db.get_task_full(tid)["status"] == "failed"
+
+
+def test_brief_pipeline_llm_failure_error_failed(monkeypatch):
+    """LLM 普通失败 → error 事件 + 任务 failed；不写 brief 但保留 brief_failed_at。"""
+    def _boom(*args, **kwargs):
+        raise RuntimeError("upstream down")
+    monkeypatch.setattr(orchestrator, "chat_json", _boom)
+    _make_report("r_pl_fail")
+    tid = orchestrator.create_brief_task("r_pl_fail")["taskId"]
+
+    async def _real():
+        return await _drain(orchestrator.brief_report_pipeline(tid))
+    events = asyncio.run(_real())
+    assert events[-1]["type"] == "error", "最后事件应为 error"
+    rep = db.get_report("r_pl_fail")
+    assert "brief" not in (rep or {})
+    assert db.get_task_full(tid)["status"] == "failed"
+
+
+# ── SSE 传输层契约（HTTP）─────────────────────────────────
+def test_brief_sse_transport_done_event(monkeypatch):
+    """GET /api/tasks/{tid}/stream → 200 + text/event-stream；body 含 event: done。"""
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
+    _make_report("r_sse_1")
+    tid = orchestrator.create_brief_task("r_sse_1")["taskId"]
+
+    with TestClient(app) as cli:
+        with cli.stream("GET", f"/api/tasks/{tid}/stream") as r:
+            assert r.status_code == 200
+            assert "text/event-stream" in r.headers.get("content-type", "")
+            body = "".join(r.iter_text())
+    assert "event: done" in body, "SSE body 应含 done 事件"
 
 
 # ── 失效挂点 ×3 ────────────────────────────────────────────

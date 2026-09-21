@@ -52,7 +52,7 @@ export function VMetricsPanel({ metrics }: { metrics?: ReportMetrics }) {
   return (
     <div className="my-6">
       <div className="mb-3 flex items-center gap-1.5 text-aux font-semibold text-ink">
-        <Gauge size={15} className="text-primary" /> 效能与业务闭环指标（相比人工竞品分析，公式透明可解释）
+        <Gauge size={15} className="text-primary" /> 效能与业务闭环指标（相比人工旅游调研，公式透明可解释）
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {cards.map((c) => {
@@ -71,7 +71,7 @@ export function VMetricsPanel({ metrics }: { metrics?: ReportMetrics }) {
       {/* 业务闭环细分指标 */}
       <div className="mt-3 flex flex-wrap gap-2 text-tag">
         <Pill label="维度覆盖率" value={pct(biz.dimension_coverage)} />
-        <Pill label="品牌覆盖率" value={pct(biz.brand_coverage)} />
+        <Pill label="目的地覆盖率" value={pct(biz.destination_coverage)} />
         <Pill label="人工修正率" value={biz.correction_rate != null ? pct(biz.correction_rate) : '待反馈'} />
         <Pill label="Token 消耗" value={num(eff.tokens_used).toLocaleString()} />
       </div>

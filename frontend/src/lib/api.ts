@@ -7,16 +7,18 @@ import type {
   Expert,
   ExpertWorkload,
   PingLLMResp,
+  PrefsResp,
+  PrefsValues,
   Report,
   ReportCard,
   ReportSection,
+  ResearchTypeOption,
   SaveSettingsResp,
   SSEEventType,
   SettingsResp,
   SettingsValues,
   Subscription,
   TraceSpan,
-  ReportBrief,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -94,16 +96,26 @@ export async function pingLLM(): Promise<PingLLMResp> {
   }
 }
 
-export async function createTask(query: string, mode: string = 'deep', model?: string | null): Promise<CreateTaskResp> {
+export async function createTask(
+  query: string,
+  mode: string = 'deep',
+  model?: string | null,
+  type: string = 'guide',
+): Promise<CreateTaskResp> {
   return safeJson<CreateTaskResp>(
     '/api/tasks',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode, model: model ?? null }),
+      body: JSON.stringify({ query, mode, model: model ?? null, type }),
     },
-    { taskId: `demo-${Date.now()}` },
+    { taskId: `demo-${Date.now()}`, researchType: type },
   )
+}
+
+/* 调研类型选项（首页类型选择器唯一数据源；后端注册表生成） */
+export async function fetchResearchTypes(): Promise<ResearchTypeOption[]> {
+  return safeJson<ResearchTypeOption[]>('/api/research-types', undefined, [])
 }
 
 export async function submitClarify(
@@ -174,20 +186,19 @@ export async function deleteReport(reportId: string): Promise<{ ok: boolean }> {
   return safeJson(`/api/reports/${reportId}`, { method: 'DELETE' }, { ok: true })
 }
 
-/* 一页纸精炼（简报）：幂等生成并返回；失败（HTTP 非 2xx / 网络异常）必须显式抛出并提供错误信息。 */
-export async function generateReportBrief(
-  reportId: string,
-): Promise<{ ok?: boolean; brief?: ReportBrief; message?: string }> {
+/* 一页纸精炼（简报，G7）：创建 kind='brief' 后台任务并返回 taskId。
+ * 幂等/失败语义在任务流内：产物落库后 report.brief 就绪；历史补帧/终态重连由任务流保证。
+ * HTTP 非 2xx（如 404）显式抛出；网络异常亦显式抛出（不做静默兜底）。 */
+export async function generateReportBrief(reportId: string): Promise<{ taskId: string }> {
   const r = await fetch(`${API_BASE}/api/reports/${reportId}/brief`, { method: 'POST' })
-  const data = (await r.json().catch(() => ({}))) as {
-    ok?: boolean
-    brief?: ReportBrief
-    message?: string
-  }
+  const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }
   if (!r.ok) {
-    throw new Error(data.message || `生成失败（HTTP ${r.status}）`)
+    throw new Error(data.detail || data.message || `请求失败（HTTP ${r.status}）`)
   }
-  return data
+  if (!data.taskId) {
+    throw new Error(data.message || '未返回任务 ID，请重试')
+  }
+  return { taskId: data.taskId }
 }
 
 /* 仪表盘真实统计 */
@@ -197,21 +208,21 @@ export async function fetchDashboard(): Promise<DashboardStats | null> {
 
 /* 全局证据溯源库 */
 export async function fetchEvidences(params?: {
-  brand?: string
+  destination?: string
   source_type?: string
   min_cred?: number
   /** 证据归属过滤：'<rid>' = 仅该报告证据；不传 = 全部证据。 */
   report_id?: string
 }): Promise<EvidenceQueryResp> {
   const qs = new URLSearchParams()
-  if (params?.brand) qs.set('brand', params.brand)
+  if (params?.destination) qs.set('destination', params.destination)
   if (params?.source_type) qs.set('source_type', params.source_type)
   if (params?.min_cred != null) qs.set('min_cred', String(params.min_cred))
   if (params?.report_id != null) qs.set('report_id', params.report_id)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return safeJson<EvidenceQueryResp>(`/api/evidences${suffix}`, undefined, {
     items: [],
-    facets: { total: 0, by_type: {}, by_brand: {} },
+    facets: { total: 0, by_type: {}, by_destination: {} },
   })
 }
 
@@ -234,18 +245,22 @@ export async function refineReportEvidence(
   )
 }
 
-/* 竞品监控订阅 */
+/* 目的地监控订阅 */
 export async function fetchSubscriptions(): Promise<Subscription[]> {
   return safeJson<Subscription[]>('/api/subscriptions', undefined, [])
 }
 
-export async function createSubscription(query: string, brands: string[]): Promise<Subscription | null> {
+export async function createSubscription(
+  query: string,
+  destinations: string[],
+  type: string = 'guide',
+): Promise<Subscription | null> {
   return safeJson<Subscription | null>(
     '/api/subscriptions',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, brands }),
+      body: JSON.stringify({ query, destinations, type }),
     },
     null,
   )
@@ -364,4 +379,81 @@ export function getTaskStatus(taskId: string): Promise<TaskStatusResp> {
 /** 进行中的任务列表。 */
 export function listRunningTasks(): Promise<RunningTask[]> {
   return safeJson<RunningTask[]>('/api/tasks/running', undefined, [])
+}
+
+/* ── 用户级偏好（prefs）───────────────────────────────────
+   与 fetchSettings/saveSettings 的分工：settings 是系统级运行时配置（密钥脱敏）；
+   prefs 是用户级偏好（明文）。持久化策略（本地秒开 / 远端真相源 / 首次上推）
+   不在本层，见 src/lib/persist.ts —— 本层只管 HTTP。 */
+
+/**
+ * 「当前部署根本没有这个接口」——与「临时网络故障」是两回事。
+ *
+ * 触发场景：Vercel 只读镜像 `api/index.py` 是**有意裁剪**的部署形态（该目录
+ * 是 backend/ 的子集，见 backend/tests/test_api_mirror_guard.py），只写 /tmp、
+ * 明确声明「刷新/重启后不持久化」。因此那边不存在 /api/prefs **不是 bug**。
+ *
+ * 拿到此错误意味着：应永久降级为纯本地持久化，而不是把它当成故障反复重推。
+ */
+export class PrefsUnsupportedError extends Error {
+  constructor(status: number) {
+    super(`该部署未提供 /api/prefs（HTTP ${status}），已降级为本地持久化`)
+    this.name = 'PrefsUnsupportedError'
+  }
+}
+
+/** 服务端偏好接口可用性。`unknown` 表示尚未观察到任何结论，此时正常发请求。 */
+export type PrefsApiCapability = 'unknown' | 'supported' | 'unsupported'
+
+let prefsCapability: PrefsApiCapability = 'unknown'
+
+/** 供 persist 层查询：`unsupported` 时不再空推、不再刷告警。 */
+export function getPrefsApiCapability(): PrefsApiCapability {
+  return prefsCapability
+}
+
+/** 判定「接口不存在」的状态码（404 路由缺失 / 405 方法未实现）。 */
+function isMissingEndpoint(status: number): boolean {
+  return status === 404 || status === 405
+}
+
+/** 读取用户偏好。后端不可用时返回 null（由 persist 层决定"保留本地值"）。 */
+export async function fetchPrefs(): Promise<PrefsResp | null> {
+  try {
+    const r = await fetch(`${API_BASE}/api/prefs`)
+    if (isMissingEndpoint(r.status)) {
+      prefsCapability = 'unsupported'
+      return null
+    }
+    if (!r.ok) return null
+    prefsCapability = 'supported'
+    return (await r.json()) as PrefsResp
+  } catch {
+    return null
+  }
+}
+
+/** 写入用户偏好（增量 patch）。失败抛错，由 persist 层保留 pending 标记待重推。 */
+export async function savePrefs(patch: PrefsValues): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/prefs`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patch }),
+  })
+  if (isMissingEndpoint(r.status)) {
+    // 该部署没有这个接口 → 记录能力缺失，抛专用错误让 persist 层永久降级
+    prefsCapability = 'unsupported'
+    throw new PrefsUnsupportedError(r.status)
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}))
+    const errors = (data as { detail?: { errors?: Record<string, string> } })?.detail?.errors
+    const msg = errors
+      ? Object.entries(errors)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join('\n')
+      : `偏好保存失败（HTTP ${r.status}）`
+    throw new Error(msg)
+  }
+  prefsCapability = 'supported'
 }

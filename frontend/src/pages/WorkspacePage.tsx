@@ -84,7 +84,7 @@ export default function WorkspacePage() {
           <Sprout size={18} strokeWidth={1.8} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-aux font-medium text-ink">{displayQuery || '竞品分析任务'}</div>
+          <div className="truncate text-aux font-medium text-ink">{displayQuery || '旅游调研任务'}</div>
           <div className="text-tag text-ink-3">任务 {taskId}</div>
         </div>
         {/* 进度 */}

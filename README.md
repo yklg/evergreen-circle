@@ -1,4 +1,4 @@
-# 青野 Verda · AI 竞品情报工作台
+# 青野 Verda · AI 旅游调研工作台
 
 > 让每个结论都有出处，让每次调研都活着。
 
@@ -8,8 +8,10 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Built with TRAE](https://img.shields.io/badge/Built%20with-TRAE%20AI-7C5CFF.svg)](https://www.trae.ai/)
 
-青野 Verda 是一个**会自己组队、能溯源、看得见思考过程**的「AI 竞品情报工作台」。
-它把一支由 48 位虚拟专家组成的多 Agent 团队封装进一条 Deep Research 流水线：从澄清需求、真实联网采集、交叉验证、结构化分析，到并行撰写一份带证据溯源的竞品研究报告——全程可观测、可回放、可人工介入二次深化。
+青野 Verda 是一个**会自己组队、能溯源、看得见思考过程**的「AI 旅游调研工作台」。
+它把一支由 48 位虚拟专家组成的多 Agent 团队封装进一条 Deep Research 流水线：从澄清需求、真实联网采集、交叉验证、结构化分析，到并行撰写一份带证据溯源的旅游调研报告——全程可观测、可回放、可人工介入二次深化。
+
+首页可选择调研类型：**游玩攻略**（交通 · 住宿 · 路线 · 美食 · 预算）与**调研评估**（可达性 · 配套 · 安全 · 性价比），类型决定章节骨架、搜索角度、分析结构与澄清问卷。
 
 - **真实，不演示**：真实 LLM（智谱 GLM）+ 真实联网搜索（博查 Bocha）+ 真实网页抓取 + SQLite 持久化。搜不到就如实标注「未采集到」，绝不编造假数据。
 - **每个结论都有出处**：四条铁律——无证据不立论 / 交叉验证 / 返工闭环 / 全程可观测。
@@ -26,7 +28,7 @@
 | 🧠 多 Agent 编排 | 48 位分层虚拟专家（决策层 / 策略层 / 执行层），按任务自动组队、指派、终审 |
 | 🔎 Deep Research 流水线 | `intake → orchestrator → collect → analyze → write → audit → done`，带返工闭环 |
 | 🌐 真实联网采集 | 博查 Bocha 多角度多轮搜索 + 真实正文抓取 + 乱码/相关性过滤 |
-| 📊 结构化知识 Schema | 功能树 / 定价模型 / 用户画像三类强结构对象，前端渲染矩阵、定价表、画像卡 |
+| 📊 结构化知识 Schema | 游玩攻略：逐日路线 / 住宿选型 / 预算拆解；调研评估：可达性矩阵 / 配套清单 / 风险画像。前端渲染路线表、清单与矩阵 |
 | 🔬 可信度真实计算 | 按来源分级 + 域名权威性 + 时效性 + 抓取质量打分（0–100，非写死） |
 | 📈 量化提升 & 业务闭环指标 | 效率提升 / 覆盖度 / 一致性 / 准确率 / 人工修正率，每项可解释 |
 | 👀 全链路可观测 Trace | 每个 Agent 的 Prompt/输出/Token/决策可查、可回放 |
@@ -108,8 +110,8 @@ cp backend/.env.example backend/.env
 cd backend
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m uvicorn app.main:app --reload --port 8010
-# 后端: http://localhost:8010   健康检查: /health   LLM 自检: /api/llm/ping
+.venv/bin/python -m uvicorn app.main:app --reload --port 8020
+# 后端: http://localhost:8020   健康检查: /health   LLM 自检: /api/llm/ping
 ```
 
 ### 3. 启动前端
@@ -118,7 +120,7 @@ python3 -m venv .venv
 cd frontend
 npm install
 npm run dev
-# 前端: http://localhost:3400
+# 前端: http://localhost:3500
 ```
 
 ### 一键启停（可选）
@@ -126,7 +128,7 @@ npm run dev
 项目根目录提供了本地一键脚本（macOS / Linux）：
 
 ```bash
-./restart.sh   # 清理旧进程 → 启动后端(:8010) → 等待就绪 → 启动前端(:3400)
+./restart.sh   # 清理旧进程 → 启动后端(:8020) → 等待就绪 → 启动前端(:3500)
 ./stop.sh      # 按端口精确关闭本项目前后端
 ```
 
@@ -142,14 +144,13 @@ npm run dev
 | `ZHIPU_MODEL` / `ZHIPU_MODEL_CORE` / `ZHIPU_MODEL_AUX` / `ZHIPU_MODEL_FAST` | 多模型矩阵（默认 / 核心章 / 辅助章 / 杂务） | 否（有默认值） |
 | `BOCHA_API_KEY` | 博查 Bocha Web Search Key，从 https://open.bocha.cn 获取（形如 `sk-xxxx`） | 真实联网采集时必填 |
 | `DOUYIN_COOKIE` / `BILIBILI_COOKIE` / `XHS_COOKIE` | 各平台舆情采集 cookie | 平台采集时按需 |
-| `APP_PORT` | 后端端口（默认 8000，本地脚本用 8010） | 否 |
-| `FRONTEND_ORIGIN` | 前端地址（CORS 白名单），默认 `http://localhost:3400` | 否 |
-| `ENABLE_DEMO_FALLBACK` | 无 key 时是否启用缓存兜底（演示不崩） | 否 |
+| `APP_PORT` | 后端端口（默认 8000，本地脚本用 8020） | 否 |
+| `FRONTEND_ORIGIN` | 前端地址（CORS 白名单），默认 `http://localhost:3500` | 否 |
 
 验证 LLM 是否打通：
 
 ```bash
-curl http://localhost:8010/api/llm/ping
+curl http://localhost:8020/api/llm/ping
 ```
 
 ---
