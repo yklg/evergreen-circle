@@ -23,7 +23,7 @@ from app.core import research_types as rt
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
 from app.core.research_types import DEFAULT_RESEARCH_TYPE
 import logging
-from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task
+from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task, GuideSingleDestinationError
 from app.core import runner
 from app.core.runtime_config import (
     GROUP_FIELDS,
@@ -315,7 +315,13 @@ class ClarifyBody(BaseModel):
 
 @app.post("/api/tasks/{task_id}/clarify")
 def post_clarify(task_id: str, body: ClarifyBody):
-    return submit_clarify(task_id, body.answers)
+    try:
+        return submit_clarify(task_id, body.answers)
+    except GuideSingleDestinationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "guide_single_destination", "message": str(e)},
+        )
 
 
 # ── SSE 思维流（纯订阅者；执行由 runner 后台常驻，断连只撤订阅不杀任务）─

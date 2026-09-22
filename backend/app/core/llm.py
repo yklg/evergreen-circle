@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from contextvars import ContextVar
 from typing import Any, Iterator, Optional
 
 from openai import OpenAI
@@ -153,6 +154,24 @@ def _strip_think(text: str) -> str:
     return cleaned.strip()
 
 
+# 截断观测（只读，不改变任何调用行为）：让上层能区分「这次输出是被 max_tokens
+# 切断的」与「模型正常收尾」。用 ContextVar 而非进程共享变量——写稿章经
+# asyncio.to_thread 执行，chat() 与读取方在同一线程上下文（copy_context 副本）内，
+# 并行的各章互不串扰。
+_LAST_FINISH: ContextVar[str] = ContextVar("llm_last_finish", default="")
+_LAST_REASONING: ContextVar[int] = ContextVar("llm_last_reasoning", default=0)
+
+
+def last_finish_reason() -> str:
+    """最近一次 chat() 的结束原因（'stop' / 'length' / …）；尚未调用过为空串。"""
+    return _LAST_FINISH.get()
+
+
+def last_reasoning_tokens() -> int:
+    """最近一次 chat() 的推理 token 数（厂商不返回该字段时为 0）。"""
+    return _LAST_REASONING.get()
+
+
 def chat(
     messages: list[dict],
     temperature: float = 0.6,
@@ -189,14 +208,24 @@ def chat(
             resp = client.chat.completions.create(**kwargs)
             latency_ms = int((time.perf_counter() - t0) * 1000)
             content = _strip_think(resp.choices[0].message.content or "")
+            finish = str(getattr(resp.choices[0], "finish_reason", "") or "")
+            reasoning = 0
             usage = None
             try:
                 usage = resp.usage
                 if usage:
                     TOKEN_USAGE["total"] += int(usage.total_tokens or 0)
+                    details = getattr(usage, "completion_tokens_details", None)
+                    reasoning = int(getattr(details, "reasoning_tokens", 0) or 0)
             except Exception:
                 pass
-            # 无侵入埋点：记录本次调用的 trace span
+            _LAST_FINISH.set(finish)
+            _LAST_REASONING.set(reasoning)
+            # 无侵入埋点：记录本次调用的 trace span。被截断时在 decision 上留痕，
+            # 决策回放里一眼看出「这段输出是被 max_tokens 切断的」+ 推理烧了多少。
+            decision = purpose
+            if finish == "length":
+                decision += f"· 输出被截断（推理 {reasoning} tok）" if reasoning else "· 输出被截断"
             try:
                 trace.record_span(
                     model=use_model,
@@ -204,7 +233,7 @@ def chat(
                     response=content,
                     usage=usage,
                     latency_ms=latency_ms,
-                    decision=purpose,
+                    decision=decision,
                     evidence_ids=evidence_ids,
                 )
             except Exception:

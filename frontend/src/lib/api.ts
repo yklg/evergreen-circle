@@ -122,15 +122,26 @@ export async function submitClarify(
   taskId: string,
   answers: Record<string, unknown>,
 ): Promise<{ ok: boolean }> {
-  return safeJson(
-    `/api/tasks/${taskId}/clarify`,
-    {
+  let r: Response
+  try {
+    r = await fetch(`${API_BASE}/api/tasks/${taskId}/clarify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answers }),
-    },
-    { ok: true },
-  )
+    })
+  } catch {
+    return { ok: true } // 后端不可达：维持旧降级，由工作区流显示错误
+  }
+  if (!r.ok) {
+    // 结构性拒绝（如 guide 多目的地 422）：抛出后端文案供页面就地提示
+    const data = await r.json().catch(() => null) as
+      | { detail?: { message?: string } | string }
+      | null
+    const detail = data?.detail
+    const msg = typeof detail === 'string' ? detail : detail?.message
+    throw new Error(msg || `提交失败（HTTP ${r.status}）`)
+  }
+  return (await r.json().catch(() => ({ ok: true }))) as { ok: boolean }
 }
 
 export async function fetchReport(reportId: string): Promise<Report | null> {

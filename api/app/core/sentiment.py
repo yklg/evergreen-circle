@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from app.core.llm import chat_json
 from app.core.platforms import PLATFORMS
+from app.core.wordfreq import top_words
 
 # 各平台元数据统一从平台注册表（app.core.platforms）派生，避免多份注册表漂移。
 # 注：抖音永远排第一（与历史行为一致）。
@@ -29,6 +30,9 @@ def _empty_result() -> Dict[str, Any]:
         "overall": {"pos": 0, "neu": 0, "neg": 0},
         "overall_count": {"pos": 0, "neu": 0, "neg": 0},
         "by_platform": {},
+        "by_destination": [],
+        "by_spot": [],
+        "keywords": [],
         "timeline": [],
         "camps": [],
         "voices": [],
@@ -121,18 +125,61 @@ def analyze_sentiment(destination: str, comments: List[Dict[str, Any]]) -> Dict[
 
     # 按目的地聚合：不同目的地的口碑对比（支持「不同平台/目的地观点聚类」）
     by_destination = _build_by_destination(comments)
+    # 按景点实体聚合（M2c）：(spot × platform) 双维——舆情章节逐景点小表/卡的数据源。
+    # 评论必须带 spot_id（spots 阶段冻结实体后补充采集），by_platform 旧形状保持不变。
+    by_spot = _build_by_spot(comments)
+    # 词云数据（M2d）：jieba 真实词频，全局一份喂「全网口碑词云」；逐景点词云在 by_spot 行内。
+    keywords = top_words([f"{c.get('text', '')} {c.get('title', '')}" for c in comments])
 
     return {
         "overall": overall_pct,
         "overall_count": overall,
         "by_platform": ordered_platform,
         "by_destination": by_destination,
+        "by_spot": by_spot,
+        "keywords": keywords,
         "timeline": [],  # 评论无可靠日期，不伪造时间线
         "camps": camps,
         "voices": voices,
         "highlights": highlights,
         "sample_size": len(comments),
     }
+
+
+def _build_by_spot(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 (spot × platform) 聚合：逐景点声量、情感占比与平台分布（样本降序）。
+
+    只出统计产物；spot_id 直引 spots 阶段冻结实体，不做名称二次匹配。
+    """
+    agg: Dict[str, Dict[str, Any]] = {}
+    for c in comments:
+        sid = (c.get("spot_id") or "").strip()
+        if not sid:
+            continue
+        g = agg.setdefault(sid, {
+            "spot_id": sid, "spot_name": (c.get("spot_name") or "").strip(),
+            "counts": {"pos": 0, "neu": 0, "neg": 0}, "platforms": {}, "texts": [],
+        })
+        s = c.get("sentiment", "neu")
+        g["counts"][s] = g["counts"].get(s, 0) + 1
+        plat = c.get("platform", "douyin")
+        g["platforms"][plat] = g["platforms"].get(plat, 0) + 1
+        g["texts"].append(f"{c.get('text', '')} {c.get('title', '')}")
+    out: List[Dict[str, Any]] = []
+    for g in agg.values():
+        n = sum(g["counts"].values())
+        if not n:
+            continue
+        pct = _normalize_pct(g["counts"], n)
+        out.append({
+            "spot_id": g["spot_id"], "spot_name": g["spot_name"], "sample": n,
+            "pos": pct["pos"], "neu": pct["neu"], "neg": pct["neg"],
+            "by_platform": g["platforms"],
+            # 逐景点词云数据（expert 出「每景点独立词云」；deep 仅有小表时此表可空）
+            "keywords": top_words(g["texts"], limit=24),
+        })
+    out.sort(key=lambda x: (-x["sample"], x["spot_id"]))
+    return out
 
 
 def _build_by_destination(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -52,3 +52,52 @@ if (
   }
   ;(globalThis as { localStorage?: unknown }).localStorage = storage
 }
+
+// jsdom 未实现 Element.prototype.scrollIntoView（W3C 规范外的浏览器专有滚动 API，
+// jsdom 有意不做布局/滚动模拟）。生产代码在滚动到底部时调用它（VAgentStream、
+// VTracePanel），调用点已有 ?. 兜底但拿不到方法本身就会抛 TypeError。
+// 这同样是 jsdom 环境缺口而非被测代码缺陷：注入 no-op 桩，不修改生产代码。
+if (typeof window !== 'undefined' && typeof window.HTMLElement !== 'undefined') {
+  if (typeof window.HTMLElement.prototype.scrollIntoView !== 'function') {
+    window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {}
+  }
+}
+
+// jsdom 无 canvas 后端：getContext('2d') 返回 null。历史成因（echarts-wordcloud import 期
+// 探测 2d 上下文）已随 E1 词云 DOM 化移除该依赖而消失；此处保留最小 2d 桩作为兜底——
+// 任何第三方图表/图像库在测试内触碰 canvas 时不至于整批 import 崩。
+// 仅补环境缺口：canvas 真实绘制不在 jsdom 内验证（浏览器实机验收项）。
+if (typeof window !== 'undefined' && typeof window.HTMLCanvasElement !== 'undefined') {
+  const origGetContext = window.HTMLCanvasElement.prototype.getContext
+  window.HTMLCanvasElement.prototype.getContext = function (
+    this: HTMLCanvasElement, type: string, ...rest: unknown[]
+  ) {
+    if (type !== '2d') {
+      return (origGetContext as Function)?.apply(this, [type, ...rest]) ?? null
+    }
+    const canvas = this as unknown as { width: number; height: number }
+    const noop = () => {}
+    const makeImage = (w: number, h: number) => ({
+      width: w, height: h, colorSpace: 'srgb',
+      data: new Uint8ClampedArray(Math.max(4, w * h * 4)),
+    })
+    const ctx: Record<string, unknown> = {
+      canvas,
+      font: '16px sans-serif', fillStyle: '#000', strokeStyle: '#000',
+      textAlign: 'start', textBaseline: 'alphabetic',
+      globalAlpha: 1, globalCompositeOperation: 'source-over', imageSmoothingEnabled: true,
+      measureText: (t: unknown) => ({ width: String(t ?? '').length * 8, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
+      getImageData: (_x: number, _y: number, w: number, h: number) => makeImage(w, h),
+      createImageData: (a: unknown, b?: number) =>
+        typeof a === 'object' && a !== null
+          ? makeImage((a as { width: number }).width, (a as { height: number }).height)
+          : makeImage(Number(a), Number(b)),
+      putImageData: noop, fillText: noop, strokeText: noop, clearRect: noop,
+      fillRect: noop, strokeRect: noop, beginPath: noop, closePath: noop,
+      moveTo: noop, lineTo: noop, arc: noop, rect: noop, stroke: noop, fill: noop,
+      save: noop, restore: noop, translate: noop, rotate: noop, scale: noop,
+      setTransform: noop, transform: noop, drawImage: noop, clip: noop,
+    }
+    return ctx
+  } as typeof window.HTMLCanvasElement.prototype.getContext
+}

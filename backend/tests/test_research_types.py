@@ -75,13 +75,41 @@ def test_claim_fields_cover_section_fields():
                     f"{rtype}.{mode}: 章节 {sid} 字段 {set(fields) - allowed} 不在 claim 白名单"
 
 
-# ── ③ 结构化键：每类型恰好 3 个且 ⊆ 白名单 ──────────────────────
+# ── ③ 结构化键：⊆ 白名单，且每个键在编排/容错两层都有落点 ─────────
+# 旧钉「恰好 3 个」源于 schema_completeness 分母硬编码；8 章改造后分母改为
+# len(structured_keys)（schemas.schema_completeness），钉数会拦 legitimate 扩展，
+# 这里改钉为更强的跨表一致性：漏配容错器/提示片段/中文标签都会被抓住。
 @pytest.mark.parametrize("rtype", _TYPES)
 def test_structured_keys_shape(rtype):
+    from app.core import orchestrator as O
+    from app.core import schemas
+
     keys = rt.RESEARCH_TYPES[rtype]["structured_keys"]
-    assert len(keys) == 3, "schema_completeness 的分母为 3，键数必须恒为 3"
-    assert len(set(keys)) == 3
+    assert keys and len(set(keys)) == len(keys)
     assert set(keys) <= set(rt.STRUCTURED_FIELDS)
+    # 每个键必须有 schemas 容错器（coerce_structured 对未知键静默跳过 = 产出丢键）
+    missing_coercer = set(keys) - set(schemas._COERCERS)
+    assert not missing_coercer, f"{rtype} 结构化键缺容错器：{missing_coercer}"
+    # LLM 产出的键必须有 _STRUCTURED_SCHEMA 片段（缺一个片段会让整批结构化产出全灭）；
+    # 实体阶段键（spot_ranking，分数由 scoring 规则算）不进 LLM 提示，除外。
+    llm_keys = set(keys) - set(O._ENTITY_STAGE_KEYS)
+    missing_frag = llm_keys - set(O._STRUCTURED_SCHEMA)
+    assert not missing_frag, f"{rtype} 结构化键缺提示片段：{missing_frag}"
+    assert set(keys) <= set(O._STRUCTURED_LABEL), f"{rtype} 结构化键缺中文标签"
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_section_structured_mounts_cover_all_keys(rtype):
+    """SECTION_STRUCTURED 契约：挂载键必须属于本类型；每个结构化对象都有承载章节（无孤儿）。"""
+    spec = rt.RESEARCH_TYPES[rtype]
+    all_sections = {s for ids in spec["sections"].values() for s in ids}
+    for sid in all_sections:
+        for k in rt.section_structured_keys(sid):
+            assert k in spec["structured_keys"], f"{rtype}: 章节 {sid} 挂载了类型外键 {k}"
+    mounted = {k for sid in all_sections for k in rt.section_structured_keys(sid)}
+    mounted |= {f for sid in all_sections for f in rt.section_fields(sid)[0]}
+    orphans = set(spec["structured_keys"]) - mounted
+    assert not orphans, f"{rtype} 结构化对象没有承载章节：{orphans}"
 
 
 # ── ④ 分析键取值合法，且废弃键已清除 ───────────────────────────
@@ -237,10 +265,11 @@ def test_numbered_titles_only_whitelist_and_sequential(rtype):
 
 
 def test_numbered_titles_quick_mode_still_sequential():
-    """快速模式章节更少 → 序号按实际出现的白名单连续，不留空号。"""
+    """快速模式章节更少 → 序号按实际出现的白名单连续，不留空号（M1 改钉：guide 新 8 章骨架）。"""
     titles = rt.numbered_titles(rt.sections_for("guide", "quick"), "guide")
     assert list(titles.values()) == [
-        "一、交通与抵达", "二、住宿区域与选型", "三、逐日路线安排", "四、预算拆解",
+        "一、景点分布调研 · Top榜与位置分布", "二、美食清单 · Top榜",
+        "三、交通与抵达 · 逐景点实际路线", "四、预算拆解",
     ]
 
 
@@ -274,6 +303,71 @@ def test_report_title_uses_type_suffix():
     assert rt.report_title(["大理", "丽江"], "guide") == "大理、丽江 旅游攻略报告"
     assert rt.report_title(["成都", "杭州"], "assessment") == "成都、杭州 宜居评估报告"
     assert rt.report_title([], "guide") == "目的地 旅游攻略报告"
+
+
+# ── ⑨ 单/多目的地自适应（《目的地集合政策》§5.1/§5.4）─────────────
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_multi_only_items_declared_in_every_type(rtype):
+    """多对象专属项必须真实存在于各类型图集/键集里（否则剔除逻辑成了空转）。"""
+    spec = rt.RESEARCH_TYPES[rtype]
+    assert set(rt.MULTI_ONLY_CHARTS) <= set(spec["charts"]), f"{rtype} 图集缺 {rt.MULTI_ONLY_CHARTS}"
+    assert set(rt.MULTI_ONLY_ANALYSIS_KEYS) <= set(spec["analysis_keys"])
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_adaptive_slices_preserve_order_and_type(rtype):
+    spec = rt.RESEARCH_TYPES[rtype]
+    assert isinstance(rt.charts_for(rtype, 2), tuple)
+    assert rt.charts_for(rtype, 2) == spec["charts"]
+    assert rt.analysis_keys_for(rtype, 2) == spec["analysis_keys"]
+    assert rt.charts_for(rtype, 1) == tuple(c for c in spec["charts"]
+                                            if c not in rt.MULTI_ONLY_CHARTS)
+    assert rt.analysis_keys_for(rtype, 1) == tuple(k for k in spec["analysis_keys"]
+                                                   if k not in rt.MULTI_ONLY_ANALYSIS_KEYS)
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_single_destination_titles_have_no_comparison_word(rtype):
+    """泛型不变量：N=1 时**所有**用户可见标题不含「对比」（新增类型自动受约束，无需改测试）。"""
+    visible = [rt.radar_title(rtype, 1), rt.cost_bar_title(rtype, 1),
+               rt.report_title(["大理"], rtype)]
+    visible += list(rt.numbered_titles(rt.sections_for(rtype, "expert"), rtype).values())
+    for title in visible:
+        assert "对比" not in title, f"{rtype} 单目的地标题仍写「对比」：{title}"
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_multi_destination_titles_keep_comparison(rtype):
+    """N≥2 保持既有行为：雷达/成本图标题仍含「对比」（能力面不收窄）。"""
+    assert "对比" in rt.radar_title(rtype, 2)
+    assert "对比" in rt.cost_bar_title(rtype, 2)
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_report_title_unchanged_by_count(rtype):
+    """M6：`report_title` 本就不含「对比」，此处锁行为而非改函数（N=1 / N=2 同例）。"""
+    assert "对比" not in rt.report_title(["大理"], rtype)
+    assert "对比" not in rt.report_title(["大理", "丽江"], rtype)
+
+
+def test_solo_titles_present_where_comparison_title_exists():
+    """配了「对比」标题的图必须同时配 solo 标题，否则单目的地会带着对比措辞出图。"""
+    for rtype in _TYPES:
+        spec = rt.RESEARCH_TYPES[rtype]
+        assert spec.get("radar_title_solo")
+        cb = spec.get("cost_bar") or {}
+        assert cb.get("title") and cb.get("title_solo")
+        assert cb["title"] != cb["title_solo"]
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_days_angle_template_shape(rtype):
+    """天数角度模板（可选键）：只能含 {days}，不得含目的地占位符——采集层会自动前置地名。"""
+    tpl = rt.RESEARCH_TYPES[rtype].get("days_angle_tpl")
+    if tpl is None:
+        return          # 缺省容忍：该类型不生成天数角度（_orthogonal_angles 跳过而非抛）
+    assert "{days}" in tpl and "{d}" not in tpl
+    assert tpl.format(days="三天") == "三天行程"
 
 
 if __name__ == "__main__":

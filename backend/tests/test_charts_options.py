@@ -214,7 +214,8 @@ def _full_coverage_analysis(rtype: str) -> dict:
 
 _SENTIMENT = {"sample_size": 12, "overall_count": {"pos": 6, "neu": 4, "neg": 2},
               "by_platform": {"douyin": {"pos": 3, "neu": 1, "neg": 1},
-                              "xiaohongshu": {"pos": 2, "neu": 1, "neg": 0}}}
+                              "xiaohongshu": {"pos": 2, "neu": 1, "neg": 0}},
+              "keywords": [{"word": "古城", "weight": 5}, {"word": "洱海", "weight": 3}]}
 
 
 @pytest.mark.parametrize("rtype", list(charts_rt.RESEARCH_TYPES))
@@ -225,10 +226,18 @@ def test_every_type_chart_set_generatable(rtype):
     specs = orchestrator._build_charts(["大理", "丽江"], _full_coverage_analysis(rtype),
                                        _SENTIMENT, [], rtype)
     emitted = {s["type"] for s in specs}
-    assert emitted == set(charts_rt.RESEARCH_TYPES[rtype]["charts"]), \
-        f"{rtype} 图表集生成不全：缺 {set(charts_rt.RESEARCH_TYPES[rtype]['charts']) - emitted}"
+    declared = set(charts_rt.RESEARCH_TYPES[rtype]["charts"])
+    assert emitted == declared, f"{rtype} 图表集生成不全：缺 {declared - emitted}"
     for s in specs:
-        assert s["chart_id"] and s["title"] and isinstance(s["option"], dict)
+        assert s["chart_id"] and s["title"]
+        if s["type"] == "wordcloud":
+            # E1 契约：wordcloud 走语义载荷 words，不再烘 echarts option
+            assert "option" not in s, "wordcloud 不得携带 echarts option"
+            assert s["words"], "不得产出空词云"
+            for w in s["words"]:
+                assert set(w) == {"word", "weight"} and str(w["word"]).strip()
+            continue
+        assert isinstance(s["option"], dict)
         assert s["option"]["title"]["text"] == s["title"]
         assert s["option"]["series"], "不得产出空系列图"
         for c in _colors(s["option"]):
@@ -240,6 +249,61 @@ def test_build_charts_skips_chart_without_data():
     from app.core import orchestrator
 
     assert orchestrator._build_charts(["大理"], {}, {}, [], "guide") == []
+
+
+# ── 词云契约（TC-C02 · E1 语义载荷）：words 形状 / 无词不产图 / expert 逐景点多云 ──
+def test_wordcloud_words_contract():
+    """W-B1：载荷归一——{word,weight} 原形保留；脏词条（空白/非 dict）剔除。"""
+    words = charts.wordcloud_words([{"word": "古城", "weight": 5}, {"word": " 洱海 ", "weight": 3},
+                                    {"word": "   ", "weight": 9}, "not-a-dict"])
+    assert words == [{"word": "古城", "weight": 5}, {"word": "洱海", "weight": 3}]
+
+
+def test_wordcloud_empty_words_not_crash():
+    """W-B2：空词表 → []（调用方据此不产图，不造空词云）。"""
+    assert charts.wordcloud_words([]) == []
+
+
+def test_wordcloud_payload_matches_wordfreq_shape():
+    """W-B4（后端侧）：挂图 spec 的 words 与 wordfreq top_words 形状全等（{word,weight}）。"""
+    from app.core import orchestrator
+
+    specs = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
+                                       _SENTIMENT, [], "guide")
+    cloud = next(s for s in specs if s["type"] == "wordcloud")
+    assert cloud["words"] == _SENTIMENT["keywords"], "语义载荷必须原样透传词频源，不改名不换算"
+
+
+def test_build_charts_wordcloud_absent_without_keywords():
+    """无词频数据不占位：sentiment 无 keywords → 图集整体缺位 wordcloud。"""
+    from app.core import orchestrator
+
+    sent = {k: v for k, v in _SENTIMENT.items() if k != "keywords"}
+    specs = orchestrator._build_charts(["大理", "丽江"], _full_coverage_analysis("guide"),
+                                       sent, [], "guide")
+    assert "wordcloud" not in {s["type"] for s in specs}
+
+
+def test_build_charts_expert_emits_per_spot_clouds():
+    """expert 档逐景点词云：每张引用冻结实体名；无 keywords 的景点出图整体缺位而非空图。"""
+    from app.core import orchestrator
+
+    sent = dict(_SENTIMENT)
+    sent["by_spot"] = [
+        {"spot_id": "大理_spot_1", "spot_name": "大理古城",
+         "keywords": [{"word": "夜景", "weight": 4}]},
+        {"spot_id": "大理_spot_2", "spot_name": "崇圣寺三塔", "keywords": []},
+    ]
+    specs = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
+                                       sent, [], "guide", mode="expert")
+    clouds = [s for s in specs if s["type"] == "wordcloud"]
+    assert [c["title"] for c in clouds] == ["全网口碑热词词云", "「大理古城」口碑词云"]
+    assert clouds[1]["words"] == [{"word": "夜景", "weight": 4}]
+    assert all("option" not in c for c in clouds), "E1：词云 spec 不得带 echarts option"
+    # deep 档只出全局一张
+    specs_deep = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
+                                            sent, [], "guide", mode="deep")
+    assert sum(1 for s in specs_deep if s["type"] == "wordcloud") == 1
 
 
 if __name__ == "__main__":

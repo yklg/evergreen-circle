@@ -401,6 +401,69 @@ def test_brief_assembly_without_summary(monkeypatch):
     assert brief and brief.get("summary") and isinstance(brief.get("judgments"), list)
 
 
+# ── M3d：结构化数据事实摘要（8 章改造） ────────────────────────
+def _user_prompt(messages) -> str:
+    return next(m["content"] for m in messages if m["role"] == "user")
+
+
+def test_brief_facts_block_from_structured(monkeypatch):
+    """新 8 章报告：spot_ranking/food_ranking/shop_list/cost_breakdown/stay_options 的
+    真实数字进 brief prompt（key_data 有依据），缺字段行不猜值。"""
+    calls = []
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    _make_report("r_facts")
+    rep = db.get_report("r_facts")
+    rep["sections"] += [
+        {"id": "spots", "title": "景点分布调研",
+         "structured": {"type": "spot_ranking", "data": [{
+             "destination": "大理", "items": [
+                 {"name": "洱海", "score": 88.5, "ticket": "免费", "stay_minutes": 120},
+                 {"name": "无名景点"}]}]}},
+        {"id": "food", "title": "美食清单",
+         "structured": {"type": "food_ranking", "data": [{
+             "destination": "大理", "items": [{"name": "乳扇", "price_range": "¥10-20"}]}]}},
+        {"id": "shops", "title": "美食商铺调研",
+         "structured": {"type": "shop_list", "data": [{
+             "destination": "大理", "items": [
+                 {"name": "老字号", "food": "乳扇", "price_per_person": 58}]}]}},
+        {"id": "budget", "title": "预算拆解",
+         "structured": {"type": "cost_breakdown", "data": [{
+             "destination": "大理", "items": [
+                 {"category": "住宿", "amount": 1500, "unit": "元/人"}]}]}},
+        {"id": "stay", "title": "住宿",
+         "structured": {"type": "stay_options", "data": [{
+             "destination": "大理", "areas": [
+                 {"area": "才村", "price_range": "¥300-500", "for_whom": "亲子家庭"}]}]}},
+    ]
+    db.save_report(rep, task_id="")
+    assert orchestrator.generate_brief("r_facts")
+    prompt = _user_prompt(calls[-1])
+    assert "结构化数据事实" in prompt
+    assert "景点「洱海」综合分 88.5；门票 免费；建议停留 120 分钟" in prompt
+    assert "美食「乳扇」人均 ¥10-20" in prompt
+    assert "商铺「老字号」（乳扇）人均参考价 58 元" in prompt
+    assert "预算·住宿 1500元/人" in prompt
+    assert "住宿「才村」¥300-500，适合 亲子家庭" in prompt
+    assert "景点「无名景点」综合分 —" in prompt  # 缺数字用占位符，不猜值
+
+
+def test_brief_legacy_report_prompt_unchanged(monkeypatch):
+    """存量报告（无 structured 键）：不出现数据事实块，旧精炼 prompt 不受影响。"""
+    calls = []
+    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    _make_report("r_legacy_facts")
+    assert orchestrator.generate_brief("r_legacy_facts")
+    assert "结构化数据事实" not in _user_prompt(calls[-1])
+
+
+def test_brief_facts_block_empty_structured_is_safe():
+    """structured 形状异常（data 为空/类型不对）→ 返回空串，不抛。"""
+    assert orchestrator._brief_facts_block([]) == ""
+    assert orchestrator._brief_facts_block(
+        [{"structured": {"type": "spot_ranking", "data": []}}]) == ""
+    assert orchestrator._brief_facts_block([{"structured": "不是dict"}]) == ""
+
+
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))

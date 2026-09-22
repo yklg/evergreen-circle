@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Sprout, ArrowRight, SkipForward, Loader2, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Sprout, ArrowRight, SkipForward, Loader2, AlertTriangle, RefreshCw, Clock } from 'lucide-react'
 import type { ClarifyQuestion } from '../types'
 import { submitClarify, openClarifyStream } from '../lib/api'
 import { VSunGlow } from '../components/ui'
 import { fadeUp } from '../lib/motion'
+import { DEST_FALLBACK_HINT_CANDIDATES, DEST_FALLBACK_HINT_NONE } from '../lib/destinationFallbackCopy'
 import QuestionField from '../components/QuestionField'
 
 interface NavState {
@@ -29,7 +30,8 @@ export default function ClarifyPage() {
   const [discoveryOngoing, setDiscoveryOngoing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [progressLabel, setProgressLabel] = useState('正在准备问卷…')
-  // 目的地识别兜底（C6）：超时/异常时候选目的地为自动识别结果，需温和提示而非大警告
+  // 澄清流兜底标志（C6）：发现超时/异常时候选为自动识别结果，温和提示而非大警告。
+  // 与运行流的 planFallback（taskStore）分属两条流、两个页面，故各自独立、只共用文案常量。
   const [destinationsFallback, setDestinationsFallback] = useState(false)
 
   // 自动前进延时：单选为快速视觉锁定（一击即定）；多选需留时间勾多项，故更长且每次勾选都重置
@@ -38,6 +40,8 @@ export default function ClarifyPage() {
 
   const [answers, setAnswers] = useState<Record<string, unknown>>({})
   const [submitting, setSubmitting] = useState(false)
+  // 提交被后端结构性拒绝（如游玩攻略多目的地）时的就地提示
+  const [submitErr, setSubmitErr] = useState<string | null>(null)
   // 用户自定义补充的目的地（按题 id 存，目前主要用于 destinations 题）
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({})
 
@@ -225,10 +229,14 @@ export default function ClarifyPage() {
     if (submitting || !taskId) return
     cancelAdvance() // 防止单步「跳过」时挂起的自动前进计时器在异步提交期间插队跳步
     setSubmitting(true)
+    setSubmitErr(null)
     try {
       await submitClarify(taskId, answers)
-    } finally {
       navigate(`/workspace/${taskId}`, { state: { query } })
+    } catch (e) {
+      // 结构性拒绝（如攻略多目的地）：留在本页就地提示，改完可重交
+      setSubmitErr(e instanceof Error ? e.message : '提交失败，请重试')
+      setSubmitting(false)
     }
   }
 
@@ -319,9 +327,7 @@ export default function ClarifyPage() {
 
             {destinationsFallback && q?.id === 'destinations' && (
               <div className="mt-4 rounded-card border border-line/60 bg-card px-4 py-2.5 text-tag text-ink-3">
-                {destinationsPresent
-                  ? '以下目的地为自动识别候选，建议核对或手动补充。'
-                  : '未能自动识别目的地，可在「补充」题说明你关注的城市/地区。'}
+                {destinationsPresent ? DEST_FALLBACK_HINT_CANDIDATES : DEST_FALLBACK_HINT_NONE}
               </div>
             )}
 
@@ -356,6 +362,13 @@ export default function ClarifyPage() {
             >
               <p className="text-body font-medium text-ink">{q.question}</p>
               {q.hint && <p className="mt-1 text-tag text-ink-3">{q.hint}</p>}
+              {/* 工作量提示：数值一律取自后端 payload（缺字段则整条不渲染，不猜阈值） */}
+              {q.workload?.max_angles != null && q.workload?.fetch_per_destination != null && (
+                <p className="mt-2 flex items-center gap-1.5 text-tag text-primary-deep">
+                  <Clock size={12} className="shrink-0" />
+                  {`勾选越多、调研越全：${q.workload.mode_label ?? '本次'}按每个目的地约 ${q.workload.max_angles} 个角度 × ${q.workload.fetch_per_destination} 条证据取证。`}
+                </p>
+              )}
 
               <QuestionField
                 question={q}
@@ -431,9 +444,7 @@ export default function ClarifyPage() {
 
             {destinationsFallback && (
               <div className="mt-4 rounded-card border border-line/60 bg-card px-4 py-2.5 text-tag text-ink-3">
-                {destinationsPresent
-                  ? '以下目的地为自动识别候选，建议核对或手动补充。'
-                  : '未能自动识别目的地，可在「补充」题说明你关注的城市/地区。'}
+                {destinationsPresent ? DEST_FALLBACK_HINT_CANDIDATES : DEST_FALLBACK_HINT_NONE}
               </div>
             )}
 
@@ -464,6 +475,15 @@ export default function ClarifyPage() {
                 </div>
               ))}
             </motion.div>
+
+            {submitErr && (
+              <div
+                role="alert"
+                className="mt-4 rounded-card border border-amber-200 bg-amber-50 px-4 py-2.5 text-aux text-ink-2"
+              >
+                {submitErr}
+              </div>
+            )}
 
             <div className="mt-7 flex items-center justify-between">
               <button

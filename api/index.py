@@ -17,7 +17,7 @@ _API_DIR = os.path.dirname(os.path.abspath(__file__))
 if _API_DIR not in sys.path:
     sys.path.insert(0, _API_DIR)
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -26,7 +26,7 @@ from app.core import db
 from app.core import research_types as rt
 from app.core.config import get_settings
 from app.core.llm import LLMNotConfigured, chat
-from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section
+from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, GuideSingleDestinationError
 from app.core.research_types import DEFAULT_RESEARCH_TYPE
 from app.core.search import search
 from app.data import expert_by_id, load_experts
@@ -141,21 +141,41 @@ class ClarifyBody(BaseModel):
 
 @app.post("/api/tasks/{task_id}/clarify")
 def post_clarify(task_id: str, body: ClarifyBody):
-    return submit_clarify(task_id, body.answers)
+    try:
+        return submit_clarify(task_id, body.answers)
+    except GuideSingleDestinationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "guide_single_destination", "message": str(e)},
+        )
 
 
 # ── SSE 思维流 ──────────────────────────────────────────
 @app.get("/api/tasks/{task_id}/stream")
 async def stream_task(task_id: str, request: Request, sub_id: str = ""):
     async def gen():
+        # 与 runner 同一终态契约：serverless 入口不经 runner，终态在此就地收口
+        terminal_seen = False
         try:
             async for ev in run_pipeline(task_id, sub_id=sub_id):
                 if await request.is_disconnected():
                     break
                 etype = ev["type"]
+                if etype == "error":
+                    terminal_seen = True
+                    db.set_task_failed(task_id, str(ev["data"].get("message") or "任务失败"))
+                elif etype == "done":
+                    terminal_seen = True
                 data = json.dumps(ev["data"], ensure_ascii=False)
                 yield f"event: {etype}\ndata: {data}\n\n"
+            if not terminal_seen:
+                # 耗尽/断连而未落终态 → 合成 failed，绝不留悬空 running
+                msg = "任务异常结束（未落终态）"
+                db.set_task_failed(task_id, msg)
+                err = json.dumps({"message": msg}, ensure_ascii=False)
+                yield f"event: error\ndata: {err}\n\n"
         except Exception as e:  # noqa: BLE001
+            db.set_task_failed(task_id, str(e))
             err = json.dumps({"message": str(e)}, ensure_ascii=False)
             yield f"event: error\ndata: {err}\n\n"
 

@@ -159,6 +159,38 @@ def test_normalize_is_pure_and_idempotent():
     assert db._normalize_report_keys("not-a-dict") == "not-a-dict", "非 dict 输入原样返回，不抛"
 
 
+# ── ⑦ G18 · 降级标记只走运行流，存量报告读路径不受影响（MIG-01）──
+def test_legacy_report_has_no_plan_fallback_fields():
+    """目的地降级只存在于 trace 与运行中 SSE，不进报告 payload：
+    旧快照既无该字段、读路径也不得凭空补出（否则前端横幅会误挂到历史报告上）。
+    """
+    _insert_legacy_report()
+    rep = db.get_report("r_legacy")
+    for key in ("plan_fallback", "degraded", "dest_source"):
+        assert key not in rep, f"报告 payload 不应出现内部降级字段 {key}"
+    # 旧快照没有 trace 数组：读路径不补 span
+    assert not [s for s in (rep.get("trace") or []) if s.get("purpose") == O._DEST_PLAN_STEP]
+
+
+# ── ⑧ W-B5 · 旧 wordcloud echarts option spec 存量哨兵（E1 契约变更后不迁移不改写）──
+def test_legacy_wordcloud_option_spec_passes_through_untouched():
+    """历史报告 data.charts 里的旧词云 spec（option.series[0].data 形状）：
+    读路径必须原样下发——后端不为存量报告重写 spec，双形状兼容由前端渲染器承担。
+    """
+    legacy = dict(_LEGACY_DATA)
+    legacy["charts"] = [{"chart_id": "ch_old", "type": "wordcloud", "title": "全网口碑热词词云",
+                         "option": {"title": {"text": "全网口碑热词词云"},
+                                    "series": [{"type": "wordcloud",
+                                                "data": [{"name": "古城", "value": 5}]}]},
+                         "evidence_ids": []}]
+    _insert_legacy_report(legacy, rid="r_cloud_legacy")
+    rep = db.get_report("r_cloud_legacy")
+    cloud = rep["charts"][0]
+    assert cloud["type"] == "wordcloud"
+    assert "words" not in cloud, "读路径不得给旧 spec 凭空补新键"
+    assert cloud["option"]["series"][0]["data"] == [{"name": "古城", "value": 5}]
+
+
 if __name__ == "__main__":
     import pytest as _pytest
     raise SystemExit(_pytest.main([__file__, "-q"]))

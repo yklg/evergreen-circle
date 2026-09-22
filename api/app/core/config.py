@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     xhs_cookie: str = ""
     bilibili_cookie: str = ""
 
+    # 百度地图**服务端 AK**（与浏览器端 AK 是不同申请类型）：
+    # 供 services/baidu.py 的地点检索 / 地理编码 / 路线规划调用。
+    # 缺失不炸任务——spots 实体阶段整体走降级链，地图/路线出占位（《目的地实体政策》）。
+    baidu_server_ak: str = ""
+    # 单次百度调用超时（秒）：批量 fan-out 时配合阶段级 deadline，慢接口不拖垮管线
+    baidu_timeout: float = 8.0
+
     # 服务
     # 安全默认值：仅监听本机回环。
     # 本项目接口无鉴权（localhost 单用户假设），若绑定 0.0.0.0 会让同局域网

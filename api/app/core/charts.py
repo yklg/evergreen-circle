@@ -142,6 +142,22 @@ def platform_bar(title: str, by_platform: Dict[str, Dict[str, int]]) -> Dict[str
     }
 
 
+def wordcloud_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """词云语义载荷归一（E1 契约）：[{word,weight}] → 去脏词条/去空白；空表 → []。
+
+    type=wordcloud 的 spec 不再烘 echarts option——由前端 DOM 词云渲染器直接消费
+    spec["words"]；是否产图由调用方裁决（空载荷不产图，不造空词云）。
+    """
+    out = []
+    for w in words or []:
+        if not isinstance(w, dict):
+            continue
+        word = str(w.get("word") or "").strip()
+        if word:
+            out.append({"word": word, "weight": w.get("weight", 0)})
+    return out
+
+
 def trend_line(title: str, x: List[str], series: List[Dict[str, Any]],
                y_name: str = "") -> Dict[str, Any]:
     """通用多序列折线图：用于发展趋势/时间演进（如版本节奏、热度、营收增速）。"""

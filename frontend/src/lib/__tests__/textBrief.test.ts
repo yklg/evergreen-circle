@@ -97,11 +97,19 @@ describe('chapterMapLeaves（分支白名单 v4.1）', () => {
     expect(B[2].leaves[0].badge).toBe('已交叉验证')
   })
 
-  it('全空但有正文 → 降级为正文计数（ch13 真实形态）', () => {
+  it('全空但有正文 → 降级为正文计数（ch13 真实形态），并带 degraded 标记', () => {
     const B = chapterMapLeaves(mk({ paragraphs: Array(8).fill('p'), charts: [{ chart_id: 'c', type: 't', data: {} }] as never }))
     expect(B).toHaveLength(1)
     expect(B[0].label).toBe('正文')
     expect(B[0].leaves[0].text).toBe('8 段 · 1 图')
+    // 渲染方（ChapterContentMap）据此改画一行说明；标签与叶子文案仍是 v4.1 白名单内容
+    expect(B[0].degraded).toBe(true)
+  })
+
+  it('健康章的分支不带 degraded 标记（只有唯一的正文降级分支才算降级）', () => {
+    const B = chapterMapLeaves(mk({ key_takeaway: '判断', paragraphs: Array(8).fill('p') }))
+    expect(B.map((b) => b.label)).toEqual(['核心判断'])
+    expect(B[0].degraded).toBeUndefined()
   })
 
   it('全空且无正文 → 不渲染（返回空）', () => {

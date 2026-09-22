@@ -15,6 +15,9 @@ httpx==0.28.1
 beautifulsoup4==4.12.3
 trafilatura==1.12.2
 
+# 舆情词云：中文分词词频统计（app/core/wordfreq.py）
+jieba==0.42.1
+
 # 可视化 skill
 matplotlib==3.9.4
 networkx==3.2.1

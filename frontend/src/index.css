@@ -142,6 +142,12 @@
     display: none !important;
   }
 
+  /* C1 章节折叠正文：打印时必须全量呈现（ReportPage beforeprint 统一置 open），
+     此处隐去「展开完整正文」交互 affordance，导出 PDF 中不留折叠痕迹。 */
+  details.report-body-collapse > summary {
+    display: none !important;
+  }
+
   /* 报告详情页英雄区：背景改由 CSS 渐变承担（原为封面 <img>）。
      浏览器默认「不打印背景」，此处不声明则导出 PDF 时渐变变白纸、
      而标题是白色 → 导出的文档里标题彻底消失。

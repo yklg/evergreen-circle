@@ -51,18 +51,32 @@ class _Run:
 _running: Dict[str, _Run] = {}
 
 
+def _broadcast(r: _Run, ev: Dict[str, Any]) -> None:
+    """事件入历史缓冲并推给各订阅者专属队列（与 _drive 主循环同一广播路径）。"""
+    r.buffer.append(ev)
+    for q in list(r.subs):
+        q.put_nowait(ev)
+
+
 def ensure_running(task_id: str) -> _Run:
     """幂等：返回该 task 的运行句柄。
 
     - 已在跑 → 直接返回（只订阅，不重跑）；
     - DB 已是终态（done/failed）且内存无活任务 → 返回只读终态句柄（前端据此跳转报告）；
-    - 否则创建 asyncio.Task 驱动 run_pipeline。
+    - DB 'running' 但内存无活句柄 = **孤儿运行**（进程重启/崩溃遗留）→
+      就地收为 failed，**读端点绝不静默重跑**（重跑的唯一入口是新建任务 POST /api/tasks）；
+    - 其余（'created' 等新任务）→ 创建 asyncio.Task 驱动执行引擎。
     """
     r = _running.get(task_id)
     if r is not None and r.alive:
         return r
 
     full = db.get_task_full(task_id)
+    if full and full.get("status") == "running":
+        msg = "任务已中断（服务重启或异常退出），请重新发起调研"
+        db.set_task_failed(task_id, msg)
+        full = {**full, "status": "failed", "error": msg}
+
     if full and full.get("status") in ("done", "failed"):
         # 内存已无活任务：以 DB 终态构造只读句柄，避免重跑已完成任务
         _running.pop(task_id, None)
@@ -89,6 +103,14 @@ def ensure_running(task_id: str) -> _Run:
 
 
 async def _drive(task_id: str, r: _Run) -> None:
+    """终态契约（唯一权威）：管线生成器必须以且仅以一条终态事件（done/error）结束，
+    或抛异常；runner 是唯一写终态入库、且唯一保证线上有对应终态帧的地方。
+
+    兼容说明：brief/refine 管线自身也调 db.set_task_failed（orchestrator 内部）、
+    run_pipeline 在落库后自写 done——那是冗余兼容，与 runner 写同一终态幂等
+    （UPDATE 同值），不允许管线写入与事件帧不同值的终态。
+    """
+    terminal_seen = False  # 管线是否已吐终态事件（done/error）
     try:
         # 按 tasks.kind 分发到不同的执行引擎（共享 progress/done/error 处理）
         full = db.get_task_full(task_id) or {}
@@ -100,9 +122,7 @@ async def _drive(task_id: str, r: _Run) -> None:
         else:
             gen = orchestrator.run_pipeline(task_id)
         async for ev in gen:
-            r.buffer.append(ev)          # 历史缓冲（重连补帧）
-            for q in list(r.subs):       # 广播给各订阅者专属队列
-                q.put_nowait(ev)
+            _broadcast(r, ev)               # 历史缓冲 + 各订阅者专属队列
             if ev["type"] == "progress":
                 d = ev["data"]
                 r.percent = d.get("percent", 0)
@@ -112,14 +132,31 @@ async def _drive(task_id: str, r: _Run) -> None:
                 db.patch_task_progress(task_id, r.percent, r.stage, r.evidence_count)
             elif ev["type"] == "report_ready":
                 r.report_id = ev["data"].get("reportId")
+            elif ev["type"] == "error":
+                # yield error 同样是终态：runner 统一收口入库（帧已广播，不补发）
+                terminal_seen = True
+                msg = (ev.get("data") or {}).get("message") or "任务失败"
+                r.status = "failed"
+                r.error = msg
+                db.set_task_failed(task_id, msg)
             elif ev["type"] == "done":
+                terminal_seen = True
                 r.report_id = ev["data"].get("reportId") or r.report_id
                 r.status = "done"
                 db.mark_task_done(task_id, r.report_id or "")
+        if not terminal_seen:
+            # 协议违例守卫：生成器耗尽却未落终态 → 合成 error 帧 + failed，
+            # 杜绝任何早退路径把任务悬在 running（本次无限重跑故障的结构性防线）
+            msg = "任务异常结束（未落终态）"
+            r.status = "failed"
+            r.error = msg
+            _broadcast(r, {"type": "error", "data": {"message": msg}})
+            db.set_task_failed(task_id, msg)
     except asyncio.CancelledError:
         # 被 cancel() 取消：交给定终态逻辑，不写失败原因遮蔽用户意图
         r.status = "failed"
         r.error = "用户取消"
+        _broadcast(r, {"type": "error", "data": {"message": "用户取消"}})
         db.set_task_failed(task_id, "用户取消")
         raise
     except LLMModelUnavailable as e:
@@ -130,6 +167,7 @@ async def _drive(task_id: str, r: _Run) -> None:
             f"请到「模型配置」页一键迁移到 {e.suggested_model or '可用模型'}。"
         )
         r.error = msg
+        _broadcast(r, {"type": "error", "data": {"message": msg}})
         db.set_task_failed(task_id, msg)
     except Exception as e:  # noqa: BLE001
         # 终态收尾，绝不静默吞掉；标记失败以便前端与 DB 状态一致
@@ -140,6 +178,7 @@ async def _drive(task_id: str, r: _Run) -> None:
             msg = str(e)
         r.status = "failed"
         r.error = msg
+        _broadcast(r, {"type": "error", "data": {"message": msg}})
         db.set_task_failed(task_id, msg)
     finally:
         r.alive = False
@@ -172,7 +211,11 @@ async def subscribe(task_id: str):
             yield {"type": "error", "data": {"message": r.error or "任务已失败"}}
         return
 
-    snapshot = list(r.buffer)            # 本订阅者加入前的历史
+    # 回放帧打 data.replay 标记（不改事件类型/顺序）：前端派遣节流队列据此
+    # 对历史帧直刷不排队，只对实时新增帧逐条出场（服务端是回放/实时的唯一知情人）。
+    snapshot = [
+        {**ev, "data": {**(ev.get("data") or {}), "replay": True}} for ev in r.buffer
+    ]
     q: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue()
     r.subs.append(q)
     r.subscribers += 1

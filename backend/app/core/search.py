@@ -25,6 +25,24 @@ _BOCHA_ERR = {
     500: "博查搜索服务内部异常",
 }
 
+# 服务商级终态码：鉴权/欠费/配额——重试与换查询词都无意义
+_PROVIDER_TERMINAL_CODES = (401, 403, 429)
+_PROVIDER_TERMINAL_HINTS = ("余额", "配额", "鉴权", "quota", "unauthorized")
+
+
+class SearchProviderError(RuntimeError):
+    """服务商级终态错误（Key 无效 / 欠费 / 配额超限）。
+
+    multi_search 对它**不做逐条容错、直接冒泡**（一条即止，不再烧剩余查询），
+    保证真因如实送达上层，而不是被吞成「0 结果」。
+    """
+
+
+def _provider_error(code: int, msg: str) -> RuntimeError:
+    if code in _PROVIDER_TERMINAL_CODES or any(h in msg.lower() for h in _PROVIDER_TERMINAL_HINTS):
+        return SearchProviderError(msg)
+    return RuntimeError(msg)
+
 
 def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -84,7 +102,7 @@ def search_bocha(
     """
     settings = get_effective_settings()
     if not settings.get("bocha_api_key"):
-        raise RuntimeError("未配置 BOCHA_API_KEY，请在「模型配置」页面填写后重试")
+        raise SearchProviderError("未配置 BOCHA_API_KEY，请在「模型配置」页面填写后重试")
 
     # count 取值范围 1-50
     count = max(1, min(int(num), 50))
@@ -113,14 +131,14 @@ def search_bocha(
         r = client.post(endpoint, headers=headers, json=payload)
         if r.status_code != 200:
             msg = _BOCHA_ERR.get(r.status_code, f"博查接口返回 HTTP {r.status_code}")
-            raise RuntimeError(msg)
+            raise _provider_error(r.status_code, msg)
         body = r.json()
 
     # 博查在 HTTP 200 时仍可能在 body 内返回错误码
     code = body.get("code")
     if code is not None and int(code) != 200:
         msg = _BOCHA_ERR.get(int(code), body.get("msg") or f"博查返回业务码 {code}")
-        raise RuntimeError(msg)
+        raise _provider_error(int(code), msg)
 
     data = body.get("data") or {}
     web_pages = (data.get("webPages") or {}).get("value") or []
@@ -166,7 +184,8 @@ def multi_search(
     site: Optional[str] = None,
     freshness: str = "noLimit",
 ) -> list[dict]:
-    """跑多条查询，按 URL 去重聚合。单条失败跳过（尽力而为）。"""
+    """跑多条查询，按 URL 去重聚合。单条瞬时失败跳过（尽力而为）；
+    服务商级终态错误（SearchProviderError）直接冒泡，一条即止。"""
     seen: set[str] = set()
     out: list[dict] = []
     for q in queries:
@@ -179,6 +198,8 @@ def multi_search(
                 seen.add(key)
                 r["query"] = q
                 out.append(r)
+        except SearchProviderError:
+            raise
         except Exception:
             continue
     return out

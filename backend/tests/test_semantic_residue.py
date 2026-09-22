@@ -4,8 +4,8 @@
 - 「竞品 / brand」语义在本仓库只剩**白名单**内的合法残留（存量库迁移旧名、旧数据读时兼容、
   deprecated 保留函数、产品品牌模块 `lib/brand.ts` 与品牌静态资源路径）；
   任何新增的竞品语义（新文件、或白名单文件里换一种写法）都会让本门禁变红。
-- `api/app/core` 与 `backend/app/core` 的模块文件集合一致（双向）：backend 新增模块
-  （如 platforms / research_types / runner）必须同步进镜像；互补 `test_api_mirror_guard.py`
+- `api/app/{core,services}` 与 `backend/app/{core,services}` 的模块文件集合一致（双向）：backend 新增模块
+  （如 platforms / research_types / runner / baidu）必须同步进镜像；互补 `test_api_mirror_guard.py`
   的「api ⊆ backend 单向 + 签名比对」，合起来构成完整镜像面守卫。
 
 说明：本文件只扫源码真相源（backend/app、frontend/src）。api/ 是镜像，P5-2 整目录同步后
@@ -79,20 +79,25 @@ def test_no_semantic_residue_outside_whitelist():
 
 
 def test_api_core_module_set_mirrors_backend():
-    """api/app/core 与 backend/app/core 模块文件集合一致（双向）——backend 新增即须同步镜像。"""
-    api_core = ROOT / "api" / "app" / "core"
-    backend_core = ROOT / "backend" / "app" / "core"
-    if not (api_core.exists() and backend_core.exists()):
+    """api/app 各代码包（core/services）与 backend 模块文件集合一致（双向）——
+    backend 新增即须同步镜像；M2 起 services 层纳入同一守卫。"""
+    api_app = ROOT / "api" / "app"
+    backend_app = ROOT / "backend" / "app"
+    if not (api_app.exists() and backend_app.exists()):
         pytest.skip("非双源形态（缺 api/ 或 backend/）")
 
     def _mods(d: Path) -> set:
         return {f.name for f in d.glob("*.py")} - {"__init__.py"}
 
-    api_mods, backend_mods = _mods(api_core), _mods(backend_core)
-    missing_in_api = sorted(backend_mods - api_mods)
-    orphan_in_api = sorted(api_mods - backend_mods)
-    assert not missing_in_api, f"镜像缺 backend 的模块文件（需整目录同步）：{missing_in_api}"
-    assert not orphan_in_api, f"镜像存在 backend 已删除的模块文件：{orphan_in_api}"
+    for pkg in ("core", "services"):
+        api_dir, backend_dir = api_app / pkg, backend_app / pkg
+        if not (api_dir.exists() and backend_dir.exists()):
+            continue
+        api_mods, backend_mods = _mods(api_dir), _mods(backend_dir)
+        missing_in_api = sorted(backend_mods - api_mods)
+        orphan_in_api = sorted(api_mods - backend_mods)
+        assert not missing_in_api, f"镜像 {pkg}/ 缺 backend 的模块文件（需整目录同步）：{missing_in_api}"
+        assert not orphan_in_api, f"镜像 {pkg}/ 存在 backend 已删除的模块文件：{orphan_in_api}"
 
 
 if __name__ == "__main__":

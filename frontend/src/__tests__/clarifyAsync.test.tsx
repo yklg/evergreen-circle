@@ -208,6 +208,23 @@ describe('T-Wizard 分步向导 + 核对屏', () => {
     )
   })
 
+  it('TC-W3b 提交被后端结构性拒绝 → 留在核对屏就地提示，不跳转', async () => {
+    mockReady(twoQs)
+    renderClarify('t_w3b')
+    await screen.findByText('最看重哪些维度？')
+    fireEvent.click(screen.getByText('下一步'))
+    await screen.findByText('目标市场是？')
+    fireEvent.click(screen.getByText('下一步'))
+    await screen.findByText('请核对，可直接修改')
+    mockedSubmitClarify.mockRejectedValueOnce(
+      new Error('游玩攻略报告目前仅支持单个目的地，请只保留一个城市/景区。'),
+    )
+    fireEvent.click(screen.getByText('启动调研'))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('仅支持单个目的地')
+    expect(navigateFn).not.toHaveBeenCalled()
+  })
+
   it('TC-W4 单题问卷：首题「下一步」直接进核对屏（无第二步）', async () => {
     mockReady([{ id: 'q1', question: '最看重哪些维度？', type: 'multi' as const, options: ['功能'] }])
     renderClarify('t_w4')
@@ -498,6 +515,84 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
     fireEvent.click(screen.getByText('重试'))
     expect(await screen.findByText('最看重哪些维度？')).toBeTruthy()
     expect(mockedOpenClarifyStream).toHaveBeenCalledTimes(2)
+  })
+})
+
+// ── G21 工作量提示：数值只取自 payload ────────────────────
+describe('G21 澄清问卷的工作量提示', () => {
+  it('TC-W1 payload 带 workload → 按 payload 数值渲染（前端不硬编码阈值）', () => {
+    mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
+      handlers.onEvent('clarify_ready', {
+        questions: [
+          {
+            id: 'destinations',
+            question: '重点调研哪些目的地？',
+            type: 'multi',
+            options: ['大理'],
+            workload: { mode: 'deep', mode_label: '深度调研', max_angles: 7, fetch_per_destination: 5 },
+          },
+        ],
+      })
+      return () => {}
+    })
+    renderClarify('t_workload')
+    expect(screen.getByText('重点调研哪些目的地？')).toBeTruthy()
+    expect(
+      screen.getByText('勾选越多、调研越全：深度调研按每个目的地约 7 个角度 × 5 条证据取证。'),
+    ).toBeTruthy()
+  })
+
+  it('TC-W2 改档位数值 → 文案随 payload 变（证明不是写死的常量）', () => {
+    mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
+      handlers.onEvent('clarify_ready', {
+        questions: [
+          {
+            id: 'destinations',
+            question: '重点调研哪些目的地？',
+            type: 'multi',
+            options: ['大理'],
+            workload: { mode: 'expert', mode_label: '专家级', max_angles: 12, fetch_per_destination: 9 },
+          },
+        ],
+      })
+      return () => {}
+    })
+    renderClarify('t_workload2')
+    expect(screen.getByText(/专家级按每个目的地约 12 个角度 × 9 条证据取证/)).toBeTruthy()
+    expect(screen.queryByText(/7 个角度/)).toBeNull()
+  })
+
+  it('TC-W3 旧后端无 workload 字段 → 整条提示不渲染且不报错', () => {
+    mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
+      handlers.onEvent('clarify_ready', {
+        questions: [{ id: 'destinations', question: '重点调研哪些目的地？', type: 'multi', options: ['大理'] }],
+      })
+      return () => {}
+    })
+    const { container } = renderClarify('t_no_workload')
+    expect(screen.getByText('重点调研哪些目的地？')).toBeTruthy()
+    expect(container.textContent).not.toContain('勾选越多、调研越全')
+    // 兜底也不得出现「约 undefined 个角度」这类脏文案
+    expect(container.textContent).not.toContain('undefined')
+  })
+
+  it('TC-W4 workload 字段不全（缺 fetch_per_destination）→ 宁可不显示也不显示半截事实', () => {
+    mockedOpenClarifyStream.mockImplementation((_tid, handlers) => {
+      handlers.onEvent('clarify_ready', {
+        questions: [
+          {
+            id: 'destinations',
+            question: '重点调研哪些目的地？',
+            type: 'multi',
+            options: ['大理'],
+            workload: { mode: 'quick', max_angles: 4 },
+          },
+        ],
+      })
+      return () => {}
+    })
+    const { container } = renderClarify('t_partial_workload')
+    expect(container.textContent).not.toContain('勾选越多、调研越全')
   })
 })
 

@@ -1,6 +1,6 @@
 """Verda 深度调研编排引擎（真实大脑，对标 Deep Research）。
 
-节点：intake → orchestrator → collect → analyze → write → audit →(pass/rework)→ done
+节点：intake → orchestrator → collect → analyze → spots(景点实体) → write → audit →(pass/rework)→ done
 
 调研类型（research_types 注册表，单一真相源）：
 - guide 游玩攻略：交通 / 住宿 / 路线 / 美食 / 预算
@@ -29,7 +29,7 @@ import urllib.parse
 import uuid
 from collections import Counter
 from contextvars import ContextVar
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from app.core import charts as C
 from app.core import db
@@ -40,16 +40,19 @@ from app.core.credibility import score_evidence, freshness_days, assess_viral
 from app.core.dedup import content_fingerprint, group_new_text, tokenize
 from app.core.fetcher import domain_of, fetch_page
 from app.core.platforms import PLATFORMS, classify_platform
-from app.core.llm import chat, chat_json, LLMNotConfigured, TOKEN_USAGE
+from app.core.llm import (chat, chat_json, last_finish_reason, is_temporary_unavailable,
+                          LLMModelUnavailable, LLMNotConfigured, TOKEN_USAGE)
 from app.core.metrics import compute_report_metrics, merge_quality_into_metrics
 from app.core.models import Evidence, Envelope, make_claim
 from app.core import research_types as RT
 from app.core.research_types import DEFAULT_RESEARCH_TYPE
-from app.core.schemas import _filter_eids, coerce_structured
-from app.core.search import multi_search
+from app.core import scoring as SC
+from app.core.schemas import _filter_eids, coerce_spot_ranking, coerce_structured
+from app.core.search import multi_search, SearchProviderError
 from app.core.sentiment import analyze_sentiment, PLATFORM_LABEL
 from app.core.textquality import is_relevant_content
 from app.data import expert_by_id, load_experts
+from app.services import baidu as baidu_client
 
 
 def _now() -> str:
@@ -62,33 +65,54 @@ def _sid(prefix: str) -> str:
 
 # ── 调研模式三档（对应需求 3）─────────────────────────────
 # 只管**规模**（搜索量/篇幅/返工轮次/模型档）；章节集属语义，查 research_types.sections_for()。
+#
+# section_max_tokens 是「正文 + 结构字段」共享的**单章**上限，且推理模型的思考 token 也算在里面
+# （实测 deepseek 未关思考时，被截断章的推理约占 3.7–4.2k）。故三档都按「正文需求 + 推理余量」
+# 给足，deep 6000→8000 正是为此。8192 是服务商（api.deepseek.com）单次输出上限，再高会被拒；
+# 仍被截断的章由写稿后的 _repair_missing_structure 兜住（见该函数）。
 MODE_CONFIG = {
     "quick": {
         "label": "快速模式",
         "max_angles": 4, "fetch_per_destination": 6, "platform_per": 6,
         "freshness": "oneYear", "rework_rounds": 0,
         # 写作深度：段落数下限 / 每段字数 / 单章 token 预算
-        "min_paragraphs": 3, "para_words": "120-200", "section_max_tokens": 3500,
+        "min_paragraphs": 3, "para_words": "120-200", "section_max_tokens": 4500,
         "analyze_max_tokens": 6000, "structured_max_tokens": 6000,
         # 舆情覆盖：取口碑的目的地数 / 每平台每查询取条数
         "sentiment_destinations": 2, "platform_take": 5,
+        # 逐景点舆情补充采集：每景点每平台取条数（0=不采集；quick 无舆情章故为 0）
+        "spot_sent_take": 0,
+        # 景点榜单实体规模（属规模配置，不进 research_types）
+        "spot_topn": 4,
+        # 商铺路线配额：每种榜上美食给前 N 家 matched 商铺配公交路线（0=不出；quick 无商铺章）
+        "shop_route_topn": 0,
     },
     "deep": {
         "label": "深度模式",
         "max_angles": 6, "fetch_per_destination": 12, "platform_per": 8,
         "freshness": "oneYear", "rework_rounds": 1,
-        "min_paragraphs": 5, "para_words": "180-280", "section_max_tokens": 6000,
+        "min_paragraphs": 5, "para_words": "180-280", "section_max_tokens": 8000,
         "analyze_max_tokens": 8000, "structured_max_tokens": 8000,
         "sentiment_destinations": 3, "platform_take": 8,
+        "spot_sent_take": 4,
+        "spot_topn": 7,
+        "shop_route_topn": 2,
+        # 行程路线章（D2，deep 起出）：用户未写天数时按每天 N 景点推算行程跨度
+        "spot_day_pace": 4,
     },
     "expert": {
         "label": "专家级模式",
         "max_angles": 9, "fetch_per_destination": 16, "platform_per": 10,
         "freshness": "oneYear", "rework_rounds": 2,
         # 专家级：篇幅最长、最详尽（券商行研/MBB 深度报告级别）
-        "min_paragraphs": 7, "para_words": "260-420", "section_max_tokens": 9000,
+        "min_paragraphs": 7, "para_words": "260-420", "section_max_tokens": 8192,
         "analyze_max_tokens": 9000, "structured_max_tokens": 9000,
         "sentiment_destinations": 4, "platform_take": 10,
+        "spot_sent_take": 6,
+        "spot_topn": 10,
+        "shop_route_topn": 2,
+        # 一页视图节奏旋钮：用户未写天数时按每天 N 景点推算行程跨度（M3a）
+        "spot_day_pace": 4,
     },
 }
 
@@ -96,8 +120,8 @@ MODE_CONFIG = {
 # 故留在编排层而非语义注册表）。覆盖两类型各自最吃分析的章节。
 CORE_SECTIONS = frozenset({
     "summary", "conclusion", "contrarian",
-    "route", "budget",            # 游玩攻略
-    "safety", "value", "verdict",  # 调研评估
+    "spots", "route", "budget",      # 游玩攻略
+    "safety", "value", "verdict",    # 调研评估
 })
 
 
@@ -149,7 +173,23 @@ def create_task(query: str, mode: str = "deep", model: Optional[str] = None,
     return {"taskId": task_id, "researchType": meta["_type"]}
 
 
+class GuideSingleDestinationError(ValueError):
+    """guide 档位结构性约束：地图/路线/评分配额均以单目的地为前提（计划待确认 #7 拍板硬拒绝）。"""
+
+
+def _answer_destinations(answers: Dict[str, Any]) -> List[str]:
+    raw = (answers or {}).get("destinations") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
 def submit_clarify(task_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
+    # 结构性闸门先于落库：guide 多目的地直接拒，坏问卷不会被 runner 带进管线
+    if _task_research_type(task_id) == "guide" and len(_answer_destinations(answers)) > 1:
+        raise GuideSingleDestinationError(
+            "游玩攻略报告目前仅支持单个目的地（地图、逐景点路线与评分配额都以单目的地为前提），"
+            "请只保留一个城市/景区后重新提交。")
     # 保留已存的 _mode / _type / _model_override（HomePage 选的类型与模型跟随澄清透传）
     task = db.get_task(task_id) or {}
     prev = task.get("clarifications", {}) or {}
@@ -182,12 +222,26 @@ def _baseline_questions(query: str = "", research_type: str = DEFAULT_RESEARCH_T
 
 
 def _build_enhanced_questions(
-    scope: Dict[str, Any], baseline: List[Dict[str, Any]]
+    scope: Dict[str, Any], baseline: List[Dict[str, Any]],
+    budget: Optional[Dict[str, Any]] = None,
+    research_type: str = DEFAULT_RESEARCH_TYPE,
+    query: str = "",
 ) -> List[Dict[str, Any]]:
-    """把领域识别 + 目的地发现结果作为增强题追加到基础题末尾（P0-②：增量而非阻塞）。"""
+    """把领域识别 + 目的地发现结果作为增强题追加到基础题末尾（P0-②：增量而非阻塞）。
+
+    budget 是随问卷下发的**工作量事实量**（见 _budget_facts），供目的地题旁渲染温和提示；
+    缺失时该题不带 workload 键（旧前端/旧后端互相兼容）。
+    guide 类型的目的地题是**单选**（单目的地结构性约束的预防位；旧缓存问卷仍可能是
+    multi，由 submit_clarify 的后端闸门兜底）。
+    guide 且需求原文已唯一点名目的地（`locked_destination`）→ **不出**目的地题：
+    用户已说清的事不再追问；计划层同一判据保证两处不会一个锁定、一个反问。
+    增强题同样按注册表挂 `consumer` 键（题-消费契约真相源，见 RT.CLARIFY_CONSUMERS）。
+    """
     subject = scope.get("subject") or ""
     domain = scope.get("domain") or ""
     candidates = scope.get("candidates") or scope.get("competitors") or []
+    rtype = RT.type_key(research_type)
+    locked = locked_destination(query, candidates) if rtype == "guide" else ""
     if subject:
         txt = f"我们识别到你要调研的是「{subject}」"
         txt += f"，所属领域：{domain}。" if domain else "。"
@@ -196,21 +250,33 @@ def _build_enhanced_questions(
         txt = f"我们识别到你要调研的主题属于「{domain}」领域，是否准确？"
     else:
         txt = "请确认我们理解的调研对象是否准确？"
+    if locked:
+        txt += f"需求里已点名「{locked}」，本次攻略将围绕它展开。"
     extra: List[Dict[str, Any]] = [{
         "id": "scope",
         "question": txt,
         "type": "single",
         "options": ["准确，继续", "大致准确，下面补充", "不准确，我在下方说明"],
         "hint": "若不准确，请在最后一题补充说明真实的调研对象与领域。",
+        "consumer": RT.consumer_of(rtype, "scope")["consumer"],
     }]
-    if candidates:
-        extra.append({
+    if candidates and not locked:
+        single = rtype == "guide"
+        dest_q: Dict[str, Any] = {
             "id": "destinations",
-            "question": f"为「{subject or '该主题'}」自动发现了以下候选目的地，请勾选你希望重点调研的对象（可多选）：",
-            "type": "multi",
+            "question": (f"为「{subject or '该主题'}」自动发现了以下候选目的地，请选择重点调研的对象（攻略仅支持单个目的地）："
+                         if single else
+                         f"为「{subject or '该主题'}」自动发现了以下候选目的地，请勾选你希望重点调研的对象（可多选）："),
+            "type": "single" if single else "multi",
             "options": candidates[:12],
-            "hint": "勾选后我们会确保每个目的地都被充分调研；如有遗漏可在最后一题补充。",
-        })
+            "hint": ("选定一个城市/景区后我们会把它调研透；如有遗漏可在最后一题补充。"
+                      if single else
+                      "勾选后我们会确保每个目的地都被充分调研；如有遗漏可在最后一题补充。"),
+            "consumer": RT.consumer_of(rtype, "destinations")["consumer"],
+        }
+        if budget:
+            dest_q["workload"] = dict(budget)
+        extra.append(dest_q)
     return list(baseline) + extra
 
 
@@ -244,7 +310,14 @@ async def _discover_and_build(
         if not fallback and (scope.get("candidates") or scope.get("domain")):
             ttl = int(get_effective_settings().get("discovery_cache_ttl_d", 7) or 7)
             db.save_discovery_cache(qhash, scope, ttl_days=ttl)
-    enhanced = _build_enhanced_questions(scope, baseline)
+    rtype = _task_research_type(task_id)
+    enhanced = _build_enhanced_questions(scope, baseline, _budget_facts(_task_mode(task_id)),
+                                         research_type=rtype, query=query)
+    locked = locked_destination(query, scope.get("candidates") or scope.get("competitors") or [])
+    if rtype == "guide" and locked and (scope.get("candidates") or scope.get("competitors")):
+        cands = "、".join(str(c) for c in (scope.get("candidates") or [])[:12]) or "无"
+        _plan_trace(task_id, f"目的地已锁定为「{locked}」：需求原文唯一点名，问卷不再追问目的地。",
+                    f"需求原文：{query}\n发现候选：{cands}")
     db.save_clarify_questions(task_id, enhanced, complete=True)
     return {"questions": enhanced, "destinations_fallback": fallback, "complete": True}
 
@@ -254,6 +327,28 @@ def _task_research_type(task_id: str) -> str:
     task = db.get_task(task_id) or {}
     clar = task.get("clarifications", {}) or {}
     return RT.type_key(task.get("_type") or clar.get("_type") or DEFAULT_RESEARCH_TYPE)
+
+
+def _task_mode(task_id: str) -> str:
+    """从任务 meta 读用户选定的规模档位（与 run_pipeline 同源；缺失一律回落 deep）。"""
+    task = db.get_task(task_id) or {}
+    clar = task.get("clarifications", {}) or {}
+    mode = str(clar.get("_mode") or task.get("_mode") or "deep")
+    return mode if mode in MODE_CONFIG else "deep"
+
+
+def _budget_facts(mode: str) -> Dict[str, Any]:
+    """下发给澄清问卷的工作量事实量：档位名 + 每目的地的角度数与取证数。
+
+    刻意只给**事实**不给秒数——耗时受网络与服务商排队影响，编造数字比不写更易误导。
+    """
+    cfg = MODE_CONFIG[mode]
+    return {
+        "mode": mode,
+        "mode_label": cfg["label"],
+        "max_angles": cfg["max_angles"],
+        "fetch_per_destination": cfg["fetch_per_destination"],
+    }
 
 
 async def generate_clarify(task_id: str, query: str) -> AsyncIterator[Dict[str, Any]]:
@@ -347,6 +442,49 @@ def _rewrite_section(section: Dict[str, Any], extra_context: Dict[str, Any],
     return section
 
 
+def _brief_facts_block(sections: List[Dict[str, Any]]) -> str:
+    """把报告结构化榜单压成少量数字事实行，喂给 brief 的 key_data。
+
+    只读 sections[].structured（{"type","data"} 形状），旧报告/assessment 无这些键时
+    自然返回空串——不造假数字，也不影响旧精炼。"""
+    by_type: Dict[str, Any] = {}
+    for s in sections:
+        st = s.get("structured")
+        if isinstance(st, dict) and st.get("data"):
+            by_type.setdefault(str(st.get("type")), st["data"])
+
+    def _rows(key: str, cap: int) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for g in by_type.get(key) or []:
+            if isinstance(g, dict):
+                rows.extend(x for x in (g.get("items") or g.get("areas") or [])
+                            if isinstance(x, dict))
+        return rows[:cap]
+
+    lines: List[str] = []
+    for r in _rows("spot_ranking", 5):
+        bits = [f"景点「{r.get('name', '')}」综合分 {r.get('score', '—')}"]
+        if r.get("ticket"):
+            bits.append(f"门票 {r['ticket']}")
+        if r.get("stay_minutes"):
+            bits.append(f"建议停留 {int(r['stay_minutes'])} 分钟")
+        lines.append("；".join(bits))
+    for r in _rows("food_ranking", 4):
+        if r.get("price_range"):
+            lines.append(f"美食「{r.get('name', '')}」人均 {r['price_range']}")
+    for r in _rows("shop_list", 5):
+        if r.get("price_per_person"):
+            lines.append(f"商铺「{r.get('name', '')}」（{r.get('food', '')}）人均参考价 {r['price_per_person']} 元")
+    for r in _rows("cost_breakdown", 6):
+        if r.get("amount"):
+            lines.append(f"预算·{r.get('category', '')} {r['amount']}{r.get('unit', '元/人')}")
+    for r in _rows("stay_options", 4):
+        if r.get("price_range"):
+            who = f"，适合 {r['for_whom']}" if r.get("for_whom") else ""
+            lines.append(f"住宿「{r.get('area', '')}」{r['price_range']}{who}")
+    return "\n".join(lines)
+
+
 def generate_brief(report_id: str) -> Optional[Dict[str, Any]]:
     """把报告压缩为一页纸精炼（派生数据）并落库 reports.data.brief。
 
@@ -381,6 +519,7 @@ def generate_brief(report_id: str) -> Optional[Dict[str, Any]]:
             "tokens_used": metrics.get("tokens_used"),
         }, ensure_ascii=False)
         senti_block = json.dumps((rep.get("sentiment") or {}).get("overall", {}), ensure_ascii=False)
+        facts_block = _brief_facts_block(sections)
 
         def _call_brief_llm() -> Dict[str, Any]:
             data = chat_json(
@@ -396,6 +535,8 @@ def generate_brief(report_id: str) -> Optional[Dict[str, Any]]:
                         f"结论数：{len(rep.get('claims', []))}\n\n{summary_block}\n\n各章核心判断：\n"
                         + "\n".join(f"- {t}" for t in takeaways[:12])
                         + f"\n\n效能指标：{metric_block}\n舆情概览：{senti_block}"
+                        + (f"\n\n结构化数据事实（key_data 优先引用其中的真实数字）：\n{facts_block}"
+                           if facts_block else "")
                     )},
                 ],
                 max_tokens=2400, temperature=0.3,
@@ -742,37 +883,295 @@ def _discover_scope_fallback(query: str) -> Dict[str, Any]:
     }
 
 
+# ── 目的地集合政策：唯一判据 + 唯一来源 + 三跳兜底 ──────────────
+# 历史缺陷：模型被提示词命令「必须凑够 3-6 个对比目的地」，用户只说「我想去上海玩三天」
+# 也会产出五城报告。根治办法是把「谁是目的地」的判定权收回给用户原文与勾选，
+# 模型只当候选提供者；判据与取数路径各只有一处实现。
+_MAX_DEST_NAME_LEN = 16
+_MAX_DESTINATIONS = 6
+# 只拒绝「一眼不是地名」的需求短语；不加字符白名单，否则「乌镇」「Lake Como」类真实地名会被误杀。
+_DEST_REJECT_WORDS = ("对比", "比较", "评估", "调研", "攻略", "路线", "与", "和", "、", "/", "vs")
+# 需求句里常见的动词/疑问短语：命中即说明这串是「一句话」而不是地名（历史缺陷：整句需求被当目的地）。
+_DEST_REJECT_PHRASES = ("我想", "想去", "帮我", "推荐", "规划", "怎么玩", "多久", "多少钱", "最好")
+
+# 行程天数的**准绳**正则：只认用户原文写法（阿拉伯数字 / 中文数词 / 周末），按序取首个命中。
+# 计划提示词不再向模型索取天数——没有通道就没有自扩。
+_DAY_PATTERNS: Tuple[re.Pattern, ...] = (
+    re.compile(r"\d+\s*[天日]"),
+    re.compile(r"[一两二三四五六七八九十]{1,2}\s*天"),
+    re.compile("周末"),
+)
+
+# 三跳都拿不到目的地时的占位名：宁可带着降级横幅空跑并在报告里如实标注，也不编造城市。
+_NO_DESTINATION = "目的地"
+# trace 里的固定 step 名（前端「决策日志」按它检索降级事实）
+_DEST_PLAN_STEP = "目的地集合判定"
+_DEST_RETRY_PURPOSE = "识别目的地（兜底重试）"
+
+
+def _usable_destination(name: Any) -> bool:
+    """「这串字符能不能当一个目的地名」的唯一判据（四条取数路径共用）。"""
+    s = str(name or "").strip()
+    if not (2 <= len(s) <= _MAX_DEST_NAME_LEN) or s.isdigit():
+        return False
+    low = s.lower()
+    return not any(w in low for w in _DEST_REJECT_WORDS + _DEST_REJECT_PHRASES)
+
+
+def _core_name(name: Any) -> str:
+    """比对用的核心名：**只剥「市」**。剥「省/自治区/特别行政区」会把「吉林省」并到「吉林市」；
+    剩余不足 2 字不剥（「市」本身不是地名）。"""
+    s = str(name or "").strip()
+    if s.endswith("市") and len(s) >= 3:
+        return s[:-1]
+    return s
+
+
+def _mentioned_in_text(name: Any, text: str) -> bool:
+    """目的地名是否出现在需求原文里（「上海」↔「上海市」等价，ASCII 大小写不敏感）。
+    只做「候选名 ⊆ 原文」的单向判定；反向包含会让「海」这类短串误命中「上海」。"""
+    core = _core_name(name)
+    if len(core) < 2:
+        return False
+    return core.lower() in str(text or "").lower()
+
+
+def _days_from_text(text: str) -> str:
+    """抽取用户原文里的行程时长短语；命中即返回**原文片段本身**，保证天数角度必有出处。"""
+    s = str(text or "")
+    for pat in _DAY_PATTERNS:
+        m = pat.search(s)
+        if m:
+            return m.group(0).strip()
+    return ""
+
+
+def _checked_destinations(clar: Dict[str, Any]) -> List[str]:
+    """问卷里勾选/填写的目的地（兼容单字符串答案），仅过判据、不看原文。"""
+    raw = (clar or {}).get("destinations") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(x).strip() for x in raw if _usable_destination(x)]
+
+
+def _dedupe_names(names: List[str]) -> List[str]:
+    """按核心名去重保序（「上海」与「上海市」算同一个）。"""
+    out: List[str] = []
+    seen = set()
+    for n in names:
+        key = _core_name(n).lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(n.strip())
+    return out
+
+
+def locked_destination(query: str, candidates: Any) -> str:
+    """需求原文是否**唯一点名**了候选池里的一个目的地——问卷层与计划层共用的锁定判据。
+
+    问卷据此跳过目的地题（用户已说清的事不再追问），计划层据此保证「不出题 ⇔ 集合
+    就是锁定名」；两处必须同一函数，否则会出现问卷锁定了大理、计划却反问/扩城的分叉。
+    候选池只认目的地发现给出的 candidates：subject 可能只是主题短语（「亲子游哪里好」
+    的兜底 subject 是「亲子游」），并入会把提问句误判成锁定。
+    """
+    pool = [str(c).strip() for c in (candidates or [])]
+    mentioned = [c for c in _dedupe_names(pool)
+                 if _usable_destination(c) and _mentioned_in_text(c, query)]
+    return mentioned[0] if len(mentioned) == 1 else ""
+
+
+# 出发地题允许留空或写模糊语；这些短语穿透 `_usable_destination`（「本地」是合法 2 字串），
+# 必须在消费点整串精确匹配跳过，否则会生成「还没定出发 城际交通方式…」这类脏检索角度。
+_ORIGIN_SKIP_WORDS = ("还没定", "待定", "不确定", "不知道", "还没想好", "再说",
+                      "本地", "本地出发", "无所谓", "随便")
+
+
+def origin_answer(clar: Dict[str, Any]) -> str:
+    """出发地答案 → 城际交通检索凭据；仅当整串是一个可用地名时生效，否则视为未填。"""
+    s = str((clar or {}).get("origin") or "").strip()
+    if not s or s in _ORIGIN_SKIP_WORDS or not _usable_destination(s):
+        return ""
+    return s
+
+
+def _destination_set(query: str, clar: Dict[str, Any],
+                     plan_candidates: List[str]) -> Tuple[List[str], str]:
+    """目的地集合的**唯一**来源：问卷勾选 ∪ 需求原文点过名的候选（并集只增不减，上限 6）。
+
+    计划 LLM 给的候选只作为「待验证的池子」——用户没提的一律不纳入，这是防自扩的关键闸门。
+    返回 (destinations, source)；source ∈ clarify/query/…，空列表表示需要走兜底链。
+    """
+    checked = [d for d in _checked_destinations(clar) if _usable_destination(d)]
+    mentioned = [c for c in plan_candidates
+                 if _usable_destination(c) and _mentioned_in_text(c, query)]
+    merged = _dedupe_names(checked + mentioned)
+    if not merged:
+        return [], ""
+    source = "clarify" if checked else "query"
+    return merged[:_MAX_DESTINATIONS], source
+
+
+def _orthogonal_angles(raw_angles: Any, destinations: List[str], days_phrase: str,
+                       spec: Dict[str, Any], max_angles: int,
+                       origin_phrase: str = "",
+                       focus_keywords: Tuple[str, ...] = ()) -> List[str]:
+    """把计划给出的角度整形成与目的地**正交**、且体现用户显式答题的角度集。
+
+    规则（顺序即优先级）：
+    1. 剔掉含任一目的地名的角度——采集层按 `f"{destination} {angle}"` 拼检索词，
+       角度里再带地名会重复、带别的城市名会污染证据归属（历史缺陷的直接根因）；
+    2. 剔掉含具体天数的角度——天数只许来自用户原文；注册表维度词「行程路线」不含天数，不受影响；
+    3. 用户勾选了侧重维度（`focus_keywords`）→ 命中的角度**稳定排序前置**，
+       截断时优先保住它们；未命中的原有相对次序不变；
+    4. 原文/答案确证了天数且该类型配了 `days_angle_tpl` → 追加**恰好 1 条**天数角度；
+       出发地答案可用且配了 `origin_angle_tpl` → 同样**恰好 1 条**城际交通角度；
+    5. 全被剔空 → 回落注册表角度（用已知可靠的角度，不送空集）；
+    6. 夹到 max_angles，并为天数/出发地两条确定性角度预留格子，保证不被挤掉。
+    始终返回新列表，绝不改动注册表里的共享元组。
+    """
+    names = [_core_name(d) for d in destinations]
+
+    def _conflicting(angle: str) -> bool:
+        low = angle.lower()
+        if any(n and n.lower() in low for n in names):
+            return True
+        return any(p.search(angle) for p in _DAY_PATTERNS)
+
+    kept: List[str] = []
+    for a in (raw_angles if isinstance(raw_angles, (list, tuple)) else []):
+        if not isinstance(a, str):
+            continue
+        s = a.strip()
+        if s and not _conflicting(s) and s not in kept:
+            kept.append(s)
+
+    if focus_keywords:
+        lows = [k.lower() for k in focus_keywords if k]
+        # sorted 稳定：命中侧重关键词的前置，其余保持模型给出的相对次序
+        kept = sorted(kept, key=lambda a: 0 if any(k in a.lower() for k in lows) else 1)
+
+    tpl = str(spec.get("days_angle_tpl") or "")
+    days_angle = tpl.format(days=days_phrase).strip() if (days_phrase and tpl) else ""
+    optpl = str(spec.get("origin_angle_tpl") or "")
+    origin_angle = optpl.format(origin=origin_phrase).strip() if (origin_phrase and optpl) else ""
+    reserve = (1 if days_angle else 0) + (1 if origin_angle else 0)
+    kept = kept[:max(0, max_angles - reserve)]
+    if origin_angle and origin_angle not in kept:
+        kept.append(origin_angle)
+    if days_angle and days_angle not in kept:
+        kept.append(days_angle)
+    if not kept:
+        kept = [str(a) for a in spec["angles"]][:max_angles]
+    return kept
+
+
+def _plan_trace(task_id: str, decision: str, detail: str = "") -> None:
+    """把「目的地是谁、从哪条路径来」写进决策日志（trace 本身持久化到 DB）。"""
+    trace.record_manual_span(task_id, "L3-001", "intake", _DEST_PLAN_STEP,
+                             detail=detail, decision=decision)
+
+
+def _fallback_destination(query: str, research_type: str, task_id: str) -> Tuple[str, str]:
+    """计划没拿到任何「用户点过名」的目的地时的三跳兜底，按序取第一个过判据的结果。
+
+    三跳全部复用既有能力，不新写第四套地名识别：
+    hop1 发现阶段缓存的 subject（零 LLM）→ hop2 静态地名表（`_discover_scope_fallback`）
+    → hop3 一次 fast 档小模型专问。全 miss 则返回 ("", "fallback")。
+    **模型不可用/限速类异常一律原样上抛**：把 404 伪装成「目的地自动识别」就是遮盖症状。
+    """
+    try:
+        cached = db.get_discovery_cache(db._query_hash(query)) or {}
+        subject = str(cached.get("subject") or "").strip()
+    except Exception as e:  # noqa: BLE001 —— 缓存读失败必须留痕后继续下跳，不静默
+        _plan_trace(task_id, "hop1 读发现缓存失败，改用静态地名表。",
+                    f"{type(e).__name__}: {e}")
+        subject = ""
+    if _usable_destination(subject):
+        return subject, "cache"
+
+    subject = str((_discover_scope_fallback(query) or {}).get("subject") or "").strip()
+    if _usable_destination(subject):
+        return subject, "static"
+
+    subject = _retry_destination(query, research_type, task_id)
+    return (subject, "retry") if _usable_destination(subject) else ("", "fallback")
+
+
+def _retry_destination(query: str, research_type: str, task_id: str) -> str:
+    """最后一跳：单独问一次小模型「这句需求里的目的地是谁」（不做其它拆解，尽量便宜）。"""
+    spec = RT.type_spec(research_type)
+    try:
+        data = chat_json(
+            [
+                {"role": "system", "content": (
+                    f"你是旅游调研开题助手，本次任务类型是「{spec['label']}」。"
+                    "只做一件事：从用户这句需求里**抽取**它提到的目的地名称。"
+                    "不要推荐、不要补充用户没提到的城市/景区。"
+                    '只输出 JSON：{"destination":"目的地名（城市/景区/区域，不要写成短语或整句）"}。'
+                )},
+                {"role": "user", "content": query},
+            ],
+            max_tokens=200, temperature=0.0, model=_model("fast"),
+            purpose=_DEST_RETRY_PURPOSE,
+        )
+    except Exception as e:  # noqa: BLE001
+        # 模型本身不可用/没配 → 按既有契约上抛（runner 有对应报错分支），不降级
+        if isinstance(e, (LLMNotConfigured, LLMModelUnavailable)) or is_temporary_unavailable(e):
+            raise
+        _plan_trace(task_id, "hop3 小模型重试失败，目的地降级为占位。", f"{type(e).__name__}: {e}")
+        return ""
+    if isinstance(data, dict):
+        return str(data.get("destination") or data.get("subject") or "").strip()
+    return str(data or "").strip()
+
+
 def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7,
-                   research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
+                   research_type: str = DEFAULT_RESEARCH_TYPE,
+                   task_id: str = "") -> Dict[str, Any]:
+    """拆解调研计划：目的地只认用户点过名的，角度与目的地正交，天数只取原文。
+
+    政策（详见改造计划 §4/§6）：
+    - 模型只负责抽取与补全，**不得自扩调研范围**；它给出的候选只有出现在需求原文里
+      （或被问卷勾选）才被采纳，其余丢弃。
+    - 检索角度里不许夹带地名或具体天数；行程天数只来自用户原文（`_DAY_PATTERNS` 准绳）。
+    - 拿不到目的地时走三跳兜底，并把降级事实写进 trace 与运行中横幅。
+    - 返回 dict 的 `degraded` / `dest_source` 属**内部字段**：只供编排层推 SSE 与写 trace，不进报告 payload。
+    """
     clar = clar or {}
     spec = RT.type_spec(research_type)
     clar_text = "；".join(f"{k}: {v}" for k, v in clar.items()
                          if v and not str(k).startswith("_"))
-    # 用户在问卷里勾选/补充的目的地（最高优先级，必须全部纳入）
-    user_destinations = clar.get("destinations") or []
-    if isinstance(user_destinations, str):
-        user_destinations = [user_destinations]
-    user_destinations = [str(b).strip() for b in user_destinations if str(b).strip()]
-    default_angles = list(spec["angles"])
+    checked = _checked_destinations(clar)
+    region = str(clar.get("_region") or "").strip()
+    candidates: List[str] = []
+    focus: List[str] = []
+    raw_angles: List[str] = []
+    plan_error = ""
     try:
         data = chat_json(
             [
                 {"role": "system", "content": (
                     f"你是旅游调研总监，本次任务类型是「{spec['label']}」（{spec['subtitle']}）。"
-                    "拆解用户的调研需求，输出 JSON："
-                    '{"subject":"本次调研的核心目的地/主题全称",'
+                    "从用户的调研需求里**抽取**信息，不要扩大范围、不要替换用户提到的对象、"
+                    "不要补充用户没提的目的地。输出 JSON："
+                    '{"subject":"用户要调研的目的地全称（单个城市/景区名，不要写成短语）",'
                     '"region":"目的地所属省份/国家（用于消歧，如 云南省、海南省、日本）",'
-                    '"destinations":["目的地全称1","目的地全称2"],'
+                    '"destinations":["你判断用户可能一并关心的候选目的地"],'
                     '"focus":["本次重点维度，如 交通/住宿/预算/口碑"],'
-                    '"search_angles":["针对每个目的地的搜索角度短语，如 交通攻略、住宿推荐、门票与价格、避坑指南、最新攻略2026"]}。'
-                    "destinations 必须是真实可搜索的城市/景区名，且【必须同时包含调研对象本身与它的主要候选对比目的地】（3-6 个），"
-                    "确保横向对比维度完整，绝不能只调研单个目的地而失去可比性。"
+                    '"search_angles":["针对每个目的地的搜索角度短语"]}。'
+                    "destinations 只是**候选**：只有用户在需求里点过名或勾选过的才会被采纳，"
+                    "其余会被系统丢弃——绝不要为了凑齐对比对象而塞进用户没提的城市。"
+                    "search_angles 每条只写维度短语（如 交通攻略、住宿推荐、门票与价格、避坑指南）："
+                    "①不得含任何城市/景区名（检索词会自动带上目的地，重复地名会污染结果）；"
+                    "②不得含具体天数（行程时长只依用户原文，不接受你推断的天数）。"
                     f"region 要给一个能精准消歧的行政区/国家短语（避免同名地歧义，如「凤凰」应识别为「湖南省湘西州」）。"
-                    f"search_angles 给 {max_angles} 个角度，务必包含「最新攻略2026」「官方公告」等时效性角度以抓取最新信息。只输出 JSON。"
+                    f"search_angles 给 {max_angles} 个，务必包含「最新攻略2026」「官方公告」等时效性角度以抓取最新信息。"
+                    "只输出 JSON。"
                 )},
                 {"role": "user", "content": (
                     f"调研需求：{query}\n用户补充：{clar_text or '无'}\n"
-                    f"用户已勾选/指定的目的地（必须全部纳入 destinations）：{('、'.join(user_destinations)) or '无'}"
+                    f"用户已勾选的目的地（这些一定会被纳入，你只需补全维度与角度）："
+                    f"{('、'.join(checked)) or '无'}"
                 )},
             ],
             max_tokens=2000,
@@ -780,48 +1179,69 @@ def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7,
             model=_model("fast"),
             purpose="拆解调研计划（目的地/维度/搜索角度）",
         )
-        if isinstance(data, dict) and (data.get("destinations") or user_destinations):
-            llm_destinations = [b for b in (data.get("destinations") or []) if isinstance(b, str) and b.strip()]
+        if isinstance(data, dict):
+            candidates = [str(x).strip() for x in (data.get("destinations") or [])
+                          if isinstance(x, str) and x.strip()]
             subject = str(data.get("subject") or "").strip()
-            # subject 仅当像「单个目的地名」才作为目的地纳入：排除对比短语/过长描述
-            # （如「成都与杭州长期居住对比」不能当成一个目的地）
-            subject_ok = bool(subject) and len(subject) <= 16 and not any(
-                k in subject for k in ("对比", "比较", "评估", "调研", "攻略", "路线", "与", "和", "、", "vs", "VS", "/")
-            )
-            # 合并：用户勾选优先 → （合格的）调研主体 → LLM 拆出的候选目的地；去重保序，上限 6
-            merged: List[str] = []
-            for b in user_destinations + ([subject] if subject_ok else []) + llm_destinations:
-                b = b.strip()
-                if b and b not in merged:
-                    merged.append(b)
-            destinations = merged[:6]
-            angles = [a for a in data.get("search_angles", []) if isinstance(a, str)][:max_angles]
+            if subject:
+                candidates.insert(0, subject)   # subject 也只当候选，同样过判据与原文校验
             focus = [f for f in data.get("focus", []) if isinstance(f, str)]
-            region = str(data.get("region") or "").strip()
-            if destinations:
-                return {
-                    "destinations": destinations,
-                    "focus": focus or ["交通", "住宿", "预算", "口碑"],
-                    "angles": angles or default_angles[:max_angles],
-                    "region": region,
-                }
-    except Exception:
-        pass
-    fallback_destinations = user_destinations or _regex_destinations(query)
+            region = str(data.get("region") or "").strip() or region
+            raw_angles = [a for a in (data.get("search_angles") or []) if isinstance(a, str)]
+    except Exception as e:  # noqa: BLE001
+        if isinstance(e, (LLMNotConfigured, LLMModelUnavailable)) or is_temporary_unavailable(e):
+            raise                          # 模型不可用不是「识别不到目的地」，必须如实报错
+        plan_error = f"{type(e).__name__}: {e}"
+
+    destinations, source = _destination_set(query, clar, candidates)
+    degraded = False
+    if not destinations:
+        name, source = _fallback_destination(query, research_type, task_id)
+        degraded = True
+        destinations = [name] if name else [_NO_DESTINATION]
+
+    # 终点闸门：问卷题已改单选、submit_clarify 也已拒，这里兜住「原文点名多目的地」
+    # 与旧缓存问卷两条漏网路径——在采集/算分之前拒，不浪费后续预算。
+    if research_type == "guide" and len([d for d in destinations if d != _NO_DESTINATION]) > 1:
+        _plan_trace(task_id, f"guide 多目的地被拒（{'、'.join(destinations)}）。",
+                    f"来源={source}\n需求原文：{query}\n勾选：{('、'.join(checked)) or '无'}")
+        raise GuideSingleDestinationError(
+            f"游玩攻略报告目前仅支持单个目的地，识别到 {len(destinations)} 个"
+            f"（{'、'.join(destinations)}）。请改为单个城市/景区，或改用「调研评估」类型做对比。")
+
+    # 天数判据双源：用户原文优先（显式说过就以它为准），原文没有才认问卷答案。
+    days_phrase = _days_from_text(query) or _days_from_text(str(clar.get("days") or ""))
+    origin_phrase = origin_answer(clar)
+    focus_qid = str(spec.get("focus_qid") or "")
+    sel_raw = clar.get(focus_qid) if focus_qid else None
+    selected = [str(x).strip() for x in
+                (sel_raw if isinstance(sel_raw, (list, tuple)) else ([sel_raw] if sel_raw else []))
+                if str(x).strip()]
+    kw_map = spec.get("focus_angle_keywords") or {}
+    focus_keywords: List[str] = []
+    for opt in selected:
+        for k in kw_map.get(opt, ()):
+            if k not in focus_keywords:
+                focus_keywords.append(k)
+
+    angles = _orthogonal_angles(raw_angles, destinations, days_phrase, spec, max_angles,
+                                origin_phrase, tuple(focus_keywords))
+    if degraded or plan_error:
+        detail = (f"计划候选：{('、'.join(candidates)) or '无'}\n"
+                  f"需求原文：{query}\n勾选：{('、'.join(checked)) or '无'}")
+        if plan_error:
+            detail += f"\n计划 LLM 异常：{plan_error}"
+        _plan_trace(task_id, f"目的地降级为「{'、'.join(destinations)}」（来源={source}）；"
+                             "已在运行中提示用户核对。", detail)
+    merged_focus = selected + [f for f in focus if f not in selected]
     return {
-        "destinations": fallback_destinations[:6],
-        "focus": ["交通", "住宿", "预算", "口碑"],
-        "angles": default_angles[:max_angles],
-        "region": str((clar.get("_region") or "")).strip(),
+        "destinations": destinations,
+        "focus": merged_focus or ["交通", "住宿", "预算", "口碑"],
+        "angles": angles,
+        "region": region,
+        "degraded": degraded,
+        "dest_source": source,
     }
-
-
-def _regex_destinations(query: str) -> List[str]:
-    tokens = re.split(r"[、,，/\s]+", query)
-    stop = {"攻略", "对比", "比较", "评估", "调研", "报告", "旅游", "旅行", "自由行",
-            "的", "与", "和", "怎么", "如何", "几月", "天"}
-    cand = [t for t in tokens if 2 <= len(t) <= 12 and t not in stop and not t.isdigit()]
-    return cand[:4] if cand else ["目标目的地"]
 
 
 # ── 编排：LLM 动态指派专家（含理由）─────────────────────────
@@ -867,7 +1287,7 @@ def _dispatch_experts(query: str, destinations: List[str], focus: List[str]) -> 
         pass
     fallback = [
         {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-        {"id": "L2-001", "reason": "策略顾问负责目的地横向对比研判"},
+        {"id": "L2-001", "reason": "策略顾问负责目的地研判与方案取舍"},
         {"id": "L2-002", "reason": "预算顾问负责成本拆解与性价比判断"},
         {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
         {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
@@ -881,6 +1301,7 @@ DAG_NODES = [
     {"id": "orchestrator", "label": "编排派遣"},
     {"id": "collect", "label": "证据采集"},
     {"id": "analyze", "label": "交叉分析"},
+    {"id": "spots", "label": "景点实体"},
     {"id": "write", "label": "报告撰写"},
     {"id": "audit", "label": "质检审裁"},
     {"id": "done", "label": "签发交付"},
@@ -1108,13 +1529,18 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("thought", {"id": _sid("th"), "kind": "plan", "expert": "L3-001",
                           "text": f"收到调研需求：{query}（{spec['label']} · {cfg['label']}）。正在拆解目的地与调研维度……", "ts": _now()})
     trace.set_context(task_id, "L3-001", "intake", "拆解调研计划")
-    plan = await asyncio.to_thread(_plan_research, query, clar, cfg["max_angles"], rtype)
+    plan = await asyncio.to_thread(_plan_research, query, clar, cfg["max_angles"], rtype, task_id)
     for e in _drain_trace():
         yield e
     destinations = plan["destinations"]
     focus = plan["focus"]
     angles = plan["angles"]
     region = plan.get("region", "")
+    if plan.get("degraded"):
+        # 运行中温和横幅（非 error）：降级事实的持久来源是上面的 trace span，这里只解决醒目度。
+        yield _ev("message", {"id": _sid("m"), "kind": "plan_fallback", "expert": "L3-001",
+                              "text": f"目的地由自动识别得出（{'、'.join(destinations)}），"
+                                      "建议核对后再采纳；如不符请在需求里写明城市名后重跑。"})
     yield _ev("thought", {"id": _sid("th"), "kind": "plan", "expert": "L3-001",
                           "text": f"锁定目的地：{'、'.join(destinations)}；重点维度：{'、'.join(focus)}；"
                                   f"将从「{'、'.join(angles)}」等角度展开多轮联网检索。", "ts": _now()})
@@ -1172,12 +1598,19 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         except (TypeError, ValueError):
             return 0
 
+    # 服务商级终态错误（欠费/Key 无效）：一条即止，不再烧剩余查询；零证据时硬失败
+    provider_err: Optional[str] = None
+
     for destination in destinations:
         yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": collector,
                               "text": f"开始深度检索「{destination}」：{'、'.join(angles)}。", "ts": _now()})
         trace.set_context(task_id, collector, "collect", f"采集目的地「{destination}」证据")
-        res = await asyncio.to_thread(_collect_destination, destination, angles, collector,
-                                      cfg["fetch_per_destination"], cfg["freshness"], seen_urls, groups)
+        try:
+            res = await asyncio.to_thread(_collect_destination, destination, angles, collector,
+                                          cfg["fetch_per_destination"], cfg["freshness"], seen_urls, groups)
+        except SearchProviderError as e:
+            provider_err = str(e)
+            break
         stats["dup_skipped"] += res.get("dup_skipped", 0)
         for e in _drain_trace():
             yield e
@@ -1243,6 +1676,12 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     region_kw = _region_keywords(region)
     region_q = (" " + region) if region else ""
     sentiment_angle_tpl = list(spec["sentiment_angles"])
+    if provider_err:
+        # 主采集已确认服务商终态错误（欠费/Key）：不再烧检索，如实标注后降级
+        yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": sentiment_expert,
+                              "text": f"舆情口碑采集中断：{provider_err}（搜索服务配额/密钥问题），"
+                                      f"舆情按已得数据降级，跳过后续检索。", "ts": _now()})
+        sentiment_destinations = []
     for sb in sentiment_destinations:
         trace.set_context(task_id, sentiment_expert, "collect", f"采集「{sb}」全平台舆情")
         plat_counts: Counter = Counter()
@@ -1252,13 +1691,21 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
             plat_label = PLATFORM_LABEL.get(plat, plat)
             # 多角度口碑检索词（查表渲染），带上地区消歧（覆盖体验/优缺点/踩坑/真实评价）
             site_q = [t.replace("{d}", sb) + region_q for t in sentiment_angle_tpl[:2]]
-            plat_results = await asyncio.to_thread(multi_search, site_q, num=8, site=site,
-                                                   freshness=cfg["freshness"])
-            # 站内受限（如抖音/小红书常被 include 过滤掉）→ 回退：全网检索 + 平台关键词
-            if not plat_results:
-                fb_q = [f"{t.replace('{d}', sb)}{region_q} {plat_label}" for t in sentiment_angle_tpl]
-                plat_results = await asyncio.to_thread(multi_search, fb_q, num=8,
+            try:
+                plat_results = await asyncio.to_thread(multi_search, site_q, num=8, site=site,
                                                        freshness=cfg["freshness"])
+                # 站内受限（如抖音/小红书常被 include 过滤掉）→ 回退：全网检索 + 平台关键词
+                if not plat_results:
+                    fb_q = [f"{t.replace('{d}', sb)}{region_q} {plat_label}" for t in sentiment_angle_tpl]
+                    plat_results = await asyncio.to_thread(multi_search, fb_q, num=8,
+                                                           freshness=cfg["freshness"])
+            except SearchProviderError as e:
+                # 中途欠费：可见 thought 如实送达真因，已完成的采集不炸掉（降级继续）
+                provider_err = str(e)
+                yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": sentiment_expert,
+                                      "text": f"舆情口碑采集中断：{e}（搜索服务配额/密钥问题），"
+                                              f"按已得样本降级，跳过后续检索。", "ts": _now()})
+                break
             for e in _drain_trace():
                 yield e
             for r in plat_results[:take]:
@@ -1304,6 +1751,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": sentiment_expert,
                               "text": f"「{sb}」舆情有效 {kept} 条（已剔除 {dropped} 条题不对版），"
                                       f"平台分布：{dict(plat_counts)}。", "ts": _now()})
+        if provider_err:
+            break
     yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": sentiment_expert,
                           "text": f"舆情共采集到 {len(sentiment_comments)} 条带真实链接的多平台口碑（覆盖 {len(sentiment_destinations)} 个目的地）。",
                           "ts": _now()})
@@ -1312,7 +1761,12 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("progress", prog(54, "analyze", len(evidences)))
 
     if not evidences:
-        yield _ev("error", {"message": "本次未能采集到任何可用证据（搜索/抓取均失败），请稍后重试或更换调研主题。"})
+        if provider_err:
+            msg = (f"本次未能采集到任何可用证据：{provider_err}"
+                   f"（请检查搜索服务配额/密钥）")
+        else:
+            msg = "本次未能采集到任何可用证据（搜索/抓取均失败），请稍后重试或更换调研主题。"
+        yield _ev("error", {"message": msg})
         return
 
     # ---- 4. analyze：LLM 交叉验证 + 论点 + 结构化 Schema ----
@@ -1330,15 +1784,110 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         yield _ev("message", {"id": _sid("m"), "kind": "claim", "claim": cl})
         await asyncio.sleep(0.03)
 
-    # 结构化知识 Schema（三类对象按调研类型查表）
+    # ---- 4.5 spots：景点实体形成（LLM 只抽可数信号 → scoring 规则算分 → 冻结 TopN 实体表）----
+    # 实体唯一来源：景点榜单/路线卡/商铺/舆情引用下游一律挂 spot_id，
+    # 禁止各章用自由文本重新匹配景点名（实体一致性的结构性防线）。分数全部由规则算出，LLM 无评分话语权。
+    frozen_entities: Dict[str, Any] = {}
+    spot_entities: List[Dict[str, Any]] = []
+    if "spot_ranking" in spec["structured_keys"]:
+        yield _ev("node_update", {"node": "spots", "status": "working", "expert": analyst})
+        yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": analyst,
+                              "text": f"景点实体阶段：从证据抽取可数信号（声量/口碑/性价比），规则算分冻结 Top{cfg['spot_topn']} 实体表……",
+                              "ts": _now()})
+        trace.set_context(task_id, analyst, "spots", "景点信号抽取与规则算分")
+        spot_rows = await asyncio.to_thread(_extract_spot_signals, query, destinations, focus,
+                                            evidences, cfg["spot_topn"], _model("core"))
+        for e in _drain_trace():
+            yield e
+        ranked = SC.rank_spots(spot_rows, cfg["spot_topn"])
+        frozen = coerce_spot_ranking(
+            {"spot_ranking": [{"destination": primary_destination, "items": ranked}]},
+            {ev.evidence_id for ev in evidences}) if ranked else []
+        if frozen and not frozen[0].get("items"):
+            frozen = []  # 规整后全被丢弃（如无合法目的地名）：不挂空表，避免下游误以为有实体
+        frozen_entities["spot_ranking"] = frozen
+        spot_entities = frozen[0]["items"] if frozen else []
+        yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                              "text": (f"已冻结 Top{len(spot_entities)} 景点实体（评分=0.4×声量+0.4×口碑+0.2×性价比，规则可复现）："
+                                       + "、".join(f"{r['name']} {r['score'] or 0}分" for r in spot_entities[:3]) + "……")
+                                     if spot_entities else
+                                     "未能从证据抽出有效景点信号，榜单实体表为空，相关章节如实留白。",
+                              "ts": _now()})
+        # M2：百度实体解析降级链（精确匹配→地理编码→matched=false）+ 真实路线批量落库。
+        # 任何失败（缺 AK/超时/配额）只影响占位降级，不回滚已完成的 LLM 分析与榜单表。
+        baidu_ok = await _resolve_spot_entities(primary_destination, spot_entities)
+        real_routes = (await _build_spot_routes(primary_destination, spot_entities)
+                       if baidu_ok else [])
+        frozen_entities["spot_routes"] = real_routes
+        if baidu_ok:
+            matched_n = sum(1 for r in spot_entities if r.get("matched"))
+            routes_n = len(real_routes[0]["items"]) if real_routes else 0
+            yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                                  "text": f"百度实体解析：{matched_n}/{len(spot_entities)} 个景点命中坐标（未命中走地理编码兜底/占位），"
+                                          f"已批量规划 {routes_n} 条真实路线（公交/地铁 + 打车估算）。",
+                                  "ts": _now()})
+        elif spot_entities:
+            yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                                  "text": "未配置百度服务端 AK：景点坐标与实际路线走占位降级，榜单表（LLM 证据版）照常产出。",
+                                  "ts": _now()})
+        # M2c：逐景点舆情补充采集（deep/expert）——评论挂 spot_id，喂 (spot×platform) 双维聚合；
+        # 目的地级基础采集保持原样，全局面板/旧图不回归。
+        if cfg.get("spot_sent_take", 0) and spot_entities:
+            spot_errs: List[str] = []
+            spot_comments = await _collect_spot_comments(
+                spot_entities, sentiment_platforms, region_q, cfg["spot_sent_take"],
+                cfg["freshness"], primary_destination, seen_urls, spot_errs)
+            if spot_errs:
+                provider_err = provider_err or spot_errs[0]
+                yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": sentiment_expert,
+                                      "text": f"景点口碑信号采集中断：{spot_errs[0]}（搜索服务配额/密钥问题），"
+                                              f"逐景点舆情按已有样本降级。", "ts": _now()})
+            sentiment_comments.extend(spot_comments)
+            yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": sentiment_expert,
+                                  "text": f"逐景点舆情补充：{len(spot_comments)} 条口碑已挂接 Top{len(spot_entities)} 景点实体"
+                                          f"（每景点每平台 ≤{cfg['spot_sent_take']} 条，(spot×platform) 聚合数据源）。",
+                                  "ts": _now()})
+        yield _ev("progress", prog(56, "spots", len(evidences)))
+        yield _ev("node_update", {"node": "spots", "status": "done"})
+    entity_hint = (json.dumps([{"spot_id": r.get("spot_id"), "name": r.get("name")}
+                               for r in spot_entities], ensure_ascii=False)[:1600]
+                   if spot_entities else "")
+
+    # 结构化知识 Schema（对象集按调研类型查表；spot_ranking 属实体阶段产出，不在 LLM 结构化提示内）
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": analyst,
-                          "text": f"构建结构化目的地知识：{' / '.join(spec['structured_keys'])}（字段完整、引用强制）……",
+                          "text": f"构建结构化目的地知识：{' / '.join(k for k in spec['structured_keys'] if k not in _ENTITY_STAGE_KEYS)}（字段完整、引用强制）……",
                           "ts": _now()})
     trace.set_context(task_id, analyst, "analyze", "产出结构化目的地知识Schema")
     structured = await asyncio.to_thread(_analyze_structured, query, destinations, focus, evidences,
-                                         rtype, cfg["structured_max_tokens"])
+                                         rtype, cfg["structured_max_tokens"], entity_hint)
     for e in _drain_trace():
         yield e
+    structured.update(frozen_entities)  # 冻结表覆盖回写：实体单一真相源，LLM 返回也不采纳
+    if "shop_list" in structured:
+        # 商铺实体保真：百度 POI 回填坐标/区域（缺 AK 静默跳过 → matched 保持 False 占位）
+        await _enrich_shops_with_poi(primary_destination, structured.get("shop_list") or [])
+        # M3e：每种美食前 N 家 matched 商铺挂一条真实公交路线（配额见 MODE_CONFIG.shop_route_topn）
+        shop_routes_n = await _attach_shop_routes(
+            primary_destination, structured.get("shop_list") or [],
+            cfg.get("shop_route_topn", 0))
+        if shop_routes_n:
+            yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                                  "text": f"已为 {shop_routes_n} 家美食商铺规划真实公交路线（自市中心锚定）。",
+                                  "ts": _now()})
+    if rtype == "guide" and mode in ("deep", "expert") and spot_entities:
+        # M3a/D2 一页视图：guide 的 deep 与 expert 档 route_plan 整体由规则组装覆盖
+        # （引用冻结实体表，LLM 版本不采纳）。天数双源判据（问卷 v2）：用户原文优先，
+        # 原文无天数才认问卷 days 答案，两路都拿不到返回 0、由 pace 推算，不造数。
+        structured["route_plan"] = _assemble_itinerary(
+            primary_destination, spot_entities, frozen_entities.get("spot_routes") or [],
+            structured.get("shop_list") or [],
+            _days_count(query) or _days_count(str(clar.get("days") or "")),
+            cfg.get("spot_day_pace", 4))
+        yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                              "text": f"一页视图：Top{len(spot_entities)} 景点已按名次逐日组装"
+                                      f"（{len(structured['route_plan'][0]['days']) if structured['route_plan'] else 0} 天，"
+                                      "抵达交通引用真实路线、商铺按 spot_id/shop_id 挂接）。",
+                              "ts": _now()})
     analysis["structured"] = structured
 
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
@@ -1441,7 +1990,9 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                         yield e
                     claims = analysis["claims"]
                     structured = await asyncio.to_thread(_analyze_structured, query, destinations, focus,
-                                                         evidences, rtype, cfg["structured_max_tokens"])
+                                                         evidences, rtype, cfg["structured_max_tokens"],
+                                                         entity_hint)
+                    structured.update(frozen_entities)
                     analysis["structured"] = structured
                     yield _ev("node_update", {"node": "analyze", "status": "done"})
             rework_rounds_done += 1
@@ -1503,7 +2054,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         return sid, await asyncio.to_thread(
             _write_single_section, sid, title, query, destinations, focus,
             evidences, claims, analysis, model, rtype,
-            cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"]
+            cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"], sentiment
         )
 
     tasks = [asyncio.create_task(_write_one(sid)) for sid in section_ids]
@@ -1520,9 +2071,45 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                               "text": f"第 {done_count}/{total} 章「{title}」撰写完成。", "ts": _now()})
         yield _ev("progress", prog(70 + int(16 * done_count / total), "write", len(evidences)))
 
+    # 写后结构补齐：只对「有正文、无结构」的章节补一次极小结构请求（原因见 _repair_missing_structure）
+    repair_ids = [sid for sid in section_ids if _structureless(sections_text.get(sid))]
+    if repair_ids:
+        sem = asyncio.Semaphore(4)
+
+        async def _repair_one(_sid: str):
+            async with sem:
+                _title = RT.SECTION_PLAN.get(_sid, _sid)
+                return _sid, await asyncio.to_thread(
+                    _repair_missing_structure, _sid, _title, sections_text[_sid],
+                    claims, _model("fast"),
+                )
+
+        for coro in asyncio.as_completed([_repair_one(s) for s in repair_ids]):
+            sid, patch = await coro
+            if patch:
+                sections_text[sid].update(patch)
+            for e in _drain_trace():
+                yield e
+
+    # 结构完整性：仍缺失的章节必须在决策回放里点名（静默降级不可接受）
+    still = [sid for sid in section_ids if _structureless(sections_text.get(sid))]
+    if still:
+        trace.record_manual_span(task_id, writer, "write", "章节结构完整性",
+                                 detail=f"{len(still)}/{len(section_ids)} 章无结构字段："
+                                        + "、".join(RT.SECTION_PLAN.get(s, s) for s in still),
+                                 model="—（规则统计，无 LLM）")
+    yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": writer,
+                          "text": f"章节结构完整性：{len(section_ids) - len(still)}/{len(section_ids)} 章结构字段就绪"
+                                  + (f"（缺失：{'、'.join(RT.SECTION_PLAN.get(s, s) for s in still)}）"
+                                     if still else "。"),
+                          "ts": _now()})
+    for e in _drain_trace():
+        yield e
+
     # 舆情专章：基于真实评论数据生成多段深度解读（与正文同等深度）
+    # —— 档位已把「全网舆情」立为正式章节（sentiment_report）时，改由普通章节管线撰写，不再走面板叙事
     sentiment_text: Dict[str, Any] = {"paragraphs": [], "key_takeaway": "", "highlights": []}
-    if sentiment.get("sample_size"):
+    if sentiment.get("sample_size") and "sentiment_report" not in section_ids:
         trace.set_context(task_id, sentiment_expert, "write", "撰写章节「全网舆情与观点阵营」")
         sentiment_text = await asyncio.to_thread(
             _write_sentiment_narrative, query, destinations, sentiment, _model("aux"),
@@ -1531,7 +2118,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         for e in _drain_trace():
             yield e
 
-    chart_specs = _build_charts(destinations, analysis, sentiment, claims, rtype)
+    chart_specs = _build_charts(destinations, analysis, sentiment, claims, rtype, mode=mode)
     for ch in chart_specs:
         yield _ev("chart", ch)
         await asyncio.sleep(0.05)
@@ -1571,7 +2158,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                               sentiment, chart_specs, sections_text, collect_notes,
                               analysis, metrics, quality_before.to_dict(),
                               quality_after.to_dict(), trace_spans, mode, section_ids,
-                              sentiment_text, objective_meta, rtype)
+                              sentiment_text, objective_meta, rtype, clar=clar)
     # 质检审阅意见（before/after）随报告下发，供报告页「质检审裁」展示
     report["audit_review"] = {"before": review_before, "after": review_after,
                               "rework_rounds": rework_rounds_done,
@@ -1617,14 +2204,30 @@ _ANALYSIS_KEY_SCHEMA: Dict[str, str] = {
 
 # 结构化键 → 展示用中文名（写入章节提示时给 LLM 一个可读标签）
 _STRUCTURED_LABEL: Dict[str, str] = {
+    "spot_ranking": "景点综合评分榜", "food_ranking": "美食Top榜",
+    "spot_routes": "逐景点路线", "shop_list": "美食商铺清单",
     "route_plan": "逐日路线", "stay_options": "住宿选项", "cost_breakdown": "花费拆解",
     "access_matrix": "可达性矩阵", "amenity_checklist": "配套清单", "risk_profile": "风险画像",
 }
 
+# spots 实体阶段产出的 structured 键：不进 LLM 结构化提示——榜单分数由
+# scoring 规则算出（可复现），实体表由 spots 阶段冻结后覆盖回写；
+# 路线卡（spot_routes）M2 起改为百度 direction 真实数据批量落库（缺 AK/失败 → 空表占位，
+# 绝不让 LLM 编造换乘细节）。
+_ENTITY_STAGE_KEYS = frozenset({"spot_ranking", "spot_routes"})
+
+# 百度批量 fan-out 的阶段级总预算（秒）：单调用另有 baidu_timeout，超时项走占位降级，
+# 不回滚已完成的 LLM 分析。
+_BAIDU_STAGE_BUDGET_S = 60.0
+
 # 结构化键 → JSON 片段（提示词按 spec["structured_keys"] 拼装，与 schemas.coerce_structured 同键）
 _STRUCTURED_SCHEMA: Dict[str, str] = {
+    "spot_ranking": '"spot_ranking":[{"destination":"目的地","items":[{"name":"景点名","area":"所在区域","signals":{"mentions":提及次数整数,"positive_ratio":正面口碑占比0-1,"value_score":性价比0-1},"score":综合分,"rank":排名整数,"ticket":"门票与预约","stay_minutes":建议停留分钟整数,"off_peak":"避峰时段","reason":"一句话入选理由","evidence_ids":["真实id"]}]}]',
+    "food_ranking": '"food_ranking":[{"destination":"目的地","items":[{"name":"美食/菜品名","category":"品类","reason":"推荐理由","price_range":"人均价格区间","evidence_ids":["真实id"]}]}]',
+    "spot_routes": '"spot_routes":[{"destination":"目的地","items":[{"spot_id":"实体表给定的spot_id","spot_name":"实体表给定的景点名","routes":[{"mode":"地铁|公交|打车|自驾","duration":"耗时","cost":"费用","transfer":"换乘站点/路线名","note":"实操要点","evidence_ids":["真实id"]}]}]}]',
+    "shop_list": '"shop_list":[{"destination":"目的地","items":[{"food":"对应的榜上美食名","name":"商铺名","area":"所在区域","price_per_person":人均价数字或null,"queue_note":"排队情况","evidence_ids":["真实id"]}]}]',
     "route_plan": '"route_plan":[{"destination":"目的地","days":[{"day":第几天整数,"spots":[{"name":"景点/活动","transport":"交通方式","duration":"建议停留","tip":"实操提示","evidence_ids":["真实id"]}]}]}]',
-    "stay_options": '"stay_options":[{"destination":"目的地","areas":[{"area":"住宿区域","price_range":"价格区间","for_whom":"适合人群","pros":["优点"],"cons":["缺点"],"evidence_ids":["真实id"]}]}]',
+    "stay_options": '"stay_options":[{"destination":"目的地","areas":[{"area":"住宿区域","price_range":"价格区间","price_min":区间最低价整数或null,"price_max":区间最高价整数或null,"for_whom":"适合人群","pros":["优点"],"cons":["缺点"],"evidence_ids":["真实id"]}]}]',
     "cost_breakdown": '"cost_breakdown":[{"destination":"目的地","items":[{"category":"交通|住宿|餐饮|门票|购物|其他","amount":数字或null,"unit":"元/人","share":占比百分数或null,"note":"说明","evidence_ids":["真实id"]}]}]',
     "access_matrix": '"access_matrix":[{"destination":"目的地","routes":[{"mode":"飞机|高铁|自驾|大巴|轮渡","duration":"耗时","cost":"费用区间","frequency":"班次频次","note":"换乘/购票要点","evidence_ids":["真实id"]}]}]',
     "amenity_checklist": '"amenity_checklist":[{"destination":"目的地","items":[{"category":"医疗|教育|商业|政务|网络","item":"具体配套","coverage":"full|partial|none","note":"说明","evidence_ids":["真实id"]}]}]',
@@ -1756,7 +2359,9 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
              research_type: str = DEFAULT_RESEARCH_TYPE,
              max_tokens_param: int = 8000, review_feedback: str = "") -> Dict[str, Any]:
     spec = RT.type_spec(research_type)
-    keys = [k for k in spec["analysis_keys"] if k in _ANALYSIS_KEY_SCHEMA]
+    # 分析对象随目的地数自适应：单目的地剔除只在多目的地才有意义的键（如占比分布）
+    keys = [k for k in RT.analysis_keys_for(research_type, len(destinations))
+            if k in _ANALYSIS_KEY_SCHEMA]
     schema = ",\n".join(_ANALYSIS_KEY_SCHEMA[k] for k in keys)
     allowed_fields = set(RT.claim_fields_for(research_type))
     cb = spec.get("cost_bar") or {}
@@ -1807,7 +2412,7 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
                     "claim_type 定义与客观性铁律：fact=证据可直接支撑的客观事实；opinion=分析判断（用词体现观点）；mixed=事实与推断混合。"
                     "每条 claim 必须明确 claim_type；不得把单一信源或存在矛盾的资讯写成定论；"
                     "当不同证据对同一事实说法不一致时，如实输出到 contradictions 而非掩盖。"
-                    f"雷达对比的维度请围绕本次类型的重点：{'、'.join(spec['radar_dims'])}。" + cost_line +
+                    f"{RT.radar_title(research_type, len(destinations))}的维度请围绕本次类型的重点：{'、'.join(spec['radar_dims'])}。" + cost_line +
                     "trends 给出可比的时间序列（客流/热度/房价/成本等任一可由证据支撑的维度），无依据则留空对象 {}，不要编造。"
                     "所有数组/对象必须基于证据合理推断，无依据则留空数组或 null；每项数据型结论都要挂 evidence_ids。"
                     "【数据真实性铁律】所有评分/数值必须精确、可信、有区分度：严禁清一色用 5 或 10 的整数倍（如 80/85/90），"
@@ -1873,20 +2478,24 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
 
 def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
                         research_type: str = DEFAULT_RESEARCH_TYPE,
-                        max_tokens_param: int = 8000) -> Dict[str, Any]:
+                        max_tokens_param: int = 8000,
+                        entity_hint: str = "") -> Dict[str, Any]:
     """产出结构化目的地知识（严格 Schema + 引用强制）。
 
-    对象集来自 spec["structured_keys"]（guide：逐日路线/住宿选项/花费拆解；
-    assessment：可达性矩阵/配套清单/风险画像），提示词片段同样按类型查表。
+    对象集来自 spec["structured_keys"]，但剔除 _ENTITY_STAGE_KEYS（景点榜等由
+    spots 实体阶段冻结后覆盖回写，不交 LLM 算分）。提示词片段同样按类型查表。
+    entity_hint：已冻结的景点实体表（spot_id+名），供 shop_list 等下游挂接同一批实体。
     """
     spec = RT.type_spec(research_type)
-    keys = list(spec["structured_keys"])
+    keys = [k for k in spec["structured_keys"] if k not in _ENTITY_STAGE_KEYS]
     fragments = [_STRUCTURED_SCHEMA.get(k) for k in keys]
     if any(f is None for f in fragments):
-        return {k: [] for k in keys}
+        return {k: [] for k in spec["structured_keys"]}
     digest = _evidence_digest(evidences, limit=24)
     valid_eids = {e.evidence_id for e in evidences}
-    out: Dict[str, Any] = {k: [] for k in keys}
+    out: Dict[str, Any] = {k: [] for k in spec["structured_keys"]}
+    entity_block = (f"\n已冻结景点实体表（spot_id 与景点名必须原样引用，禁止改名或新增景点）：\n{entity_hint}"
+                    if entity_hint else "")
     try:
         data = chat_json(
             [
@@ -1897,7 +2506,7 @@ def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
                     + ",".join(fragments) + "}。只输出 JSON，不要解释。"
                 )},
                 {"role": "user", "content": (
-                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点：{'、'.join(focus)}\n证据：\n{digest}"
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点：{'、'.join(focus)}{entity_block}\n证据：\n{digest}"
                 )},
             ],
             max_tokens=max_tokens_param,
@@ -1907,9 +2516,451 @@ def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
         )
         if isinstance(data, dict):
             coerced = coerce_structured(data, research_type, valid_eids)
-            out.update(coerced)
+            out.update({k: v for k, v in coerced.items() if k not in _ENTITY_STAGE_KEYS})
     except Exception:
         pass
+    return out
+
+
+def _extract_spot_signals(query, destinations, focus, evidences: List[Evidence],
+                          top_n: int, model: str) -> List[Dict[str, Any]]:
+    """景点实体阶段：LLM 只做**可数信号的事实抽取**（声量提及数/正面口碑占比/性价比档），
+    排序与算分交给 scoring.rank_spots——数值可复现，LLM 无评分话语权。
+
+    失败或无信号时返回空表（上层出「实体表为空」的如实提示），不影响已完成的其他分析。
+    """
+    spec_digest = _evidence_digest(evidences, limit=24)
+    valid_eids = {e.evidence_id for e in evidences}
+    try:
+        data = chat_json(
+            [
+                {"role": "system", "content": (
+                    "你是旅游数据分析师。从给定证据中整理目的地热度最高的若干景点，"
+                    "为每个景点抽取**可计数的事实信号**，禁止给景点排序或打分。字段口径："
+                    "mentions=该景点在证据中被提及/打卡的次数（整数）；"
+                    "positive_ratio=正面评价占该景点全部评价的比例（0-1 小数）；"
+                    "value_score=性价比主观档位归一（0-1 小数，1 为极高性价比）。"
+                    "所有信号都必须能追溯到给定证据，无证据支撑的景点不要编造。输出 JSON："
+                    '{"spots":[{"name":"景点名","area":"所在区域","signals":{"mentions":数字,'
+                    '"positive_ratio":0-1,"value_score":0-1},"ticket":"门票与预约方式",'
+                    '"stay_minutes":建议停留分钟整数,"off_peak":"避峰时段","reason":"一句话入选理由",'
+                    '"evidence_ids":["真实id"]}]}。只输出 JSON，不要解释。'
+                )},
+                {"role": "user", "content": (
+                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点：{'、'.join(focus)}\n"
+                    f"只需给出不超过 {top_n} 个景点。\n证据：\n{spec_digest}"
+                )},
+            ],
+            max_tokens=6000,
+            temperature=0.3,
+            model=model,
+            purpose="景点信号抽取（TopN 实体候选）",
+        )
+        rows = data.get("spots") if isinstance(data, dict) else data
+        out: List[Dict[str, Any]] = []
+        for r in (rows if isinstance(rows, list) else []):
+            if isinstance(r, dict) and str(r.get("name") or "").strip():
+                r["evidence_ids"] = _filter_eids(r.get("evidence_ids"), valid_eids)
+                out.append(r)
+        return out
+    except Exception:
+        return []
+
+
+# ── M2：百度实体解析 / 真实路线 / 商铺 POI（envelope 降级，任何失败不抛、不炸任务）──
+
+
+def _norm_spot_name(name: Any) -> str:
+    return re.sub(r"[（(].*?[）)]|[\s・·\-—]", "", str(name or "")).lower()
+
+
+def _name_hit(want: str, got: Any) -> bool:
+    a, b = _norm_spot_name(want), _norm_spot_name(got)
+    return bool(a) and bool(b) and (a == b or a in b or b in a)
+
+
+async def _run_baidu_fanout(coros: List[Any]) -> None:
+    """并发跑百度任务，阶段级总预算限时；超时任务取消（该项保持占位降级）。
+
+    子任务体内部已吞异常（百度客户端本就 envelope 不抛），这里只兜住取消与预算。
+    """
+    if not coros:
+        return
+    tasks = [asyncio.create_task(c) for c in coros]
+    _, pending = await asyncio.wait(tasks, timeout=_BAIDU_STAGE_BUDGET_S)
+    for t in pending:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _resolve_one_spot(dest: str, item: Dict[str, Any]) -> None:
+    """单景点就地解析：地点检索精确匹配 → 地理编码兜底（置信度≥60）→ matched=False 占位。"""
+    item["matched"] = False
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return
+    r = baidu_client.place_search(name, dest)
+    if r.get("ok"):
+        hit = next((p for p in r["places"]
+                    if _name_hit(name, p.get("name")) and p.get("lat") is not None
+                    and p.get("lng") is not None), None)
+        if hit:
+            item.update({"lat": hit["lat"], "lng": hit["lng"], "matched": True})
+            if hit.get("area") and not item.get("area"):
+                item["area"] = hit["area"]
+            return
+    g = baidu_client.geocode(f"{dest}{name}", dest)
+    if (g.get("ok") and g.get("lat") is not None
+            and int(g.get("confidence") or 0) >= 60):
+        item.update({"lat": g["lat"], "lng": g["lng"], "matched": True})
+
+
+async def _resolve_spot_entities(dest: str, items: List[Dict[str, Any]]) -> bool:
+    """并发解析冻结 TopN 景点坐标。返回百度通道是否可用（False→整体占位降级）。"""
+    for it in items:
+        it["matched"] = False
+    if not items or not baidu_client.available():
+        return False
+
+    async def one(it: Dict[str, Any]) -> None:
+        try:
+            await asyncio.to_thread(_resolve_one_spot, dest, it)
+        except Exception:
+            it["matched"] = False
+
+    await _run_baidu_fanout([one(it) for it in items])
+    return True
+
+
+def _fmt_duration_sec(sec: Any) -> str:
+    try:
+        m = int(float(sec) / 60)
+    except (TypeError, ValueError):
+        return ""
+    if m < 1:
+        return "1分钟内"
+    if m < 60:
+        return f"约{m}分钟"
+    return f"约{m // 60}小时{m % 60}分钟"
+
+
+def _spot_routes_one(dest: str, origin: str, it: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """单景点逐条实际路线：公交/地铁（transit 最优）+ 打车（driving 里程估价，标「估算」）。"""
+    coords = f"{it['lat']},{it['lng']}"
+    routes: List[Dict[str, Any]] = []
+    t = baidu_client.direction("transit", origin, coords, city=dest)
+    if t.get("ok") and t["routes"]:
+        best = t["routes"][0]
+        vehicles = " → ".join(dict.fromkeys(
+            s["vehicle"] for s in best["steps"] if s.get("vehicle"))) or "公交/地铁"
+        try:
+            km = f"，全程约{round(float(best.get('distance_m') or 0) / 1000, 1)}公里"
+        except (TypeError, ValueError):
+            km = ""
+        routes.append({"mode": "公交/地铁", "duration": _fmt_duration_sec(best.get("duration_s")),
+                       "cost": "", "transfer": vehicles[:80], "note": f"自市中心出发{km}",
+                       "evidence_ids": []})
+    d = baidu_client.direction("driving", origin, coords)
+    if d.get("ok") and d["routes"]:
+        best = d["routes"][0]
+        est = baidu_client.taxi_estimate(best.get("distance_m"))
+        cost = f"约{est['fare_yuan']}元（估算）" if est.get("ok") else ""
+        routes.append({"mode": "打车", "duration": _fmt_duration_sec(best.get("duration_s")),
+                       "cost": cost, "transfer": "", "note": "里程规则估价，实际以上车计价为准",
+                       "evidence_ids": []})
+    return routes
+
+
+async def _build_spot_routes(dest: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """对 matched 景点批量拉真实路线（并发 + 阶段预算），产出 coerce_spot_routes 同形结构。"""
+    targets = [it for it in items
+               if it.get("matched") and it.get("lat") is not None and it.get("spot_id")]
+    if not targets or not baidu_client.available():
+        return []
+    g = await asyncio.to_thread(baidu_client.geocode, dest, "")
+    if not g.get("ok"):
+        return []
+    origin = f"{g['lat']},{g['lng']}"
+    results: Dict[str, List[Dict[str, Any]]] = {}
+
+    async def one(it: Dict[str, Any]) -> None:
+        try:
+            routes = await asyncio.to_thread(_spot_routes_one, dest, origin, it)
+            if routes:
+                results[it["spot_id"]] = routes
+        except Exception:
+            pass
+
+    await _run_baidu_fanout([one(it) for it in targets])
+    rows = [{"spot_id": it["spot_id"], "spot_name": it.get("name", ""),
+             "routes": results[it["spot_id"]]}
+            for it in targets if it["spot_id"] in results]  # 按榜单名次保序，可复现
+    return [{"destination": dest, "items": rows}] if rows else []
+
+
+def _shop_poi_one(dest: str, row: Dict[str, Any]) -> None:
+    """商铺实体保真：百度 POI 精确命中则回填坐标与区域；LLM 只供价格与排队口碑。"""
+    name = str(row.get("name") or "").strip()
+    if not name:
+        return
+    r = baidu_client.place_search(name, dest)
+    if not r.get("ok"):
+        return
+    hit = next((p for p in r["places"]
+                if _name_hit(name, p.get("name")) and p.get("lat") is not None), None)
+    if hit:
+        row.update({"lat": hit["lat"], "lng": hit["lng"], "matched": True})
+        if hit.get("area") and not row.get("area"):
+            row["area"] = hit["area"]
+
+
+async def _enrich_shops_with_poi(dest: str, shop_groups: List[Dict[str, Any]]) -> None:
+    """商铺清单 POI 富化（就地回填 lat/lng/matched）；缺 AK 时静默跳过，前端出占位。"""
+    if not shop_groups or not baidu_client.available():
+        return
+    rows = [x for grp in shop_groups if isinstance(grp, dict)
+            for x in (grp.get("items") or []) if isinstance(x, dict)]
+    if not rows:
+        return
+
+    async def one(x: Dict[str, Any]) -> None:
+        try:
+            await asyncio.to_thread(_shop_poi_one, dest, x)
+        except Exception:
+            pass
+
+    await _run_baidu_fanout([one(x) for x in rows])
+
+
+def _shop_route_one(dest: str, origin: str, x: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """单商铺一条真实公交路线（transit 最优）；打车配额不适用（计划待确认 #4 拍板 transit）。"""
+    coords = f"{x['lat']},{x['lng']}"
+    t = baidu_client.direction("transit", origin, coords, city=dest)
+    if not (t.get("ok") and t["routes"]):
+        return []
+    best = t["routes"][0]
+    vehicles = " → ".join(dict.fromkeys(
+        s["vehicle"] for s in best["steps"] if s.get("vehicle"))) or "公交/地铁"
+    try:
+        km = f"，全程约{round(float(best.get('distance_m') or 0) / 1000, 1)}公里"
+    except (TypeError, ValueError):
+        km = ""
+    return [{"mode": "公交/地铁", "duration": _fmt_duration_sec(best.get("duration_s")),
+             "cost": "", "transfer": vehicles[:80],
+             "note": f"自市中心出发{km}", "evidence_ids": []}]
+
+
+async def _attach_shop_routes(dest: str, shop_groups: List[Dict[str, Any]],
+                              top_per_food: int) -> int:
+    """商铺路线：每种美食按清单顺序取前 top_per_food 家 matched 商铺，并发挂公交路线。
+
+    配额是硬约束（每食物 ≤top_per_food 条 direction 调用）；缺 AK / 无 matched 商铺时
+    返回 0，前端走「数据源暂不可用」占位，不影响商铺清单本身。返回成功挂线数量。
+    """
+    if top_per_food <= 0 or not shop_groups or not baidu_client.available():
+        return 0
+    per_food: Dict[str, int] = {}
+    targets: List[Dict[str, Any]] = []
+    for grp in shop_groups:
+        if not isinstance(grp, dict):
+            continue
+        for x in (grp.get("items") or []):
+            if not isinstance(x, dict) or not x.get("matched"):
+                continue
+            if x.get("lat") is None or x.get("lng") is None:
+                continue
+            food = str(x.get("food") or "").strip() or "_"
+            if per_food.get(food, 0) >= top_per_food:
+                continue
+            per_food[food] = per_food.get(food, 0) + 1
+            targets.append(x)
+    if not targets:
+        return 0
+    g = await asyncio.to_thread(baidu_client.geocode, dest, "")
+    if not g.get("ok"):
+        return 0
+    origin = f"{g['lat']},{g['lng']}"
+
+    async def one(x: Dict[str, Any]) -> None:
+        try:
+            routes = await asyncio.to_thread(_shop_route_one, dest, origin, x)
+            if routes:
+                x["routes"] = routes
+        except Exception:
+            pass
+
+    await _run_baidu_fanout([one(x) for x in targets])
+    return sum(1 for x in targets if x.get("routes"))
+
+
+_CN_DIGITS = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5,
+              "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _days_count(text: str) -> int:
+    """用户原文的天数短语转整数（与 _DAY_PATTERNS 同一准绳，拿不到返回 0，不推断）。"""
+    phrase = _days_from_text(text)
+    if not phrase:
+        return 0
+    if phrase == "周末":
+        return 2
+    stem = phrase.rstrip("天日 ").strip()
+    if stem.isdigit():
+        return int(stem)
+    if "十" in stem:
+        tens, _, ones = stem.partition("十")
+        return (_CN_DIGITS.get(tens, 1) if tens else 1) * 10 + (_CN_DIGITS.get(ones, 0) if ones else 0)
+    return _CN_DIGITS.get(stem, 0)
+
+
+def _stop_arrival_digest(routes: List[Dict[str, Any]]) -> str:
+    """景点抵达交通摘要：优先公交/地铁，退化打车；无真实路线数据返回空（占位不编造）。"""
+    for mode_label, fmt in (("公交/地铁", "公交：{transfer}·{duration}"), ("打车", "打车：{duration}")):
+        r = next((x for x in routes if x.get("mode") == mode_label), None)
+        if r:
+            filled = fmt.format(transfer=r.get("transfer") or mode_label,
+                                duration=r.get("duration") or "")
+            return filled.replace("：·", "：").replace("··", "·")
+    return ""
+
+
+def _assemble_itinerary(dest: str, spot_items: List[Dict[str, Any]],
+                        route_groups: List[Dict[str, Any]],
+                        shop_groups: List[Dict[str, Any]], days: int,
+                        pace: int) -> List[Dict[str, Any]]:
+    """一页视图（M3a/D2，guide 的 deep+expert 档）：把冻结榜单按名次逐日切分，抵达交通
+    引用真实路线，商铺按清单顺序每天均衡挂一家——全部引用 spot_id/shop_id，不做名称二次匹配。
+
+    天数优先用户原文与问卷答案（_days_count 双源），拿不到按 pace 推算；LLM 自由发挥的
+    route_plan 在本档被整体覆盖（实体单一真相源原则的延伸）。
+    纯函数、可单测、结果可复现。
+    """
+    if not spot_items:
+        return []
+    n = len(spot_items)
+    span = days if days > 0 else max(1, -(-n // max(1, pace)))
+    span = max(1, min(span, n))
+    per = -(-n // span)
+    span = -(-n // per)
+    route_by_id = {row.get("spot_id"): (row.get("routes") or [])
+                   for grp in (route_groups or []) if isinstance(grp, dict)
+                   for row in (grp.get("items") or []) if isinstance(row, dict)}
+    shops = [x for grp in (shop_groups or []) if isinstance(grp, dict)
+             for x in (grp.get("items") or []) if isinstance(x, dict) and x.get("name")]
+    days_out: List[Dict[str, Any]] = []
+    si = 0
+    for di in range(span):
+        chunk = spot_items[di * per:(di + 1) * per]
+        if not chunk:
+            break
+        stops: List[Dict[str, Any]] = []
+        for it in chunk:
+            stay = it.get("stay_minutes")
+            tip = "；".join(x for x in (
+                f"门票：{it['ticket']}" if it.get("ticket") else "",
+                f"避峰：{it['off_peak']}" if it.get("off_peak") else "",
+                f"位置：{it['area']}" if it.get("area") else "") if x)
+            stops.append({
+                "name": str(it.get("name") or ""),
+                "spot_id": str(it.get("spot_id") or ""),
+                "lat": it.get("lat"),
+                "lng": it.get("lng"),
+                "transport": _stop_arrival_digest(route_by_id.get(it.get("spot_id"), [])),
+                "duration": f"约{stay}分钟" if stay else "",
+                "tip": tip, "shop_id": "",
+                "evidence_ids": list(it.get("evidence_ids") or []),
+            })
+        if si < len(shops):
+            s = shops[si]
+            si += 1
+            price = s.get("price_per_person")
+            stops.append({
+                "name": f"美食停靠：{s.get('name')}",
+                "spot_id": "",
+                "transport": "",
+                "duration": "约1小时",
+                "tip": "；".join(x for x in (
+                    str(s.get("food") or ""),
+                    f"人均约{price}元（参考）" if price is not None else "",
+                    str(s.get("queue_note") or "")) if x),
+                "shop_id": str(s.get("shop_id") or ""),
+                "evidence_ids": list(s.get("evidence_ids") or []),
+            })
+        days_out.append({"day": di + 1, "spots": stops})
+    return [{"destination": dest, "days": days_out}]
+
+
+# 逐景点舆情补充采集的并发预算（秒）：景点数×平台数 一次 fan-out，超时项直接缺省。
+_SPOT_SENT_BUDGET_S = 90.0
+
+
+async def _collect_spot_comments(spot_entities: List[Dict[str, Any]], platforms: List[str],
+                                 region_q: str, per_take: int, freshness: str, dest: str,
+                                 seen_urls: set,
+                                 provider_errs: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """逐景点舆情补充采集（并发 fan-out + 阶段预算）：每条评论挂 spot_id/spot_name，
+    供 analyze_sentiment 做 (spot × platform) 双维聚合。
+
+    - 只喂舆情统计、不生成证据对象：spots 在 analyze 之后，证据库口径不追溯扩容。
+    - 相关性硬门槛：标题/摘要必须命中景点名（括号与空白归一后），杜绝题不对版。
+    - 展平顺序按（榜单名次 × 平台序）确定 → 舆情样本可复现。
+    - 服务商终态错误（欠费/Key）经 provider_errs 出参上报，由调用点出可见 thought 后降级。
+    """
+    jobs = [(rank, pidx, ent, plat)
+            for rank, ent in enumerate(spot_entities)
+            for pidx, plat in enumerate(platforms)]
+    if not jobs or per_take <= 0:
+        return []
+    buckets: Dict[Tuple[int, int], List[Dict[str, Any]]] = {}
+    errs: List[str] = provider_errs if provider_errs is not None else []
+
+    async def one(rank: int, pidx: int, ent: Dict[str, Any], plat: str) -> None:
+        spot_name = str(ent.get("name") or "").strip()
+        if not spot_name:
+            return
+        if errs:  # 已确认欠费：一条即止，剩余任务不再烧检索
+            buckets[(rank, pidx)] = []
+            return
+        queries = [f"{spot_name} 真实评价{region_q}", f"{spot_name} 避坑 攻略{region_q}"]
+        try:
+            results = await asyncio.to_thread(multi_search, queries, num=per_take + 4,
+                                              site=PLATFORMS[plat].search_site,
+                                              freshness=freshness)
+            if not results:  # 站内受限时回退：全网检索 + 平台关键词
+                results = await asyncio.to_thread(
+                    multi_search, [f"{spot_name} 评价 {PLATFORM_LABEL.get(plat, plat)}{region_q}"],
+                    num=per_take + 4, freshness=freshness)
+        except SearchProviderError as e:
+            errs.append(str(e))
+            buckets[(rank, pidx)] = []
+            return
+        picked: List[Dict[str, Any]] = []
+        for r in results:
+            url, title = r.get("url", ""), r.get("title", "")
+            text = (r.get("snippet") or title or "").strip()
+            if not url or not text or not _name_hit(spot_name, f"{title} {text}"):
+                continue
+            detected = _source_type(url)
+            picked.append({
+                "text": text[:280], "url": url, "title": title,
+                "platform": plat if detected in ("web", "official", "news") else detected,
+                "destination": dest,
+                "spot_id": str(ent.get("spot_id") or ""), "spot_name": spot_name,
+            })
+        buckets[(rank, pidx)] = picked[:per_take]
+
+    tasks = [asyncio.create_task(one(*j)) for j in jobs]
+    _, pending = await asyncio.wait(tasks, timeout=_SPOT_SENT_BUDGET_S)
+    for t in pending:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    out: List[Dict[str, Any]] = []
+    for rank, pidx, _ent, _plat in jobs:
+        for c in buckets.get((rank, pidx), []):
+            if c["url"] in seen_urls:
+                continue
+            seen_urls.add(c["url"])
+            out.append(c)
     return out
 
 
@@ -1942,10 +2993,63 @@ def _fallback_claims(destinations, ev_ids, groups_by_id, authors) -> List[Dict[s
 # 本模块只做渲染与编排（新增调研类型无需改这里）。
 
 
+# 写稿诊断：记录「这一章是怎么写出来的」，供写后结构补齐与 structure_status 归类判定。
+# 该键不在 _section 的字段白名单内，因此不会进 reports.data（有单测钉住）。
+DIAG_KEY = "_diag"
+
+
+def _diag(recovered: str, truncated: bool = False) -> Dict[str, Any]:
+    """写稿路径诊断。recovered ∈ json / text_retry / failed / repaired。"""
+    return {DIAG_KEY: {"recovered": recovered, "truncated": bool(truncated)}}
+
+
+def _diag_of(st: Any) -> Dict[str, Any]:
+    """取章节文本里的诊断块（缺失时返回空 dict，兼容旧数据与外部注入）。"""
+    return (st or {}).get(DIAG_KEY) or {} if isinstance(st, dict) else {}
+
+
+def _structureless(st: Any) -> bool:
+    """该章是否「有正文、但结构字段全空」——即前端章节导图会降级成一行正文计数的状态。
+
+    同时用于两处：写后补齐的筛选条件，以及结构完整性观测的计数口径（同一口径，不漂移）。
+    """
+    if not isinstance(st, dict) or not st.get("paragraphs"):
+        return False
+    return not (str(st.get("key_takeaway") or "").strip() or st.get("highlights"))
+
+
+def _structure_status(st: Any, has_material: bool) -> str:
+    """章节结构状态：ok / repaired / lost / by_design（前端据此决定导图还是如实标注）。
+
+    写稿诊断优先于材料推断：实测 9/11 章「有材料却没结构」是预算被推理 token 吃光造成的，
+    若只看材料会被误判成 by_design，丢失真相。
+    """
+    if not isinstance(st, dict):
+        return "by_design" if not has_material else "lost"
+    if str(st.get("key_takeaway") or "").strip() or st.get("highlights"):
+        return "repaired" if _diag_of(st).get("recovered") == "repaired" else "ok"
+    if _diag_of(st).get("recovered") in ("text_retry", "failed"):
+        return "lost"
+    return "lost" if has_material else "by_design"
+
+
+def _summarize_structure(sections: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """结构完整性台账（随报告落库）：让「这轮有几章丢了结构」可事后核对，不靠翻 trace。"""
+    counts = Counter(s.get("structure_status", "unknown") for s in sections)
+    return {
+        "total": len(sections),
+        "ok": counts.get("ok", 0),
+        "repaired": [s["id"] for s in sections if s.get("structure_status") == "repaired"],
+        "lost": [s["id"] for s in sections if s.get("structure_status") == "lost"],
+        "by_design": counts.get("by_design", 0),
+    }
+
+
 def _write_single_section(sid: str, title: str, query, destinations, focus,
                           evidences, claims, analysis, model: str, research_type: str = DEFAULT_RESEARCH_TYPE,
                           min_paragraphs: int = 5, para_words: str = "180-280",
-                          section_max_tokens: int = 6000) -> Dict[str, Any]:
+                          section_max_tokens: int = 6000,
+                          sentiment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """单章独立生成：每章独立 token 预算 + 独立模型，失败不影响其他章节。
 
     篇幅深度由 min_paragraphs/para_words/section_max_tokens 三档动态控制
@@ -1976,10 +3080,40 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
         if season.get("note") or season.get("best_months"):
             extra += f"\n季节研判：{json.dumps(season, ensure_ascii=False)[:600]}"
     structured = analysis.get("structured") or {}
-    for key in spec["structured_keys"]:
-        if key in fields and structured.get(key):
-            label = _STRUCTURED_LABEL.get(key, key)
+    # 章节挂载的结构化对象：SECTION_FIELDS 的 claim 字段 + SECTION_STRUCTURED 的实体表。
+    # 实体表是下游章节的唯一景点/美食真相源——正文只能引用表内名称与 spot_id。
+    mount_keys = [k for k in spec["structured_keys"] if k in set(fields)]
+    mount_keys += [k for k in RT.section_structured_keys(sid) if k not in mount_keys]
+    for key in mount_keys:
+        if not structured.get(key):
+            continue
+        label = _STRUCTURED_LABEL.get(key, key)
+        if key in _ENTITY_STAGE_KEYS:
+            extra += (f"\n【{label}·唯一实体表】以下条目是本次调研锁定的景点实体（含规则算出的评分与明细）。"
+                      "本章只能引用表内的景点名与 spot_id，禁止改名、合并或补充表外景点；"
+                      f"排序以 score 为准。{json.dumps(structured[key][:1], ensure_ascii=False)[:1200]}")
+        else:
             extra += f"\n{label}结构：{json.dumps(structured[key][:2], ensure_ascii=False)[:800]}"
+    # 攻略信息密度硬约束（编辑规则，声明在类型注册表；assessment 无此键则不注入）
+    if spec.get("density"):
+        extra += f"\n【信息密度铁律】{spec['density']}"
+    # 舆情章节：注入真实统计（占比/样本量/平台分布），只准解读统计，禁止编造或引用评论原句
+    if sentiment and "sentiment" in set(fields):
+        if sentiment.get("sample_size"):
+            extra += ("\n【舆情实测统计（唯一数据源，只能引用这些数字）】"
+                      + json.dumps({
+                          "sample_size": sentiment.get("sample_size"),
+                          "overall": sentiment.get("overall"),
+                          "by_platform": sentiment.get("by_platform"),
+                          "camps": [{"title": c.get("title"), "ratio": c.get("ratio")}
+                                    for c in (sentiment.get("camps") or [])[:4]],
+                          # (spot×platform) 双维：逐景点小表/舆情卡的真实统计（勿复述，图表呈现）
+                          "by_spot": [{"spot_name": s.get("spot_name"), "sample": s.get("sample"),
+                                       "pos": s.get("pos"), "neg": s.get("neg")}
+                                      for s in (sentiment.get("by_spot") or [])[:10]],
+                      }, ensure_ascii=False)[:1600])
+        else:
+            extra += "\n【舆情实测统计】本次未采集到足量真实评论，请如实说明缺口，不得给出定量口碑结论。"
 
     section_role = RT.SECTION_PROMPTS.get(sid, "深度旅游调研章节")
     try:
@@ -1991,7 +3125,7 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
                     "要求有锋芒、有独到观点、敢于下判断，对标 Lonely Planet 深度指南与专业调研报告。\n"
                     f"本章定位：{section_role}\n"
                     "写作要求（务必做到）：\n"
-                    "1) 结论先行：先给一句最锐利、最有信息量的『核心判断』（key_takeaway），可以直接给出推荐/劝退结论；\n"
+                    "1) 结论先行：key_takeaway 必须是 JSON 的第一个字段，给一句最锐利、最有信息量的『核心判断』，可以直接给出推荐/劝退结论；\n"
                     "2) 有观点：正文要解读『为什么』而非罗列『是什么』，给出行程/居住的取舍与你的独立判断；\n"
                     "3) 有数据：尽量引用证据中的具体数字、价格、班次、耗时、对比；避免空话套话和正确的废话；\n"
                     f"4) 有深度：正文不少于 {min_paragraphs} 段，每段 {para_words} 字，要有层次、有递进的论证链、有洞察，"
@@ -2001,7 +3135,8 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
                     "7) 客观性铁律：区分事实陈述与观点研判——事实须有可溯源证据；观点用『我们建议/有待验证』等措辞，"
                     "不得写成定论；单一信源组或存在矛盾的结论须标注『据报道/单方说法/存在争议』，禁止直接断言；"
                     "情绪化社媒证据只能作『口碑感知』描述，不得转述为客观事实（如把单条差评写成『普遍宰客』）。\n"
-                    '输出 JSON：{"paragraphs":["第一段","第二段",...],"key_takeaway":"核心判断一句话","highlights":["亮点1","亮点2","亮点3"]}。只输出 JSON。'
+                    '输出 JSON（字段顺序固定：先结构、后正文，便于截断时结构字段已落盘）：'
+                    '{"key_takeaway":"核心判断一句话","highlights":["亮点1","亮点2","亮点3"],"paragraphs":["第一段","第二段",...]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
                     f"章节标题：{title}\n"
@@ -2014,6 +3149,7 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
             model=model,
             purpose=f"撰写章节：{title}",
         )
+        truncated = last_finish_reason() == "length"
         if isinstance(data, dict):
             paras = data.get("paragraphs")
             if isinstance(paras, str):
@@ -2023,7 +3159,8 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
             hl = [str(h).strip() for h in hl if isinstance(h, str) and str(h).strip()] if isinstance(hl, list) else []
             kt = str(data.get("key_takeaway", "")).strip()
             if paras:
-                return {"paragraphs": paras, "key_takeaway": kt, "highlights": hl}
+                return {"paragraphs": paras, "key_takeaway": kt, "highlights": hl,
+                        **_diag("json", truncated)}
     except Exception:
         pass
     # 空章重试一次（更直接的提示）
@@ -2040,11 +3177,63 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
         )
         paras = [p.strip() for p in retry.split("\n") if len(p.strip()) > 30]
         if paras:
-            return {"paragraphs": paras, "key_takeaway": "", "highlights": []}
+            # 纯文本重试天然拿不到结构字段，交写后补齐（_repair_missing_structure）
+            return {"paragraphs": paras, "key_takeaway": "", "highlights": [],
+                    **_diag("text_retry", truncated or last_finish_reason() == "length")}
     except Exception:
         pass
     return {"paragraphs": ["本章节内容生成失败，请重新运行调研或切换模型。"],
-            "key_takeaway": "", "highlights": []}
+            "key_takeaway": "", "highlights": [], **_diag("failed", truncated)}
+
+
+def _repair_missing_structure(sid: str, title: str, st: Dict[str, Any],
+                              claims: List[Dict[str, Any]], model: str) -> Optional[Dict[str, Any]]:
+    """给「有正文、无结构」的章节补一次极小结构请求（key_takeaway + highlights）。
+
+    为什么需要它：单章输出预算被服务商上限（8192）夹住，而推理模型的思考 token 与正文共享
+    该预算——单次调用无法保证结构字段一定落盘（实测 9/11 章因此丢了结构，导致前端章节导图
+    全部降级成一行正文计数）。这里以极小输出（~200 token）二次提炼，成功即标 repaired，
+    失败返回 None 由上层保持 lost（绝不静默）。
+
+    只喂本章已成稿的正文 + 该章相关论点，不重发全部证据摘要：省 token，也避免与既成正文漂移。
+    """
+    paras = [str(p).strip() for p in (st.get("paragraphs") or []) if str(p).strip()]
+    if not paras:
+        return None
+    fields, _ = RT.section_fields(sid)
+    rel = "\n".join(f"- {c['text']}" for c in claims if c.get("field") in set(fields))[:800]
+    try:
+        data = chat_json(
+            [
+                {"role": "system", "content": (
+                    "你是资深旅游调研主编。下面是一章已成稿的正文，只做『提炼』，不得改写正文。\n"
+                    '输出 JSON（字段顺序固定）：{"key_takeaway":"本章核心判断一句话",'
+                    '"highlights":["亮点1","亮点2","亮点3"]}。只输出 JSON。\n'
+                    "要求：key_takeaway 必须有信息量、可下判断（可直接给推荐/劝退结论）；"
+                    "highlights 给 2-3 条最有冲击力的发现或反差，每条一句话；"
+                    "只依据给定正文提炼，不得引入正文之外的新事实、新数字。"
+                )},
+                {"role": "user", "content": (
+                    f"章节标题：{title}\n" + (f"相关论点：\n{rel}\n" if rel else "")
+                    + "正文：\n" + "\n".join(paras)[:1500]
+                )},
+            ],
+            max_tokens=600,
+            temperature=0.3,
+            model=model,
+            purpose=f"补齐章节结构：{title}",
+        )
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    kt = str(data.get("key_takeaway", "")).strip()
+    hl = data.get("highlights")
+    hl = [str(h).strip() for h in hl if isinstance(h, str) and str(h).strip()] if isinstance(hl, list) else []
+    if not kt and not hl:
+        return None
+    return {"key_takeaway": kt, "highlights": hl[:3],
+            **_diag("repaired", _diag_of(st).get("truncated", False))}
 
 
 def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], model: str,
@@ -2057,6 +3246,7 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
     """
     sample = sentiment.get("sample_size", 0)
     if not sample:
+        # 无样本时不写诊断块：这不是「写失败」，归 by_design（本就无可结构化材料）
         return {"paragraphs": [], "key_takeaway": "", "highlights": []}
 
     overall = sentiment.get("overall", {})
@@ -2093,7 +3283,8 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
                     "（如把个别吐槽写成『普遍宰客』），避免把少数/高热声音写成共识；\n"
                     "5) 开头必须交代真实样本规模与平台分布（来自给定统计，不得编造）；样本量偏小时如实在解读中点明"
                     "『样本有限、结论为方向性参考』，不得掩盖。\n"
-                    '输出 JSON：{"paragraphs":["段1","段2",...],"key_takeaway":"一句话核心口碑判断","highlights":["亮点1","亮点2"]}。只输出 JSON。'
+                    '输出 JSON（字段顺序固定：先结构、后正文）：'
+                    '{"key_takeaway":"一句话核心口碑判断","highlights":["亮点1","亮点2"],"paragraphs":["段1","段2",...]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
                     f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n"
@@ -2109,6 +3300,7 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
             model=model,
             purpose="撰写章节：全网舆情与观点阵营",
         )
+        truncated = last_finish_reason() == "length"
         if isinstance(data, dict):
             paras = data.get("paragraphs")
             if isinstance(paras, str):
@@ -2118,10 +3310,11 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
             hl = [str(h).strip() for h in hl if isinstance(h, str) and str(h).strip()] if isinstance(hl, list) else []
             kt = str(data.get("key_takeaway", "")).strip()
             if paras:
-                return {"paragraphs": paras, "key_takeaway": kt, "highlights": hl}
+                return {"paragraphs": paras, "key_takeaway": kt, "highlights": hl,
+                        **_diag("json", truncated)}
     except Exception:
         pass
-    return {"paragraphs": [], "key_takeaway": "", "highlights": []}
+    return {"paragraphs": [], "key_takeaway": "", "highlights": [], **_diag("failed")}
 
 
 # ── 图表：全部来自真实分析数据（无 random）─────────────────────
@@ -2135,10 +3328,16 @@ def _fields_for_chart(chart_type: str) -> List[str]:
 
 
 def _build_charts(destinations, analysis, sentiment, claims=None,
-                  research_type: str = DEFAULT_RESEARCH_TYPE) -> List[Dict[str, Any]]:
-    """按 spec["charts"] 出图：类型决定图集，某图无真实数据则整图跳过（不占位造假）。"""
+                  research_type: str = DEFAULT_RESEARCH_TYPE,
+                  mode: str = "deep") -> List[Dict[str, Any]]:
+    """按 spec["charts"] 出图：类型决定图集，某图无真实数据则整图跳过（不占位造假）。
+
+    图集与标题随目的地数自适应：单目的地不出占比环图，雷达/花费条改用无「对比」措辞的标题。
+    mode=expert 时词云在「全网口碑词云」之外，逐景点各出一张（by_spot 行内真实词频）。
+    """
     spec = RT.type_spec(research_type)
-    allowed = set(spec["charts"])
+    allowed = set(RT.charts_for(research_type, len(destinations)))
+    radar_title = RT.radar_title(research_type, len(destinations))
     specs: List[Dict[str, Any]] = []
     ev_by_field: Dict[str, List[str]] = {}
     for c in (claims or []):
@@ -2160,16 +3359,17 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
               if dims and isinstance(s.get("values"), list) and len(s["values"]) == len(dims)]
     if "radar" in allowed and dims and scores:
         series = [{"name": s["destination"], "values": s["values"]} for s in scores[:4]]
-        specs.append({"chart_id": _sid("ch"), "type": "radar", "title": spec["radar_title"],
-                      "option": C.feature_radar(spec["radar_title"], dims, series),
+        specs.append({"chart_id": _sid("ch"), "type": "radar", "title": radar_title,
+                      "option": C.feature_radar(radar_title, dims, series),
                       "evidence_ids": chart_eids("radar")})
 
     cb = spec.get("cost_bar") or {}
     rows = ([r for r in (analysis.get(cb["key"]) or [])
              if isinstance(r.get(cb["value_field"]), (int, float))] if cb else [])
     if "cost_bar" in allowed and rows:
-        specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": cb["title"],
-                      "option": C.pricing_bar(cb["title"], [r["destination"] for r in rows],
+        bar_title = RT.cost_bar_title(research_type, len(destinations))
+        specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": bar_title,
+                      "option": C.pricing_bar(bar_title, [r["destination"] for r in rows],
                                               [float(r[cb["value_field"]]) for r in rows],
                                               y_name=cb["unit"]),
                       "evidence_ids": chart_eids("cost_bar")})
@@ -2214,6 +3414,21 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
             specs.append({"chart_id": _sid("ch"), "type": "platform_bar", "title": "各平台声量（抖音优先）",
                           "option": C.platform_bar("各平台声量（抖音优先）", sentiment["by_platform"]),
                           "evidence_ids": []})
+    # 口碑词云（M2d · E1 语义载荷）：wordfreq 真实词频为源；无词不产图。expert 逐景点各一张（引用冻结实体名）。
+    if "wordcloud" in allowed:
+        wc_words = C.wordcloud_words(sentiment.get("keywords") or [])
+        if wc_words:
+            wc_title = "全网口碑热词词云"
+            specs.append({"chart_id": _sid("ch"), "type": "wordcloud", "title": wc_title,
+                          "words": wc_words, "evidence_ids": []})
+            if mode == "expert":
+                for g in sentiment.get("by_spot") or []:
+                    gw = C.wordcloud_words(g.get("keywords") or [])
+                    if not gw:
+                        continue
+                    t = f"「{g.get('spot_name') or g.get('spot_id')}」口碑词云"
+                    specs.append({"chart_id": _sid("ch"), "type": "wordcloud", "title": t,
+                                  "words": gw, "evidence_ids": []})
     return specs
 
 
@@ -2239,7 +3454,33 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
     rows: List[Dict[str, Any]] = []
     structured = analysis.get("structured") or {}
 
-    if section_id == "budget":            # guide：预算拆解
+    if section_id == "spots":             # guide：景点分布调研（冻结实体表）
+        for sr in structured.get("spot_ranking", []):
+            dest = str(sr.get("destination", ""))
+            for it in sr.get("items", []):
+                sig = it.get("signals") or {}
+                score = it.get("score")
+                val = (f"评分 {score}" if score is not None else "评分 —")
+                val += f"（声量 {sig.get('voice', 0)}·口碑 {sig.get('sentiment', 0)}·性价比 {sig.get('value', 0)}）"
+                rows.append(_row(f"{dest} · {it.get('rank', '')}. {it.get('name', '')}", val,
+                                 "景点综合评分", it.get("evidence_ids")))
+    elif section_id == "food":            # guide：美食 Top 榜
+        for fr in structured.get("food_ranking", []):
+            dest = str(fr.get("destination", ""))
+            for it in fr.get("items", []):
+                rows.append(_row(f"{dest} · {it.get('name', '')}",
+                                 it.get("price_range") or "人均未公开", "美食榜",
+                                 it.get("evidence_ids")))
+    elif section_id == "shops":           # guide：美食商铺调研（人均=参考价）
+        for sl in structured.get("shop_list", []):
+            dest = str(sl.get("destination", ""))
+            for it in sl.get("items", []):
+                price = it.get("price_per_person")
+                val = f"{price}元/人（参考价）" if price is not None else "人均未公开"
+                rows.append(_row(f"{dest} · {it.get('name', '')}", val,
+                                 f"商铺·{it.get('food', '')}".strip("·"),
+                                 it.get("evidence_ids")))
+    elif section_id == "budget":            # guide：预算拆解
         for cb in structured.get("cost_breakdown", []):
             dest = str(cb.get("destination", ""))
             for it in cb.get("items", []):
@@ -2322,12 +3563,35 @@ def _make_cover_svg(title: str, destinations: List[str],
     return "data:image/svg+xml," + urllib.parse.quote(svg)
 
 
+def _answers_digest(clar: Optional[Dict[str, Any]], destinations: List[str],
+                    research_type: str) -> List[Dict[str, str]]:
+    """报告头部答题摘要：白名单**派生自** CLARIFY_CONSUMERS 的 digest 标记，不另写一份清单。
+
+    destinations 一行取**计划层终值**（锁定/勾选后的权威集合），不取问卷原始勾选，
+    防止「问卷题被条件跳过 ⇒ 摘要缺行」与两时点漂移。空值字段静默缺席。
+    """
+    out: List[Dict[str, str]] = []
+    for qid, label in RT.clarify_digest_fields(research_type):
+        if qid == "destinations":
+            value = "、".join(str(d).strip() for d in (destinations or []) if str(d).strip())
+        else:
+            raw = (clar or {}).get(qid)
+            if isinstance(raw, (list, tuple)):
+                value = "、".join(str(x).strip() for x in raw if str(x).strip())
+            else:
+                value = str(raw or "").strip()
+        if value:
+            out.append({"label": label, "value": value})
+    return out
+
+
 def _assemble_report(query, destinations, focus, dispatch, claims, evidences, images,
                      sentiment, charts, sections_text, collect_notes,
                      analysis, metrics, quality_before, quality_after,
                      trace_spans, mode, section_ids, sentiment_text=None,
                      objective_meta: Optional[Dict] = None,
-                     research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
+                     research_type: str = DEFAULT_RESEARCH_TYPE,
+                     clar: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     rid = _sid("r")
     spec = RT.type_spec(research_type)
     members = [m["id"] for m in dispatch["members"]]
@@ -2336,7 +3600,10 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
     subtitle = (f"基于 {len(evidences)} 条联网证据 · {indep_domains} 个独立来源 · "
                 f"{len(members)} 位专家协作生成 · {MODE_CONFIG.get(mode,{}).get('label','深度模式')}")
 
-    chart_by_type = {c["type"]: c for c in charts}
+    # 同类型可能有多张图（expert 档逐景点词云），按类型挂全部而非仅末张
+    charts_by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for c in charts:
+        charts_by_type.setdefault(c["type"], []).append(c)
 
     # 章节标题（类型白名单内的章节加中文序号）
     title_map = {**RT.SECTION_PLAN, **RT.numbered_titles(section_ids, research_type)}
@@ -2348,7 +3615,7 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
         if not isinstance(st, dict):
             st = {"paragraphs": st if isinstance(st, list) else [str(st)], "key_takeaway": "", "highlights": []}
         sec_claims = [c for c in claims if c["field"] in set(fields)]
-        sec_charts = [chart_by_type[t] for t in chart_types if t in chart_by_type]
+        sec_charts = [c for t in chart_types for c in charts_by_type.get(t, [])]
         src: List[str] = []
         for c in sec_claims:
             src.extend(c.get("evidence_ids", []))
@@ -2367,21 +3634,27 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
             "structured": None,
             "data_grid": None,
         }
-        # 结构化对象挂到承载它的章节（该章字段含此结构化键）
+        # 结构化对象挂到承载它的章节：claim 字段命中的键，或 SECTION_STRUCTURED 声明的实体表
         structured = analysis.get("structured") or {}
-        for key in spec["structured_keys"]:
-            if key in fields and structured.get(key):
+        mount_keys = [k for k in spec["structured_keys"] if k in set(fields)]
+        mount_keys += [k for k in RT.section_structured_keys(sid) if k not in mount_keys]
+        for key in mount_keys:
+            if structured.get(key):
                 sec["structured"] = {"type": key, "data": structured[key]}
                 break
         # 数据空间
         if sid in data_grid_sections:
             sec["data_grid"] = _build_data_grid(sid, analysis, evidences)
+        # 结构状态：前端据此决定画导图还是如实标注（本就没有材料 vs 写稿失败丢了结构）
+        sec["structure_status"] = _structure_status(
+            st, bool(sec_claims) or sec.get("structured") is not None)
         return sec
 
     sections = [_section(sid) for sid in section_ids if sid != "sentiment"]
 
     # 舆情专章（始终插入，置于结论章之前）
-    sent_charts = [c for c in (chart_by_type.get("sentiment_donut"), chart_by_type.get("platform_bar")) if c]
+    sent_charts = [c[0] for t in ("sentiment_donut", "platform_bar")
+                   if (c := charts_by_type.get(t))]
     st = sentiment_text or {}
     has_sample = bool(sentiment.get("sample_size"))
     # 优先使用 LLM 基于真实数据生成的多段深度解读；无则如实兜底说明
@@ -2407,20 +3680,25 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
         "paragraphs": sent_paras,
         "claims": [], "charts": sent_charts, "source_evidence_ids": [],
         "structured": None, "data_grid": None,
+        "structure_status": _structure_status(st, False),
     }
-    # 把舆情章插在 conclusion 之前
-    insert_at = len(sections)
-    for i, s in enumerate(sections):
-        if s["id"] in ("conclusion", "risk"):
-            insert_at = i
-            break
-    sections.insert(insert_at, sentiment_sec)
+    # 报告已有正式的「全网舆情」章（sentiment_report 进了本档位章节集）时，
+    # 不再插入旧的报告级舆情面板——避免双舆情章；quick 等无该章的档位维持原样。
+    if "sentiment_report" not in section_ids:
+        # 把舆情章插在 conclusion 之前
+        insert_at = len(sections)
+        for i, s in enumerate(sections):
+            if s["id"] in ("conclusion", "risk"):
+                insert_at = i
+                break
+        sections.insert(insert_at, sentiment_sec)
 
     if collect_notes:
         sections.append({"id": "trace_note", "title": "附：采集与方法说明", "level": 1,
                          "key_takeaway": "", "highlights": [],
                          "paragraphs": collect_notes, "claims": [], "charts": [],
-                         "source_evidence_ids": [], "structured": None, "data_grid": None})
+                         "source_evidence_ids": [], "structured": None, "data_grid": None,
+                         "structure_status": "by_design"})
 
     toc = [{"id": s["id"], "title": s["title"], "level": 1} for s in sections]
     glossary = [
@@ -2460,6 +3738,7 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
         "query": query,
         "destinations": destinations,
         "research_type": research_type,
+        "answers_digest": _answers_digest(clar, destinations, research_type),
         "mode": mode,
         "created_at": _now(),
         "experts": members,
@@ -2478,6 +3757,8 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
         "quality_before": quality_before,
         "quality_after": quality_after,
         "trace": trace_lite,
+        # 结构完整性台账：lost 章节可供事后核对/回补（前端不依赖它渲染）
+        "structure_report": _summarize_structure(sections),
         # v2.1 方法论与局限（正式契约字段；标准合规声明）
         "methodology": _build_methodology(objective_meta, evidences),
         "contradictions": [c for c in (analysis.get("contradictions") or []) if isinstance(c, dict)],

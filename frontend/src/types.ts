@@ -30,6 +30,13 @@ export interface ClarifyQuestion {
   hint?: string
   type: 'single' | 'multi' | 'text' | 'slider'
   options?: string[]
+  /** 目的地题的工作量事实量（后端按所选档位下发）；旧后端无此字段时不渲染提示 */
+  workload?: {
+    mode?: string
+    mode_label?: string
+    max_angles?: number
+    fetch_per_destination?: number
+  }
 }
 export interface CreateTaskResp {
   taskId: string
@@ -136,11 +143,19 @@ export interface Claim {
   claim_type?: 'fact' | 'opinion' | 'mixed'
 }
 
+export interface WordcloudWord {
+  word: string
+  weight: number
+}
+
 export interface ChartSpec {
   chart_id: string
   type: string
   title?: string
-  option: Record<string, unknown>
+  /** echarts 类图表的 option；wordcloud 新契约（words 载荷）无此键，故可选。 */
+  option?: Record<string, unknown>
+  /** wordcloud 语义载荷（E1 契约）：后端归一的 [{word,weight}]；旧报告无此键，走 option 双形状兼容。 */
+  words?: WordcloudWord[]
   png?: string
   evidence_ids?: string[]
 }
@@ -167,6 +182,7 @@ export interface DataGrid {
 
 /* 结构化调研知识（键集由后端 research_types 注册表按类型下发） */
 export type StructuredBlockType =
+  | 'spot_ranking' | 'spot_routes' | 'food_ranking' | 'shop_list'
   | 'route_plan' | 'stay_options' | 'cost_breakdown'
   | 'access_matrix' | 'amenity_checklist' | 'risk_profile'
 
@@ -188,6 +204,8 @@ export interface ReportSection {
   source_evidence_ids?: string[]
   structured?: StructuredBlock | null
   data_grid?: DataGrid | null
+  /** 后端写稿的结构状态：by_design=本章本无结构化材料，lost=写稿失败丢了结构（老报告无此字段） */
+  structure_status?: 'ok' | 'repaired' | 'lost' | 'by_design'
   refined?: boolean
 }
 
@@ -204,6 +222,8 @@ export interface SentimentResult {
   overall_count?: { pos: number; neu: number; neg: number }
   by_platform: Record<string, { pos: number; neu: number; neg: number }>
   by_destination?: { destination: string; sample: number; pos: number; neu: number; neg: number }[]
+  /** (spot × platform) 双维聚合（M2c）：逐景点口碑小表/舆情卡数据源，spot_id 直引冻结实体 */
+  by_spot?: { spot_id: string; spot_name: string; sample: number; pos: number; neu: number; neg: number; by_platform: Record<string, number> }[]
   timeline: { date: string; pos: number; neu: number; neg: number }[]
   camps: { title: string; ratio: number; summary: string; quotes: { text: string; url: string; platform?: string }[] }[]
   voices?: { platform: string; platform_label: string; text: string; sentiment: string; url: string; title?: string }[]
@@ -219,6 +239,8 @@ export interface Report {
   destinations?: string[]
   /** 调研类型（guide 游玩攻略 / assessment 调研评估；旧报告缺省视为 guide） */
   research_type?: string
+  /** 报告头部答题摘要行（后端 CLARIFY_CONSUMERS digest 白名单派生；旧报告缺省不渲染） */
+  answers_digest?: { label: string; value: string }[]
   mode?: string
   created_at: string
   experts: string[]

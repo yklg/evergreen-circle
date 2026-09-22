@@ -7,9 +7,9 @@ import { useExpertStore } from '../store/expertStore'
 
 const STAGE_LABEL: Record<string, string> = {
   intake: '需求理解', orchestrator: '编排派遣', collect: '证据采集',
-  analyze: '交叉分析', write: '报告撰写', audit: '质检审裁', done: '签发交付',
+  analyze: '交叉分析', spots: '景点实体', write: '报告撰写', audit: '质检审裁', done: '签发交付',
 }
-const STAGES = ['all', 'intake', 'orchestrator', 'collect', 'analyze', 'write', 'audit', 'done']
+const STAGES = ['all', 'intake', 'orchestrator', 'collect', 'analyze', 'spots', 'write', 'audit', 'done']
 
 /** 独立 Trace 页签：结构化展示每个 Agent 的完整调用链路（Prompt/输出/Token/决策）。 */
 export default function TracePage() {

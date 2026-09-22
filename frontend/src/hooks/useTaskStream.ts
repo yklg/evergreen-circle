@@ -10,17 +10,32 @@ import { useTaskStore } from '../store/taskStore'
 export function useTaskStream(taskId: string | undefined, query: string) {
   const reset = useTaskStore((s) => s.reset)
   const ingest = useTaskStore((s) => s.ingest)
+  const flushDispatchQueue = useTaskStore((s) => s.flushDispatchQueue)
 
   useEffect(() => {
     if (!taskId) return
 
     reset(taskId, query)
-    const close = openTaskStream(taskId, {
-      onEvent: (type, data) => ingest(type, data),
+    // 终态帧后必须主动 close：EventSource 规范下服务端关流后浏览器会自动重连，
+    // 不 close 就会在 done/error 之后无限重连（每轮拿一帧终态，永不停止）。
+    let close: (() => void) | null = null
+    let closed = false
+    const doClose = () => {
+      closed = true
+      close?.()
+    }
+    close = openTaskStream(taskId, {
+      onEvent: (type, data) => {
+        ingest(type, data)
+        if ((type === 'done' || type === 'error') && !closed) doClose()
+      },
       onError: () => {
         // SSE 在流结束时也会触发 error；done 已置 finished，故仅在未完成时记录
       },
     })
-    return () => close()
-  }, [taskId, query, reset, ingest])
+    return () => {
+      doClose()
+      flushDispatchQueue() // 卸载冲刷派遣队列余量（清定时器、不丢帧）
+    }
+  }, [taskId, query, reset, ingest, flushDispatchQueue])
 }

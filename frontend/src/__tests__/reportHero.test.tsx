@@ -216,6 +216,28 @@ describe('ReportPage 英雄区 · 操作行接线', () => {
       renderReportPage(makeReport({ title: LONG_TITLE, subtitle: 'x'.repeat(200) })),
     ).not.toThrow()
   })
+
+  it('H18 — 答题摘要行：有 answers_digest 时按「标签 值 · 」顺序渲染', () => {
+    renderReportPage(makeReport({
+      answers_digest: [
+        { label: '天数', value: '5 天' },
+        { label: '人群', value: '亲子家庭' },
+        { label: '目的地', value: '大理' },
+      ],
+    }))
+    const el = screen.getByTestId('answers-digest')
+    expect(el.textContent).toContain('天数 5 天')
+    expect(el.textContent).toContain('人群 亲子家庭 · 目的地 大理')
+  })
+
+  it('H19 — 旧 payload 兼容：无/空 answers_digest 不渲染摘要行且不抛错', () => {
+    const legacy = makeReport()
+    expect(() => renderReportPage(legacy)).not.toThrow()
+    expect(screen.queryByTestId('answers-digest')).toBeNull()
+    cleanup()
+    expect(() => renderReportPage(makeReport({ answers_digest: [] }))).not.toThrow()
+    expect(screen.queryByTestId('answers-digest')).toBeNull()
+  })
 })
 
 describe('英雄区打印留底契约（H15）', () => {

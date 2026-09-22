@@ -38,6 +38,7 @@ const BASE_NODES: DAGNode[] = [
   { id: 'orchestrator', label: '编排派遣', status: 'idle' },
   { id: 'collect', label: '证据采集', status: 'idle' },
   { id: 'analyze', label: '交叉分析', status: 'idle' },
+  { id: 'spots', label: '景点实体', status: 'idle' },
   { id: 'write', label: '报告撰写', status: 'idle' },
   { id: 'audit', label: '质检审裁', status: 'idle' },
   { id: 'done', label: '签发交付', status: 'idle' },
@@ -61,9 +62,14 @@ interface TaskState {
   progress: ProgressInfo
   teamMembers: string[]
   error: string | null
+  // 目的地来自兜底链（计划降级）：只作温和横幅，与 error 通道无关；
+  // 与澄清问卷的 destinations_fallback 分属两条流，各自独立（见 lib/destinationFallbackCopy）
+  planFallback: boolean
 
   reset: (taskId: string, query: string) => void
   ingest: (type: SSEEventType, data: unknown) => void
+  /** 冲刷派遣队列余量（订阅方卸载时调用，保证不丢帧）。 */
+  flushDispatchQueue: () => void
 }
 
 const initProgress: ProgressInfo = {
@@ -79,7 +85,52 @@ function asObj(d: unknown): LooseRecord {
   return (d ?? {}) as LooseRecord
 }
 
-export const useTaskStore = create<TaskState>((set, get) => ({
+/** 派遣帧逐条出场间隔（F2）；仅 setTimeout 驱动（fake timers 可测，禁用 performance.now 基准）。 */
+export const DISPATCH_STAGGER_MS = 500
+
+export const useTaskStore = create<TaskState>((set, get) => {
+  // ── dispatch 节流队列（F2）──────────────────────────────
+  // 只对「本次会话实时新增」的 kind=dispatch thought 帧排队逐条出场；
+  // 回放帧（后端 subscribe 给 snapshot 打的 data.replay 标记）直刷不排队；
+  // 终态（done/error）与卸载冲刷余量，reset 丢弃并清定时器。
+  let dispatchBuf: ThoughtItem[] = []
+  let pumpTimer: ReturnType<typeof setTimeout> | null = null
+
+  const pushThought = (t: ThoughtItem) =>
+    set((s) => ({ thoughts: [...s.thoughts, t] }))
+
+  const stopPump = () => {
+    if (pumpTimer !== null) {
+      clearTimeout(pumpTimer)
+      pumpTimer = null
+    }
+  }
+
+  const tick = () => {
+    pumpTimer = null
+    const next = dispatchBuf.shift()
+    if (next) pushThought(next)
+    if (dispatchBuf.length > 0) pumpTimer = setTimeout(tick, DISPATCH_STAGGER_MS)
+  }
+
+  const enqueueDispatch = (t: ThoughtItem) => {
+    if (pumpTimer === null && dispatchBuf.length === 0) {
+      pushThought(t) // 首条立现，其后每 ~500ms 出队一条
+      pumpTimer = setTimeout(tick, DISPATCH_STAGGER_MS)
+      return
+    }
+    dispatchBuf.push(t)
+    if (pumpTimer === null) pumpTimer = setTimeout(tick, DISPATCH_STAGGER_MS)
+  }
+
+  const flushDispatch = () => {
+    stopPump()
+    const rest = dispatchBuf
+    dispatchBuf = []
+    for (const t of rest) pushThought(t)
+  }
+
+  return {
   taskId: null,
   query: '',
   running: false,
@@ -97,8 +148,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   progress: { ...initProgress },
   teamMembers: [],
   error: null,
+  planFallback: false,
 
-  reset: (taskId, query) =>
+  reset: (taskId, query) => {
+    stopPump()
+    dispatchBuf = []
     set({
       taskId,
       query,
@@ -117,7 +171,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       progress: { ...initProgress },
       teamMembers: [],
       error: null,
-    }),
+      planFallback: false,
+    })
+  },
 
   ingest: (type, data) => {
     const d = asObj(data)
@@ -138,7 +194,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         return
       }
       case 'thought': {
-        set({ thoughts: [...s.thoughts, d as unknown as ThoughtItem] })
+        const { replay, ...t } = d as ThoughtItem & { replay?: boolean }
+        if (t.kind === 'dispatch' && !replay) {
+          enqueueDispatch(t as ThoughtItem)
+          return
+        }
+        set({ thoughts: [...s.thoughts, t as ThoughtItem] })
         return
       }
       case 'message': {
@@ -147,6 +208,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         if (msg.kind === 'team' && msg.members) patch.teamMembers = msg.members
         if (msg.kind === 'claim' && msg.claim)
           patch.claims = [...s.claims, msg.claim]
+        if (msg.kind === 'plan_fallback') patch.planFallback = true
         set(patch)
         return
       }
@@ -175,13 +237,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         return
       }
       case 'done': {
+        flushDispatch() // 终态冲刷余量：done 前所有派遣气泡必须已上屏
         set({ running: false, finished: true, reportId: (d.reportId as string) ?? s.reportId })
         return
       }
       case 'error': {
+        flushDispatch()
         set({ error: (d.message as string) ?? '发生未知错误', running: false })
         return
       }
     }
   },
-}))
+
+  flushDispatchQueue: () => flushDispatch(),
+  }
+})

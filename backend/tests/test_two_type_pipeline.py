@@ -4,7 +4,7 @@
 - 事件协议：首帧 node_update(idle) → … → report_ready → done{reportId}；无 error；percent 单调不减。
 - 类型驱动：报告 research_type 与任务 meta `_type` 一致；章节集 == RT.sections_for(type, mode)
   （证伪「章节集写死」与「类型中途丢失」）。
-- 图表集：实际产出图的 type 序列 == spec["charts"]（注册表 ↔ 构建器逐项一致，非仅子集）。
+- 图表集：实际产出图的 type 序列 == RT.charts_for(type, 目的地数)（注册表 ↔ 构建器逐项一致，非仅子集）。
 - 结构化：report.structured 键 == spec["structured_keys"] 且均非空；承载章 structured.type 合法。
 - runner 透传：`ensure_running` 驱动的任务，报告类型 == 建任务时选的类型（B-03 分发路径）。
 
@@ -22,17 +22,26 @@ from app.core import db, runner
 from app.core import orchestrator as O
 from app.core import research_types as RT
 from app.core import sentiment
+from app.services import baidu as baidu_mod
 
 # 统一走 quick（rework_rounds=0，章节 5 章），保持用例时长可控
 MODE = "quick"
+# 目的地集合政策（《目的地集合政策》M1）后：只有需求原文点过名的候选才会被采纳，
+# 故 query 必须把 DEST 里的城市都写全，否则会被收敛成单目的地。
+# guide 自本期起受单目的地闸门约束（M3c）：query 与 DEST 均收敛为一城，多目的地拒绝见
+# test_guide_single_dest.py；assessment 保留多目的地对比路径不变。
 QUERIES = {
     "guide": "大理 5 天亲子游攻略",
     "assessment": "评估成都和杭州哪个更适合长期居住",
 }
-DEST = {"guide": ["大理", "丽江"], "assessment": ["成都", "杭州"]}
+# 一个目的地都没点名的 guide 需求（走三跳兜底 → 降级横幅）
+DEGRADED_QUERY = "我想去个没去过的安静小城玩三天"
+_QUERIES_BY_TYPE = {"guide": [QUERIES["guide"], DEGRADED_QUERY],
+                    "assessment": [QUERIES["assessment"]]}
+DEST = {"guide": ["大理"], "assessment": ["成都", "杭州"]}
 _DISPATCH_TEAM = [
     {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-    {"id": "L2-001", "reason": "策略顾问负责目的地横向对比研判"},
+    {"id": "L2-001", "reason": "策略顾问负责目的地研判与方案取舍"},
     {"id": "L2-002", "reason": "预算与合规顾问负责成本拆解"},
     {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
     {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
@@ -47,8 +56,13 @@ def _alpha(n: int) -> str:
 
 
 def _install_fakes(monkeypatch) -> dict:
-    """装齐全量假外部依赖；返回调用记录，供断言「确实走了 LLM/搜索路径」。"""
-    calls: dict = {"llm": [], "search": 0, "fetch": 0}
+    """装齐全量假外部依赖；返回调用记录，供断言「确实走了 LLM/搜索路径」。
+
+    TC-X0 契约：①未知 purpose 一律 raise（旧版静默 `return None` 会让新增调用点
+    悄悄走兜底分支，用例照绿却什么都没测）；②记录每一次 multi_search 的检索词，
+    供「检索词不含其它城市名」这类政策断言取数。
+    """
+    calls: dict = {"llm": [], "search": 0, "search_queries": [], "fetch": 0, "retry": 0}
 
     def fake_chat_json(messages, temperature=0.3, max_tokens=2048, model=None, *, purpose=""):
         calls["llm"].append(purpose)
@@ -65,9 +79,13 @@ def _install_fakes(monkeypatch) -> dict:
             eids = _EID_RE.findall(content)[:2]
             assert eids, "分析阶段提示词必须携带真实证据 id（否则用例的引用断言失去意义）"
             return _analysis_payload(_rtype_of(content), _DEST_OF_CONTENT(content), eids)
+        if purpose == "景点信号抽取（TopN 实体候选）":
+            eids = _EID_RE.findall(content)[:2]
+            assert eids, "景点信号抽取提示词必须携带真实证据 id"
+            return _spot_signals_payload(_DEST_OF_CONTENT(content), eids)
         if purpose.startswith("结构化目的地知识"):
             eids = _EID_RE.findall(content)[:2] or []
-            return _structured_payload(purpose, _DEST_OF_CONTENT(content), eids)
+            return _structured_payload(purpose, _DEST_OF_CONTENT(content), eids, content)
         if purpose.startswith("撰写章节：") or purpose.startswith("重试撰写章节："):
             return {"paragraphs": ["第一段正文：基于证据给出的核心判断与取舍。",
                                    "第二段正文：展开论证链、给出可执行建议。"],
@@ -76,12 +94,20 @@ def _install_fakes(monkeypatch) -> dict:
         if purpose.startswith("质检官审阅"):
             return {"verdict": "pass", "scores": {"证据充分性": 82, "维度完整性": 77},
                     "review": "证据链完整。", "issues": [], "suggestions": []}
-        # 无 purpose 的调用（舆情逐条情感分类 / 金句提炼）→ 返非 dict/非 list，
-        # 让 sentiment 走规则兜底，避免用例耦合到具体情感分布
-        return None
+        if purpose == O._DEST_RETRY_PURPOSE:
+            # 兜底链第三跳：单独问一次小模型「这句需求里的目的地是谁」
+            calls["retry"] += 1
+            return {"destination": "候选小城"}
+        if purpose == "":
+            # 舆情逐条情感分类 / 金句提炼（sentiment.py 不传 purpose）：返非 list，
+            # 让 sentiment 走规则兜底，避免用例耦合到具体情感分布
+            return None
+        raise AssertionError(
+            f"未预期的 LLM 调用 purpose：{purpose!r}——新增调用点必须在此显式 mock")
 
     def fake_multi_search(queries, *, num=10, site=None, freshness="noLimit"):
         calls["search"] += 1
+        calls["search_queries"].extend(queries)
         out = []
         for q in queries:
             per = 2 if site else 3
@@ -111,6 +137,9 @@ def _install_fakes(monkeypatch) -> dict:
     monkeypatch.setattr(sentiment, "chat_json", fake_chat_json, raising=False)
     import app.core.llm as llm_mod
     monkeypatch.setattr(llm_mod, "chat_json", fake_chat_json, raising=False)
+    # 确定性隔离：所有管线用例默认把百度通道钉成「缺 AK」（TC-B03 等价类），
+    # 防开发机 env 泄漏真实 BAIDU_SERVER_AK 让测试打真实网络；需要假百度的用例自行覆盖。
+    monkeypatch.setattr(baidu_mod, "_server_config", lambda: ("", 8.0))
     return calls
 
 
@@ -125,8 +154,8 @@ def _DEST_OF_CONTENT(content: str):
 
 def _rtype_of(content: str) -> str:
     """提示词回显调研主题，据此判定类型（提示词与注册表同源，故不写死类型分支）。"""
-    for key, query in QUERIES.items():
-        if query in content:
+    for key, queries in _QUERIES_BY_TYPE.items():
+        if any(q in content for q in queries):
             return key
     raise AssertionError("假 LLM 无法从提示词识别调研类型")
 
@@ -167,15 +196,55 @@ def _analysis_payload(rtype, dests, eids):
     return payload
 
 
-def _structured_payload(purpose, dests, eids):
+def _spot_signals_payload(dests, eids):
+    """spots 实体阶段假信号：只给**可数事实**（mentions/positive_ratio/value_score），
+    不给名次与分数——排序与算分是 scoring.rank_spots 的职责（LLM 无评分话语权）。"""
+    rows = []
+    for i, d in enumerate(dests):
+        for j in range(2):   # 每目的地两个候选，覆盖 TopN 截断与排序
+            rows.append({
+                "name": f"{d}古城" if j == 0 else f"{d}洱海廊道",
+                "area": "城区" if j == 0 else "环海路",
+                "signals": {"mentions": 30 - i * 8 - j * 5,
+                            "positive_ratio": 0.8 - i * 0.1 - j * 0.05,
+                            "value_score": 0.7 - i * 0.1},
+                "ticket": "免费开放", "stay_minutes": 180 - j * 60,
+                "off_peak": "工作日上午", "reason": "地标片区，证据高频提及",
+                "evidence_ids": eids[:1],
+            })
+    return {"spots": rows}
+
+
+def _structured_payload(purpose, dests, eids, content: str = ""):
+    # 实体单一真相源守卫：guide 的结构化提示必须携带 spots 阶段冻结的实体表
+    # （M2 起 shop_list 靠它对齐同一批实体；spot_routes 已移入实体阶段键，不再出自 LLM）
+    if "shop_list" in purpose:
+        assert "已冻结景点实体表" in content, "结构化提示必须注入冻结实体表"
     if "route_plan" in purpose:
+        frozen = re.findall(r'"spot_id":\s*"([^"]+)",\s*"name":\s*"([^"]+)"', content)
+        sid, sname = frozen[0] if frozen else ("", f"{dests[0]}古城")
         return {
+            "food_ranking": [{"destination": d, "items": [
+                {"name": f"{d}特色菜", "category": "地方菜", "reason": "口碑高频提及",
+                 "price_range": "40-80 元", "evidence_ids": eids[:1]}]} for d in dests],
+            # 毒值：spot_routes 属实体阶段键（百度真实路线落库），生产端必须整键丢弃、
+            # 绝不采纳 LLM 编造的换乘细节（TC-B03/TC-P02 分别钉两种结局）。
+            "spot_routes": [{"destination": d, "items": [
+                {"spot_id": sid if d == dests[0] else "", "spot_name": sname if d == dests[0] else f"{d}古城",
+                 "routes": [{"mode": "地铁", "duration": "25 分钟", "cost": "4 元",
+                             "transfer": "1 次", "note": "古城东门站下",
+                             "evidence_ids": eids[:1]}]}]} for d in dests],
+            "shop_list": [{"destination": d, "items": [
+                {"food": f"{d}特色菜", "name": f"{d}老字号餐馆", "area": "古城片区",
+                 "price_per_person": "￥58", "queue_note": "饭点排队约 30 分钟",
+                 "evidence_ids": eids[:1]}]} for d in dests],
             "route_plan": [{"destination": d, "days": [
                 {"day": 1, "spots": [{"name": f"{d}古城", "transport": "步行", "duration": "3小时",
                                       "tip": "早去避人流", "evidence_ids": eids[:1]}]}]}
                 for d in dests],
             "stay_options": [{"destination": d, "areas": [
-                {"area": "古城片区", "price_range": "300-600 元/晚", "for_whom": "亲子家庭",
+                {"area": "古城片区", "price_range": "300-600 元/晚",
+                 "price_min": 300, "price_max": 600, "for_whom": "亲子家庭",
                  "pros": ["逛街方便"], "cons": ["夜间偏吵"], "evidence_ids": eids[:1]}]}
                 for d in dests],
             "cost_breakdown": [{"destination": d, "items": [
@@ -197,9 +266,11 @@ def _structured_payload(purpose, dests, eids):
     raise AssertionError(f"未预期的结构化 purpose：{purpose}")
 
 
-def _run_pipeline(rtype):
-    """建任务 → 直接驱动 run_pipeline 到终态，返回 (events, report)。"""
-    task_id = O.create_task(QUERIES[rtype], MODE, "", rtype)["taskId"]
+def _run_pipeline(rtype, query: str = None, clar: dict = None, mode: str = MODE):
+    """建任务（可选注入澄清答案）→ 直接驱动 run_pipeline 到终态，返回 (events, report)。"""
+    task_id = O.create_task(query or QUERIES[rtype], mode, "", rtype)["taskId"]
+    if clar:
+        O.submit_clarify(task_id, clar)
 
     async def _scenario():
         evs = []
@@ -228,8 +299,9 @@ def test_pipeline_event_sequence_travel_types(monkeypatch):
 
     assert evs[0]["type"] == "node_update"
     assert all(n["status"] == "idle" for n in evs[0]["data"]["nodes"])
+    # guide 特有 spots 实体节点（assessment 无实体阶段，见下方类型章节用例）
     assert _node_sequence(evs) == ["intake", "orchestrator", "collect", "analyze",
-                                   "audit", "write", "done"]
+                                   "spots", "audit", "write", "done"]
 
     types = [e["type"] for e in evs]
     assert "error" not in types
@@ -284,32 +356,35 @@ def test_report_sections_and_type_match_registry(monkeypatch, rtype):
 # ── 图表集与注册表逐项一致 ───────────────────────────────
 @pytest.mark.parametrize("rtype", ["guide", "assessment"])
 def test_charts_match_registry_exactly(monkeypatch, rtype):
-    """产出图序列 == spec["charts"]（注册表增删图而构建器未跟上 → 此处失败）。"""
+    """产出图序列 == charts_for(类型, 目的地数)（注册表增删图而构建器未跟上 → 此处失败）。"""
     _install_fakes(monkeypatch)
     _, evs, report = _run_pipeline(rtype)
-    spec = RT.type_spec(rtype)
+    expected = list(RT.charts_for(rtype, len(DEST[rtype])))
 
     chart_evs = [e["data"] for e in evs if e["type"] == "chart"]
     types = [c["type"] for c in chart_evs]
-    assert types == list(spec["charts"]), "图表集必须与注册表逐项一致且同序"
+    assert types == expected, "图表集必须与注册表自适应图集逐项一致且同序"
     assert [c["type"] for c in report["charts"]] == types
 
-    # 每张图的 option 过基础契约；成本图 y 轴单位按类型查表
+    # 每张图过基础契约（E1：wordcloud 走 words 语义载荷，其余走 echarts option）；成本图 y 轴单位按类型查表
     for c in chart_evs:
-        assert c["option"]["title"]["text"] == c["title"]
-        assert c["option"]["series"]
+        if c["type"] == "wordcloud":
+            assert c["words"] and "option" not in c
+        else:
+            assert c["option"]["title"]["text"] == c["title"]
+            assert c["option"]["series"]
     cost = next(c for c in chart_evs if c["type"] == "cost_bar")
-    assert cost["option"]["yAxis"]["name"] == spec["cost_bar"]["unit"]
+    assert cost["option"]["yAxis"]["name"] == RT.type_spec(rtype)["cost_bar"]["unit"]
 
     # 章节挂图仅限本类型图集
     sec_charts = [ch["type"] for s in report["sections"] for ch in (s.get("charts") or [])]
-    assert set(sec_charts) <= set(spec["charts"])
+    assert set(sec_charts) <= set(expected)
 
 
 # ── 结构化对象 ───────────────────────────────────────────
 @pytest.mark.parametrize("rtype", ["guide", "assessment"])
 def test_structured_keys_match_registry(monkeypatch, rtype):
-    """report.structured 键集 == spec["structured_keys"]，三类对象均非空且挂真实证据引用。"""
+    """report.structured 键集 == spec["structured_keys"]，全部键均非空且挂真实证据引用。"""
     _install_fakes(monkeypatch)
     _, _, report = _run_pipeline(rtype)
     keys = list(RT.type_spec(rtype)["structured_keys"])
@@ -317,13 +392,180 @@ def test_structured_keys_match_registry(monkeypatch, rtype):
     assert set(report["structured"]) == set(keys)
     for k in keys:
         rows = report["structured"][k]
+        if k == "spot_routes":
+            # M2：路线卡只出自百度真实数据；本套件百度通道被钉成缺 AK → 空表占位是预期
+            # 终态（LLM 毒值必须被整键丢弃），非空结局见 TC-P02 假百度用例。
+            assert rows == [], f"缺 AK 时 spot_routes 必须降级为空表，实得：{rows}"
+            continue
         assert rows and rows[0]["destination"], f"{k} 不应为空且主键为 destination"
+
+    if "spot_ranking" in keys:
+        # 实体阶段冻结表：名次由 scoring 降序回填、分数为规则算出（LLM 无评分话语权）；
+        # spot_id 稳定生成，是下游路线卡/商铺/舆情的唯一挂接键。
+        items = report["structured"]["spot_ranking"][0]["items"]
+        assert [it["rank"] for it in items] == list(range(1, len(items) + 1))
+        assert all(it["spot_id"] and it["score"] is not None and it["signals"] for it in items)
+        assert items == sorted(items, key=lambda it: -it["score"])
 
     carried = [s for s in report["sections"] if s.get("structured")]
     assert carried, "结构化对象应挂载到承载章节"
     for s in carried:
         assert s["structured"]["type"] in keys
         assert s["structured"]["data"]
+
+
+def test_spot_routes_and_entities_degrade_without_baidu_ak(monkeypatch):
+    """TC-B03 / EX-D：缺百度服务端 AK 时实体解析/路线/商铺 POI 整体占位降级——
+    榜单表（LLM 证据版）照常产出、报告不失败，且 LLM 编造的路线毒值不被采纳。
+    （百度通道已由 _install_fakes 钉成缺 AK。）"""
+    _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("guide")
+    assert report and not [e for e in evs if e["type"] == "error"], "降级不得炸任务"
+    items = report["structured"]["spot_ranking"][0]["items"]
+    assert items and all(it["matched"] is False and it["lat"] is None for it in items)
+    assert report["structured"]["spot_routes"] == []
+    shops = report["structured"]["shop_list"][0]["items"]
+    # 商铺未经 POI 核验时 matched 为 False/None（未核验占位），绝不为 True
+    assert shops and all(s["matched"] is not True and s["lat"] is None for s in shops)
+    assert any("未配置百度服务端 AK" in (e["data"].get("text") or "")
+               for e in evs if e["type"] == "thought"), "降级必须留下可见的如实提示"
+
+
+def _install_fake_baidu(monkeypatch):
+    """假百度通道（envelope 形状与 services/baidu 契约一致）。
+    客户端自身的失败等价类由 test_baidu_client.py 单测，这里只测编排接线。"""
+    monkeypatch.setattr(baidu_mod, "available", lambda: True)
+    monkeypatch.setattr(baidu_mod, "geocode",
+                        lambda address, city="": {"ok": True, "lat": 25.70, "lng": 100.15,
+                                                  "confidence": 90})
+    monkeypatch.setattr(
+        baidu_mod, "place_search",
+        lambda query, region, **kw: {"ok": True, "places": [
+            {"name": query, "lat": 25.69, "lng": 100.16,
+             "area": "大理市", "address": "某路1号", "tag": ""}]})
+
+    def _fake_direction(mode, origin, destination, city=None, city_limit=True):
+        return {"ok": True, "routes": [{
+            "distance_m": 8200, "duration_s": 2400,
+            "steps": [{"instruction": "乘坐地铁1号线", "vehicle": "地铁1号线",
+                       "distance_m": "1.2公里"}]}]}
+
+    monkeypatch.setattr(baidu_mod, "direction", _fake_direction)
+
+
+def test_spot_entity_ids_flow_into_downstream_structured(monkeypatch):
+    """TC-P02 / INV-C：百度通道可用时，路线卡只引用冻结实体表的 spot_id，
+    坐标真实回填、打车费为规则估算——「文字里的景点和地图上的景点对不上」
+    这一架构根因的管线级防线。"""
+    _install_fakes(monkeypatch)
+    _install_fake_baidu(monkeypatch)
+    _, _, report = _run_pipeline("guide")
+    frozen_ids = {it["spot_id"] for g in report["structured"]["spot_ranking"] for it in g["items"]}
+    assert frozen_ids, "冻结实体表不能为空（假工厂已提供信号）"
+    items = report["structured"]["spot_ranking"][0]["items"]
+    assert all(it["matched"] and it["lat"] == 25.69 for it in items), "实体解析应回填坐标"
+    groups = report["structured"]["spot_routes"]
+    assert groups and groups[0]["destination"]
+    ref_ids = {it["spot_id"] for g in groups for it in g["items"]}
+    assert ref_ids and ref_ids <= frozen_ids, \
+        f"路线卡引用了表外 spot_id：{ref_ids - frozen_ids}"
+    routes = [r for g in groups for it in g["items"] for r in it["routes"]]
+    modes = {r["mode"] for r in routes}
+    assert modes == {"公交/地铁", "打车"}, f"路线应出自百度真实通道而非 LLM 毒值：{modes}"
+    taxi = next(r for r in routes if r["mode"] == "打车")
+    assert "估算" in taxi["cost"], "打车费为里程规则估价，必须标「估算」"
+
+
+# ── 问卷勾选是目的地集合的显式通道（P1-2）──────────────────
+def test_clarify_checked_destinations_are_respected(monkeypatch):
+    """最终集合 == 勾选 ∪ 原文提及（勾选在前），未勾选且未点名的候选一律不纳入。
+
+    guide 单目的地闸门（M3c）后勾选通道不可能再产出两城集合，改由 assessment 守此不变量；
+    guide 勾选单城的正常路径与多目的地拒绝见 test_guide_single_dest.py。
+    """
+    calls = _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("assessment", None, {"destinations": ["杭州"]})
+
+    assert report["destinations"] == ["杭州", "成都"], "勾选项必须被纳入，且排在原文提及之前"
+    assert not [e for e in evs if e["type"] == "message"
+                and e["data"].get("kind") == "plan_fallback"], "走勾选路径不应判为降级"
+
+    # 检索词只围绕这两个目的地：不引入第三座城市的名字
+    others = ("大理", "丽江", "西双版纳")
+    assert not [q for q in calls["search_queries"] if any(o in q for o in others)]
+
+
+# ── C6 · 报告头部答题摘要（TC-S1/S3）────────────────────────
+def test_report_answers_digest_whitelist_and_origin_exclusion(monkeypatch):
+    """digest 行只来自注册表白名单；目的地取计划层终值；origin 是检索凭据、不进摘要。"""
+    _install_fakes(monkeypatch)
+    clar = {"days": "3-5 天", "party": "亲子家庭", "origin": "北京",
+            "focus": ["交通路线", "美食与商铺"], "budget_level": "舒适均衡（1000-3000）"}
+    _, evs, report = _run_pipeline("guide", None, clar)
+    assert evs[-1]["type"] == "done" and report
+
+    digest = report["answers_digest"]
+    assert [(d["label"], d["value"]) for d in digest] == [
+        ("天数", "3-5 天"), ("人群", "亲子家庭"),
+        ("侧重", "交通路线、美食与商铺"), ("目的地", "大理")], (
+        "行集/顺序/展示名都必须与 CLARIFY_CONSUMERS 的 digest 登记逐项一致")
+    flat = "".join(d["value"] for d in digest)
+    assert "北京" not in flat, "出发地只进检索角度，不进答题摘要"
+    assert "舒适均衡" not in flat, "plan_text 题不进摘要"
+    # 目的地行来自计划层终值（本次勾选为空、由原文锁定），而非问卷原始答案
+    assert report["destinations"] == ["大理"]
+
+
+# ── 检索词与目的地正交（G11 / L2 根因直证）────────────────
+@pytest.mark.parametrize("rtype", ["guide", "assessment"])
+def test_search_queries_orthogonal_to_destination(monkeypatch, rtype):
+    """每条检索词恰好含一个本地名、不含他城名、且地名不重复。
+
+    这正是历史缺陷的直接症状：角度里夹带地名/其它城市 → 检索词重复、证据归属串城。
+    """
+    calls = _install_fakes(monkeypatch)
+    _run_pipeline(rtype)
+    names = DEST[rtype]
+    queries = calls["search_queries"]
+    assert queries, "应确实发出检索请求"
+    for q in queries:
+        hit = [d for d in names if d in q]
+        assert len(hit) == 1, f"检索词必须恰好含一个目的地：{q}"
+        assert q.count(hit[0]) == 1, f"目的地名不得在检索词里重复：{q}"
+
+
+# ── 计划降级：温和横幅 + 协议不破（G14 / OBS-01）────────────
+def test_plan_fallback_banner_keeps_protocol(monkeypatch):
+    """需求里一个目的地都没点名 → 走兜底链：推 plan_fallback 温和帧，R6 协议照旧。"""
+    calls = _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("guide", DEGRADED_QUERY)
+
+    banners = [e for e in evs if e["type"] == "message"
+               and e["data"].get("kind") == "plan_fallback"]
+    assert len(banners) == 1, "降级只提示一次"
+    assert "候选小城" in banners[0]["data"]["text"]
+    assert calls["retry"] == 1, "三跳应落到第三跳且恰好一次"
+
+    # 温和提示走 message 通道，不进 error 通道
+    types = [e["type"] for e in evs]
+    assert "error" not in types and types[-1] == "done"
+    percents = [e["data"]["percent"] for e in evs if e["type"] == "progress"]
+    assert percents == sorted(percents) and percents[-1] == 100
+
+    # 单目的地：无 donut、标题无「对比」（图集与文案按 N 自适应）
+    chart_types = [e["data"]["type"] for e in evs if e["type"] == "chart"]
+    assert "donut" not in chart_types
+    assert chart_types == list(RT.charts_for("guide", 1))
+    for e in evs:
+        if e["type"] == "chart":
+            assert "对比" not in e["data"]["title"], e["data"]["title"]
+    assert report["destinations"] == ["候选小城"]
+
+    # 降级事实进决策日志（trace 是其持久来源），报告 payload 不带内部字段
+    step = next(s for s in report["trace"] if s["stage"] == "intake"
+                and s["purpose"] == O._DEST_PLAN_STEP)
+    assert "降级" in step["decision"]
+    assert "degraded" not in report and "dest_source" not in report
 
 
 # ── runner 分发路径把类型送达流水线 ──────────────────────
@@ -352,6 +594,147 @@ def test_runner_drive_delivers_type_to_pipeline(monkeypatch):
         RT.sections_for(rtype, MODE)
     mode_ev = next(e for e in evs if e["type"] == "message" and e["data"].get("kind") == "mode")
     assert mode_ev["data"]["research_type"] == rtype
+
+
+def test_expert_guide_one_page_view_assembled_from_frozen_entities(monkeypatch):
+    """M3a/D2 / INV-C：guide 的 deep 与 expert 档 route_plan 被规则组装整体覆盖——
+    逐日停靠全部引用冻结 spot_id（榜单名次保序、每实体恰好一次），抵达交通出自真实
+    路线，商铺逐日挂 shop_id。（R-B1：deep 正例断言迁移自 expert 钉，两档同判据。）"""
+    for mode in ("deep", "expert"):
+        _install_fakes(monkeypatch)
+        _install_fake_baidu(monkeypatch)
+        _, evs, report = _run_pipeline("guide", mode=mode)
+        assert report and not [e for e in evs if e["type"] == "error"]
+
+        frozen_ids = [it["spot_id"] for g in report["structured"]["spot_ranking"] for it in g["items"]]
+        assert frozen_ids, "假工厂应给出可冻结实体"
+        rp = report["structured"]["route_plan"]
+        assert rp and rp[0]["destination"] == "大理"
+        stops = [s for d in rp[0]["days"] for s in d["spots"]]
+        ref = [s["spot_id"] for s in stops if s.get("spot_id")]
+        assert ref == frozen_ids, f"{mode} 档停靠点按榜单名次保序且每实体恰好一次"
+        shop_refs = {s["shop_id"] for s in stops if s.get("shop_id")}
+        shop_ids = {x["shop_id"] for g in report["structured"]["shop_list"] for x in g["items"]}
+        assert shop_refs and shop_refs <= shop_ids, "美食停靠只引用商铺表内实体"
+        first = next(s for s in stops if s.get("spot_id") == frozen_ids[0])
+        assert "公交" in first["transport"], "抵达交通引用假百度的真实路线通道"
+        assert first["lat"] == 25.69 and first["lng"] == 100.16, \
+            "N6 分布图数据源：规则组装把冻结实体坐标随挂接透传"
+        assert any("一页视图" in (e["data"].get("text") or "")
+                   for e in evs if e["type"] == "thought"), "组装事实必须留下可观测 thought"
+        # S-B2：stay_options 数值带字段注册联动——LLM 显式产出经 coerce 原样保留
+        stay_area = report["structured"]["stay_options"][0]["areas"][0]
+        assert (stay_area["price_min"], stay_area["price_max"]) == (300, 600)
+
+
+def test_quick_guide_route_plan_keeps_llm_version(monkeypatch):
+    """quick 档不触发一页视图覆盖（route 章只属 deep/expert）：structured 里的
+    route_plan 仍是 LLM 自由发挥版，不带规则组装的实体挂接。（R-B2 反例）"""
+    _install_fakes(monkeypatch)
+    _install_fake_baidu(monkeypatch)
+    _, evs, report = _run_pipeline("guide")
+    assert not any("一页视图" in (e["data"].get("text") or "")
+                   for e in evs if e["type"] == "thought")
+    rp = report["structured"].get("route_plan") or []
+    stops = [s for g in rp for d in g["days"] for s in d["spots"]]
+    assert all(not s.get("spot_id") for s in stops), "quick 档不得注入规则组装的实体挂接"
+
+
+# ── D2 · 行程路线章进 deep：章节集 / pace 声明 / 天数双源 ──
+def test_guide_deep_sections_include_route_last():
+    """R-B5：deep+guide 章节集**显式**含 route 且序为末位（8→9 章）——
+    防章节集查表钉（sections_for 同表）静默跟错表。"""
+    deep = RT.type_spec("guide")["sections"]["deep"]
+    assert deep[-1] == "route", "route 必须挂在 deep 章末位"
+    assert len(deep) == 9
+    assert RT.sections_for("guide", "deep") == list(deep)
+    assert "route" not in RT.type_spec("guide")["sections"]["quick"]
+
+
+def test_deep_mode_declares_spot_day_pace():
+    """R-B3：deep 档**显式**声明 spot_day_pace——不靠 cfg.get 兜底默认，
+    与 expert 同为行程组装的规模旋钮。"""
+    assert "spot_day_pace" in O.MODE_CONFIG["deep"]
+    assert O.MODE_CONFIG["deep"]["spot_day_pace"] > 0
+
+
+def test_itinerary_days_dual_source_query_then_clarify(monkeypatch):
+    """R-B4（评审③）：组装入参天数双源——query 无天数时认问卷 days 答案；
+    两路都缺才落 pace 推算，且不造空天。"""
+    _install_fakes(monkeypatch)
+    _install_fake_baidu(monkeypatch)
+    no_days_query = "大理亲子游攻略"
+
+    _, _, via_clar = _run_pipeline("guide", no_days_query,
+                                   clar={"days": "3-5 天"}, mode="deep")
+    days_clar = via_clar["structured"]["route_plan"][0]["days"]
+    n_frozen = sum(len(g["items"]) for g in via_clar["structured"]["spot_ranking"])
+    assert all(d["spots"] for d in days_clar), "逐日均有停靠，不造空天"
+    assert len(days_clar) <= 5, "「3-5 天」按上限 5 天折算，跨度不超用户天数"
+    assert len(days_clar) >= min(n_frozen, 5) or len(days_clar) > 2, \
+        "问卷天数应拉开跨度（vs pace 推算）"
+
+    _install_fakes(monkeypatch)
+    _install_fake_baidu(monkeypatch)
+    _, _, via_pace = _run_pipeline("guide", no_days_query, mode="deep")
+    days_pace = via_pace["structured"]["route_plan"][0]["days"]
+    assert len(days_clar) > len(days_pace), "query+问卷双缺 → pace 推算更短；问卷答案必须生效"
+
+    _install_fakes(monkeypatch)
+    _install_fake_baidu(monkeypatch)
+    _, _, both = _run_pipeline("guide", "大理 5 天亲子游攻略", clar={"days": "2 天"}, mode="deep")
+    days_both = both["structured"]["route_plan"][0]["days"]
+    assert len(days_both) > len(days_pace), "query 原文优先于问卷答案（5 天而非 2 天）"
+
+
+# ── 搜索服务商终态错误的调用点策略（修复计划 item3 / 覆盖评估 C 组）──
+def test_provider_outage_hard_fails_with_real_reason(monkeypatch):
+    """TC-P1：collect 首条即欠费 → 任务硬失败，error 帧文案携带真因（不再吞成 0 结果）。"""
+    from app.core.search import SearchProviderError
+    runner._running.clear()
+    _install_fakes(monkeypatch)
+
+    def _dead(queries, **kw):
+        raise SearchProviderError("博查账户余额不足，请充值")
+    monkeypatch.setattr(O, "multi_search", _dead, raising=False)
+    task_id = O.create_task(QUERIES["guide"], MODE, "", "guide")["taskId"]
+
+    async def _scenario():
+        runner.ensure_running(task_id)
+        evs = []
+        async for ev in runner.subscribe(task_id):
+            evs.append(ev)
+            if ev["type"] in ("done", "error"):
+                break
+        return evs
+    evs = asyncio.run(_scenario())
+
+    errs = [e for e in evs if e["type"] == "error"]
+    assert errs, "零证据 + 服务商欠费必须走 error 终态"
+    msg = errs[0]["data"]["message"]
+    assert "博查账户余额不足" in msg, f"文案必须送达真因：{msg}"
+    assert "请检查搜索服务配额/密钥" in msg
+    assert db.get_task_full(task_id)["status"] == "failed"
+
+
+def test_midway_outage_degrades_with_visible_thought(monkeypatch):
+    """TC-P2：collect 成功后中途欠费 → 报告照常产出（已完成的分析不炸掉），
+    舆情位有含真因的可见 thought，全程不再白烧检索。"""
+    from app.core.search import SearchProviderError
+    calls = _install_fakes(monkeypatch)
+    real_ms = O.multi_search
+
+    def _flaky(queries, **kw):
+        if calls["search"] <= 1:
+            return real_ms(queries, **kw)   # 首过：collect 主采集正常
+        raise SearchProviderError("博查账户余额不足，请充值")
+    monkeypatch.setattr(O, "multi_search", _flaky, raising=False)
+
+    _, evs, report = _run_pipeline("guide")
+    assert report and evs[-1]["type"] == "done", "中途欠费必须降级继续出报告"
+    thoughts = [e["data"].get("text") or "" for e in evs if e["type"] == "thought"]
+    assert any("采集中断" in t and "博查账户余额不足" in t for t in thoughts), \
+        "降级必须留下含真因的可见 thought"
 
 
 if __name__ == "__main__":

@@ -117,6 +117,21 @@ describe('F2-1 六个结构化渲染器 happy path', () => {
     expect(screen.getByText('早 8 点前到人少')).toBeTruthy()
   })
 
+  it('M3a 一页视图：停靠点挂 data-spot-id/shop-id 实体键并出「美食停靠」徽标；旧数据无键不渲染', () => {
+    const { container } = render(<VRoutePlan data={[{ destination: '大理', days: [
+      { day: 1, spots: [
+        { name: '大理古城', spot_id: '大理_spot_1', transport: '公交：公交1路·约40分钟' },
+        { name: '美食停靠：老字号', shop_id: '大理_shop_1', duration: '约1小时' },
+      ] },
+    ] }]} />)
+    expect(container.querySelector('[data-spot-id="大理_spot_1"]')).not.toBeNull()
+    expect(container.querySelector('[data-shop-id="大理_shop_1"]')).not.toBeNull()
+    expect(screen.getByText('美食停靠')).toBeTruthy()
+    // 实体键只挂在真实引用上：景点行不带 shop-id、商铺行不带 spot-id
+    expect(container.querySelectorAll('[data-spot-id]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-shop-id]')).toHaveLength(1)
+  })
+
   it('住宿选型：表头 + 区域/价格/适合人群/优劣势（优劣势取前 3 条）', () => {
     render(<VStayTable data={STAY_OPTIONS} />)
     expect(screen.getByText('大理 · 住宿区域选型')).toBeTruthy()
