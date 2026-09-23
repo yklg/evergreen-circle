@@ -3614,6 +3614,18 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
                                               y_name=cb["unit"]),
                       "evidence_ids": chart_eids("cost_bar")})
 
+    # 安全评分柱状图：数据源是 analysis.safety_index[].safety_score（0-100 整数）
+    safety_rows = [r for r in own(analysis.get("safety_index") or [])
+                   if isinstance(r.get("safety_score"), (int, float))]
+    if "cost_bar" in allowed and safety_rows:
+        safety_title = "目的地安全评分对比" if len(destinations) >= 2 else "目的地安全评分"
+        specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": safety_title,
+                      "option": C.pricing_bar(safety_title,
+                                              [_row_name(r) for r in safety_rows],
+                                              [float(r["safety_score"]) for r in safety_rows],
+                                              y_name="分（0-100）"),
+                      "evidence_ids": chart_eids("safety_score")})
+
     # 花费构成柱：数据源是结构化 cost_breakdown（交通/住宿/餐饮…），此前有数据无图。
     # 是否产出由图集声明决定（SOLO_ONLY_CHARTS 已在 charts_for 里按目的地数剔除）。
     cb_items: List[Dict[str, Any]] = []

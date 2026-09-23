@@ -374,7 +374,13 @@ def test_charts_match_registry_exactly(monkeypatch, rtype):
 
     chart_evs = [e["data"] for e in evs if e["type"] == "chart"]
     types = [c["type"] for c in chart_evs]
-    assert types == expected, "图表集必须与注册表自适应图集逐项一致且同序"
+    # 注册表声明的是「类型集」，同一类型可由构建器产出多张（如 cost_bar 同时承载
+    # 生活成本柱与安全评分柱）。原断言按类型序列逐项相等，隐含「一类型一张图」，
+    # 与 3888 的按类型广播同源。改为比对**去重后的类型序列**：仍守住本用例原意
+    # （注册表增删图而构建器未跟上 → 此处失败），但不 forbid 同类型多图。
+    dedup = lambda seq: list(dict.fromkeys(seq))
+    assert dedup(types) == dedup(expected), \
+        "去重后的图表类型序列必须与注册表自适应图集一致且同序"
     assert [c["type"] for c in report["charts"]] == types
 
     # 每张图过基础契约（E1：wordcloud 走 words 语义载荷，其余走 echarts option）；成本图 y 轴单位按类型查表
@@ -384,12 +390,93 @@ def test_charts_match_registry_exactly(monkeypatch, rtype):
         else:
             assert c["option"]["title"]["text"] == c["title"]
             assert c["option"]["series"]
-    cost = next(c for c in chart_evs if c["type"] == "cost_bar")
+    # 成本图的 y 轴单位：按**注册表声明的标题**精确定位，而非 next(第一个 cost_bar)。
+    # 后者取到哪张取决于构建器产出顺序（与 3926 的 c[0] 同类顺序依赖）——同类型
+    # 已有 2 张 cost_bar 时，next() 一旦取到安全评分柱就会误判。
+    cost_title = RT.cost_bar_title(rtype, len(DEST[rtype]))
+    cost = next(c for c in chart_evs
+                if c["type"] == "cost_bar" and c["title"] == cost_title)
     assert cost["option"]["yAxis"]["name"] == RT.type_spec(rtype)["cost_bar"]["unit"]
 
     # 章节挂图仅限本类型图集
     sec_charts = [ch["type"] for s in report["sections"] for ch in (s.get("charts") or [])]
     assert set(sec_charts) <= set(expected)
+
+
+# ── T-03 图表章节归属唯一性（glacial-vale-sparrow 批次⓪）─────────────
+# 既有 :391-392 只断言「章节挂的图类型 ⊆ 图集」，完全不校验归属唯一性——
+# 装配层 orchestrator.py:3888 是 `for t in chart_types for c in charts_by_type[t]`，
+# 即按**类型**无差别广播全部。
+#
+# 不变量的精确边界（实测校准，勿放宽）：
+#   assessment 现有三处跨章共用同一类型，其中 radar(summary+verdict) 与
+#   trend(summary+trend) 是**有意的单图复用**——综合研判章复用宜居度雷达合理。
+#   真正的缺陷只在「同类型产出 >1 张时仍整组广播」：此时每章都会拿到全部张数，
+#   而非归属自己的那张。故本用例只钉 N>1 这一条件，不误伤单图复用。
+@pytest.mark.xfail(strict=True, reason=(
+    "根因③未修：assessment deep/expert 档 cost_bar 实产 2 张（月均生活成本 + "
+    "目的地安全评分），而 safety 与 value 两章同挂 cost_bar，按类型广播致两章各拿到 "
+    "全部 2 张（互相串章）。批次⓪ 给 spec 加 sections 归属、3888/3926 改按归属"
+    "精确匹配后本断言应通过——届时 strict 以 XPASS 报错，提醒移除本 xfail 标记。"
+))
+def test_multi_chart_type_not_broadcast_wholesale(monkeypatch):
+    """T-03：某类型产出多张图时，任一章不得拿到该类型的全部张数。
+
+    刻意用 deep 而非模块默认 quick：quick 档 assessment 章节集不含 value，
+    cost_bar 只有一章挂载，广播与精确匹配结果相同，用例会假绿。
+    """
+    _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("assessment", mode="deep")
+    charts = [e["data"] for e in evs if e["type"] == "chart"]
+
+    by_type = {}
+    for c in charts:
+        by_type.setdefault(c["type"], []).append(c["chart_id"])
+    multi = {t: ids for t, ids in by_type.items() if len(ids) > 1}
+    assert multi, (
+        "本用例假设存在同类型多图（assessment 的 cost_bar 应有 2 张）；若已不存在，"
+        "说明产出结构变了，请改测真实风险面而非留个空转用例"
+    )
+
+    for sec in report["sections"]:
+        held = {c["chart_id"] for c in (sec.get("charts") or [])}
+        for ctype, ids in multi.items():
+            assert not (set(ids) <= held), (
+                f"图表串章：{ctype!r} 实产 {len(ids)} 张，章节 {sec['id']!r} 却拿到了"
+                f"全部 {len(ids)} 张——装配层按类型整组广播而非按归属精确匹配（根因③）"
+            )
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "批次⓪ 未落地：assessment 现有 2 张 cost_bar（月均生活成本 + 目的地安全评分）"
+    "均无 sections 归属声明。批次⓪ 给每个图表 spec 补 sections 后本断言应通过，"
+    "届时 strict 以 XPASS 提醒移除标记。"
+))
+def test_same_type_multi_charts_declare_sections(monkeypatch):
+    """T-03 前置契约：同一类型若产出多张图，各张必须带 sections 归属声明。
+
+    单张时按类型广播恰好等价于按归属挂载，且这种「一图多章」是有意的复用
+    （assessment 的 radar 同供 summary 与 verdict、trend 同供 summary 与 trend），
+    所以真正的风险面只在「同类型 ≥2 张」——本用例只钉这个条件。
+    归属用复数 sections 而非单数 section：一张图可能需要合法地出现在多章。
+    """
+    _install_fakes(monkeypatch)
+    _, evs, _ = _run_pipeline("assessment", mode="deep")
+    charts = [e["data"] for e in evs if e["type"] == "chart"]
+    by_type = {}
+    for c in charts:
+        by_type.setdefault(c["type"], []).append(c)
+    multi = {t: g for t, g in by_type.items() if len(g) > 1}
+    assert multi, (
+        "本用例假设存在同类型多图（assessment 的 cost_bar 应有 2 张）；若已不存在，"
+        "说明产出结构变了，请改测真实风险面而非留个空转用例"
+    )
+    for ctype, group in multi.items():
+        missing = [c["chart_id"] for c in group if not c.get("sections")]
+        assert not missing, (
+            f"类型 {ctype!r} 产出 {len(group)} 张图，其中 {len(missing)} 张缺 "
+            f"sections 归属声明——按类型广播会串章"
+        )
 
 
 # ── 结构化对象 ───────────────────────────────────────────

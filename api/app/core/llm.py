@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from contextvars import ContextVar
-from typing import Any, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from openai import OpenAI
 
-from app.core import trace
+from app.core import db, trace
 from app.core.runtime_config import get_effective_settings
 
 
@@ -137,9 +138,99 @@ def _get_client() -> OpenAI:
 
 
 def _supports_thinking(model: str) -> bool:
-    """判断模型是否支持思考模式开关（glm-5 系列、glm-4.6 支持 thinking 参数）。"""
+    """名字判据 = traits 缓存的**初始已知值**（L1 止血），不再承担对新模型的
+    唯一防线——能力真相以 `thinking_toggle_supported` 实测缓存为准（L4）。
+
+    deepseek-flash 默认开思考：真实故障 r_38bdd649 里 spots 抽取/结构化调用的
+    推理 token 吃光 max_tokens（finish=length）→ 结构化全空 → 报告可视化整层
+    缺位。api.deepseek.com 已验接受 `thinking:{"type":"disabled"}`（2026-09-22，
+    finish=stop、零 reasoning）。deepseek-chat/reasoner 等旧名不在列，行为不变。"""
     m = model.lower()
-    return "glm-5" in m or "glm-4.6" in m or "glm-4-6" in m
+    return ("glm-5" in m or "glm-4.6" in m or "glm-4-6" in m
+            or ("deepseek" in m and ("v4" in m or "flash" in m or "pro" in m)))
+
+
+# ── L4 · 模型能力运行时缓存（brisk-pond-finch）────────────────
+# base_url+model 复合键 → {"thinking_toggle_supported": true/false}。能力是外部
+# 网关的运行时事实，探明一次即沉淀：显式实测值**优先于**上面的名字判据（实测拒参
+# 过，名字命中也不带参；实测接受过，恒带参）。settings kv 整值 JSON 覆盖（无迁移、
+# 并发写不半更新）；invalidate_client()/配置保存不动本缓存（键含网关，天然隔离）。
+_TRAITS_KEY = "model_traits"
+_TRAITS_LOCK = threading.Lock()
+_TRAITS_MEM: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _traits_map() -> Dict[str, Dict[str, Any]]:
+    global _TRAITS_MEM
+    if _TRAITS_MEM is None:
+        raw = db.get_setting(_TRAITS_KEY)
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except Exception:
+            parsed = {}
+        _TRAITS_MEM = parsed if isinstance(parsed, dict) else {}
+    return _TRAITS_MEM
+
+
+def _traits_key(model: str) -> str:
+    return f"{get_effective_settings().get('llm_base_url') or ''}|{model}"
+
+
+def record_model_fact(model: str, **facts: Any) -> None:
+    """写入实测能力事实（线程安全；无变化不写库，避免热路径反复落盘）。"""
+    with _TRAITS_LOCK:
+        m = _traits_map()
+        k = _traits_key(model)
+        e = dict(m.get(k) or {})
+        changed = False
+        for fk, fv in facts.items():
+            if e.get(fk) != fv:
+                e[fk] = fv
+                changed = True
+        if not changed:
+            return
+        e["updated_at"] = int(time.time())
+        m[k] = e
+        _TRAITS_MEM = m
+        try:
+            db.set_setting(_TRAITS_KEY, json.dumps(m, ensure_ascii=False))
+        except Exception:
+            pass  # 观测性缓存写失败不得影响调用本身
+
+
+def thinking_toggle_supported(model: str) -> Optional[bool]:
+    e = _traits_map().get(_traits_key(model)) or {}
+    v = e.get("thinking_toggle_supported")
+    return v if isinstance(v, bool) else None
+
+
+_PARAM_REJECT_HINTS = ("body", "parameter", "param", "field",
+                       "unknown", "unrecognized", "invalid", "not supported")
+
+
+def _is_thinking_param_rejection(err: Exception) -> bool:
+    """「网关拒收 thinking 参数」判据（评审建议 1 / 评估 LT-5a）。
+
+    必须**先于** `_raise_if_model_unavailable` 求值：后者 regex 含
+    `is not supported`，拒参文案若先撞上会被转抛 LLMModelUnavailable 杀整个
+    任务（错桶）。互斥判据：状态码 400/422 ∧ message 同时含 `thinking` 与参数类
+    特征；「model x is not supported」（不含 thinking）仍归模型缺失桶。429 状态
+    码不匹配，天然归既有退避圈，不占本阶梯计数。"""
+    code = getattr(err, "status_code", None)
+    if code not in (400, 422):
+        return False
+    msg = str(err).lower()
+    return "thinking" in msg and any(h in msg for h in _PARAM_REJECT_HINTS)
+
+
+def _send_thinking_off(model: str, force: bool = False) -> bool:
+    """本次调用是否携带关思考参数：显式 traits > force（L4 阶梯指令）> L1 名字初值。"""
+    known = thinking_toggle_supported(model)
+    if known is False:
+        return False
+    if known is True:
+        return True
+    return force or _supports_thinking(model)
 
 
 def _strip_think(text: str) -> str:
@@ -160,6 +251,14 @@ def _strip_think(text: str) -> str:
 # 并行的各章互不串扰。
 _LAST_FINISH: ContextVar[str] = ContextVar("llm_last_finish", default="")
 _LAST_REASONING: ContextVar[int] = ContextVar("llm_last_reasoning", default=0)
+# 最近一次 chat() 是否真的携带了关思考参数（拒参裸参重发后置 False）：
+# chat_json 的截断契约阶梯据此判「带参已生效仍 length → 不盲重试」。
+_LAST_PARAM_SENT: ContextVar[bool] = ContextVar("llm_last_param_sent", default=False)
+
+
+def last_param_sent() -> bool:
+    """最近一次 chat() 是否带出了 thinking 关参（同线程读，ContextVar 单向 copy）。"""
+    return _LAST_PARAM_SENT.get()
 
 
 def last_finish_reason() -> str:
@@ -172,6 +271,21 @@ def last_reasoning_tokens() -> int:
     return _LAST_REASONING.get()
 
 
+def _create_toggle_fallback(client: OpenAI, kwargs: dict, model: str):
+    """发一次调用；若带出的 thinking 参数被网关拒绝 → 记 traits=false 并裸参数
+    **同次**重发一次（发现期上界之一）。第二次仍失败按原异常上抛，回到既有
+    退避/模型不可用处置——拒参在 llm 层内部消化，绝不外漏给调用点的吞异常面。"""
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception as e:  # noqa: BLE001
+        if kwargs.get("extra_body") and _is_thinking_param_rejection(e):
+            record_model_fact(model, thinking_toggle_supported=False)
+            bare = {k: v for k, v in kwargs.items() if k != "extra_body"}
+            _LAST_PARAM_SENT.set(False)
+            return client.chat.completions.create(**bare)
+        raise
+
+
 def chat(
     messages: list[dict],
     temperature: float = 0.6,
@@ -180,6 +294,7 @@ def chat(
     *,
     purpose: str = "",
     evidence_ids: Optional[list] = None,
+    force_thinking_off: bool = False,
 ) -> str:
     """一次性返回完整回复文本。遇 429 自动退避重试。
 
@@ -200,12 +315,13 @@ def chat(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            # 关闭思考模式：glm-5 系列默认开思考，会吃光 token 且更慢；
-            # 调研流水线追求速度与稳定输出，统一关闭（实测质量仍很高）。
-            if _supports_thinking(use_model):
+            # 关闭思考模式：默认开思考的模型会吃光 token 且更慢；调研流水线追求
+            # 速度与稳定输出，统一关闭。是否带参由 traits 实测 > 名字初值决定。
+            if _send_thinking_off(use_model, force=force_thinking_off):
                 kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+            _LAST_PARAM_SENT.set(bool(kwargs.get("extra_body")))
             t0 = time.perf_counter()
-            resp = client.chat.completions.create(**kwargs)
+            resp = _create_toggle_fallback(client, kwargs, use_model)
             latency_ms = int((time.perf_counter() - t0) * 1000)
             content = _strip_think(resp.choices[0].message.content or "")
             finish = str(getattr(resp.choices[0], "finish_reason", "") or "")
@@ -221,6 +337,9 @@ def chat(
                 pass
             _LAST_FINISH.set(finish)
             _LAST_REASONING.set(reasoning)
+            # 参数被接受即沉淀能力事实（仅在 traits 未知时落库，热路径零写盘）。
+            if kwargs.get("extra_body") and thinking_toggle_supported(use_model) is None:
+                record_model_fact(use_model, thinking_toggle_supported=True)
             # 无侵入埋点：记录本次调用的 trace span。被截断时在 decision 上留痕，
             # 决策回放里一眼看出「这段输出是被 max_tokens 切断的」+ 推理烧了多少。
             decision = purpose
@@ -255,10 +374,25 @@ def chat_json(
     *,
     purpose: str = "",
 ) -> Optional[Any]:
-    """要求 LLM 输出 JSON，解析为对象；失败返回 None（调用方决定是否重试）。"""
+    """要求 LLM 输出 JSON，解析为对象；失败返回 None（调用方决定是否重试）。
+
+    截断契约阶梯（L4）：解析失败 ∧ 本次调用 `finish=length` ∧ 上次**未**带关思考
+    参数（带参已生效仍截断 → 不盲重试，直接 None 走上层可见降级）时，带参重试
+    恰好一次。traits 实测「不支持关参」的模型跳过（不浪费往返）。每调用额外往返
+    ≤1，叠加 chat 内拒参回退 ≤1——发现期上界 ≤2，结论入 traits 后永久短路。"""
     raw = chat(messages, temperature=temperature, max_tokens=max_tokens,
                model=model, purpose=purpose)
-    return _extract_json(raw)
+    parsed = _extract_json(raw)
+    if (parsed is None and _LAST_FINISH.get() == "length"
+            and not _LAST_PARAM_SENT.get()):
+        use_model = model or get_effective_settings().get("llm_model")
+        if use_model and thinking_toggle_supported(use_model) is not False:
+            raw = chat(messages, temperature=temperature, max_tokens=max_tokens,
+                       model=model,
+                       purpose=f"{purpose}·截断契约重试(关思考)" if purpose else "截断契约重试(关思考)",
+                       force_thinking_off=True)
+            parsed = _extract_json(raw)
+    return parsed
 
 
 def chat_schema(
@@ -295,14 +429,21 @@ def _extract_json(text: str) -> Optional[Any]:
         return json.loads(text)
     except Exception:
         pass
-    # 退而求其次：抓第一个 { } 或 [ ]
-    for pat in (r"\[.*\]", r"\{.*\}"):
+    # 退而求其次：候选按**起始位置**排序取先解析成功者（起点相同时对象优先）。
+    # 不能再按「数组优先」的固定顺序试：模型只要在对象外面加一句寒暄，
+    # 贪婪的 `\[.*\]` 就会把对象内部的数组整段抓走并解析成功，
+    # 于是返回 list 而非 dict，调用方的 isinstance(data, dict) 判定落空 →
+    # 静默走兜底（真实故障：48 位专家每次只用那 6 位，见 quiet-shore-pike R3）。
+    cands: list[tuple[int, int, str]] = []
+    for prio, pat in enumerate((r"\{.*\}", r"\[.*\]")):
         m = re.search(pat, text, re.S)
         if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                continue
+            cands.append((m.start(), prio, m.group(0)))
+    for _, _, blob in sorted(cands):
+        try:
+            return json.loads(blob)
+        except Exception:
+            continue
     return None
 
 

@@ -23,6 +23,10 @@ export interface StreamMessage {
   expert?: string
   text?: string
   members?: string[]
+  /** 组队降级原因：llm_error | llm_output_unusable | spec_violation；空表示真组队 */
+  degraded?: string
+  /** 指派产出被归一的痕迹（丢非法指派 / lead 悬空等），供决策回放核对 */
+  repairs?: string[]
   claim?: Claim
   reason?: string
   diff?: { before: string; after: string }
@@ -65,6 +69,10 @@ interface TaskState {
   // 目的地来自兜底链（计划降级）：只作温和横幅，与 error 通道无关；
   // 与澄清问卷的 destinations_fallback 分属两条流，各自独立（见 lib/destinationFallbackCopy）
   planFallback: boolean
+  // 专家团队来自规则兜底（未经 LLM 动态指派）：取值 llm_error | llm_output_unusable |
+  // spec_violation，空串/null 表示真组队。与 planFallback 同属「运行流降级」，
+  // 不进报告 payload —— 报告是历史快照，降级只描述这一次怎么跑出来的。
+  dispatchDegraded: string | null
 
   reset: (taskId: string, query: string) => void
   ingest: (type: SSEEventType, data: unknown) => void
@@ -149,6 +157,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
   teamMembers: [],
   error: null,
   planFallback: false,
+  dispatchDegraded: null,
 
   reset: (taskId, query) => {
     stopPump()
@@ -172,6 +181,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       teamMembers: [],
       error: null,
       planFallback: false,
+      dispatchDegraded: null,
     })
   },
 
@@ -209,6 +219,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
         if (msg.kind === 'claim' && msg.claim)
           patch.claims = [...s.claims, msg.claim]
         if (msg.kind === 'plan_fallback') patch.planFallback = true
+        if (msg.kind === 'team' && msg.degraded) patch.dispatchDegraded = msg.degraded
         set(patch)
         return
       }

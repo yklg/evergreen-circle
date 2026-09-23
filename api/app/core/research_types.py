@@ -131,7 +131,7 @@ SECTION_FIELDS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     # 调研评估
     "accessibility": (("accessibility", "access_matrix"), ()),
     "amenities": (("amenities", "amenity_checklist"), ()),
-    "safety": (("safety", "risk_profile"), ()),
+    "safety": (("safety", "risk_profile", "overview"), ("cost_bar",)),
     "value": (("value", "budget"), ("cost_bar",)),
     "livelihood": (("livelihood",), ()),
     "verdict": (("verdict",), ("radar",)),
