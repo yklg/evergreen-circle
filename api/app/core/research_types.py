@@ -129,11 +129,11 @@ SECTION_FIELDS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "route": (("route", "route_plan"), ()),
     "tips": (("tips", "risk"), ()),
     # 调研评估
-    "accessibility": (("accessibility", "access_matrix"), ()),
-    "amenities": (("amenities", "amenity_checklist"), ()),
-    "safety": (("safety", "risk_profile", "overview"), ("cost_bar",)),
+    "accessibility": (("accessibility", "access_matrix"), ("radar",)),
+    "amenities": (("amenities", "amenity_checklist"), ("cost_bar",)),
+    "safety": (("safety", "risk_profile", "overview"), ("cost_bar", "season_heat")),
     "value": (("value", "budget"), ("cost_bar",)),
-    "livelihood": (("livelihood",), ()),
+    "livelihood": (("livelihood",), ("cost_bar",)),
     "verdict": (("verdict",), ("radar",)),
     # 视角
     "persp_family": (("overview", "stay", "tips"), ()),
@@ -189,12 +189,14 @@ SECTION_STRUCTURED: Dict[str, Tuple[str, ...]] = {
     "accessibility": ("access_matrix",),
     "amenities": ("amenity_checklist",),
     "safety": ("risk_profile",),
+    # 视角专属块（rough-cliff-vole）：不登记即孤儿数据——渲染/审计按本表挂章。
+    "persp_family": ("family_checklist", "persp_rules", "persp_packing"),
 }
 
 # 图表类型白名单（charts.py 能力面 ∩ 本模块使用面）
 CHART_TYPES: Tuple[str, ...] = (
     "radar", "cost_bar", "cost_compose", "season_heat", "donut",
-    "trend", "sentiment_donut", "platform_bar", "wordcloud",
+    "trend", "sentiment_donut", "platform_bar", "wordcloud", "growth_bar",
 )
 
 # 已废弃的旧契约字段（防回潮：不得出现在任何类型的产出里）
@@ -222,6 +224,7 @@ DEST_KEYED_ROWS: Tuple[Tuple[str, str], ...] = (
     ("budget", "destination"),
     ("cost", "destination"),
     ("safety_index", "destination"),
+    ("livelihood_cost", "destination"),
     ("season.matrix", "destination"),
     ("share_estimate", "name"),
     ("trends.series", "name"),
@@ -232,7 +235,80 @@ DEST_KEYED_ROWS: Tuple[Tuple[str, str], ...] = (
     ("structured.route_plan", "destination"),
     ("structured.stay_options", "destination"),
     ("structured.cost_breakdown", "destination"),
+    # 视角块按**组级 destination** 分组（同 spot_routes 形状）——登记组级主键安全；
+    # 行级景点名**不登记**（景点名不是目的地，误登记会被整表滤光，评审 P0-1）。
+    ("structured.family_checklist", "destination"),
+    ("structured.persp_rules", "destination"),
+    ("structured.persp_packing", "destination"),
 )
+
+# ── 视角专属板块能力注册表（rough-cliff-vole）────────────────────
+# 视角章 id → 专属采集/结构化契约。10 个视角全登记（防漏）；除亲子外
+# checklist_key 等为 None = 本期无专属采集、仍出通用散文——全链路按 None 谓词
+# 跳过，编排层不写 if persp_family 分支（同 MULTI_ONLY/SOLO_ONLY 先例）。
+# 注意：视角结构化键**不进**静态 structured_keys——由 structured_keys_for()
+# 在视角命中时追加，保证非视角卷的质量分母逐值不变（评审 P0-1）。
+# checklist 行集由编排层从冻结榜 seed（行守恒），LLM 只填格不造行；
+# 视角块与 spot_routes 同形状（组级 destination 分组），DEST_KEYED_ROWS 只登记组级主键。
+PERSPECTIVE_SPECS: Dict[str, Dict[str, Any]] = {
+    "persp_family": {
+        "angle_tpls": ("亲子 儿童票 免票 身高 年龄 规则", "亲子 母婴室 婴儿车 遛娃 设施"),
+        # 二查措辞按真机校准：设施名词堆叠（母婴室+亲子设施）命中 58 同城母婴店/月嫂广告，
+        # 换成 UGC 问句用词（带娃/推车/婴儿车/台阶）才采到「路面适不适合推车」这类可行事实。
+        "spot_probe_tpls": ("{spot} 儿童票 免票 身高 年龄 规则",
+                            "{spot} 带娃 推车 婴儿车 台阶 母婴室"),
+        "checklist_key": "family_checklist",
+        "checklist_columns": ("儿童票规则", "推车可行/体力门槛",
+                              "母婴室/家庭卫生间", "带娃节奏建议"),
+        "rules_key": "persp_rules",
+        "packing_key": "persp_packing",
+        "hard_constraints": ("days", "budget_level", "origin", "child_age"),
+    },
+    "persp_couple": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                     "checklist_columns": (), "rules_key": None, "packing_key": None,
+                     "hard_constraints": ("days", "budget_level", "origin")},
+    "persp_solo": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                   "checklist_columns": (), "rules_key": None, "packing_key": None,
+                   "hard_constraints": ("days", "budget_level", "origin")},
+    "persp_photo": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                    "checklist_columns": (), "rules_key": None, "packing_key": None,
+                    "hard_constraints": ("days", "travel_season")},
+    "persp_senior": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                     "checklist_columns": (), "rules_key": None, "packing_key": None,
+                     "hard_constraints": ("days", "budget_level", "origin")},
+    "persp_live": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                   "checklist_columns": (), "rules_key": None, "packing_key": None,
+                   "hard_constraints": ("horizon", "budget_level")},
+    "persp_invest": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                     "checklist_columns": (), "rules_key": None, "packing_key": None,
+                     "hard_constraints": ("horizon", "budget_level")},
+    "persp_study": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                    "checklist_columns": (), "rules_key": None, "packing_key": None,
+                    "hard_constraints": ("horizon", "budget_level")},
+    "persp_retire": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                     "checklist_columns": (), "rules_key": None, "packing_key": None,
+                     "hard_constraints": ("horizon", "budget_level")},
+    "persp_remote": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+                     "checklist_columns": (), "rules_key": None, "packing_key": None,
+                     "hard_constraints": ("horizon", "budget_level")},
+}
+
+# 全部视角专属结构化键的并集（元测试与 structured_keys_for 共用判据）。
+PERSP_STRUCTURED_KEYS = frozenset(
+    k for p in PERSPECTIVE_SPECS.values()
+    for k in (p.get("checklist_key"), p.get("rules_key"), p.get("packing_key")) if k)
+
+
+def perspective_spec(section_id: str) -> Dict[str, Any]:
+    """视角章节 id → 专属契约；未登记返回 {}（调用方按 None 谓词跳过）。"""
+    return PERSPECTIVE_SPECS.get(section_id) or {}
+
+
+def perspective_structured_keys(section_id: str) -> Tuple[str, ...]:
+    """视角章应产出的结构化键（未配置视角为空）。"""
+    p = perspective_spec(section_id)
+    return tuple(k for k in (p.get("checklist_key"), p.get("rules_key"),
+                             p.get("packing_key")) if k)
 
 _CN_NUM: Tuple[str, ...] = ("一", "二", "三", "四", "五", "六",
                             "七", "八", "九", "十", "十一", "十二", "十三", "十四")
@@ -244,6 +320,7 @@ _CN_NUM: Tuple[str, ...] = ("一", "二", "三", "四", "五", "六",
 # 防止「问了不听」的装饰题再次出现（days/origin/focus 三个历史错位点即根因实例）。
 CONSUMER_PLAN_TEXT = "plan_text"          # 答案仅作为提示词参考文本进计划层
 CONSUMER_CONFIRM_ONLY = "confirm_only"    # 用户校对位，答案不改变产出
+CONSUMER_CONSTRAINTS = "constraints"      # 答案作为硬约束注入视角章写作/质检提示
 
 
 def _structured(point: str) -> str:
@@ -253,13 +330,15 @@ def _structured(point: str) -> str:
 STRUCTURED_CONSUMERS = frozenset(
     _structured(p) for p in ("days_angle", "origin_angle", "perspective",
                              "destinations", "focus"))
-ALL_CONSUMERS = STRUCTURED_CONSUMERS | {CONSUMER_PLAN_TEXT, CONSUMER_CONFIRM_ONLY}
+ALL_CONSUMERS = (STRUCTURED_CONSUMERS | {CONSUMER_PLAN_TEXT, CONSUMER_CONFIRM_ONLY,
+                                         CONSUMER_CONSTRAINTS})
 
 # qid → {consumer, digest, label}；digest=True 的答案进报告头部答题摘要（C6 唯一白名单）。
 CLARIFY_CONSUMERS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "guide": {
         "days": {"consumer": _structured("days_angle"), "digest": True, "label": "天数"},
         "party": {"consumer": _structured("perspective"), "digest": True, "label": "人群"},
+        "child_age": {"consumer": CONSUMER_CONSTRAINTS, "digest": True, "label": "娃龄"},
         "budget_level": {"consumer": CONSUMER_PLAN_TEXT, "digest": False, "label": ""},
         "travel_season": {"consumer": CONSUMER_PLAN_TEXT, "digest": False, "label": ""},
         "origin": {"consumer": _structured("origin_angle"), "digest": False, "label": ""},
@@ -296,6 +375,32 @@ def consumer_registry(rtype: Optional[str]) -> Dict[str, Dict[str, Any]]:
     return CLARIFY_CONSUMERS.get(_type_key(rtype), CLARIFY_CONSUMERS[DEFAULT_RESEARCH_TYPE])
 
 
+def show_if_triggered(q: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+    """条件题显隐判据（唯一实现，前后端同语义）：show_if.qid 的答案恰等于 equals 才触发。"""
+    cond = q.get("show_if") or {}
+    if not cond:
+        return True
+    return str((answers or {}).get(str(cond.get("qid"))) or "") == str(cond.get("equals"))
+
+
+def missing_conditional_answers(rtype: Optional[str], answers: Dict[str, Any]) -> List[str]:
+    """已触发但缺答的条件题 id 列表（submit 必答闸门唯一判据源）。
+
+    只对带 show_if 的题生效：未触发（如 party≠亲子）缺答**不算缺**——
+    前端隐藏题、非亲子用户根本看不到，拒答就是把脏判定推给用户。
+    """
+    qs = type_spec(rtype).get("clarify") or []
+    return [str(q["id"]) for q in qs
+            if q.get("show_if") and show_if_triggered(q, answers)
+            and not str((answers or {}).get(str(q["id"])) or "").strip()]
+
+
+def visible_clarify_questions(rtype: Optional[str], answers: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """按当前答案集过滤出应展示的题目（前端插除题与后端闸门共用同一判据）。"""
+    qs = type_spec(rtype).get("clarify") or []
+    return [q for q in qs if show_if_triggered(q, answers)]
+
+
 def _type_key(rtype: Optional[str]) -> str:
     s = str(rtype or "").strip().lower()
     return s if s in CLARIFY_CONSUMERS else DEFAULT_RESEARCH_TYPE
@@ -315,6 +420,10 @@ def _clarify_guide() -> List[Dict[str, Any]]:
          "options": ["1-2 天", "3-5 天", "6-10 天", "10 天以上", "还没定"]},
         {"id": "party", "question": "同行人群是？（决定行程节奏与视角章节）", "type": "single",
          "options": ["亲子家庭", "情侣/夫妻", "独自旅行", "朋友结伴", "带长辈", "摄影采风"]},
+        {"id": "child_age", "question": "孩子多大？（决定免票线、设施与玩法建议）", "type": "single",
+         "options": ["3 岁以下", "3-6 岁", "7-12 岁", "12 岁以上"],
+         "show_if": {"qid": "party", "equals": "亲子家庭"},
+         "hint": "免票线、母婴设施与玩法建议都随年龄段变化；多娃填最小的。"},
         {"id": "budget_level", "question": "预算档位大概在哪一档？", "type": "single",
          "options": ["经济实惠（人均 <1000）", "舒适均衡（1000-3000）",
                      "品质享受（3000-6000）", "高端不限（>6000）", "还没定"]},
@@ -402,7 +511,7 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
         },
         "charts": ("radar", "cost_bar", "cost_compose", "season_heat", "donut",
                    "trend", "sentiment_donut", "platform_bar", "wordcloud"),
-        "data_grid_sections": ("spots", "food", "budget", "shops", "route"),
+        "data_grid_sections": ("spots", "food", "budget", "shops", "route", "persp_family"),
         # 信息密度硬约束（评分/篇幅等规模参数仍归 MODE_CONFIG；这里是编辑规则），
         # 由 orchestrator 在写稿提示中注入，仅 guide 类型声明。
         "density": (
@@ -455,7 +564,8 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
         "sentiment_angles": ("{d} 宜居吗", "{d} 生活成本", "{d} 真实居住体验", "{d} 优缺点"),
         "structured_keys": ("access_matrix", "amenity_checklist", "risk_profile"),
         "analysis_keys": ("livability", "cost", "safety_index", "share_estimate",
-                          "trends", "contradictions"),
+                          "trends", "contradictions",
+                          "livelihood_cost", "action_priorities", "consensus_split"),
         "radar_key": "livability",
         "radar_title": "目的地宜居度雷达对比",
         "radar_title_solo": "目的地宜居度雷达",
@@ -475,8 +585,19 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
             "发展前景": ("发展", "前景", "规划"),
         },
         "charts": ("radar", "cost_bar", "donut", "trend",
-                   "sentiment_donut", "platform_bar"),
-        "data_grid_sections": ("value", "accessibility", "trend"),
+                   "sentiment_donut", "platform_bar",
+                   "season_heat", "growth_bar"),
+        "data_grid_sections": ("value", "accessibility", "trend", "livelihood"),
+        # 信息密度硬约束（与 guide 同键同注入点，见 orchestrator 写稿提示）：
+        # 评估报告的证据密度全在评分/矩阵/清单里，正文的价值是给机理与事实，不是复述结论。
+        "density": (
+            "信息密度铁律：评分/矩阵/清单等结构化数据先行，正文各段直接给事实、数据与机理"
+            "（不写导语、总起句、评价性收束句——核心判断与评分已单独成块，正文不得复述一遍）；"
+            "目的地、交通方式、配套项、风险维度一律引用给定结构化表（可达性矩阵/配套清单/"
+            "风险画像）内的名称与口径，禁止另起别名或重新归类；"
+            "每段至少含 1 个具体数字（分数/耗时/费用/占比/里程）或具体实体名，否则删掉该段；"
+            "禁止「众所周知/随着社会发展/总而言之」等套话开头结尾，禁止空洞升华段。"
+        ),
         "clarify": _clarify_assessment(),
         "perspective_source": ("intent", "perspective"),
         "perspectives": {
@@ -494,9 +615,22 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
         "title_suffix": "宜居评估报告",
         "cover_byline": "旅游调研 · 评估",
         "glossary": (
-            {"term": "可达性打分", "definition": "从主要出发地到目的地的交通方式、耗时、费用与班次频次综合量化。", "source": "本报告分析框架"},
-            {"term": "配套完善度", "definition": "医疗/教育/商业/政务/网络等生活配套的覆盖程度评级（full/partial/none）。", "source": "本报告分析框架"},
-            {"term": "风险画像", "definition": "按治安/自然灾害/医疗应急等维度给出的风险等级（low/medium/high）与依据。", "source": "本报告分析框架"},
+            {"term": "可达性打分",
+             "definition": "由各交通方式的耗时与费用两类可核验数值按 0.6/0.4 加权算出"
+                           "（方式内相对分，本次报告最优路线=100），附计算明细，LLM 不参与打分。",
+             "source": "本报告评分公式（scoring.py）"},
+            {"term": "配套完善度",
+             "definition": "医疗/教育/商业/政务/网络等生活配套按覆盖程度 full/partial/none "
+                           "映射 100/50/0 后取均值，附计算明细，LLM 不参与打分。",
+             "source": "本报告评分公式（scoring.py）"},
+            {"term": "风险画像",
+             "definition": "按治安/自然灾害/医疗应急等维度取风险等级 low/medium/high，"
+                           "映射 20/50/80 后等权合成综合风险分，附计算明细，LLM 不参与打分。",
+             "source": "本报告评分公式（scoring.py）"},
+            {"term": "证据强度",
+             "definition": "结论总数、有据/无据条数与被引用证据的独立信源数，逐条计数得出"
+                           "（同一内容多站转载归并为一个信源），不做加权估计。",
+             "source": "本报告评分公式（scoring.py）"},
         ),
     },
 }
@@ -610,6 +744,19 @@ def charts_for(rtype: Optional[str], n_destinations: int) -> Tuple[str, ...]:
     if n_destinations >= 2:
         return tuple(c for c in charts if c not in SOLO_ONLY_CHARTS)
     return tuple(c for c in charts if c not in MULTI_ONLY_CHARTS)
+
+
+def structured_keys_for(rtype: Optional[str], perspective_section_id: str = "") -> Tuple[str, ...]:
+    """本卷**应产出**的有效结构化键集 = 类型基础键 + 视角专属键（视角命中时追加）。
+
+    质量分母（schema_completeness）与审计必须读本函数而非静态 structured_keys——
+    视角键不在静态表里：非视角卷的分母逐值不变，亲子卷多三键也不虚高（评审 P0-1）。
+    """
+    keys = list(type_spec(rtype)["structured_keys"])
+    for k in perspective_structured_keys(perspective_section_id):
+        if k not in keys:
+            keys.append(k)
+    return tuple(keys)
 
 
 def radar_title(rtype: Optional[str], n_destinations: int) -> str:

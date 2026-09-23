@@ -645,6 +645,134 @@ export function VRiskProfile({ data }: { data: Row[] }) {
 }
 
 /* 类型 → 渲染器（键集与后端 research_types.structured_keys 一致） */
+/** 视角·逐景点核查表（rough-cliff-vole R1 榜单表样式）：行=冻结榜不丢行，
+ *  缺格「待核验」text-risk 占位（与 spot_routes 未命中占位同哲学：可见、不造数）。 */
+function VFamilyChecklist({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4" data-testid="family-checklist">
+      {data.map((d, di) => {
+        const items = (d.items as Row[]) || []
+        const cols: string[] = ((items[0]?.cells as Row[]) || []).map(
+          (c) => String(c.column ?? ''))
+        return (
+          <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+            <div className="bg-paper px-4 py-2 text-aux font-semibold text-ink">
+              {String(d.destination ?? '')} · 逐景点亲子核查表
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-tag">
+                <thead>
+                  <tr className="border-b border-line text-ink-3">
+                    <th className="px-3 py-1.5 text-left font-medium">#</th>
+                    <th className="px-2 py-1.5 text-left font-medium">景点</th>
+                    {cols.map((c) => (
+                      <th key={c} className="px-2 py-1.5 text-left font-medium whitespace-nowrap">{c}</th>
+                    ))}
+                    <th className="px-3 py-1.5 text-left font-medium">证据</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it: Row, ii: number) => {
+                    const cells = (it.cells as Row[]) || []
+                    const eids = [...new Set(cells.flatMap(
+                      (c) => (c.evidence_ids as string[]) || []))]
+                    return (
+                      <tr key={ii} data-checklist-row={String(it.spot_id ?? '')}
+                          className="border-b border-line/60 last:border-0">
+                        <td className="px-3 py-1.5 font-semibold text-primary-deep">{ii + 1}</td>
+                        <td className="px-2 py-1.5 font-medium text-ink whitespace-nowrap">
+                          {String(it.spot_name ?? '')}
+                        </td>
+                        {cells.map((c, ci) => (
+                          <td key={ci} className="px-2 py-1.5">
+                            {c.verified
+                              ? <span className="text-ink-2">{String(c.text ?? '')}</span>
+                              : <span data-cell-missing className="rounded-chip bg-sun-soft px-1.5 py-0.5 text-risk">
+                                  {String(c.text ?? '待核验')}
+                                </span>}
+                          </td>
+                        ))}
+                        <td className="px-3 py-1.5 text-ink-3 whitespace-nowrap">
+                          {eids.length ? eids.map((e) => `[${e}]`).join(' ') : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 视角铁律清单：每条由问卷硬约束驱动（refs）+ 真实证据引用。 */
+function VPerspRules({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4" data-testid="persp-rules">
+      {data.map((d, di) => {
+        const items = (d.items as Row[]) || []
+        if (!items.length) return null
+        return (
+          <div key={di} className="rounded-card border border-line bg-white p-4">
+            <div className="mb-2 text-aux font-semibold text-ink">
+              {String(d.destination ?? '')} · 本次行程铁律（按你的问卷生成）
+            </div>
+            <ul className="space-y-2">
+              {items.map((r, ri) => (
+                <li key={ri} data-rule-row className="flex gap-2 text-tag leading-relaxed text-ink-2">
+                  <span className="text-primary-deep font-semibold">☑</span>
+                  <span>
+                    {String(r.text ?? '')}
+                    {Array.isArray(r.evidence_ids) && r.evidence_ids.length > 0 && (
+                      <span className="ml-1 text-ink-3">
+                        {(r.evidence_ids as string[]).map((e) => `[${e}]`).join(' ')}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 视角·行前清单（只收目的地事实挂钩项，随证据列展示）。 */
+function VPerspPacking({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4" data-testid="persp-packing">
+      {data.map((d, di) => {
+        const items = (d.items as Row[]) || []
+        if (!items.length) return null
+        return (
+          <div key={di} className="rounded-card border border-line bg-white p-4">
+            <div className="mb-2 text-aux font-semibold text-ink">行前清单 · 目的地相关</div>
+            <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {items.map((r, ri) => (
+                <li key={ri} data-packing-row className="flex gap-2 text-tag leading-relaxed text-ink-2">
+                  <span className="text-primary-deep font-semibold">□</span>
+                  <span>
+                    <span className="font-medium text-ink">{String(r.item ?? '')}</span>
+                    {r.reason ? <span className="text-ink-3">（{String(r.reason)}）</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 const BLOCKS: Record<StructuredBlockType, (p: { data: Row[] }) => ReactElement | null> = {
   spot_ranking: VSpotAtlas,
   spot_routes: VSpotRoutes,
@@ -656,12 +784,25 @@ const BLOCKS: Record<StructuredBlockType, (p: { data: Row[] }) => ReactElement |
   access_matrix: VAccessMatrix,
   amenity_checklist: VAmenityChecklist,
   risk_profile: VRiskProfile,
+  family_checklist: VFamilyChecklist,
+  persp_rules: VPerspRules,
+  persp_packing: VPerspPacking,
 }
 
 /** 结构化块分发。旧报告的已废弃类型（feature_tree 等）不渲染也不报错。 */
-export function VStructuredBlock({ block }: { block?: StructuredBlock | null }) {
+export function VStructuredBlock({ block }: {
+  block?: StructuredBlock[] | StructuredBlock | null
+}) {
   if (!block) return null
-  const Renderer = BLOCKS[block.type]
-  if (!Renderer) return null
-  return <Renderer data={block.data as Row[]} />
+  // 复数挂块契约（rough-cliff-vole）：视角一章同挂核查表+铁律+清单；旧报告为单块 dict
+  const blocks = Array.isArray(block) ? block : [block]
+  return (
+    <>
+      {blocks.map((b, i) => {
+        const Renderer = BLOCKS[b.type]
+        if (!Renderer) return null
+        return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} />
+      })}
+    </>
+  )
 }

@@ -23,7 +23,7 @@ from app.core import research_types as rt
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
 from app.core.research_types import DEFAULT_RESEARCH_TYPE
 import logging
-from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task, GuideSingleDestinationError
+from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task, GuideSingleDestinationError, ClarifyAnswerRequiredError
 from app.core import runner
 from app.core.runtime_config import (
     GROUP_FIELDS,
@@ -321,6 +321,11 @@ def post_clarify(task_id: str, body: ClarifyBody):
         raise HTTPException(
             status_code=422,
             detail={"code": "guide_single_destination", "message": str(e)},
+        )
+    except ClarifyAnswerRequiredError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "clarify_answer_required", "message": str(e)},
         )
 
 

@@ -23,7 +23,14 @@ def _grid() -> Dict[str, Any]:
     return {"left": 48, "right": 24, "top": 48, "bottom": 36, "containLabel": True}
 
 
-def feature_radar(title: str, dimensions: List[str], series: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _graphic_note(note: str, limit: int = 80) -> List[Dict[str, Any]]:
+    """图内右下角注记（公式/口径说明）：与 season_heat 的 note 同一手法，供算分图可审计。"""
+    return [{"type": "text", "right": 16, "bottom": 30,
+             "style": {"text": note[:limit], "fill": MORANDI["ink2"], "fontSize": 11}}]
+
+
+def feature_radar(title: str, dimensions: List[str], series: List[Dict[str, Any]],
+                  note: str = "") -> Dict[str, Any]:
     indicator = [{"name": d, "max": 100} for d in dimensions]
     data = [
         {"value": s["values"], "name": s["name"], "lineStyle": {"color": SERIES[i % len(SERIES)]},
@@ -31,7 +38,7 @@ def feature_radar(title: str, dimensions: List[str], series: List[Dict[str, Any]
          "areaStyle": {"opacity": 0.12}}
         for i, s in enumerate(series)
     ]
-    return {
+    option: Dict[str, Any] = {
         "title": {"text": title, "left": "center", "textStyle": {"color": MORANDI["ink"], "fontSize": 15}},
         "tooltip": {},
         "legend": {"bottom": 0, "textStyle": _BASE_TEXT},
@@ -43,12 +50,15 @@ def feature_radar(title: str, dimensions: List[str], series: List[Dict[str, Any]
         },
         "series": [{"type": "radar", "data": data, "symbolSize": 5}],
     }
+    if note:
+        option["graphic"] = _graphic_note(note)
+    return option
 
 
 def pricing_bar(title: str, products: List[str], values: List[float],
-                y_name: str = "￥/月") -> Dict[str, Any]:
+                y_name: str = "￥/月", note: str = "") -> Dict[str, Any]:
     """分类柱状图（花费/成本对比）；y 轴单位由调用方按调研类型传入。"""
-    return {
+    option: Dict[str, Any] = {
         "title": {"text": title, "left": "center", "textStyle": {"color": MORANDI["ink"], "fontSize": 15}},
         "tooltip": {"trigger": "axis"},
         "grid": _grid(),
@@ -61,6 +71,9 @@ def pricing_bar(title: str, products: List[str], values: List[float],
             "itemStyle": {"color": MORANDI["primary"], "borderRadius": [8, 8, 0, 0]},
         }],
     }
+    if note:
+        option["graphic"] = _graphic_note(note)
+    return option
 
 
 def season_heat(title: str, months: List[str], destinations: List[str],
@@ -86,8 +99,7 @@ def season_heat(title: str, months: List[str], destinations: List[str],
                     "emphasis": {"itemStyle": {"shadowBlur": 8, "shadowColor": "rgba(0,0,0,0.25)"}}}],
     }
     if note:
-        option["graphic"] = [{"type": "text", "right": 16, "bottom": 30,
-                              "style": {"text": note[:60], "fill": MORANDI["ink2"], "fontSize": 11}}]
+        option["graphic"] = _graphic_note(note, 60)
     return option
 
 

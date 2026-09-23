@@ -21,6 +21,9 @@ _MODULE_PATH = Path(rt.__file__)
 _ANALYSIS_KEYS_ALLOWED = {
     "comparison", "livability", "budget", "cost", "season", "safety_index",
     "share_estimate", "trends", "contradictions",
+    # 批次① 新增（各键的提示片段在 orchestrator._ANALYSIS_KEY_SCHEMA，由
+    # test_analysis_keys_have_prompt_fragments 钉死「登记即可产出」）
+    "livelihood_cost", "action_priorities", "consensus_split",
 }
 
 
@@ -122,6 +125,20 @@ def test_analysis_keys_valid(rtype):
     assert spec["radar_key"] in keys, "雷达图数据键必须在该类型的 analysis_keys 内"
     assert spec["cost_bar"]["key"] in keys, "成本柱图数据键必须在该类型的 analysis_keys 内"
     assert "share_estimate" in keys and "trends" in keys and "contradictions" in keys
+
+
+@pytest.mark.parametrize("rtype", _TYPES)
+def test_analysis_keys_have_prompt_fragments(rtype):
+    """每个 analysis_key 必须在 orchestrator._ANALYSIS_KEY_SCHEMA 有提示片段。
+
+    缺片段的键 LLM 永远不被要求产出 → 静默无数据（批次① 三新键即靠本断言钉住
+    「登记即产出」；与 :86 的结构化键同型防线）。
+    """
+    from app.core import orchestrator as O
+
+    keys = set(rt.RESEARCH_TYPES[rtype]["analysis_keys"])
+    missing = keys - set(O._ANALYSIS_KEY_SCHEMA)
+    assert not missing, f"{rtype} 分析键缺提示片段：{sorted(missing)}"
 
 
 @pytest.mark.parametrize("rtype", _TYPES)

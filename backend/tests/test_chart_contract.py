@@ -4,19 +4,15 @@
 - T-16 `_build_charts` 的公开签名与「扁平 List[spec]」返回契约不得变更——
   批次② 要把内部拆成 builder 注册表，但 test_charts_options.py 有 6 处按位置
   直接调用它，签名一动即连带变红。
-- T-04 「声明↔数据源键」一致性：某类型一旦进 spec["charts"]，其在 _build_charts
+- T-04 「声明↔数据源键」一致性：某类型一旦进 spec["charts"]，其在 builder
   中所读的数据源键必须已在该类型 analysis_keys / structured_keys 登记。
   补的是既有三层声明校验（test_research_types.py:139/146/152 全部止于「类型」
   抽象层级、且以 set 比对）之外的静默失败面：挂了类型但无数据源 → 永远不出图，
-  而三层校验全绿。
+  而三层校验全绿。数据源键的来源 = 每个 builder 自带的 REQUIRES 元组——第五处
+  人工对齐的登记表已被消除，声明与实现同处一函数（批次②）。
 - T-05 拆分等价 characterization：固化 guide 在当前实现下的产出基线（归一化后
   剔除随机 chart_id），批次② 拆分前后必须逐字节一致。手法复用仓内既有先例
   test_runner_terminal.py:196 的 _bare() 归一化比对思路。
-
-过渡说明（诚实标注）：CHART_SOURCE_KEYS 是一张「类型 → 允许的数据源键」手工
-登记表，本身构成第五处需人工对齐的声明源。批次② 落地 builder 注册表后，本表
-应由每个 builder 自带的 REQUIRES 元组取代，测试改为遍历 CHART_BUILDERS——
-届时删除本表。当前以「任一候选键命中即通过」放宽，只为先挡住「完全无数据源」。
 
 运行：backend/ 下 `pytest tests/test_chart_contract.py -q`
 """
@@ -29,26 +25,20 @@ from app.core import research_types as RT
 
 _TYPES = list(RT.RESEARCH_TYPES)
 
-# ── T-04：图表类型 → 在 _build_charts 中所读的数据源键 ──────────────
-# 语义：
+
+# ── T-04：图表类型 → 在 builder 中所读的数据源键 ───────────────────
+# 语义（REQUIRES 词表，由 orchestrator._builder 声明）：
 #   "@radar_key"      读 spec["radar_key"] 指向的 analysis 键
 #   "@cost_bar_key"   读 spec["cost_bar"]["key"] 指向的 analysis 键
 #   "@sentiment"      数据来自 sentiment 对象，不经 analysis/structured
+#   "@claims"         数据来自 claims/evidences（算分图），不经 analysis/structured
 #   "a.b"             analysis 顶层键 a；structured.<b> 表示 structured 子键
-# 值为「候选键元组」：同一类型可由不同原料驱动（如 season_heat 既读 season
-# 也读 structured.risk_profile），任一已在该类型登记即视为有源。
-CHART_SOURCE_KEYS = {
-    "radar": ("@radar_key",),
-    "cost_bar": ("@cost_bar_key",),
-    "cost_compose": ("structured.cost_breakdown",),
-    "season_heat": ("season", "structured.risk_profile"),
-    "donut": ("share_estimate",),
-    "trend": ("trends",),
-    "sentiment_donut": ("@sentiment",),
-    "platform_bar": ("@sentiment",),
-    "wordcloud": ("@sentiment",),
-    "growth_bar": ("action_priorities",),
-}
+def _builders_by_type():
+    """类型 → 该类型全部 builder（同类型可有多个：cost_bar 有 5 个、growth_bar 有 3 个）。"""
+    out = {}
+    for fn in orchestrator.CHART_BUILDERS:
+        out.setdefault(fn.CHART_TYPE, []).append(fn)
+    return out
 
 
 def _registered_keys(rtype):
@@ -59,12 +49,12 @@ def _registered_keys(rtype):
 
 
 def _resolve(candidate, spec):
-    """把候选键描述解析成实际登记名；@sentiment 类返回 None 表示无需 analysis。"""
+    """把候选键描述解析成实际登记名；@sentiment/@claims 返回 None 表示无需 analysis。"""
     if candidate == "@radar_key":
         return spec["radar_key"]
     if candidate == "@cost_bar_key":
         return (spec.get("cost_bar") or {}).get("key")
-    if candidate == "@sentiment":
+    if candidate in ("@sentiment", "@claims"):
         return None
     if candidate.startswith("structured."):
         return candidate.split(".", 1)[1]
@@ -73,35 +63,134 @@ def _resolve(candidate, spec):
 
 @pytest.mark.parametrize("rtype", _TYPES)
 def test_declared_chart_types_have_data_source(rtype):
-    """T-04：spec["charts"] 里每个类型，必须至少有一个候选数据源键已登记。
+    """T-04：spec["charts"] 里每个类型，至少要有一个 builder 的数据源键已登记。
 
     防线场景：给某类型 charts 加了 season_heat，却没把 season 加进 analysis_keys
-    ——既有三层校验全绿，但该图永远生不出来（静默失败）。
+    ——既有三层校验全绿，但该图永远生不出来（静默失败）。允许「部分 builder 无源」
+    是有意的：同类型的别的 builder 可能只服务另一类型（如 cost_bar 族里
+    safety_index 只在 assessment 登记），那些 builder 对该类型自然降级为不出图。
     """
     spec = RT.type_spec(rtype)
     registered, _ = _registered_keys(rtype)
+    by_type = _builders_by_type()
     for ctype in spec["charts"]:
-        assert ctype in CHART_SOURCE_KEYS, \
-            f"{rtype}: 图表类型 {ctype!r} 未在 CHART_SOURCE_KEYS 登记其数据源键"
-        candidates = CHART_SOURCE_KEYS[ctype]
-        resolved = [_resolve(c, spec) for c in candidates]
-        # @sentiment 解析为 None：只要声明了该候选即视为有源（舆情链路另行校验）
-        if None in resolved:
-            continue
-        hit = [k for k in resolved if k and k in registered]
-        assert hit, (
-            f"{rtype}: charts 声明了 {ctype!r}，但其候选数据源 {candidates} "
+        assert ctype in by_type, f"{rtype}: 图表类型 {ctype!r} 没有任何 builder 实现"
+        ok = False
+        for fn in by_type[ctype]:
+            resolved = [_resolve(c, spec) for c in fn.REQUIRES]
+            # @sentiment/@claims 解析为 None：声明了该候选即视为有源（舆情链路另行校验）
+            if None in resolved or any(k and k in registered for k in resolved):
+                ok = True
+                break
+        assert ok, (
+            f"{rtype}: charts 声明了 {ctype!r}，但其 builder（{fn.__name__} 等）的候选数据源 "
             f"无一登记于 analysis_keys/structured_keys —— 该图将永远生不出来"
         )
 
 
-def test_chart_source_keys_table_covers_whitelist():
-    """T-04 自身防漂移：CHART_TYPES 白名单里每个类型都得在登记表有条目。
+def test_chart_type_whitelist_covered_by_builders():
+    """T-04 自身防漂移：CHART_TYPES 白名单与 builder 注册表必须互相覆盖。
 
-    否则新增图表类型时会悄悄绕过 T-04 校验。
+    缺 builder → 声明了类型却永远生不出；builder 类型不在白名单 → 出图越出
+    契约面（前端也可能没渲染分派）。两侧都钉住。
     """
-    missing = set(RT.CHART_TYPES) - set(CHART_SOURCE_KEYS)
-    assert not missing, f"CHART_SOURCE_KEYS 缺登记：{sorted(missing)}"
+    by_type = _builders_by_type()
+    assert set(RT.CHART_TYPES) <= set(by_type), \
+        f"CHART_TYPES 有类型无 builder 实现：{sorted(set(RT.CHART_TYPES) - set(by_type))}"
+    assert set(by_type) <= set(RT.CHART_TYPES), \
+        f"builder 产出了契约面外的类型：{sorted(set(by_type) - set(RT.CHART_TYPES))}"
+    for fn in orchestrator.CHART_BUILDERS:
+        assert fn.REQUIRES, f"{fn.__name__} 未声明 REQUIRES（T-04 将无从校验）"
+
+
+def test_batch1_new_source_keys_are_registered():
+    """批次① 三个新分析键必须三重登记齐备，否则批次② 挂图即静默失败：
+
+    ① 进 assessment analysis_keys（LLM 产出契约）；② 按目的地分行的进 DEST_KEYED_ROWS
+    （装配层据此剔除不属于本次目的地的行）；③ 作为 builder 的 REQUIRES 登记（T-04
+    据此判「该类型有源」，缺登记则批次② 一致性测试直接红）。
+    """
+    spec = RT.type_spec("assessment")
+    for key in ("livelihood_cost", "action_priorities", "consensus_split"):
+        assert key in spec["analysis_keys"], f"{key} 未进 assessment analysis_keys"
+    assert ("livelihood_cost", "destination") in RT.DEST_KEYED_ROWS, \
+        "livelihood_cost 按目的地分行，未登记进 DEST_KEYED_ROWS"
+    by_name = {fn.__name__: fn for fn in orchestrator.CHART_BUILDERS}
+    # 三张新图统一走 growth_bar（共识/优先级/证据计数都不是平台数据，
+    # platform_bar 内部按 PLATFORM_ORDER 过滤会出空图）——故断言 growth_bar 侧。
+    requires = {fn.__name__: set(fn.REQUIRES) for fn in orchestrator.CHART_BUILDERS}
+    assert "livelihood_cost" in requires["_chart_livelihood_bar"], \
+        "生活成本分项柱的 REQUIRES 未登记 livelihood_cost"
+    assert "consensus_split" in requires["_chart_consensus_bar"], \
+        "共识vs反共识对照条的 REQUIRES 未登记 consensus_split"
+    assert "action_priorities" in requires["_chart_action_priorities"], \
+        "行动优先级分档柱的 REQUIRES 未登记 action_priorities"
+    assert by_name["_chart_consensus_bar"].CHART_TYPE == "growth_bar", \
+        "共识对照条须走 growth_bar（platform_bar 会按平台白名单滤空）"
+    assert by_name["_chart_action_priorities"].CHART_TYPE == "growth_bar"
+    assert by_name["_chart_evidence_strength"].CHART_TYPE == "growth_bar"
+
+
+# ── T-03：归属谓词（章节装配与舆情面板的唯一取图入口）─────────────
+def test_ownership_predicate_declared_charts_match_by_sections_only():
+    """声明了 sections 的图只按归属匹配：同类多图互不串章（根因③最小复现）。
+
+    这正是 assessment deep 档 cost_bar 两图（价值章成本柱 / 安全章评分柱）的
+    最小形态——旧实现两章各拿 2 张完全相同的图。
+    """
+    charts = [
+        {"chart_id": "cost", "type": "cost_bar", "sections": ("value",)},
+        {"chart_id": "safety", "type": "cost_bar", "sections": ("safety",)},
+    ]
+    pick = lambda sid: [c["chart_id"] for c in
+                        orchestrator._charts_for_section(sid, charts, ("cost_bar",))]
+    assert pick("value") == ["cost"]
+    assert pick("safety") == ["safety"]
+
+
+def test_ownership_predicate_declared_overrides_chart_types():
+    """sections 是权威：即便章节类型表未声明该类型，归属命中即挂。
+
+    这是批次② builder 自声明「图属哪章」的方向——不必再同步改 SECTION_FIELDS。
+    """
+    charts = [{"chart_id": "x", "type": "cost_bar", "sections": ("safety",)}]
+    assert [c["chart_id"] for c in
+            orchestrator._charts_for_section("safety", charts, ())] == ["x"]
+
+
+def test_ownership_predicate_undeclared_keeps_type_broadcast():
+    """sections 缺省 → 旧「按类型广播」行为保留（guide 现有图零变化的结构性保证）。
+
+    未声明的同类型多张会被整组挂出——这是旧行为的事实语义（expert 逐景点词云依赖它），
+    故不能把缺省解释成单张。批次② 全量迁移 builder 后此分支应随之消失。
+    """
+    charts = [{"chart_id": "r1", "type": "radar"}, {"chart_id": "r2", "type": "radar"},
+              {"chart_id": "d1", "type": "donut"}]
+    assert [c["chart_id"] for c in
+            orchestrator._charts_for_section("summary", charts,
+                                             ("radar", "donut"))] == ["r1", "r2", "d1"]
+
+
+def test_sentiment_panel_pick_is_order_independent():
+    """打乱产出顺序，舆情专章取图集合不变（旧「按类型取 c[0] 首张」会漂移）。
+
+    批次② 给 contrarian/risk 各配 platform_bar 后，旧实现取到哪张将随产出顺序
+    漂移——本用例把该顺序依赖钉死在集合层面。
+    """
+    charts = [
+        {"chart_id": "donut", "type": "sentiment_donut",
+         "sections": ("sentiment_report", "sentiment")},
+        {"chart_id": "bar-a", "type": "platform_bar",
+         "sections": ("sentiment_report", "sentiment")},
+        {"chart_id": "bar-other", "type": "platform_bar", "sections": ("contrarian",)},
+    ]
+
+    def pick(seq):
+        return {c["chart_id"] for c in orchestrator._charts_for_section(
+            "sentiment", seq, ("sentiment_donut", "platform_bar"))}
+
+    assert pick(charts) == {"donut", "bar-a"}
+    assert pick(list(reversed(charts))) == {"donut", "bar-a"}
 
 
 # ── T-16：_build_charts 公开签名与返回契约 ────────────────────────

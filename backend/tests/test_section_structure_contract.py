@@ -96,7 +96,9 @@ def test_diag_never_leaks_into_report_section():
     assert set(sec) == {
         "id", "title", "level", "key_takeaway", "highlights", "paragraphs", "claims",
         "charts", "source_evidence_ids", "structured", "data_grid", "structure_status",
+        "score_gap",
     }
+    assert sec["score_gap"] is None, "无缺口章节该键恒在且为 None（与 structure_status 正交）"
 
 
 # ── I4 structure_status 四态映射 ─────────────────────────

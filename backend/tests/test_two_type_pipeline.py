@@ -21,6 +21,7 @@ import pytest
 from app.core import db, runner
 from app.core import orchestrator as O
 from app.core import research_types as RT
+from app.core import scoring as SC
 from app.core import sentiment
 from app.services import baidu as baidu_mod
 
@@ -97,6 +98,10 @@ def _install_fakes(monkeypatch) -> dict:
         if purpose.startswith("结构化目的地知识"):
             eids = _EID_RE.findall(content)[:2] or []
             return _structured_payload(purpose, _DEST_OF_CONTENT(content), eids, content)
+        if purpose == "视角专属核查表与铁律填格":
+            # 亲子视角装配的假产物：空载荷 → 系统按行守恒产出全「待核验」表
+            # （填格质量与守卫在 test_perspective_assembly.py 单测，不在此耦合）
+            return {"rows": [], "rules": [], "packing": []}
         if purpose.startswith("撰写章节：") or purpose.startswith("重试撰写章节："):
             return {"paragraphs": ["第一段正文：基于证据给出的核心判断与取舍。",
                                    "第二段正文：展开论证链、给出可执行建议。"],
@@ -201,6 +206,23 @@ def _analysis_payload(rtype, dests, eids):
         payload["safety_index"] = [{"destination": d, "safety_score": 88 - i * 5,
                                     "note": "治安良好", "evidence_ids": eids[:2]}
                                    for i, d in enumerate(dests)]
+    if "livelihood_cost" in spec["analysis_keys"]:  # assessment 独有：生活成本分项 + 观点章数据
+        payload["livelihood_cost"] = [
+            {"destination": d, "items": [
+                {"category": "房租", "amount": 1800 + i * 200, "unit": "元/月",
+                 "evidence_ids": eids[:1]},
+                # 带 ￥ 的字符串金额：钉死 sanitize 侧容忍符号漂移（_num_or_none 同口径）
+                {"category": "餐饮", "amount": "￥900", "unit": "元/月",
+                 "evidence_ids": eids[:1]}]}
+            for i, d in enumerate(dests)]
+        payload["action_priorities"] = {"items": [
+            {"action": f"优先核验{dests[0]}核心区的居住成本", "tier": "high",
+             "evidence_ids": eids[:1]}]}
+        payload["consensus_split"] = {
+            "orthodox": {"label": "主流共识", "summary": f"{dests[0]}性价比占优",
+                         "share": 60, "evidence_ids": eids[:1]},
+            "contrarian": {"label": "反共识判断", "summary": "旺季实际体验明显下滑",
+                           "share": 18, "evidence_ids": eids[:1]}}
     if "budget" in payload:
         for i, row in enumerate(payload["budget"]):
             row["tier"] = ["经济", "舒适"][i % 2]
@@ -264,14 +286,27 @@ def _structured_payload(purpose, dests, eids, content: str = ""):
         }
     if "access_matrix" in purpose:
         return {
+            # 三种方式齐备是可达性雷达的**出图前提**（维度 = 各目的地共有方式，<3 维不出图）；
+            # 真实 LLM 产出本就会覆盖高铁/飞机/自驾，夹具只给一种方式等于把「可达性章
+            # 必然无图」固化成假事实。
             "access_matrix": [{"destination": d, "routes": [
-                {"mode": "高铁", "duration": "1.5 小时", "cost": 180, "frequency": "每小时 2 班",
-                 "note": "直达市中心", "evidence_ids": eids[:1]}]} for d in dests],
+                {"mode": mode, "duration": f"{mins // 60} 小时", "cost": f"{cost} 元",
+                 "frequency": "每小时 2 班", "note": "直达市中心",
+                 # 批次①：可选数值字段（供确定性算分）；文本 duration/cost 保留展示
+                 "duration_minutes": mins + i * 40, "cost_yuan": cost + i * 60,
+                 "evidence_ids": eids[:1]}
+                for mode, mins, cost in (("高铁", 95, 180), ("飞机", 150, 520),
+                                         ("自驾", 260, 320))]}
+                for i, d in enumerate(dests)],
             "amenity_checklist": [{"destination": d, "items": [
                 {"category": "医疗", "item": "三甲医院", "coverage": "full", "note": "3 家",
                  "evidence_ids": eids[:1]}]} for d in dests],
             "risk_profile": [{"destination": d, "items": [
                 {"dimension": "气候", "level": "low", "note": "四季温和",
+                 "evidence_ids": eids[:1]},
+                # 第二维：风险热力网格要求各目的地**共有**维度 ≥2 才出图
+                # （单维热力网格退化成一排色块，不出图是设计而非缺陷）
+                {"dimension": "治安", "level": "medium", "note": "夜间人流密集区需留意",
                  "evidence_ids": eids[:1]}]} for d in dests],
         }
     raise AssertionError(f"未预期的结构化 purpose：{purpose}")
@@ -405,20 +440,15 @@ def test_charts_match_registry_exactly(monkeypatch, rtype):
 
 # ── T-03 图表章节归属唯一性（glacial-vale-sparrow 批次⓪）─────────────
 # 既有 :391-392 只断言「章节挂的图类型 ⊆ 图集」，完全不校验归属唯一性——
-# 装配层 orchestrator.py:3888 是 `for t in chart_types for c in charts_by_type[t]`，
-# 即按**类型**无差别广播全部。
+# 装配层 orchestrator.py 旧实现是 `for t in chart_types for c in charts_by_type[t]`，
+# 即按**类型**无差别广播全部；批次⓪ 已改为「归属优先」：声明了 sections 的图只按
+# 归属匹配，未声明的图维持按类型广播。
 #
 # 不变量的精确边界（实测校准，勿放宽）：
 #   assessment 现有三处跨章共用同一类型，其中 radar(summary+verdict) 与
 #   trend(summary+trend) 是**有意的单图复用**——综合研判章复用宜居度雷达合理。
 #   真正的缺陷只在「同类型产出 >1 张时仍整组广播」：此时每章都会拿到全部张数，
 #   而非归属自己的那张。故本用例只钉 N>1 这一条件，不误伤单图复用。
-@pytest.mark.xfail(strict=True, reason=(
-    "根因③未修：assessment deep/expert 档 cost_bar 实产 2 张（月均生活成本 + "
-    "目的地安全评分），而 safety 与 value 两章同挂 cost_bar，按类型广播致两章各拿到 "
-    "全部 2 张（互相串章）。批次⓪ 给 spec 加 sections 归属、3888/3926 改按归属"
-    "精确匹配后本断言应通过——届时 strict 以 XPASS 报错，提醒移除本 xfail 标记。"
-))
 def test_multi_chart_type_not_broadcast_wholesale(monkeypatch):
     """T-03：某类型产出多张图时，任一章不得拿到该类型的全部张数。
 
@@ -447,11 +477,6 @@ def test_multi_chart_type_not_broadcast_wholesale(monkeypatch):
             )
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "批次⓪ 未落地：assessment 现有 2 张 cost_bar（月均生活成本 + 目的地安全评分）"
-    "均无 sections 归属声明。批次⓪ 给每个图表 spec 补 sections 后本断言应通过，"
-    "届时 strict 以 XPASS 提醒移除标记。"
-))
 def test_same_type_multi_charts_declare_sections(monkeypatch):
     """T-03 前置契约：同一类型若产出多张图，各张必须带 sections 归属声明。
 
@@ -477,6 +502,29 @@ def test_same_type_multi_charts_declare_sections(monkeypatch):
             f"类型 {ctype!r} 产出 {len(group)} 张图，其中 {len(missing)} 张缺 "
             f"sections 归属声明——按类型广播会串章"
         )
+
+
+@pytest.mark.parametrize("mode", ["deep", "expert"])
+def test_assessment_every_section_has_charts_end_to_end(monkeypatch, mode):
+    """批次② 端到端：装配后的报告里 assessment **每个章节都挂着图**。
+
+    与 test_assessment_charts.py 分层不同：那里测 `_build_charts` + 归属谓词，
+    这里测 `_assemble_report` 真把图挂进了章节——两层之间的断点正是根因③的藏身处
+    （builder 产出了、谓词也对，装配层却按类型广播/漏挂）。
+    用户要求「2-11 章都需要可视化」，本用例是那句话在装配层的固化。
+    """
+    _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("assessment", mode=mode)
+    assert not [e for e in evs if e["type"] == "error"]
+
+    sections = report["sections"]
+    # assessment 无 sentiment_report 章 → 装配层另插一处报告级舆情面板（既有行为）
+    assert {s["id"] for s in sections} - {"sentiment"} == set(RT.sections_for("assessment", mode))
+    missing = [s["id"] for s in sections if not (s.get("charts") or [])]
+    assert not missing, f"{mode} 档装配后无图章节：{missing}"
+    # 舆情章也必须配图（情感分布 + 平台声量）
+    sent = next(s for s in sections if s["id"] == "sentiment")
+    assert {c["type"] for c in sent["charts"]} == {"sentiment_donut", "platform_bar"}
 
 
 # ── 结构化对象 ───────────────────────────────────────────
@@ -508,8 +556,42 @@ def test_structured_keys_match_registry(monkeypatch, rtype):
     carried = [s for s in report["sections"] if s.get("structured")]
     assert carried, "结构化对象应挂载到承载章节"
     for s in carried:
-        assert s["structured"]["type"] in keys
-        assert s["structured"]["data"]
+        # 复数挂块契约（rough-cliff-vole）：sec["structured"] == [{type,data},…]
+        blocks = s["structured"]
+        assert isinstance(blocks, list), "挂块必须是复数列表（单块 break 契约已退役）"
+        for b in blocks:
+            assert b["type"] in keys
+            assert b["data"]
+
+
+def test_fake_analysis_payload_covers_all_analysis_keys():
+    """假 LLM 载荷必须覆盖 spec["analysis_keys"] 全部键（批次① 三新键即在此钉住）。
+
+    缺键的假载荷会让端到端用例悄悄跳过该键的清洗/装配链路——覆盖缺口不报错的
+    静默失败，与 _analysis_payload 的 docstring 承诺相分离。
+    """
+    for rtype in ("guide", "assessment"):
+        spec = RT.type_spec(rtype)
+        payload = _analysis_payload(rtype, DEST[rtype], ["e1", "e2"])
+        missing = set(spec["analysis_keys"]) - set(payload)
+        assert not missing, f"{rtype} 假载荷缺分析键：{sorted(missing)}"
+
+
+def test_assessment_numeric_route_fields_reach_report_structured(monkeypatch):
+    """批次① 端到端：access_matrix 的可选数值字段经 coerce 落入报告 structured，
+    且 scoring 能据此算出可达性分（数值由规则算出，LLM 无评分话语权）。"""
+    _install_fakes(monkeypatch)
+    _, _, report = _run_pipeline("assessment")
+
+    rows = report["structured"]["access_matrix"]
+    routes = [r for row in rows for r in row["routes"]]
+    assert routes and all("duration_minutes" in r and "cost_yuan" in r for r in routes), \
+        "可选数值字段被 coerce_access_matrix 静默丢弃"
+
+    scores = SC.score_accessibility(rows)
+    assert [s["destination"] for s in scores] == report["destinations"]
+    assert all(0.0 < s["score"] <= 100.0 for s in scores)
+    assert all(s["modes"] for s in scores)
 
 
 def test_spot_routes_and_entities_degrade_without_baidu_ak(monkeypatch):
@@ -594,17 +676,48 @@ def test_clarify_checked_destinations_are_respected(monkeypatch):
 
 
 # ── C6 · 报告头部答题摘要（TC-S1/S3）────────────────────────
+def test_family_perspective_end_to_end_placeholder_table_and_timing(monkeypatch):
+    """亲子视角端到端（rough-cliff-vole VR-D3）：核查表行=冻结榜、装配先于质量评估、块挂章。"""
+    _install_fakes(monkeypatch)
+    seen_structured_keys_at_quality: list = []
+    real_eq = O.evaluate_quality
+
+    def spy_eq(destinations, focus, claims, evidences, structured, **kw):
+        seen_structured_keys_at_quality.append(set(structured))
+        return real_eq(destinations, focus, claims, evidences, structured, **kw)
+
+    monkeypatch.setattr(O, "evaluate_quality", spy_eq)
+    clar = {"party": "亲子家庭", "child_age": "3-6 岁", "days": "1-2 天",
+            "budget_level": "经济实惠（人均 <1000）", "origin": "昆明"}
+    _, evs, report = _run_pipeline("guide", None, clar)
+    assert report
+
+    structured = report["structured"]
+    assert "family_checklist" in structured and "persp_rules" in structured
+    rows = structured["family_checklist"][0]["items"]
+    spot_rows = structured["spot_ranking"][0]["items"]
+    assert [r["spot_id"] for r in rows] == [s["spot_id"] for s in spot_rows], \
+        "核查表行集必须逐行等于冻结榜（行守恒 seed，LLM 不可造行/丢行）"
+    assert all(len(r["cells"]) == 4 for r in rows)
+    # 时序：第一次质量评估时视角键已在（装配先于质检——分母认键、质检看得到表）
+    assert seen_structured_keys_at_quality and "family_checklist" in seen_structured_keys_at_quality[0]
+    # 块挂章：SECTION_STRUCTURED 通道把核查表挂到亲子视角章
+    persp_sec = next(s for s in report["sections"] if s["id"] == "persp_family")
+    mounted = {b["type"] for b in (persp_sec.get("structured") or [])}
+    assert {"family_checklist", "persp_rules", "persp_packing"} <= mounted
+
+
 def test_report_answers_digest_whitelist_and_origin_exclusion(monkeypatch):
     """digest 行只来自注册表白名单；目的地取计划层终值；origin 是检索凭据、不进摘要。"""
     _install_fakes(monkeypatch)
-    clar = {"days": "3-5 天", "party": "亲子家庭", "origin": "北京",
+    clar = {"days": "3-5 天", "party": "亲子家庭", "child_age": "3-6 岁", "origin": "北京",
             "focus": ["交通路线", "美食与商铺"], "budget_level": "舒适均衡（1000-3000）"}
     _, evs, report = _run_pipeline("guide", None, clar)
     assert evs[-1]["type"] == "done" and report
 
     digest = report["answers_digest"]
     assert [(d["label"], d["value"]) for d in digest] == [
-        ("天数", "3-5 天"), ("人群", "亲子家庭"),
+        ("天数", "3-5 天"), ("人群", "亲子家庭"), ("娃龄", "3-6 岁"),
         ("侧重", "交通路线、美食与商铺"), ("目的地", "大理")], (
         "行集/顺序/展示名都必须与 CLARIFY_CONSUMERS 的 digest 登记逐项一致")
     flat = "".join(d["value"] for d in digest)
@@ -925,3 +1038,48 @@ def test_auditor_follows_team_not_literal(monkeypatch):
     auditor = _node_expert(evs, "audit")
     assert auditor in [m["id"] for m in _DISPATCH_TEAM], \
         f"质检由队外专家出镜：{auditor}"
+
+
+# ── 算分缺口接线（批次③ · 缺口台账端到端）────────────────────
+def test_assessment_score_gap_reaches_report(monkeypatch):
+    """缺口台账必须经生产接线走到报告章节，而不是只活在 builder 的局部变量里。
+
+    夹具把 access_matrix 各 route 的 `duration_minutes`/`cost_yuan` 数值抹掉（保留
+    文本 duration/cost）——「有矩阵但算不出」正是缺口的定义。**不能用健康夹具**：
+    健康时 chart_gaps == []，与「接线断了、装配层拿到默认 None」的结果完全无法区分
+    （`(chart_gaps or [])` 让两者都得到空集），那条测试测了等于没测。
+    """
+    _install_fakes(monkeypatch)
+    base = O.chat_json
+
+    def _strip_numeric(messages, temperature=0.3, max_tokens=2048, model=None, *, purpose=""):
+        payload = base(messages, temperature=temperature, max_tokens=max_tokens,
+                       model=model, purpose=purpose)
+        if purpose.startswith("结构化目的地知识") and "access_matrix" in purpose:
+            for row in payload["access_matrix"]:
+                for route in row["routes"]:
+                    route.pop("duration_minutes", None)
+                    route.pop("cost_yuan", None)
+        return payload
+
+    monkeypatch.setattr(O, "chat_json", _strip_numeric, raising=False)
+    _, _, report = _run_pipeline("assessment")
+    assert report is not None
+    secs = {s["id"]: s for s in report["sections"]}
+
+    acc = secs["accessibility"]
+    assert acc["score_gap"] == {"kind": "insufficient_input",
+                                "reason": "可达性矩阵未给出「耗时/费用」数值"}, \
+        "算分输入缺口未落章：builder 记录了却没有接线到装配层"
+    assert not [c for c in acc["charts"] if c["type"] == "radar"], \
+        "输入缺口下仍画出可达性雷达（相对分基准不存在，画出来的是编造的分数）"
+    # 注意不能断言「报告里没有 radar」：分析阶段的宜居度雷达另有数据源（analysis），
+    # 缺口只该影响可达性那张。这里钉的是「无源的可达性雷达不得改投别的章」。
+    strays = [c for c in report["charts"]
+              if c["type"] == "radar" and "accessibility" in (c.get("sections") or ())]
+    assert not strays, "无源可达性雷达在报告里另找归属"
+
+    gapped = [s["id"] for s in report["sections"] if s.get("score_gap")]
+    assert gapped == ["accessibility"], f"缺口串到了别的章：{gapped}"
+    # 正交性：缺口是算分输入问题，不得改写成结构状态
+    assert acc["structure_status"] != "lost"

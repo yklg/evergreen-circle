@@ -214,6 +214,35 @@ def _full_coverage_analysis(rtype: str) -> dict:
             {"category": "住宿", "amount": 100.0, "unit": "元/人"},
         ]}]},
     }
+    if rtype == "assessment":
+        # 批次② 新增图的数据轴：各图独立原料齐备才谈得上「可生成」。
+        # 共有方式/共有维度是硬约束（雷达与热力网格每行必须等长，缺格不补 0），
+        # 故两个目的地给同一组方式与同一组风险维度。
+        def _both(value_of):
+            return [{"destination": d, **value_of(i)} for i, d in enumerate(("大理", "丽江"))]
+        analysis["safety_index"] = _both(lambda i: {"safety_score": 88 - i * 5, "note": "治安良好"})
+        analysis["livelihood_cost"] = _both(lambda i: {"items": [
+            {"category": "房租", "amount": 1800 + i * 200, "unit": "元/月"},
+            {"category": "餐饮", "amount": 900 + i * 100, "unit": "元/月"}]})
+        analysis["action_priorities"] = {"items": [
+            {"action": "优先核验核心区居住成本", "tier": "high"},
+            {"action": "补充通勤实测数据", "tier": "mid"}]}
+        analysis["consensus_split"] = {
+            "orthodox": {"label": "主流共识", "summary": "性价比占优", "share": 60},
+            "contrarian": {"label": "反共识判断", "summary": "旺季体验下滑", "share": 18}}
+        modes = [("高铁", 95, 180), ("飞机", 150, 520), ("自驾", 240, 300)]
+        analysis["structured"].update({
+            "access_matrix": _both(lambda i: {"routes": [
+                {"mode": m, "duration": f"{mins // 60} 小时", "cost": f"{yuan} 元",
+                 "duration_minutes": mins + i * 40, "cost_yuan": yuan + i * 60,
+                 "frequency": "每小时 2 班"} for m, mins, yuan in modes]}),
+            "amenity_checklist": _both(lambda i: {"items": [
+                {"category": "医疗", "item": "三甲医院", "coverage": "full", "note": "3 家"},
+                {"category": "商业", "item": "大型商超", "coverage": "partial"}]}),
+            "risk_profile": _both(lambda i: {"items": [
+                {"dimension": "气候", "level": "low", "note": "四季温和"},
+                {"dimension": "治安", "level": "medium", "note": "夜间人流杂"}]}),
+        })
     return analysis
 
 

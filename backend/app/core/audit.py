@@ -68,6 +68,7 @@ def evaluate_quality(
     *,
     min_indep_domains: int = 2,
     research_type: str = DEFAULT_RESEARCH_TYPE,
+    perspective_section_id: str = "",
 ) -> QualityReport:
     qr = QualityReport()
 
@@ -122,7 +123,8 @@ def evaluate_quality(
 
     # 5. Schema 完整度
     from app.core.schemas import schema_completeness
-    qr.schema_completeness = schema_completeness(structured, research_type)
+    qr.schema_completeness = schema_completeness(structured, research_type,
+                                                 perspective_section_id)
     if qr.schema_completeness < 0.34:
         qr.issues.append({
             "issue_id": "is_" + uuid.uuid4().hex[:8],
@@ -178,6 +180,7 @@ def llm_quality_review(
     qr: "QualityReport",
     model: str = None,
     research_type: str = DEFAULT_RESEARCH_TYPE,
+    persp_constraints: str = "",
 ) -> Dict[str, Any]:
     """质检官用 LLM 对当前分析做真实『审阅』（非纯规则）：逐维度打分 + 指出问题 + 给改进建议。
 
@@ -222,6 +225,10 @@ def llm_quality_review(
                     '"review":"一段总体评审意见（点明亮点与短板）",'
                     '"issues":["具体问题1","具体问题2"],'
                     '"suggestions":["可执行改进建议1","改进建议2"]}。只输出 JSON。'
+                    + ("\n【问卷硬约束越界检查】用户问卷约束：" + persp_constraints +
+                       " ——论点或结构化产出与其冲突（如给 1-2 天行程排 3 天玩法、"
+                       "预算档位与实际推荐不符）、或核查表之外出现无参数的套话建议，"
+                       "必须逐条计入 issues。" if persp_constraints else "")
                 )},
                 {"role": "user", "content": (
                     f"调研主题：{query}\n调研类型：{RT.type_spec(research_type)['label']}\n"

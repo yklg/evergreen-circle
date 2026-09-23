@@ -3,7 +3,8 @@
  * C1 版式全章化（N1 / rugged-lagoon-merlin C-F1~C-F4）
  *
  * 守护契约（ReportPage 章节重排 + 折叠交互完整性）：
- *   C-F1 同章 DOM 顺序：takeaway → charts → 正文（首段评注直出）
+ *   C-F1 同章 DOM 顺序：核心判断 → 图表 → 结构化块 → 数据空间 → 正文（首段评注直出）
+ *        （T-12′：批次②后每章可同时有 charts + structured + data_grid，五段全序一次钉死）
  *   C-F2 正文默认折叠（details 无 open、内容不卸载）+ index.css 打印展开留底（仿 H15 手法）
  *   C-F3 编辑模式自动 open（折叠不切断编辑路径）
  *   C-F4 本章高亮命中 → 折叠体自动 open（折叠不切断高亮路径）
@@ -53,6 +54,22 @@ const SECTION = {
       evidence_ids: [],
     },
   ],
+  structured: {
+    type: 'access_matrix',
+    data: [
+      {
+        destination: '成都',
+        routes: [{ mode: '高铁', duration: '1.5 小时', cost: '180 元', frequency: '每小时 2 班' }],
+      },
+    ],
+  },
+  data_grid: {
+    columns: ['数据名', '值', '指标', '来源', '来源网址'],
+    rows: [{
+      name: '成都 · 高铁', value: '95', metric: '耗时（分钟）',
+      source: 'a.example.com', source_url: 'https://a.example.com/x',
+    }],
+  },
 }
 
 const REPORT = {
@@ -96,13 +113,20 @@ function detailsEl(container: HTMLElement) {
 }
 
 describe('C1 章节版式', () => {
-  it('C-F1：同章 takeaway → charts → 评注首段直出（DOM 顺序钉）', () => {
+  it('C-F1：同章「核心判断 → 图表 → 结构化块 → 数据空间 → 正文」全序钉', () => {
     renderReport()
-    const takeaway = screen.getByText('核心判断')
-    const cloud = screen.getByTestId('wordcloud-dom')
-    const note = screen.getByText('第一段评注')
-    expect(takeaway.compareDocumentPosition(cloud) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(cloud.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const order = [
+      screen.getByText('核心判断'),          // 518 结论先行
+      screen.getByTestId('wordcloud-dom'),  // 536 图表
+      screen.getByText(/可达性矩阵/),         // 545 结构化块
+      screen.getByText(/概览 · 数据空间/),    // 548 数据空间
+      screen.getByText('第一段评注'),         // 551 正文（首段评注直出）
+    ]
+    for (let i = 0; i + 1 < order.length; i++) {
+      expect(
+        order[i].compareDocumentPosition(order[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
   })
 
   it('C-F2：正文默认折叠但内容不卸载；index.css 打印留底规则在位（H15 手法）', () => {

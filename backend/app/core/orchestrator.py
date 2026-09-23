@@ -29,7 +29,8 @@ import urllib.parse
 import uuid
 from collections import Counter
 from contextvars import ContextVar
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 from app.core import charts as C
 from app.core import db
@@ -86,10 +87,13 @@ MODE_CONFIG = {
         "spot_topn": 4,
         # 商铺路线配额：每种榜上美食给前 N 家 matched 商铺配公交路线（0=不出；quick 无商铺章）
         "shop_route_topn": 0,
+        # 视角专属采集配额（rough-cliff-vole）：槽位角度条数 / 逐景点二查前 N 名。
+        # quick 全 0：核查表仍出（全行待核验），但不吃搜索预算——配额优先给主链路。
+        "persp_slots": 0, "persp_probe_topn": 0,
     },
     "deep": {
         "label": "深度模式",
-        "max_angles": 6, "fetch_per_destination": 12, "platform_per": 8,
+        "max_angles": 8, "fetch_per_destination": 12, "platform_per": 8,
         "freshness": "oneYear", "rework_rounds": 1,
         "min_paragraphs": 5, "para_words": "180-280", "section_max_tokens": 8000,
         "analyze_max_tokens": 8000, "structured_max_tokens": 8000,
@@ -99,10 +103,13 @@ MODE_CONFIG = {
         "shop_route_topn": 2,
         # 行程路线章（D2，deep 起出）：用户未写天数时按每天 N 景点推算行程跨度
         "spot_day_pace": 4,
+        # 视角槽位 2 条 + 冻结榜前 7 名逐景点二查（≤16 次/deep 拍板口径）；
+        # max_angles 6→8 保证 reserve（days/origin/视角 2）不再挤占模型角度（原 4 条保住）。
+        "persp_slots": 2, "persp_probe_topn": 7,
     },
     "expert": {
         "label": "专家级模式",
-        "max_angles": 9, "fetch_per_destination": 16, "platform_per": 10,
+        "max_angles": 11, "fetch_per_destination": 16, "platform_per": 10,
         "freshness": "oneYear", "rework_rounds": 2,
         # 专家级：篇幅最长、最详尽（券商行研/MBB 深度报告级别）
         "min_paragraphs": 7, "para_words": "260-420", "section_max_tokens": 8192,
@@ -113,6 +120,8 @@ MODE_CONFIG = {
         "shop_route_topn": 2,
         # 一页视图节奏旋钮：用户未写天数时按每天 N 景点推算行程跨度（M3a）
         "spot_day_pace": 4,
+        # 同 deep 的视角配额（二查按榜前 7，不为 expert 的 10 名榜放大搜索预算）
+        "persp_slots": 2, "persp_probe_topn": 7,
     },
 }
 
@@ -177,6 +186,13 @@ class GuideSingleDestinationError(ValueError):
     """guide 档位结构性约束：地图/路线/评分配额均以单目的地为前提（计划待确认 #7 拍板硬拒绝）。"""
 
 
+class ClarifyAnswerRequiredError(ValueError):
+    """已触发的条件题（show_if）缺答——首个必答闸门（rough-cliff-vole）。
+
+    只对触发态拒：未触发的隐藏题缺答不拒（非亲子用户根本看不到该题）。
+    """
+
+
 def _answer_destinations(answers: Dict[str, Any]) -> List[str]:
     raw = (answers or {}).get("destinations") or []
     if isinstance(raw, str):
@@ -190,6 +206,12 @@ def submit_clarify(task_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
         raise GuideSingleDestinationError(
             "游玩攻略报告目前仅支持单个目的地（地图、逐景点路线与评分配额都以单目的地为前提），"
             "请只保留一个城市/景区后重新提交。")
+    # 条件题必答闸门：show_if 触发且缺答 → 结构化拒（判据源在注册表，不在这里散写）
+    rtype = _task_research_type(task_id)
+    missing = RT.missing_conditional_answers(rtype, answers or {})
+    if missing:
+        raise ClarifyAnswerRequiredError(
+            f"请先回答已展开的追问（{'、'.join(missing)}）再提交——这些答案会作为报告的硬约束。")
     # 保留已存的 _mode / _type / _model_override（HomePage 选的类型与模型跟随澄清透传）
     task = db.get_task(task_id) or {}
     prev = task.get("clarifications", {}) or {}
@@ -451,13 +473,15 @@ def _rewrite_section(section: Dict[str, Any], extra_context: Dict[str, Any],
 def _brief_facts_block(sections: List[Dict[str, Any]]) -> str:
     """把报告结构化榜单压成少量数字事实行，喂给 brief 的 key_data。
 
-    只读 sections[].structured（{"type","data"} 形状），旧报告/assessment 无这些键时
-    自然返回空串——不造假数字，也不影响旧精炼。"""
+    只读 sections[].structured（[{type,data}] 复数形状；旧报告为 {type,data} 单块），
+    旧报告/assessment 无这些键时自然返回空串——不造假数字，也不影响旧精炼。"""
     by_type: Dict[str, Any] = {}
     for s in sections:
         st = s.get("structured")
-        if isinstance(st, dict) and st.get("data"):
-            by_type.setdefault(str(st.get("type")), st["data"])
+        blocks = st if isinstance(st, list) else [st] if isinstance(st, dict) else []
+        for b in blocks:
+            if isinstance(b, dict) and b.get("data"):
+                by_type.setdefault(str(b.get("type")), b["data"])
 
     def _rows(key: str, cap: int) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -488,6 +512,10 @@ def _brief_facts_block(sections: List[Dict[str, Any]]) -> str:
         if r.get("price_range"):
             who = f"，适合 {r['for_whom']}" if r.get("for_whom") else ""
             lines.append(f"住宿「{r.get('area', '')}」{r['price_range']}{who}")
+    # 视角铁律前 3 条进执行摘要（rough-cliff-vole：铁律是问卷硬约束驱动的可执行行）
+    for r in _rows("persp_rules", 3):
+        if r.get("text"):
+            lines.append(f"视角铁律：{r['text']}")
     return "\n".join(lines)
 
 
@@ -1022,7 +1050,8 @@ def _destination_set(query: str, clar: Dict[str, Any],
 def _orthogonal_angles(raw_angles: Any, destinations: List[str], days_phrase: str,
                        spec: Dict[str, Any], max_angles: int,
                        origin_phrase: str = "",
-                       focus_keywords: Tuple[str, ...] = ()) -> List[str]:
+                       focus_keywords: Tuple[str, ...] = (),
+                       persp_angles: Tuple[str, ...] = ()) -> List[str]:
     """把计划给出的角度整形成与目的地**正交**、且体现用户显式答题的角度集。
 
     规则（顺序即优先级）：
@@ -1062,12 +1091,16 @@ def _orthogonal_angles(raw_angles: Any, destinations: List[str], days_phrase: st
     days_angle = tpl.format(days=days_phrase).strip() if (days_phrase and tpl) else ""
     optpl = str(spec.get("origin_angle_tpl") or "")
     origin_angle = optpl.format(origin=origin_phrase).strip() if (origin_phrase and optpl) else ""
-    reserve = (1 if days_angle else 0) + (1 if origin_angle else 0)
+    reserve = (1 if days_angle else 0) + (1 if origin_angle else 0) + len(persp_angles)
     kept = kept[:max(0, max_angles - reserve)]
     if origin_angle and origin_angle not in kept:
         kept.append(origin_angle)
     if days_angle and days_angle not in kept:
         kept.append(days_angle)
+    # 视角槽位（rough-cliff-vole）：与 days/origin 同型确定性追加，不被模型角度挤掉
+    for a in persp_angles:
+        if a and a not in kept:
+            kept.append(a)
     if not kept:
         kept = [str(a) for a in spec["angles"]][:max_angles]
     return kept
@@ -1135,7 +1168,8 @@ def _retry_destination(query: str, research_type: str, task_id: str) -> str:
 
 def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7,
                    research_type: str = DEFAULT_RESEARCH_TYPE,
-                   task_id: str = "") -> Dict[str, Any]:
+                   task_id: str = "",
+                   persp_slots: int = 0) -> Dict[str, Any]:
     """拆解调研计划：目的地只认用户点过名的，角度与目的地正交，天数只取原文。
 
     政策（详见改造计划 §4/§6）：
@@ -1232,8 +1266,17 @@ def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7,
             if k not in focus_keywords:
                 focus_keywords.append(k)
 
+    # 视角槽位（rough-cliff-vole）：视角命中且模式配了格子才占——
+    # 判据源在 PERSPECTIVE_SPECS（编排层不写 persp_family 分支）。
+    persp_qid, persp_key = (spec.get("perspective_source") or ("", ""))[:2]
+    _persp_raw = str(clar.get(persp_key) or clar.get(persp_qid) or "")
+    persp_sid = RT.perspective_section(research_type, _persp_raw)
+    persp_angles = tuple(
+        (RT.perspective_spec(persp_sid).get("angle_tpls") or ())[:max(0, persp_slots)])
+
     angles = _orthogonal_angles(raw_angles, destinations, days_phrase, spec, max_angles,
-                                origin_phrase, tuple(focus_keywords))
+                                origin_phrase, tuple(focus_keywords),
+                                persp_angles=persp_angles)
     if degraded or plan_error:
         detail = (f"计划候选：{('、'.join(candidates)) or '无'}\n"
                   f"需求原文：{query}\n勾选：{('、'.join(checked)) or '无'}")
@@ -1622,6 +1665,13 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     persp_qid, persp_key = spec["perspective_source"]
     perspective = str(clar.get(persp_key) or clar.get(persp_qid) or "")
     section_ids = RT.sections_for(rtype, mode, perspective)
+    # 视角专属链路总闸（rough-cliff-vole）：sid 为空 = 通用视角，采集/装配/约束全跳过
+    persp_sid = RT.perspective_section(rtype, perspective)
+    persp_constraints_line = ""
+    _hp = RT.perspective_spec(persp_sid).get("hard_constraints") or ()
+    _hv = "；".join(f"{q}={clar[q]}" for q in _hp if str(clar.get(q) or "").strip())
+    if _hv:
+        persp_constraints_line = _hv
 
     t_start = time.monotonic()
     token_start = TOKEN_USAGE["total"]
@@ -1649,7 +1699,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("thought", {"id": _sid("th"), "kind": "plan", "expert": "L3-001",
                           "text": f"收到调研需求：{query}（{spec['label']} · {cfg['label']}）。正在拆解目的地与调研维度……", "ts": _now()})
     trace.set_context(task_id, "L3-001", "intake", "拆解调研计划")
-    plan = await asyncio.to_thread(_plan_research, query, clar, cfg["max_angles"], rtype, task_id)
+    plan = await asyncio.to_thread(_plan_research, query, clar, cfg["max_angles"], rtype, task_id,
+                                   persp_slots=cfg["persp_slots"])
     for e in _drain_trace():
         yield e
     destinations = plan["destinations"]
@@ -1937,6 +1988,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
 
     frozen_entities: Dict[str, Any] = {}
     spot_entities: List[Dict[str, Any]] = []
+    # 视角二查证据映射（只活在编排期，不进报告 payload——评审 P1-2 不改 evidences schema）
+    family_probes: Dict[str, List[str]] = {}
     if "spot_ranking" in spec["structured_keys"]:
         yield _ev("node_update", {"node": "spots", "status": "working", "expert": analyst})
         yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": analyst,
@@ -2002,6 +2055,35 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                                   "text": f"逐景点舆情补充：{len(spot_comments)} 条口碑已挂接 Top{len(spot_entities)} 景点实体"
                                           f"（每景点每平台 ≤{cfg['spot_sent_take']} 条，(spot×platform) 聚合数据源）。",
                                   "ts": _now()})
+        # 视角专属逐景点二查（rough-cliff-vole）：视角配了核查表且模式有配额才发；
+        # 判据全部查表（PERSPECTIVE_SPECS / MODE_CONFIG），非亲子视角零调用。
+        persp_probe_tpls = tuple(RT.perspective_spec(persp_sid).get("spot_probe_tpls") or ())
+        if persp_probe_tpls and spot_entities:
+            probe_topn = int(cfg.get("persp_probe_topn") or 0)
+            if not probe_topn:
+                yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                                      "text": f"{cfg['label']}不做视角专项二查（搜索配额优先给主链路）："
+                                              "核查表照常全行产出、参数列以「待核验」占位。",
+                                      "ts": _now()})
+            else:
+                probe = await _probe_spot_family(
+                    primary_destination, spot_entities, persp_probe_tpls,
+                    cfg["freshness"], seen_urls, analyst, probe_topn)
+                evidences.extend(probe["evidences"])
+                family_probes.update(probe["by_spot"])
+                if probe["quota_error"]:
+                    provider_err = provider_err or probe["quota_error"]
+                    yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": analyst,
+                                          "text": f"专项二查中断：{probe['quota_error']}（搜索服务配额/密钥问题）——"
+                                                  "降级为仅槽位角度，核查表缺列以「待核验」占位，不造数。",
+                                          "ts": _now()})
+                else:
+                    n_targets = min(len([e for e in spot_entities if e.get("spot_id")]), probe_topn)
+                    yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
+                                          "text": f"视角专项二查：{len(probe['by_spot'])}/{n_targets} 个景点"
+                                                  f"采到票规/设施线索（共 {len(probe['evidences'])} 条证据），"
+                                                  "未命中景点在核查表按「待核验」占位。",
+                                          "ts": _now()})
         yield _ev("progress", prog(56, "spots", len(evidences)))
         yield _ev("node_update", {"node": "spots", "status": "done"})
     entity_hint = (json.dumps([{"spot_id": r.get("spot_id"), "name": r.get("name")}
@@ -2048,6 +2130,13 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                                       f"（{len(structured['route_plan'][0]['days']) if structured['route_plan'] else 0} 天，"
                                       "抵达交通引用真实路线、商铺按 spot_id/shop_id 挂接）。",
                               "ts": _now()})
+    # 视角专属块装配（rough-cliff-vole）：行 seed 自冻结榜、LLM 只填格；
+    # 时序钉死在质量评估之前（分母认键）、_write_one fan-out 之前（写作提示拿得到）。
+    # 装配失败不炸管线：全「待核验」占位表照出（占位可见即正确终态）。
+    if persp_sid and RT.perspective_spec(persp_sid).get("checklist_key") and spot_entities:
+        structured.update(await asyncio.to_thread(
+            _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
+            family_probes, evidences, clar, _model("aux")))
     analysis["structured"] = structured
 
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
@@ -2065,12 +2154,12 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": auditor,
                           "text": "质检官评估证据覆盖度、维度完整性与置信度，决定是否打回返工。", "ts": _now()})
     quality_before = evaluate_quality(destinations, focus, claims, evidences, structured,
-                                      research_type=rtype)
+                                      research_type=rtype, perspective_section_id=persp_sid)
     # 质检官 LLM 真实审阅（逐维度打分 + 问题 + 改进建议）——让质检有对比、有审阅、可观测
     trace.set_context(task_id, auditor, "audit", "质检官审阅：逐维度打分+问题+改进建议")
     review_before = await asyncio.to_thread(
         llm_quality_review, query, destinations, focus, claims, structured, quality_before,
-        _model("aux"), rtype)
+        _model("aux"), rtype, persp_constraints=persp_constraints_line)
     for e in _drain_trace():
         yield e
     yield _ev("message", {"id": _sid("m"), "kind": "audit_review", "expert": auditor,
@@ -2157,15 +2246,21 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                     evt = _trunc_degrade_evt(rework_trunc)
                     if evt:
                         yield evt
+                    # 返工轮 structured 整体重建：视角块必须重新装配（ST-01 不回潮）
+                    if persp_sid and RT.perspective_spec(persp_sid).get("checklist_key") and spot_entities:
+                        structured.update(await asyncio.to_thread(
+                            _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
+                            family_probes, evidences, clar, _model("aux")))
                     analysis["structured"] = structured
                     yield _ev("node_update", {"node": "analyze", "status": "done"})
             rework_rounds_done += 1
             quality_after_round = evaluate_quality(destinations, focus, claims, evidences, structured,
-                                                   research_type=rtype)
+                                                   research_type=rtype,
+                                                   perspective_section_id=persp_sid)
             issues_resolved = max(0, len(quality_before.issues) - len(quality_after_round.issues))
             envelopes = decide_rework(quality_after_round, evidences)
         quality_after = evaluate_quality(destinations, focus, claims, evidences, structured,
-                                         research_type=rtype)
+                                         research_type=rtype, perspective_section_id=persp_sid)
     else:
         quality_after = quality_before
 
@@ -2223,7 +2318,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         return sid, await asyncio.to_thread(
             _write_single_section, sid, title, query, destinations, focus,
             evidences, claims, analysis, model, rtype,
-            cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"], sentiment
+            cfg["min_paragraphs"], cfg["para_words"], cfg["section_max_tokens"], sentiment,
+            persp_line=(persp_constraints_line if sid == persp_sid else "")
         )
 
     tasks = [asyncio.create_task(_write_one(sid)) for sid in section_ids]
@@ -2287,7 +2383,9 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         for e in _drain_trace():
             yield e
 
-    chart_specs = _build_charts(destinations, analysis, sentiment, claims, rtype, mode=mode)
+    chart_specs, chart_gaps = _build_charts_and_gaps(
+        destinations, analysis, sentiment, claims, rtype,
+        mode=mode, evidences=evidences)
     for ch in chart_specs:
         yield _ev("chart", ch)
         await asyncio.sleep(0.05)
@@ -2304,7 +2402,7 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         destinations=destinations, focus=focus, claims=claims, evidences=evidences,
         structured=structured, elapsed_seconds=elapsed, tokens_used=tokens_used,
         rework_rounds=rework_rounds_done, issues_resolved=issues_resolved,
-        objective_stats=stats, research_type=rtype,
+        objective_stats=stats, research_type=rtype, perspective_section_id=persp_sid,
     )
     metrics = merge_quality_into_metrics(metrics, quality_after.to_dict())
 
@@ -2327,7 +2425,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                               sentiment, chart_specs, sections_text, collect_notes,
                               analysis, metrics, quality_before.to_dict(),
                               quality_after.to_dict(), trace_spans, mode, section_ids,
-                              sentiment_text, objective_meta, rtype, clar=clar)
+                              sentiment_text, objective_meta, rtype, clar=clar,
+                              chart_gaps=chart_gaps)
     # 质检审阅意见（before/after）随报告下发，供报告页「质检审裁」展示
     report["audit_review"] = {"before": review_before, "after": review_after,
                               "rework_rounds": rework_rounds_done,
@@ -2365,6 +2464,9 @@ _ANALYSIS_KEY_SCHEMA: Dict[str, str] = {
     "budget": '"budget":[{"destination":"目的地","per_capita_3d":数字或null,"tier":"经济|舒适|品质|高端","note":"花费结构与省钱空间一句话","evidence_ids":["真实id"]}]',
     "cost": '"cost":[{"destination":"目的地","monthly_rent":数字或null,"monthly_living":数字或null,"note":"居住成本结构一句话","evidence_ids":["真实id"]}]',
     "safety_index": '"safety_index":[{"destination":"目的地","safety_score":0-100整数,"note":"治安/灾害/医疗风险研判一句话","evidence_ids":["真实id"]}]',
+    "livelihood_cost": '"livelihood_cost":[{"destination":"目的地","items":[{"category":"房租|餐饮|交通|日常消费|其他","amount":月支出数字或null,"unit":"元/月","evidence_ids":["真实id"]}]}]',
+    "action_priorities": '"action_priorities":{"items":[{"action":"一句话行动建议","tier":"high|mid|low","evidence_ids":["真实id"]}]}',
+    "consensus_split": '"consensus_split":{"orthodox":{"label":"主流共识","summary":"一句话概括主流观点","share":占比整数或null,"evidence_ids":["真实id"]},"contrarian":{"label":"反共识判断","summary":"一句话概括与主流相反但有证据的判断","share":占比整数或null,"evidence_ids":["真实id"]}}',
     "season": '"season":{"best_months":["最佳月份"],"avoid":["需避开的时段"],"matrix":[{"destination":"目的地","values":[12个0-100整数,依次对应1月到12月的出行适宜度]}]}',
     "share_estimate": '"share_estimate":[{"name":"目的地","value":百分比整数}]',
     "trends": '"trends":{"x":["时间点,如2022/2023/2024等"],"unit":"指标单位,如 接待游客(万人次)/热度指数/房价(元/㎡)","series":[{"name":"目的地","values":[数字,与x等长]}],"note":"趋势研判一句话"}',
@@ -2398,7 +2500,7 @@ _STRUCTURED_SCHEMA: Dict[str, str] = {
     "route_plan": '"route_plan":[{"destination":"目的地","days":[{"day":第几天整数,"spots":[{"name":"景点/活动","transport":"交通方式","duration":"建议停留","tip":"实操提示","evidence_ids":["真实id"]}]}]}]',
     "stay_options": '"stay_options":[{"destination":"目的地","areas":[{"area":"住宿区域","price_range":"价格区间","price_min":区间最低价整数或null,"price_max":区间最高价整数或null,"for_whom":"适合人群","pros":["优点"],"cons":["缺点"],"evidence_ids":["真实id"]}]}]',
     "cost_breakdown": '"cost_breakdown":[{"destination":"目的地","items":[{"category":"交通|住宿|餐饮|门票|购物|其他","amount":数字或null,"unit":"元/人","share":占比百分数或null,"note":"说明","evidence_ids":["真实id"]}]}]',
-    "access_matrix": '"access_matrix":[{"destination":"目的地","routes":[{"mode":"飞机|高铁|自驾|大巴|轮渡","duration":"耗时","cost":"费用区间","frequency":"班次频次","note":"换乘/购票要点","evidence_ids":["真实id"]}]}]',
+    "access_matrix": '"access_matrix":[{"destination":"目的地","routes":[{"mode":"飞机|高铁|自驾|大巴|轮渡","duration":"耗时","cost":"费用区间","frequency":"班次频次","note":"换乘/购票要点","duration_minutes":耗时分钟数字,"cost_yuan":单程费用元数字,"evidence_ids":["真实id"]}]}]',
     "amenity_checklist": '"amenity_checklist":[{"destination":"目的地","items":[{"category":"医疗|教育|商业|政务|网络","item":"具体配套","coverage":"full|partial|none","note":"说明","evidence_ids":["真实id"]}]}]',
     "risk_profile": '"risk_profile":[{"destination":"目的地","items":[{"dimension":"治安|自然灾害|医疗应急|其他","level":"low|medium|high","note":"说明","evidence_ids":["真实id"]}]}]',
 }
@@ -2598,6 +2700,8 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
                            "scores": [{"destination": d, "values": []} for d in destinations[:4]]}
         elif k == "season":
             fallback[k] = {"best_months": [], "avoid": [], "matrix": []}
+        elif k in ("action_priorities", "consensus_split"):
+            fallback[k] = {}  # 对象型产出：空对象即「无料」，图侧据此降级不出图
         else:
             fallback[k] = []
     try:
@@ -2667,6 +2771,12 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
                         result[k] = _sanitize_season(raw_k)
                     elif k == "share_estimate":
                         result[k] = _sanitize_share(raw_k or [])
+                    elif k == "livelihood_cost":
+                        result[k] = _sanitize_livelihood_cost(raw_k, valid_ids)
+                    elif k == "action_priorities":
+                        result[k] = _sanitize_action_priorities(raw_k, valid_ids)
+                    elif k == "consensus_split":
+                        result[k] = _sanitize_consensus_split(raw_k, valid_ids)
                     elif k == "trends":
                         result[k] = _sanitize_trends(raw_k)
                     elif k == "contradictions":
@@ -2711,7 +2821,9 @@ def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
                 {"role": "system", "content": (
                     "你是旅游知识结构化专家。基于给定证据（每条带 evidence_id），为每个目的地输出严格结构化的 JSON。"
                     "字段必须完整、格式一致。evidence_ids 必须来自给定证据真实 id（无则留空数组）；"
-                    "每个叶子项都必须挂载支撑它的 evidence_ids，无证据的项不要输出。输出 JSON：{"
+                    "每个叶子项都必须挂载支撑它的 evidence_ids，无证据的项不要输出。"
+                    "【数值铁律】耗时/费用等数值字段（duration_minutes/cost_yuan）无法从证据确证时必须省略该键，"
+                    "严禁估算或用「约」填充——缺失即未知，系统按缺失降级处理。输出 JSON：{"
                     + ",".join(fragments) + "}。只输出 JSON，不要解释。"
                 )},
                 {"role": "user", "content": (
@@ -2920,6 +3032,197 @@ async def _build_spot_routes(dest: str, items: List[Dict[str, Any]]) -> List[Dic
              "routes": results.get(it["spot_id"], [])}
             for it in targets]  # 按榜单名次保序，可复现
     return [{"destination": dest, "items": rows}] if rows else []
+
+
+_PROBE_STAGE_BUDGET_S = 90.0
+_PROBE_CONCURRENCY = 4
+
+
+def _probe_spot_family_one(dest: str, spot_name: str, tpls: Tuple[str, ...],
+                           freshness: str, existing_urls: set,
+                           collector: str) -> List["Evidence"]:
+    """单景点定向二查（同步）：检索 → URL 去重 → 摘要构造 Evidence。
+
+    不抓全文——二查供核查表填格，搜索摘要本身就是票规/设施的参数化事实源；
+    配额/密钥类终态（SearchProviderError）原样冒泡给阶段层做整体降级，不吞。
+    """
+    queries = [f"{dest} {t.format(spot=spot_name)}" for t in tpls]
+    results = multi_search(queries, num=5, freshness=freshness)
+    out: List[Evidence] = []
+    for r in results:
+        if len(out) >= 4:
+            break
+        url = r.get("url", "")
+        snippet = str(r.get("snippet") or "").strip()
+        if not url or not snippet or url in existing_urls:
+            continue
+        existing_urls.add(url)
+        stype = _source_type(url)
+        pub = r.get("captured_at", "")
+        cred = score_evidence(url, stype, captured_at=pub or _now(),
+                              has_publish_date=bool(pub), ok_fetch=False,
+                              excerpt=snippet[:280])
+        out.append(Evidence(evidence_id=_sid("e"), source_url=url, source_type=stype,
+                            title=r.get("title", spot_name), excerpt=snippet[:280],
+                            captured_at=pub or _now(), credibility=cred,
+                            collected_by=collector, destination=dest,
+                            domain=domain_of(url),
+                            freshness_days=freshness_days(pub or _now()),
+                            content_hash=content_fingerprint(snippet)))
+    return out
+
+
+async def _probe_spot_family(dest: str, items: List[Dict[str, Any]],
+                             tpls: Tuple[str, ...], freshness: str,
+                             existing_urls: set, collector: str,
+                             probe_topn: int) -> Dict[str, Any]:
+    """冻结榜前 N 景点逐点二查（并发 ≤4 + 阶段预算，同百度 fan-out 两型）。
+
+    返回 {by_spot: {spot_id: [evidence_ids]}, evidences, failed, quota_error}。
+    单点失败只记 failed（核查表该格占位）；SearchProviderError 属服务商终态——
+    中止剩余任务（不再烧配额），整阶段由调用方降级为「仅槽位」+ 可见 thought。
+    证据归属：evidences 表无景点列，spot_id 映射只活在编排期内存（评审 P1-2），
+    由装配层写入核查表格内 evidence_ids，不改 DB schema。
+    """
+    targets = [it for it in items if it.get("spot_id")][:max(0, probe_topn)]
+    by_spot: Dict[str, List[str]] = {}
+    collected: List[Evidence] = []
+    failed: List[str] = []
+    quota_error: Optional[str] = None
+    sem = asyncio.Semaphore(_PROBE_CONCURRENCY)
+
+    async def one(it: Dict[str, Any]) -> None:
+        nonlocal quota_error
+        if quota_error:
+            return
+        async with sem:
+            if quota_error:
+                return
+            try:
+                evs = await asyncio.to_thread(_probe_spot_family_one, dest,
+                                              str(it.get("name") or ""), tpls,
+                                              freshness, existing_urls, collector)
+            except SearchProviderError as e:
+                quota_error = str(e)
+                return
+            except Exception:
+                failed.append(str(it["spot_id"]))
+                return
+        if evs:
+            collected.extend(evs)
+            by_spot[str(it["spot_id"])] = [e.evidence_id for e in evs]
+        else:
+            failed.append(str(it["spot_id"]))
+
+    tasks = [asyncio.create_task(one(it)) for it in targets]
+    if tasks:
+        _, pending = await asyncio.wait(tasks, timeout=_PROBE_STAGE_BUDGET_S)
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return {"by_spot": by_spot, "evidences": collected, "failed": failed,
+            "quota_error": quota_error}
+
+
+def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, Any]],
+                       probes: Dict[str, List[str]], evidences: List[Any],
+                       clar: Dict[str, Any], model: str) -> Dict[str, Any]:
+    """视角专属块装配（同步，to_thread 调用；rough-cliff-vole P3）。
+
+    行集**由冻结榜 seed**（每个 spot_id 恰一行，LLM 只填格不造行——多报/漏报的
+    行一律不采纳，缺失格走「待核验」占位）；不造数守卫：格/规则声称 verified 但
+    引用不出真实证据 id → 强制降为待核验。LLM 整体失败不炸管线：照常产出全占位表
+    （占位可见即正确终态，同 spot_routes 降级哲学）。
+    返回 {checklist_key: [...], rules_key: [...], packing_key: [...]}（组级 destination 分组）。
+    """
+    p = RT.perspective_spec(persp_sid)
+    ck = p.get("checklist_key")
+    if not ck or not spot_entities:
+        return {}
+    cols = tuple(p.get("checklist_columns") or ())
+    ev_ids = {getattr(e, "evidence_id", "") for e in evidences}
+    ev_by_id = {getattr(e, "evidence_id", ""): e for e in evidences}
+    hard_q = tuple(p.get("hard_constraints") or ())
+    constraints = "；".join(f"{q}={clar.get(q)}" for q in hard_q if str(clar.get(q) or "").strip())
+    ev_lines = []
+    for it in spot_entities:
+        eids = [x for x in (probes.get(str(it.get("spot_id"))) or []) if x in ev_ids]
+        digest = "；".join(f"[{x}] {str(getattr(ev_by_id[x], 'excerpt', ''))[:110]}"
+                           for x in eids[:4])
+        ev_lines.append(f"{it.get('spot_id')}|{it.get('name', '')}|{digest or '（二查未采到证据）'}")
+    payload: Dict[str, Any] = {}
+    try:
+        payload = chat_json(
+            [
+                {"role": "system", "content": (
+                    f"你是旅游调研「{RT.SECTION_PLAN.get(persp_sid, persp_sid)}」专项核查填格员。"
+                    f"逐景点填以下列：{'、'.join(cols)}。铁律："
+                    "①每格只能引用该景点行内给出的 [e_xxxx] 证据，text 里保留关键数字/规则原文；"
+                    "②该景点没有对应证据时**省略该格**（系统会填「待核验」），严禁凭常识造参数；"
+                    "③rules 是给该行程的可执行铁律（≤5 条），每条必须引用 ≥1 个真实证据 id，"
+                    "并在 refs 里写出它所依据的问卷约束字段名（可选值：" +
+                    ("、".join(hard_q) or "无") + "）；"
+                    "④packing 只收与目的地事实挂钩的行前清单项（气候/票证/设施类），"
+                    "通用到任何城市都成立的项不收。"
+                    '输出 JSON：{"rows":[{"spot_id":"…","cells":{"列名":{"text":"…",'
+                    '"evidence_ids":["e_…"],"verified":true}}}],'
+                    '"rules":[{"text":"…","refs":["字段"],"evidence_ids":["e_…"]}],'
+                    '"packing":[{"item":"…","reason":"…","evidence_ids":["e_…"]}]}。只输出 JSON。'
+                )},
+                {"role": "user", "content": (
+                    f"目的地：{dest}\n本次问卷硬约束：{constraints or '（无）'}\n"
+                    "景点证据行（spot_id|名称|证据摘要）：\n" + "\n".join(ev_lines)[:6000]
+                )},
+            ],
+            max_tokens=3600, temperature=0.3, model=model,
+            purpose="视角专属核查表与铁律填格",
+        ) or {}
+    except Exception:
+        payload = {}
+    rows_in = {str(r.get("spot_id")): r for r in (payload.get("rows") or [])
+               if isinstance(r, dict)}
+    items: List[Dict[str, Any]] = []
+    for it in spot_entities:  # 行守恒：冻结榜每行恰一行
+        cells_in = (rows_in.get(str(it.get("spot_id"))) or {}).get("cells") or {}
+        cells = []
+        for col in cols:
+            raw = cells_in.get(col) if isinstance(cells_in.get(col), dict) else {}
+            eids = [x for x in (raw.get("evidence_ids") or []) if x in ev_ids]
+            text = str(raw.get("text") or "").strip()
+            if raw.get("verified") and eids and text:
+                cells.append({"column": col, "text": text,
+                              "evidence_ids": eids, "verified": True})
+            else:
+                cells.append({"column": col, "text": "待核验（本次未采到）",
+                              "evidence_ids": [], "verified": False})
+        items.append({"spot_id": it.get("spot_id"), "spot_name": it.get("name", ""),
+                      "cells": cells})
+    out: Dict[str, Any] = {ck: [{"destination": dest, "items": items}]}
+    rules_key = p.get("rules_key")
+    if rules_key:
+        rules = []
+        for r in (payload.get("rules") or [])[:5]:
+            if not isinstance(r, dict):
+                continue
+            eids = [x for x in (r.get("evidence_ids") or []) if x in ev_ids]
+            refs = [q for q in (r.get("refs") or []) if str(q) in hard_q]
+            text = str(r.get("text") or "").strip()
+            if text and eids and refs:
+                rules.append({"text": text, "refs": refs, "evidence_ids": eids})
+        out[rules_key] = [{"destination": dest, "items": rules}]
+    packing_key = p.get("packing_key")
+    if packing_key:
+        pack = []
+        for r in (payload.get("packing") or [])[:8]:
+            if not isinstance(r, dict):
+                continue
+            eids = [x for x in (r.get("evidence_ids") or []) if x in ev_ids]
+            item = str(r.get("item") or "").strip()
+            if item and eids:
+                pack.append({"item": item, "reason": str(r.get("reason") or "").strip(),
+                             "evidence_ids": eids})
+        out[packing_key] = [{"destination": dest, "items": pack}]
+    return out
 
 
 def _shop_poi_one(dest: str, row: Dict[str, Any]) -> None:
@@ -3199,6 +3502,82 @@ def _sanitize_share(share: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return clean
 
 
+def _sanitize_livelihood_cost(raw: Any, valid_ids: set) -> List[Dict[str, Any]]:
+    """生活成本分项（livelihood 章图源）：逐目的地行，items 只留「类别非空 + 金额正数」项。
+
+    与 cost_breakdown 同形但语义不同（居住成本 vs 旅行花费），故独立产出。
+    金额容忍 ￥/¥/元/千分位等符号漂移（_num_or_none 同口径），但缺金额/非正数不计。
+    行内无有效项则整行剔除；全空返回 []——降级契约：调用方据此不出图，不报错。
+    """
+    out: List[Dict[str, Any]] = []
+    for it in (raw if isinstance(raw, list) else []):
+        if not isinstance(it, dict):
+            continue
+        dest = _row_name(it)
+        if not dest:
+            continue
+        items = []
+        for i in (it.get("items") or []):
+            if not isinstance(i, dict):
+                continue
+            cat = str(i.get("category") or "").strip()
+            raw_amt = i.get("amount")
+            amt = None if isinstance(raw_amt, bool) else _num_or_none(raw_amt)
+            if not cat or amt is None or amt <= 0:
+                continue
+            items.append({"category": cat[:20], "amount": round(float(amt), 1),
+                          "unit": str(i.get("unit") or "元/月").strip()[:12],
+                          "evidence_ids": _filter_eids(i.get("evidence_ids"), valid_ids)})
+        if items:
+            out.append({"destination": dest, "items": items})
+    return out
+
+
+def _sanitize_action_priorities(raw: Any, valid_ids: set) -> Dict[str, Any]:
+    """行动优先级清单（conclusion 章图源）：tier 枚举收敛，未知档按 mid 计。
+
+    无有效行动（缺 action 文本）→ 空对象（降级：不出图）。
+    """
+    src = raw if isinstance(raw, dict) else {}
+    items = []
+    for i in (src.get("items") or []):
+        if not isinstance(i, dict):
+            continue
+        action = str(i.get("action") or "").strip()
+        if not action:
+            continue
+        tier = str(i.get("tier") or "").strip().lower()
+        items.append({"action": action[:80],
+                      "tier": tier if tier in ("high", "mid", "low") else "mid",
+                      "evidence_ids": _filter_eids(i.get("evidence_ids"), valid_ids)})
+    return {"items": items} if items else {}
+
+
+def _sanitize_consensus_split(raw: Any, valid_ids: set) -> Dict[str, Any]:
+    """共识 vs 反共识（contrarian 章图源）：两侧各自收敛为 {label,summary,[share],eids}。
+
+    单侧缺失只保留存在的一侧（图按实际有料的一侧降级）；两侧皆无 → 空对象。
+    """
+    src = raw if isinstance(raw, dict) else {}
+    out: Dict[str, Any] = {}
+    for key, default_label in (("orthodox", "主流共识"), ("contrarian", "反共识判断")):
+        side = src.get(key)
+        if not isinstance(side, dict):
+            continue
+        summary = str(side.get("summary") or "").strip()
+        if not summary:
+            continue
+        entry: Dict[str, Any] = {"label": str(side.get("label") or default_label).strip()[:20],
+                                 "summary": summary[:200],
+                                 "evidence_ids": _filter_eids(side.get("evidence_ids"), valid_ids)}
+        share = side.get("share")
+        if (isinstance(share, (int, float)) and not isinstance(share, bool)
+                and 0 < share <= 100):
+            entry["share"] = round(float(share), 1)
+        out[key] = entry
+    return out
+
+
 def _fallback_claims(destinations, ev_ids, groups_by_id, authors) -> List[Dict[str, Any]]:
     """LLM 不可用时，仍只输出挂真实证据的结论（不编造内容主张，仅做归纳陈述）。
 
@@ -3273,7 +3652,8 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
                           evidences, claims, analysis, model: str, research_type: str = DEFAULT_RESEARCH_TYPE,
                           min_paragraphs: int = 5, para_words: str = "180-280",
                           section_max_tokens: int = 6000,
-                          sentiment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                          sentiment: Optional[Dict[str, Any]] = None,
+                          persp_line: str = "") -> Dict[str, Any]:
     """单章独立生成：每章独立 token 预算 + 独立模型，失败不影响其他章节。
 
     篇幅深度由 min_paragraphs/para_words/section_max_tokens 三档动态控制
@@ -3321,6 +3701,13 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
     # 攻略信息密度硬约束（编辑规则，声明在类型注册表；assessment 无此键则不注入）
     if spec.get("density"):
         extra += f"\n【信息密度铁律】{spec['density']}"
+    # 视角专属章硬约束（rough-cliff-vole P4）：问卷答案是生成约束，不是装饰——
+    # 超约束建议必须显式条件句；核查表已结构化，正文不得逐格复述（同 spots 契约）。
+    if persp_line:
+        extra += ("\n【本次问卷硬约束】" + persp_line +
+                  " ——超约束的建议不得出现，或显式标注「若延长行程/上浮预算」条件句；"
+                  "核查表与铁律清单已由系统结构化产出并随本章展示，"
+                  "正文只写表格装不下的判断与机理，禁止逐格复述表格内容。")
     # 舆情章节：注入真实统计（占比/样本量/平台分布），只准解读统计，禁止编造或引用评论原句
     if sentiment and "sentiment" in set(fields):
         if sentiment.get("sample_size"):
@@ -3542,27 +3929,540 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
 
 
 # ── 图表：全部来自真实分析数据（无 random）─────────────────────
-def _fields_for_chart(chart_type: str) -> List[str]:
-    """章节字段表反查：哪些 claim 字段支撑该图表（图表挂 evidence_ids 用）。"""
+# 注册表式 builder（批次②）：一类图 = 一个函数 + 一行注册。builder 在自己的函数里
+# **同时**声明「怎么造」（数据源与降级）与「属哪章」（sections）——实现与归属同处，
+# 结构上杜绝「挂了没实现 / 实现了没挂」这类分居两处的漂移（图表串章的历史根因）。
+_ALGO_TAG = "（本报告算法推断）"
+# 舆情两图与词云的归属：正式舆情章（deep/expert 档）与旧报告级舆情面板（quick 档，
+# 见 _assemble_report 的插入逻辑）双挂——两档各自只命中一个，不会重复。
+_SENT_SECTIONS: Tuple[str, ...] = ("sentiment_report", "sentiment")
+
+
+@dataclass(frozen=True)
+class ChartContext:
+    """图表构建上下文：收拢原先散在 _build_charts 闭包里的依赖，builder 免长签名。
+
+    builder 只读本对象：allowed=按目的地数过滤后的图集（charts_for）、own=目的地行兜底、
+    eids=按 claim 字段收证据、new_id=chart_id 生成。新增一类图不动编排层。
+    """
+    destinations: List[str]
+    analysis: Dict[str, Any]
+    sentiment: Dict[str, Any]
+    claims: List[Any]
+    evidences: List[Any]
+    spec: Dict[str, Any]
+    allowed: frozenset
+    mode: str
+    research_type: str
+    own: Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
+    eids: Callable[..., List[str]]
+    new_id: Callable[[str], str]
+    # 缺口台账（③ 体验层）：builder 在「有材料但算不出」时记一条，装配层据此如实标注。
+    # 与「无材料不出图」区分：无材料属数据采集缺口，有材料无值属算分输入缺口。
+    gaps: List[Dict[str, Any]] = field(default_factory=list)
+
+    def section_evidence(self, *sections: str) -> List[str]:
+        """图挂哪章就挂哪章的结论证据：只吃 builder 自声明的 sections。
+
+        不做「图表类型 → 全表反查」——那会把别的章（乃至别的类型）的证据混进来，
+        且共享章节（conclusion/risk/contrarian 两类型都有）反查不出类型级归属。
+        """
+        fields: List[str] = []
+        for sid in sections:
+            fields.extend(RT.section_fields(sid)[0])
+        return self.eids(*fields)
+
+    def note_gap(self, *sections: str, reason: str) -> None:
+        """记一条「有材料但算不出」的缺口（frozen 只锁属性重绑，台账是共享列表）。
+
+        只有 builder 知道自己为什么没出图——把「判据」与「缺口文案」放在同一处，
+        装配层不再反推（反推即第二处口径，改算分公式时必然漂移）。
+        """
+        self.gaps.append({"sections": tuple(sections), "reason": reason})
+
+    def sections_exist(self, *sections: str) -> bool:
+        """builder 自声明的章节是否属于本类型（跨类型 builder 的类型门）。
+
+        `allowed` 只按目的地数过滤图类型，管不住「某类型根本没有这一章」：评估类图的
+        数据源若落到 guide（如外部传入 access_matrix），会产出无人认领的图与缺口——
+        装配层取不到（图消失），事件流里却多一张（图凭空出现）。
+        """
+        plan: set = set()
+        for ids in (self.spec.get("sections") or {}).values():
+            plan.update(ids)
+        return all(s in plan for s in sections)
+
+
+def _builder(chart_type: str, requires: Tuple[str, ...]):
+    """注册元数据：图类型 + 候选数据源键（T-04 遍历 CHART_BUILDERS 校验，不再另维护映射表）。
+
+    requires 词表见 tests/test_chart_contract.py：@radar_key/@cost_bar_key/@sentiment/@claims
+    为派生键，`a.b` 指 structured 子键，其余为 analysis 顶层键。
+    """
+    def deco(fn):
+        fn.CHART_TYPE = chart_type
+        fn.REQUIRES = requires
+        return fn
+    return deco
+
+
+def _cost_axis_labels(items: List[Dict[str, Any]]) -> List[str]:
+    """同目的地多档位时把档位拼进 x 轴，否则三根柱子都叫「大理」，看不出差异。"""
+    names = [_row_name(r) for r in items]
+    same_dest_multi = len(names) > 1 and len(set(names)) < len(names)
     out: List[str] = []
-    for fields, ctypes in RT.SECTION_FIELDS.values():
-        if chart_type in ctypes:
-            out.extend(fields)
+    for r in items:
+        dest_name = _row_name(r)
+        tier = str(r.get("tier") or "").strip()
+        out.append(f"{dest_name}·{tier}" if (same_dest_multi and tier) else (dest_name or "—"))
     return out
 
 
-def _build_charts(destinations, analysis, sentiment, claims=None,
-                  research_type: str = DEFAULT_RESEARCH_TYPE,
-                  mode: str = "deep") -> List[Dict[str, Any]]:
-    """按 spec["charts"] 出图：类型决定图集，某图无真实数据则整图跳过（不占位造假）。
+def _dest_prefixed(dest: str, name: str, multi: bool) -> str:
+    """多目的地时把目的地拼进 x 轴标签，否则两个城市的「房租」两根柱子同名。"""
+    return f"{dest}·{name}" if (multi and dest) else name
 
-    图集与标题随目的地数自适应：单目的地不出占比环图，雷达/花费条改用无「对比」措辞的标题。
-    mode=expert 时词云在「全网口碑词云」之外，逐景点各出一张（by_spot 行内真实词频）。
+
+@_builder("radar", ("@radar_key",))
+def _chart_radar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """宜居度/适配度雷达（summary/verdict 章）：数据源 spec["radar_key"] 的维度分。"""
+    if "radar" not in ctx.allowed:
+        return []
+    sections = ("summary", "verdict")
+    radar = ctx.analysis.get(ctx.spec["radar_key"]) or {}
+    dims = radar.get("dimensions") or []
+    scores = [s for s in ctx.own(radar.get("scores") or [])
+              if dims and isinstance(s.get("values"), list) and len(s["values"]) == len(dims)]
+    if not (dims and scores):
+        return []
+    title = RT.radar_title(ctx.research_type, len(ctx.destinations))
+    series = [{"name": s["destination"], "values": s["values"]} for s in scores[:4]]
+    return [{"chart_id": ctx.new_id("ch"), "type": "radar", "title": title,
+             "sections": sections, "option": C.feature_radar(title, dims, series),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("cost_bar", ("@cost_bar_key",))
+def _chart_cost_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """月均/人均成本柱：guide 挂预算章、assessment 挂性价比章。
+
+    sections 声明取两类型章节的**并集**——两类型各自只含其一（guide 有 budget 无 value、
+    assessment 反之），按归属匹配不会串章，也不必在编排层按类型分支。
     """
-    spec = RT.type_spec(research_type)
-    allowed = set(RT.charts_for(research_type, len(destinations)))
-    radar_title = RT.radar_title(research_type, len(destinations))
-    specs: List[Dict[str, Any]] = []
+    cb = ctx.spec.get("cost_bar") or {}
+    if "cost_bar" not in ctx.allowed or not cb:
+        return []
+    rows = [r for r in ctx.own(ctx.analysis.get(cb["key"]) or [])
+            if isinstance(r.get(cb["value_field"]), (int, float))]
+    if not rows:
+        return []
+    sections = ("budget", "value")
+    title = RT.cost_bar_title(ctx.research_type, len(ctx.destinations))
+    return [{"chart_id": ctx.new_id("ch"), "type": "cost_bar", "title": title,
+             "sections": sections,
+             "option": C.pricing_bar(title, _cost_axis_labels(rows),
+                                     [float(r[cb["value_field"]]) for r in rows],
+                                     y_name=cb["unit"]),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("cost_bar", ("safety_index",))
+def _chart_safety_score(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """安全评分柱（safety 章）：数据源 analysis.safety_index[].safety_score（0-100 整数）。"""
+    if "cost_bar" not in ctx.allowed:
+        return []
+    rows = [r for r in ctx.own(ctx.analysis.get("safety_index") or [])
+            if isinstance(r.get("safety_score"), (int, float))]
+    if not rows:
+        return []
+    sections = ("safety",)
+    title = "目的地安全评分对比" if len(ctx.destinations) >= 2 else "目的地安全评分"
+    return [{"chart_id": ctx.new_id("ch"), "type": "cost_bar", "title": title,
+             "sections": sections,
+             "option": C.pricing_bar(title, [_row_name(r) for r in rows],
+                                     [float(r["safety_score"]) for r in rows],
+                                     y_name="分（0-100）"),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("cost_compose", ("structured.cost_breakdown",))
+def _chart_cost_compose(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """人均花费构成柱（budget 章 · SOLO_ONLY）：数据源 structured.cost_breakdown。"""
+    if "cost_compose" not in ctx.allowed:
+        return []
+    items: List[Dict[str, Any]] = []
+    for grp in ctx.own((ctx.analysis.get("structured") or {}).get("cost_breakdown") or []):
+        items.extend(i for i in (grp.get("items") or []) if isinstance(i, dict))
+    items = [i for i in items if isinstance(i.get("amount"), (int, float))
+             and str(i.get("category") or "").strip()]
+    if not items:
+        return []
+    sections = ("budget",)
+    unit = str(items[0].get("unit") or "元/人").strip()
+    title = f"人均花费构成（{unit}）"
+    return [{"chart_id": ctx.new_id("ch"), "type": "cost_compose", "title": title,
+             "sections": sections,
+             "option": C.pricing_bar(title, [str(i["category"]).strip() for i in items],
+                                     [float(i["amount"]) for i in items], y_name=unit),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("season_heat", ("season",))
+def _chart_season_heat(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """逐月出行适宜度热力（season 章）：数据源 analysis.season.matrix（12 个月）。"""
+    if "season_heat" not in ctx.allowed:
+        return []
+    season = ctx.analysis.get("season") or {}
+    matrix = [m for m in ctx.own(season.get("matrix") or [])
+              if isinstance(m.get("values"), list) and len(m["values"]) == 12]
+    if not matrix:
+        return []
+    sections = ("season",)
+    title = "逐月出行适宜度（1-12 月）"
+    return [{"chart_id": ctx.new_id("ch"), "type": "season_heat", "title": title,
+             "sections": sections,
+             "option": C.season_heat(title, [f"{i}月" for i in range(1, 13)],
+                                     [m["destination"] for m in matrix],
+                                     [m["values"] for m in matrix],
+                                     str(season.get("note") or "")),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("donut", ("share_estimate",))
+def _chart_donut(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """热度/客流份额环图（summary 章 · MULTI_ONLY）：数据源 analysis.share_estimate。"""
+    if "donut" not in ctx.allowed:
+        return []
+    share = [s for s in ctx.own(ctx.analysis.get("share_estimate") or [])
+             if isinstance(s.get("value"), (int, float))]
+    if not share:
+        return []
+    sections = ("summary",)
+    title = ctx.spec["share_title"]
+    return [{"chart_id": ctx.new_id("ch"), "type": "donut", "title": title,
+             "sections": sections,
+             "option": C.market_donut(title, [{"name": s["name"], "value": s["value"]}
+                                              for s in share]),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("trend", ("trends",))
+def _chart_trend(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """发展轨迹折线（summary/trend 章）：数据源 analysis.trends（x 与各序列等长才出图）。"""
+    if "trend" not in ctx.allowed:
+        return []
+    tr = ctx.analysis.get("trends") or {}
+    tx = tr.get("x") if isinstance(tr.get("x"), list) else []
+    tseries = [s for s in ctx.own(tr.get("series") or [])
+               if tx and isinstance(s.get("values"), list) and len(s["values"]) == len(tx)]
+    if not (tx and tseries):
+        return []
+    sections = ("summary", "trend")
+    title = f"发展轨迹趋势（{tr.get('unit', '')}）".replace("（）", "")
+    return [{"chart_id": ctx.new_id("ch"), "type": "trend", "title": title,
+             "sections": sections,
+             "option": C.trend_line(title, tx,
+                                    [{"name": s["name"], "values": s["values"]}
+                                     for s in tseries[:5]],
+                                    y_name=tr.get("unit", "")),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("sentiment_donut", ("@sentiment",))
+def _chart_sentiment_donut(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """整体情感分布环图（舆情章）：数据源 sentiment.overall_count。"""
+    if "sentiment_donut" not in ctx.allowed or not ctx.sentiment.get("sample_size"):
+        return []
+    title = "整体舆情情感分布"
+    return [{"chart_id": ctx.new_id("ch"), "type": "sentiment_donut", "title": title,
+             "sections": _SENT_SECTIONS,
+             "option": C.sentiment_donut(title, ctx.sentiment["overall_count"]),
+             "evidence_ids": []}]
+
+
+@_builder("platform_bar", ("@sentiment",))
+def _chart_platform_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """各平台声量柱（舆情章）：数据源 sentiment.by_platform。
+
+    只吃平台键白名单（C.platform_bar 内部按 PLATFORM_ORDER 过滤）——非平台数据的
+    对照条（共识/证据计数）走 growth_bar，不借用本图类型。
+    """
+    if "platform_bar" not in ctx.allowed or not ctx.sentiment.get("sample_size"):
+        return []
+    by_platform = ctx.sentiment.get("by_platform")
+    if not by_platform:
+        return []
+    title = "各平台声量（抖音优先）"
+    return [{"chart_id": ctx.new_id("ch"), "type": "platform_bar", "title": title,
+             "sections": _SENT_SECTIONS,
+             "option": C.platform_bar(title, by_platform), "evidence_ids": []}]
+
+
+@_builder("wordcloud", ("@sentiment",))
+def _chart_wordcloud(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """口碑词云（M2d · E1 语义载荷）：wordfreq 真实词频为源；无词不产图。
+
+    expert 档在「全网口碑词云」之外逐景点各出一张（引用冻结实体名与行内真实词频）。
+    """
+    if "wordcloud" not in ctx.allowed:
+        return []
+    out: List[Dict[str, Any]] = []
+    wc_words = C.wordcloud_words(ctx.sentiment.get("keywords") or [])
+    if wc_words:
+        title = "全网口碑热词词云"
+        out.append({"chart_id": ctx.new_id("ch"), "type": "wordcloud", "title": title,
+                    "sections": _SENT_SECTIONS, "words": wc_words, "evidence_ids": []})
+        if ctx.mode == "expert":
+            for g in ctx.sentiment.get("by_spot") or []:
+                gw = C.wordcloud_words(g.get("keywords") or [])
+                if not gw:
+                    continue
+                t = f"「{g.get('spot_name') or g.get('spot_id')}」口碑词云"
+                out.append({"chart_id": ctx.new_id("ch"), "type": "wordcloud", "title": t,
+                            "sections": _SENT_SECTIONS, "words": gw, "evidence_ids": []})
+    return out
+
+
+@_builder("radar", ("structured.access_matrix",))
+def _chart_access_radar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """可达性分项拆解雷达（accessibility 章）：交通方式为维度、目的地为序列。
+
+    数据源 structured.access_matrix 经 SC.score_accessibility 确定性算分（方式内相对分）。
+    维度取各目的地**共有**方式：雷达每序列必须等长，缺维度补 0 会把「未知」画成「0 分」。
+    不足 3 维不出图（两轴雷达画出来是折线，三方式才是常态：高铁/飞机/自驾）。
+    """
+    if "radar" not in ctx.allowed or not ctx.sections_exist("accessibility"):
+        return []
+    rows = ctx.own((ctx.analysis.get("structured") or {}).get("access_matrix") or [])
+    scored = SC.score_accessibility(rows)
+    if not scored:
+        if rows:   # 有矩阵却算不出：缺耗时/费用数值，属算分输入缺口（如实标注，不静默）
+            ctx.note_gap("accessibility", reason="可达性矩阵未给出「耗时/费用」数值")
+        return []
+    dims = [m for m in scored[0]["modes"] if all(m in r["modes"] for r in scored)]
+    if len(dims) < 3:
+        ctx.note_gap("accessibility",
+                     reason=f"各目的地可比的交通方式不足 3 种（当前 {len(dims)} 种）")
+        return []
+    sections = ("accessibility",)
+    title = f"可达性分项{'对比' if len(scored) >= 2 else '拆解'}{_ALGO_TAG}"
+    series = [{"name": r["destination"], "values": [r["modes"][d] for d in dims]}
+              for r in scored[:4]]
+    note = (f"分项分 = 耗时×{SC.WEIGHT_DURATION} + 费用×{SC.WEIGHT_COST}"
+            f"（方式内相对分，最优=100）；LLM 不参与打分")
+    return [{"chart_id": ctx.new_id("ch"), "type": "radar", "title": title,
+             "sections": sections, "option": C.feature_radar(title, dims, series, note),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("cost_bar", ("structured.amenity_checklist",))
+def _chart_amenity_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """配套覆盖度柱（amenities 章）：逐配套项按覆盖枚举映射 0/50/100。
+
+    值走 SCORE_FORMULAS["amenity"]（full/partial/none → 1.0/0.5/0.0），与配套章算分
+    同一张表——图上每根柱都是可复核的枚举映射，不是估的。
+    """
+    if "cost_bar" not in ctx.allowed or not ctx.sections_exist("amenities"):
+        return []
+    ratio = SC.SCORE_FORMULAS["amenity"]
+    multi = len(ctx.destinations) >= 2
+    labels: List[str] = []
+    values: List[float] = []
+    for grp in ctx.own((ctx.analysis.get("structured") or {}).get("amenity_checklist") or []):
+        dest = str(grp.get("destination") or "").strip()
+        for it in (grp.get("items") or []):
+            name = str(it.get("item") or "").strip()
+            if not name:
+                continue
+            cov = str(it.get("coverage") or "partial").strip().lower()
+            labels.append(_dest_prefixed(dest, name, multi))
+            values.append(ratio.get(cov, ratio["partial"]) * 100)
+    if not values:
+        return []
+    sections = ("amenities",)
+    title = f"配套覆盖度{'对比' if multi else ''}{_ALGO_TAG}"
+    note = "覆盖分 = " + " / ".join(f"{k} {v * 100:.0f}" for k, v in ratio.items())
+    return [{"chart_id": ctx.new_id("ch"), "type": "cost_bar", "title": title,
+             "sections": sections,
+             "option": C.pricing_bar(title, labels, values, y_name="覆盖度（满分 100）", note=note),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("season_heat", ("structured.risk_profile",))
+def _chart_risk_heat(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """风险维度热力网格（safety 章）：y=目的地、x=风险维度、值=风险等级映射分。
+
+    分档映射表与安全章算分同一张（SCORE_FORMULAS["risk"]：low=20/medium=50/high=80），
+    注释文案由表生成——改表即改图，不存在第二处口径。维度取各目的地**共有**项：
+    热力网格每行必须等长，缺格补 0 会把「未评估」画成「无风险」。不足 2 维不出图。
+    """
+    if "season_heat" not in ctx.allowed or not ctx.sections_exist("safety"):
+        return []
+    rows = ctx.own((ctx.analysis.get("structured") or {}).get("risk_profile") or [])
+    levels = SC.SCORE_FORMULAS["risk"]
+    order: List[str] = []
+    per_dest: List[Tuple[str, Dict[str, float]]] = []
+    for grp in rows:
+        dest = str(grp.get("destination") or "").strip()
+        lv: Dict[str, float] = {}
+        for it in (grp.get("items") or []):
+            dim = str(it.get("dimension") or "").strip()
+            if not dim:
+                continue
+            lv[dim] = levels.get(str(it.get("level") or "").lower(), levels["medium"])
+            if dim not in order:
+                order.append(dim)
+        if dest and lv:
+            per_dest.append((dest, lv))
+    dims = [d for d in order if all(d in lv for _, lv in per_dest)]
+    if len(dims) < 2:
+        if per_dest:   # 有风险行却凑不出 2 个共有维度：网格每行必须等长，如实标注
+            ctx.note_gap("safety",
+                         reason=f"各目的地的共有风险维度不足 2 个（当前 {len(dims)} 个）")
+        return []
+    sections = ("safety",)
+    title = f"风险维度热力网格{_ALGO_TAG}"
+    return [{"chart_id": ctx.new_id("ch"), "type": "season_heat", "title": title,
+             "sections": sections,
+             "option": C.season_heat(title, dims, [d for d, _ in per_dest],
+                                     [[lv[d] for d in dims] for _, lv in per_dest],
+                                     "风险分：" + " / ".join(f"{k}={int(v)}"
+                                                            for k, v in levels.items())),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("cost_bar", ("livelihood_cost",))
+def _chart_livelihood_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """生活成本分项柱（livelihood 章）：数据源 analysis.livelihood_cost（逐目的地分项）。"""
+    if "cost_bar" not in ctx.allowed or not ctx.sections_exist("livelihood"):
+        return []
+    multi = len(ctx.destinations) >= 2
+    unit = ""
+    labels: List[str] = []
+    values: List[float] = []
+    groups = ctx.own(ctx.analysis.get("livelihood_cost") or [])
+    for grp in groups:
+        dest = str(grp.get("destination") or "").strip()
+        for it in (grp.get("items") or []):
+            cat = str(it.get("category") or "").strip()
+            amt = it.get("amount")
+            if not cat or not isinstance(amt, (int, float)) or isinstance(amt, bool):
+                continue
+            unit = unit or str(it.get("unit") or "元/月").strip()
+            labels.append(_dest_prefixed(dest, cat, multi))
+            values.append(float(amt))
+    if not values:
+        if any((g.get("items") for g in groups)):   # 有分项却全无金额：算分输入缺口
+            ctx.note_gap("livelihood", reason="生活成本分项未给出金额")
+        return []
+    sections = ("livelihood",)
+    title = f"生活成本分项{'对比' if multi else ''}{_ALGO_TAG}"
+    return [{"chart_id": ctx.new_id("ch"), "type": "cost_bar", "title": title,
+             "sections": sections,
+             "option": C.pricing_bar(title, labels, values, y_name=unit or "元/月"),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("growth_bar", ("consensus_split",))
+def _chart_consensus_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """共识 vs 反共识对照条（contrarian 章）：数据源 analysis.consensus_split。
+
+    只画**有占比**的一侧（share 缺失不补 0——「未给出占比」与「占比 0%」不是一回事）；
+    两侧都无占比才不出图。
+    """
+    if "growth_bar" not in ctx.allowed or not ctx.sections_exist("contrarian"):
+        return []
+    split = ctx.analysis.get("consensus_split") or {}
+    labels: List[str] = []
+    values: List[float] = []
+    for key, default_label in (("orthodox", "主流共识"), ("contrarian", "反共识判断")):
+        side = split.get(key)
+        if not isinstance(side, dict):
+            continue
+        share = side.get("share")
+        if not isinstance(share, (int, float)) or isinstance(share, bool):
+            continue
+        labels.append(str(side.get("label") or default_label).strip()[:20])
+        values.append(float(share))
+    if not values:
+        return []
+    sections = ("contrarian",)
+    title = f"共识 vs 反共识占比{_ALGO_TAG}"
+    return [{"chart_id": ctx.new_id("ch"), "type": "growth_bar", "title": title,
+             "sections": sections,
+             "option": C.growth_bar(title, labels, values, y_name="占比（%）"),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("growth_bar", ("action_priorities",))
+def _chart_action_priorities(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """行动优先级分档柱（conclusion 章）：按 tier 计数（高/中/低）。
+
+    tier 收敛（未知档按 mid）在清洗层完成，这里只计数——「有几条高优先级行动」
+    本身就是结论章要给决策者的信息。
+    """
+    if "growth_bar" not in ctx.allowed or not ctx.sections_exist("conclusion"):
+        return []
+    tiers = (("high", "高优先级"), ("mid", "中优先级"), ("low", "低优先级"))
+    counts = {k: 0 for k, _ in tiers}
+    for it in ((ctx.analysis.get("action_priorities") or {}).get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        tier = str(it.get("tier") or "").strip().lower()
+        if tier in counts:
+            counts[tier] += 1
+    if not sum(counts.values()):
+        return []
+    sections = ("conclusion",)
+    title = f"行动优先级分档{_ALGO_TAG}"
+    return [{"chart_id": ctx.new_id("ch"), "type": "growth_bar", "title": title,
+             "sections": sections,
+             "option": C.growth_bar(title, [label for _, label in tiers],
+                                    [float(counts[k]) for k, _ in tiers], y_name="条"),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+@_builder("growth_bar", ("@claims",))
+def _chart_evidence_strength(ctx: ChartContext) -> List[Dict[str, Any]]:
+    """证据强度计数（risk 章）：结论总数/有据/无据 + 引用证据/独立信源。
+
+    数据源是 claims/evidences（scoring.count_evidence_strength，确定性计数）。计数类
+    无「输入不足」语义，0 条也是可展示的事实；但**无结论**时不画一排 0（无对象可数）。
+    """
+    if "growth_bar" not in ctx.allowed or not ctx.sections_exist("risk"):
+        return []
+    st = SC.count_evidence_strength(ctx.claims, ctx.evidences)
+    if not st["claims_total"]:
+        return []
+    sections = ("risk",)
+    title = f"证据强度计数{_ALGO_TAG}"
+    labels = ["结论总数", "有据结论", "无据存疑", "引用证据", "独立信源"]
+    values = [st["claims_total"], st["supported"], st["unsupported"],
+              st["evidence_total"], st["domains"]]
+    return [{"chart_id": ctx.new_id("ch"), "type": "growth_bar", "title": title,
+             "sections": sections,
+             "option": C.growth_bar(title, labels, [float(v) for v in values],
+                                    y_name="条 / 个"),
+             "evidence_ids": ctx.section_evidence(*sections)}]
+
+
+# 注册表顺序 = 产出顺序：guide 既有图（前 10 个 builder）必须保持原序，
+# test_chart_contract.py 的 T-05 基线逐项比对产出序列，挪动即红。
+CHART_BUILDERS: Tuple[Callable[[ChartContext], List[Dict[str, Any]]], ...] = (
+    _chart_radar, _chart_cost_bar, _chart_safety_score, _chart_cost_compose,
+    _chart_season_heat, _chart_donut, _chart_trend,
+    _chart_sentiment_donut, _chart_platform_bar, _chart_wordcloud,
+    # assessment 批次② 新增 7 张
+    _chart_access_radar, _chart_amenity_bar, _chart_risk_heat,
+    _chart_livelihood_bar, _chart_consensus_bar, _chart_action_priorities,
+    _chart_evidence_strength,
+)
+
+
+def _chart_context(destinations, analysis, sentiment, claims=None,
+                   research_type: str = DEFAULT_RESEARCH_TYPE, mode: str = "deep",
+                   evidences=None) -> ChartContext:
+    """装配 ChartContext：闭包（own/eids/new_id）在此收拢，供 _build_charts 与单测共用。"""
     ev_by_field: Dict[str, List[str]] = {}
     for c in (claims or []):
         ev_by_field.setdefault(c.get("field", ""), []).extend(c.get("evidence_ids", []))
@@ -3574,131 +4474,64 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
         seen = set()
         return [x for x in out if not (x in seen or seen.add(x))][:6]
 
-    def chart_eids(chart_type: str) -> List[str]:
-        return eids(*_fields_for_chart(chart_type))
-
     def own(rows_iter: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """消费侧兜底：只取属于本次目的地的行（装配前已过滤，这里防新调用点漏过收口）。"""
-        return [r for r in rows_iter if _row_dest_ok(_row_name(r), destinations)]
+        return [r for r in (rows_iter or []) if _row_dest_ok(_row_name(r), destinations)]
 
-    radar = analysis.get(spec["radar_key"]) or {}
-    dims = radar.get("dimensions") or []
-    scores = [s for s in own(radar.get("scores") or [])
-              if dims and isinstance(s.get("values"), list) and len(s["values"]) == len(dims)]
-    if "radar" in allowed and dims and scores:
-        series = [{"name": s["destination"], "values": s["values"]} for s in scores[:4]]
-        specs.append({"chart_id": _sid("ch"), "type": "radar", "title": radar_title,
-                      "option": C.feature_radar(radar_title, dims, series),
-                      "evidence_ids": chart_eids("radar")})
+    dest_list = list(destinations or [])
+    return ChartContext(
+        destinations=dest_list, analysis=analysis or {}, sentiment=sentiment or {},
+        claims=list(claims or []), evidences=list(evidences or []),
+        spec=RT.type_spec(research_type),
+        allowed=frozenset(RT.charts_for(research_type, len(dest_list))),
+        mode=mode, research_type=research_type, own=own, eids=eids, new_id=_sid,
+    )
 
-    cb = spec.get("cost_bar") or {}
-    rows = ([r for r in own(analysis.get(cb["key"]) or [])
-             if isinstance(r.get(cb["value_field"]), (int, float))] if cb else [])
 
-    def cost_labels(items: List[Dict[str, Any]]) -> List[str]:
-        """同目的地多档位时把档位拼进 x 轴，否则三根柱子都叫「大理」，看不出差异。"""
-        names = [_row_name(r) for r in items]
-        same_dest_multi = len(names) > 1 and len(set(names)) < len(names)
-        out: List[str] = []
-        for r in items:
-            dest_name = _row_name(r)
-            tier = str(r.get("tier") or "").strip()
-            out.append(f"{dest_name}·{tier}" if (same_dest_multi and tier) else (dest_name or "—"))
-        return out
+def _build_charts_and_gaps(destinations, analysis, sentiment, claims=None,
+                           research_type: str = DEFAULT_RESEARCH_TYPE,
+                           mode: str = "deep", evidences=None,
+                           ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """生产入口：出图之外，回传 builder 记下的「有材料但算不出」缺口台账。
 
-    if "cost_bar" in allowed and rows:
-        bar_title = RT.cost_bar_title(research_type, len(destinations))
-        specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": bar_title,
-                      "option": C.pricing_bar(bar_title, cost_labels(rows),
-                                              [float(r[cb["value_field"]]) for r in rows],
-                                              y_name=cb["unit"]),
-                      "evidence_ids": chart_eids("cost_bar")})
+    缺口只在**同一次** builder 运行里产生（判据与产出同处，见 ChartContext.note_gap），
+    装配层据此在章节上如实标注；不重跑 builder、不反推原因。
+    """
+    ctx = _chart_context(destinations, analysis, sentiment, claims,
+                         research_type, mode, evidences)
+    specs: List[Dict[str, Any]] = []
+    for build in CHART_BUILDERS:
+        specs.extend(build(ctx) or [])
+    return specs, ctx.gaps
 
-    # 安全评分柱状图：数据源是 analysis.safety_index[].safety_score（0-100 整数）
-    safety_rows = [r for r in own(analysis.get("safety_index") or [])
-                   if isinstance(r.get("safety_score"), (int, float))]
-    if "cost_bar" in allowed and safety_rows:
-        safety_title = "目的地安全评分对比" if len(destinations) >= 2 else "目的地安全评分"
-        specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": safety_title,
-                      "option": C.pricing_bar(safety_title,
-                                              [_row_name(r) for r in safety_rows],
-                                              [float(r["safety_score"]) for r in safety_rows],
-                                              y_name="分（0-100）"),
-                      "evidence_ids": chart_eids("safety_score")})
 
-    # 花费构成柱：数据源是结构化 cost_breakdown（交通/住宿/餐饮…），此前有数据无图。
-    # 是否产出由图集声明决定（SOLO_ONLY_CHARTS 已在 charts_for 里按目的地数剔除）。
-    cb_items: List[Dict[str, Any]] = []
-    for grp in own((analysis.get("structured") or {}).get("cost_breakdown") or []):
-        cb_items.extend(i for i in (grp.get("items") or []) if isinstance(i, dict))
-    cb_items = [i for i in cb_items if isinstance(i.get("amount"), (int, float))
-                and str(i.get("category") or "").strip()]
-    if "cost_compose" in allowed and cb_items:
-        compose_unit = str(cb_items[0].get("unit") or "元/人").strip()
-        compose_title = f"人均花费构成（{compose_unit}）"
-        specs.append({"chart_id": _sid("ch"), "type": "cost_compose", "title": compose_title,
-                      "option": C.pricing_bar(compose_title,
-                                              [str(i["category"]).strip() for i in cb_items],
-                                              [float(i["amount"]) for i in cb_items],
-                                              y_name=compose_unit),
-                      "evidence_ids": chart_eids("cost_compose")})
+def _build_charts(destinations, analysis, sentiment, claims=None,
+                  research_type: str = DEFAULT_RESEARCH_TYPE,
+                  mode: str = "deep", evidences=None) -> List[Dict[str, Any]]:
+    """按 spec["charts"] 出图：类型决定图集，某图无真实数据则整图跳过（不占位造假）。
 
-    season = analysis.get("season") or {}
-    matrix = [m for m in own(season.get("matrix") or [])
-              if isinstance(m.get("values"), list) and len(m["values"]) == 12]
-    if "season_heat" in allowed and matrix:
-        title = "逐月出行适宜度（1-12 月）"
-        specs.append({"chart_id": _sid("ch"), "type": "season_heat", "title": title,
-                      "option": C.season_heat(title, [f"{i}月" for i in range(1, 13)],
-                                              [m["destination"] for m in matrix],
-                                              [m["values"] for m in matrix],
-                                              str(season.get("note") or "")),
-                      "evidence_ids": chart_eids("season_heat")})
+    实现 = 遍历 CHART_BUILDERS（每类图一个函数，自带 sections 归属与降级），本函数
+    只做上下文装配与结果汇总——新增图不动这里。签名与扁平返回契约保持不变
+    （test_charts_options 有 6 处位置调用、test_chart_contract T-16 守护）。
+    """
+    return _build_charts_and_gaps(destinations, analysis, sentiment, claims,
+                                  research_type, mode, evidences)[0]
 
-    share = [s for s in own(analysis.get("share_estimate") or [])
-             if isinstance(s.get("value"), (int, float))]
-    if "donut" in allowed and share:
-        specs.append({"chart_id": _sid("ch"), "type": "donut", "title": spec["share_title"],
-                      "option": C.market_donut(spec["share_title"],
-                                               [{"name": s["name"], "value": s["value"]} for s in share]),
-                      "evidence_ids": chart_eids("donut")})
 
-    tr = analysis.get("trends") or {}
-    tx = tr.get("x") if isinstance(tr.get("x"), list) else []
-    tseries = [s for s in own(tr.get("series") or [])
-               if tx and isinstance(s.get("values"), list) and len(s["values"]) == len(tx)]
-    if "trend" in allowed and tx and tseries:
-        title = f"发展轨迹趋势（{tr.get('unit', '')}）".replace("（）", "")
-        specs.append({"chart_id": _sid("ch"), "type": "trend", "title": title,
-                      "option": C.trend_line(title, tx,
-                                             [{"name": s["name"], "values": s["values"]} for s in tseries[:5]],
-                                             y_name=tr.get("unit", "")),
-                      "evidence_ids": chart_eids("trend")})
+# ── 图表归属谓词（批次⓪ 契约）：章节装配与舆情面板的唯一取图入口 ──────
+def _charts_for_section(sid: str, charts: List[Dict[str, Any]],
+                        chart_types: Tuple[str, ...] = ()) -> List[Dict[str, Any]]:
+    """按归属取图：spec 声明了 sections 的图**只按归属匹配**（sections 是权威，
+    此时 chart_types 对它失效）；未声明（None）的图维持旧「按类型广播」行为，
+    保证 guide 现有图（全部未声明）产出零变化。
 
-    if "sentiment_donut" in allowed and sentiment.get("sample_size"):
-        specs.append({"chart_id": _sid("ch"), "type": "sentiment_donut", "title": "整体舆情情感分布",
-                      "option": C.sentiment_donut("整体舆情情感分布", sentiment["overall_count"]),
-                      "evidence_ids": []})
-        if "platform_bar" in allowed and sentiment.get("by_platform"):
-            specs.append({"chart_id": _sid("ch"), "type": "platform_bar", "title": "各平台声量（抖音优先）",
-                          "option": C.platform_bar("各平台声量（抖音优先）", sentiment["by_platform"]),
-                          "evidence_ids": []})
-    # 口碑词云（M2d · E1 语义载荷）：wordfreq 真实词频为源；无词不产图。expert 逐景点各一张（引用冻结实体名）。
-    if "wordcloud" in allowed:
-        wc_words = C.wordcloud_words(sentiment.get("keywords") or [])
-        if wc_words:
-            wc_title = "全网口碑热词词云"
-            specs.append({"chart_id": _sid("ch"), "type": "wordcloud", "title": wc_title,
-                          "words": wc_words, "evidence_ids": []})
-            if mode == "expert":
-                for g in sentiment.get("by_spot") or []:
-                    gw = C.wordcloud_words(g.get("keywords") or [])
-                    if not gw:
-                        continue
-                    t = f"「{g.get('spot_name') or g.get('spot_id')}」口碑词云"
-                    specs.append({"chart_id": _sid("ch"), "type": "wordcloud", "title": t,
-                                  "words": gw, "evidence_ids": []})
-    return specs
+    旧实现按 c["type"] 无差别广播，同类型多图时每章拿到全部张数（串章根因③）；
+    舆情面板旧实现按类型取 c[0] 首张，取到哪张随产出顺序漂移——两处统一到本谓词后，
+    图落在哪章由图自带的 sections 声明决定，与产出顺序、章节类型表皆解耦。
+    """
+    return [c for c in charts
+            if sid in (c.get("sections") or ())
+            or (c.get("sections") is None and c["type"] in chart_types)]
 
 
 # ── 数据空间：把数据密集章节的数据汇总成可导出 CSV 的表格 ────────
@@ -3768,6 +4601,15 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
                     plan = f"{sp.get('transport', '')} / {sp.get('duration', '')}".strip(" /")
                     rows.append(_row(f"{dest} · D{day} {sp.get('name', '')}", plan or "—",
                                      "行程安排", sp.get("evidence_ids")))
+    elif section_id == "persp_family":   # guide：亲子视角逐景点核查表（一格一行，可溯源）
+        for fc in structured.get("family_checklist", []):
+            dest = str(fc.get("destination", ""))
+            for it in fc.get("items", []):
+                for c in it.get("cells", []):
+                    val = str(c.get("text") or "待核验")
+                    rows.append(_row(f"{dest} · {it.get('spot_name', '')} · {c.get('column', '')}",
+                                     val, "亲子核查项" if c.get("verified") else "待核验占位",
+                                     c.get("evidence_ids")))
     elif section_id == "value":           # assessment：性价比与成本
         for c in (analysis.get("cost") or []):
             dest = str(c.get("destination", ""))
@@ -3777,6 +4619,14 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
             if isinstance(c.get("monthly_living"), (int, float)):
                 rows.append(_row(f"{dest} 月均生活费", f"{c['monthly_living']}元/月", "生活成本",
                                  c.get("evidence_ids")))
+    elif section_id == "livelihood":      # assessment：生活成本分项
+        for lc in (analysis.get("livelihood_cost") or []):
+            dest = str(lc.get("destination", ""))
+            for it in lc.get("items", []):
+                amount = it.get("amount")
+                val = f"{amount}{it.get('unit') or '元/月'}" if amount is not None else "未公开"
+                rows.append(_row(f"{dest} · {it.get('category', '')}", val, "生活成本项",
+                                 it.get("evidence_ids")))
     elif section_id == "accessibility":   # assessment：可达性
         for am in structured.get("access_matrix", []):
             dest = str(am.get("destination", ""))
@@ -3860,7 +4710,8 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
                      trace_spans, mode, section_ids, sentiment_text=None,
                      objective_meta: Optional[Dict] = None,
                      research_type: str = DEFAULT_RESEARCH_TYPE,
-                     clar: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                     clar: Optional[Dict[str, Any]] = None,
+                     chart_gaps: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     rid = _sid("r")
     spec = RT.type_spec(research_type)
     members = [m["id"] for m in dispatch["members"]]
@@ -3869,11 +4720,10 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
     subtitle = (f"基于 {len(evidences)} 条联网证据 · {indep_domains} 个独立来源 · "
                 f"{len(members)} 位专家协作生成 · {MODE_CONFIG.get(mode,{}).get('label','深度模式')}")
 
-    # 同类型可能有多张图（expert 档逐景点词云），按类型挂全部而非仅末张
-    charts_by_type: Dict[str, List[Dict[str, Any]]] = {}
-    for c in charts:
-        charts_by_type.setdefault(c["type"], []).append(c)
-
+    # 图表归属（批次⓪ 契约）：spec 声明了 sections 的图**只按归属匹配**（此时类型过滤
+    # 失效，sections 是权威归属，供 builder 自声明「图属哪章」）；未声明（None）的图
+    # 维持旧「按类型广播」行为——guide 现有图全部未声明，产出零变化。
+    # 旧实现按 c["type"] 无差别广播，同类型多图时每章都会拿到全部张数（串章根因）。
     # 章节标题（类型白名单内的章节加中文序号）
     title_map = {**RT.SECTION_PLAN, **RT.numbered_titles(section_ids, research_type)}
     data_grid_sections = set(spec["data_grid_sections"])
@@ -3884,7 +4734,7 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
         if not isinstance(st, dict):
             st = {"paragraphs": st if isinstance(st, list) else [str(st)], "key_takeaway": "", "highlights": []}
         sec_claims = [c for c in claims if c["field"] in set(fields)]
-        sec_charts = [c for t in chart_types for c in charts_by_type.get(t, [])]
+        sec_charts = _charts_for_section(sid, charts, chart_types)
         src: List[str] = []
         for c in sec_claims:
             src.extend(c.get("evidence_ids", []))
@@ -3902,28 +4752,39 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
             "source_evidence_ids": src,
             "structured": None,
             "data_grid": None,
+            "score_gap": None,
         }
-        # 结构化对象挂到承载它的章节：claim 字段命中的键，或 SECTION_STRUCTURED 声明的实体表
+        # 结构化对象挂到承载它的章节：claim 字段命中的键，或 SECTION_STRUCTURED 声明的实体表。
+        # 挂块为**复数**（rough-cliff-vole）：视角一章同挂核查表+铁律+清单项三块；
+        # 既有章节本就一键，形状从 {type,data} 变 [{type,data}]，前端归一化两种形状读。
         structured = analysis.get("structured") or {}
         mount_keys = [k for k in spec["structured_keys"] if k in set(fields)]
         mount_keys += [k for k in RT.section_structured_keys(sid) if k not in mount_keys]
-        for key in mount_keys:
-            if structured.get(key):
-                sec["structured"] = {"type": key, "data": structured[key]}
-                break
+        blocks = [{"type": key, "data": structured[key]}
+                  for key in mount_keys if structured.get(key)]
+        if blocks:
+            sec["structured"] = blocks
         # 数据空间
         if sid in data_grid_sections:
             sec["data_grid"] = _build_data_grid(sid, analysis, evidences)
         # 结构状态：前端据此决定画导图还是如实标注（本就没有材料 vs 写稿失败丢了结构）
         sec["structure_status"] = _structure_status(
             st, bool(sec_claims) or sec.get("structured") is not None)
+        # 算分输入缺口（③ 体验层）：取 builder 同一次产出里记的台账，按归属落章。
+        # 与 structure_status 是两条正交的轴（那条讲结构提炼，这条讲算分输入），
+        # 故不复用同一字段与状态值——lost 是「写稿失败」，本字段是「材料缺可核验数值」。
+        gap = next((g for g in (chart_gaps or []) if sid in g.get("sections", ())), None)
+        if gap:
+            sec["score_gap"] = {"kind": "insufficient_input", "reason": gap["reason"]}
         return sec
 
     sections = [_section(sid) for sid in section_ids if sid != "sentiment"]
 
-    # 舆情专章（始终插入，置于结论章之前）
-    sent_charts = [c[0] for t in ("sentiment_donut", "platform_bar")
-                   if (c := charts_by_type.get(t))]
+    # 舆情专章（始终插入，置于结论章之前）。取图与 _section 同一谓词入口：
+    # 舆情图已声明 sections，不再按产出顺序取首张（旧实现属隐蔽顺序依赖）。
+    # 类型白名单保持两类（词云不在旧面板的展示面内，quick 档仍不挂）。
+    sent_charts = _charts_for_section("sentiment", charts,
+                                      ("sentiment_donut", "platform_bar"))
     st = sentiment_text or {}
     has_sample = bool(sentiment.get("sample_size"))
     # 优先使用 LLM 基于真实数据生成的多段深度解读；无则如实兜底说明
@@ -3948,7 +4809,7 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
         "highlights": [h for h in st.get("highlights", []) if str(h).strip()],
         "paragraphs": sent_paras,
         "claims": [], "charts": sent_charts, "source_evidence_ids": [],
-        "structured": None, "data_grid": None,
+        "structured": None, "data_grid": None, "score_gap": None,
         "structure_status": _structure_status(st, False),
     }
     # 报告已有正式的「全网舆情」章（sentiment_report 进了本档位章节集）时，
@@ -3967,7 +4828,7 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
                          "key_takeaway": "", "highlights": [],
                          "paragraphs": collect_notes, "claims": [], "charts": [],
                          "source_evidence_ids": [], "structured": None, "data_grid": None,
-                         "structure_status": "by_design"})
+                         "score_gap": None, "structure_status": "by_design"})
 
     toc = [{"id": s["id"], "title": s["title"], "level": 1} for s in sections]
     glossary = [

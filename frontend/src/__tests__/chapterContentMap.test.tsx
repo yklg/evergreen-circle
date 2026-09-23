@@ -11,6 +11,8 @@
  *   - ok / repaired → 照常画 SVG（repaired 已有结构，不会走到说明分支）
  *   - 全空且无正文 → 组件整体不渲染（沿用既有行为）
  *   - summary 模式不受影响（仍是芯片态，内容源共用 chapterMapLeaves）
+ *   - score_gap（T-13′）→ 一行「评分维度缺可核验数据 · <原因>」，**与 lost 正交**：
+ *     结构完好的章节照样可以缺算分输入，折叠态也照常显示（结论面不藏在折叠后面）
  *
  * 选择器用 `svg[role="img"]`：折叠按钮的 lucide X 图标也是 <svg>，只数 svg 会误判。
  */
@@ -114,5 +116,43 @@ describe('ChapterContentMap（detail 模式：退化态换一行说明）', () =
     expect(container.textContent).not.toContain(DEGRADED_NOTE_LOST)
     expect(container.textContent).not.toContain(DEGRADED_NOTE_BY_DESIGN)
     expect(container.textContent).toContain('正文')
+  })
+})
+
+describe('ChapterContentMap（score_gap：算分输入缺口 · T-13′）', () => {
+  const GAP_SECTION = mk({
+    structure_status: 'ok',
+    key_takeaway: '判断',
+    paragraphs: ['p'],
+    score_gap: { kind: 'insufficient_input', reason: '可达性矩阵未给出「耗时/费用」数值' },
+  })
+
+  it('有 score_gap → 出一行「评分维度缺可核验数据 · 原因」，且不冒充 lost 文案', () => {
+    const { container } = render(<ChapterContentMap section={GAP_SECTION} />)
+    const note = container.querySelector('[data-score-gap]')
+    expect(note).not.toBeNull()
+    expect(note!.textContent).toContain('评分维度缺可核验数据')
+    expect(note!.textContent).toContain('可达性矩阵未给出「耗时/费用」数值')
+    expect(container.textContent).not.toContain(DEGRADED_NOTE_LOST)
+    expect(container.textContent).not.toContain(DEGRADED_NOTE_BY_DESIGN)
+  })
+
+  it('结构完好（ok）与算分缺口并存：导图照画，说明另起一行（两条轴不互斥）', () => {
+    const { container } = render(<ChapterContentMap section={GAP_SECTION} />)
+    expect(mindmapOf(container)).not.toBeNull()
+    expect(container.querySelector('[data-score-gap]')).not.toBeNull()
+  })
+
+  it('无 score_gap（null / 老报告缺字段）→ 不出现说明行', () => {
+    const { container } = render(
+      <ChapterContentMap section={mk({ structure_status: 'ok', key_takeaway: '判断', paragraphs: ['p'] })} />
+    )
+    expect(container.querySelector('[data-score-gap]')).toBeNull()
+  })
+
+  it('折叠态也显示缺口说明（结论面不藏在「显示本章内容结构」后面）', () => {
+    const { container } = render(<ChapterContentMap section={GAP_SECTION} collapsed />)
+    expect(container.querySelector('[data-score-gap]')).not.toBeNull()
+    expect(container.textContent).toContain('显示本章内容结构')
   })
 })

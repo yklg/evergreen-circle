@@ -30,6 +30,8 @@ export interface ClarifyQuestion {
   hint?: string
   type: 'single' | 'multi' | 'text' | 'slider'
   options?: string[]
+  /** 条件题显隐元数据（rough-cliff-vole）：仅当被引题答案恰等于 equals 时展示；旧后端无此字段=恒展示 */
+  show_if?: { qid: string; equals: string }
   /** 目的地题的工作量事实量（后端按所选档位下发）；旧后端无此字段时不渲染提示 */
   workload?: {
     mode?: string
@@ -185,6 +187,7 @@ export type StructuredBlockType =
   | 'spot_ranking' | 'spot_routes' | 'food_ranking' | 'shop_list'
   | 'route_plan' | 'stay_options' | 'cost_breakdown'
   | 'access_matrix' | 'amenity_checklist' | 'risk_profile'
+  | 'family_checklist' | 'persp_rules' | 'persp_packing'
 
 export interface StructuredBlock {
   type: StructuredBlockType
@@ -202,10 +205,15 @@ export interface ReportSection {
   claims?: Claim[]
   charts?: ChartSpec[]
   source_evidence_ids?: string[]
-  structured?: StructuredBlock | null
+  structured?: StructuredBlock[] | StructuredBlock | null
   data_grid?: DataGrid | null
   /** 后端写稿的结构状态：by_design=本章本无结构化材料，lost=写稿失败丢了结构（老报告无此字段） */
   structure_status?: 'ok' | 'repaired' | 'lost' | 'by_design'
+  /**
+   * 算分输入缺口（与 structure_status 正交的轴，老报告/无缺口章节为 null 或缺字段）：
+   * kind=insufficient_input 表示「有材料但缺可核验数值」→ 本章算分图整体缺位，如实标注。
+   */
+  score_gap?: { kind?: string; reason: string } | null
   refined?: boolean
 }
 

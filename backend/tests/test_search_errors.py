@@ -1,12 +1,16 @@
-"""搜索错误分级 fail-fast（修复计划 wise-flint-darter item3；覆盖评估 B 组 5 钉）。
+"""搜索错误分级 fail-fast（修复计划 wise-flint-darter item3；覆盖评估 B 组 5 钉；
+rough-cliff-vole RV-6 补节流钉）。
 
 守护的不变量（app/core/search.py）：
-- 服务商级终态错误（Key 无效/欠费/配额：HTTP 或业务码 401/403/429 及文案命中族）
-  → SearchProviderError，multi_search 不吞、一条即止（不再烧剩余查询）。
-- 瞬时失败（5xx/网络抖动）→ 维持逐条跳过、聚合已得的尽力而为语义。
+- 服务商级终态错误（Key 无效/欠费：HTTP 或业务码 401/403 及文案命中族）
+  → SearchProviderError，multi_search 不吞、一条即止（不再烧剩余查询），且**零退避**。
+- 429 属账号级 QPS 节流（瞬态）→ 按退避阶梯重发同一条查询；阶梯用尽才升格终态。
+  真机 r_b14e555d 实证：把 429 当终态会让逐景点二查首发即中止、核查表满屏占位。
+- 瞬时失败（5xx/网络抖动）→ 维持逐条容错、聚合已得的尽力而为语义。
 - 缺 key → 安全降级抛错（现状钉），且任何对外文案不带 API key（防泄漏）。
+- 出站节流：任意两次真实请求之间保持最小间隔（防并发突发打满 QPS）。
 
-零网络：httpx.Client 与 settings 全部 mock。
+零网络、零真实等待：httpx.Client / settings / 休眠垫片全部 mock。
 运行：backend/ 下 `pytest tests/test_search_errors.py -q`
 """
 import json
@@ -19,6 +23,16 @@ from app.core.search import SearchProviderError
 FAKE_KEY = "sk-SECRET-do-not-leak"
 SETTINGS = {"bocha_api_key": FAKE_KEY, "bocha_base_url": "https://bocha.invalid/v1",
             "search_timeout": 5}
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep(monkeypatch):
+    """退避与节流走 _sleep 垫片：测试记录延迟序列而非真等（断言仍按阶梯值核）。"""
+    slept: list[float] = []
+    monkeypatch.setattr(S, "_sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(S, "_next_send_at", 0.0)
+    S._slept = slept          # 供各用例读取退避/节流序列
+    yield
 
 
 class _Resp:
@@ -67,9 +81,9 @@ def _http(status, body=None):
     return _r
 
 
-# ── TC-S1 等价类：终态码 → SearchProviderError；5xx → 普通 RuntimeError ──
+# ── TC-S1 等价类：真终态码 → SearchProviderError；5xx/400 → 普通 RuntimeError ──
 @pytest.mark.parametrize("status,is_terminal", [
-    (401, True), (403, True), (429, True),
+    (401, True), (403, True),
     (500, False), (400, False),
 ])
 def test_bocha_error_classification(monkeypatch, status, is_terminal):
@@ -80,6 +94,57 @@ def test_bocha_error_classification(monkeypatch, status, is_terminal):
     if not is_terminal:
         assert not isinstance(ei.value, SearchProviderError), f"{status} 属瞬时类，不得判终态"
     assert str(ei.value)
+
+
+# ── TC-S1b（RV-6 根修钉）429 属节流瞬态：退避后重发，同查询可得结果 ──────
+def test_429_is_throttled_not_terminal(monkeypatch):
+    """真机 r_b14e555d 回归钉：首发 429 不得判终态——退避重发后必须拿到结果。"""
+    def responder(n, _p):
+        return _Resp(429) if n == 1 else _Resp(200, _ok_body("大理 攻略"))
+    state = _install_client(monkeypatch, responder)
+    out = S.search_bocha("大理 攻略")
+    assert state["n"] == 2, f"节流应退避重发，实发 {state['n']} 次"
+    assert out and out[0]["url"] == "https://a.example/1"
+    assert S._slept, "重发前必须真的退避（否则等价于无节流保护）"
+
+
+def test_429_ladder_exhausted_upgrades_to_terminal(monkeypatch):
+    """持续 429：按阶梯发满 1+len(backoffs) 次后升格服务商终态，文案不改口。"""
+    state = _install_client(monkeypatch, _http(429))
+    with pytest.raises(SearchProviderError) as ei:
+        S.search_bocha("大理 攻略")
+    assert state["n"] == 1 + len(S._THROTTLE_BACKOFFS)
+    assert "频率超限" in str(ei.value)
+    # 退避序列即阶梯本身（不得零间隔连发，否则等于没有退避）
+    assert [d for d in S._slept if d in S._THROTTLE_BACKOFFS] == list(S._THROTTLE_BACKOFFS)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_true_terminal_never_backoff_retries(monkeypatch, status):
+    """防回潮负钉：真终态（鉴权/欠费）一次即判，绝不被退避拖慢、绝不重发。"""
+    state = _install_client(monkeypatch, _http(status))
+    with pytest.raises(SearchProviderError):
+        S.search_bocha("大理 攻略")
+    assert state["n"] == 1, f"{status} 属终态，重试只是白烧请求"
+    assert [d for d in S._slept if d in S._THROTTLE_BACKOFFS] == []
+
+
+def test_outbound_pacing_keeps_min_interval(monkeypatch):
+    """账号级 QPS 节流：连续请求之间必须排入最小间隔（并发突发不得直接外溢）。"""
+    _install_client(monkeypatch, lambda n, _p: _Resp(200, _ok_body("大理 攻略")))
+    for _ in range(3):
+        S.search_bocha("大理 攻略")
+    assert any(d <= S._MIN_INTERVAL_S for d in S._slept), \
+        f"出站节流未生效，未产生任何间隔等待：{S._slept}"
+
+
+def test_multi_search_still_fail_fast_after_throttle_ladder(monkeypatch):
+    """multi_search 语义不破：升格后的终态仍「一条即止」，不烧剩余查询。"""
+    state = _install_client(monkeypatch, _http(429))
+    with pytest.raises(SearchProviderError):
+        S.multi_search(["大理 攻略", "大理 美食", "大理 住宿", "大理 交通"])
+    assert state["n"] == 1 + len(S._THROTTLE_BACKOFFS), \
+        f"仅首条查询走完退避阶梯即止，实发 {state['n']} 次"
 
 
 def test_business_code_terminal_in_http_200(monkeypatch):

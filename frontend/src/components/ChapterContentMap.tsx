@@ -38,14 +38,28 @@ export function ChapterContentMap({
 
   if (!hasContent) return null
 
+  // 算分输入缺口（后端 score_gap，与 structure_status 正交）：折叠态也照常显示——
+  // 「本该有图却没出」的如实说明属于结论面，不该藏在「显示本章内容结构」后面。
+  const gapNote = section.score_gap?.reason ? (
+    <p
+      data-score-gap
+      className="mb-2 rounded-chip border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2"
+    >
+      评分维度缺可核验数据 · {section.score_gap.reason}
+    </p>
+  ) : null
+
   if (isCollapsed) {
     return (
-      <button
-        onClick={() => setIsCollapsed(false)}
-        className="flex w-full items-center justify-center gap-2 rounded-card border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2 hover:border-primary hover:text-primary-deep"
-      >
-        <span>显示本章内容结构</span>
-      </button>
+      <>
+        {gapNote}
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="flex w-full items-center justify-center gap-2 rounded-card border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2 hover:border-primary hover:text-primary-deep"
+        >
+          <span>显示本章内容结构</span>
+        </button>
+      </>
     )
   }
 
@@ -61,6 +75,8 @@ export function ChapterContentMap({
           <X size={14} />
         </button>
       </div>
+
+      {gapNote}
 
       {mode === 'detail' ? (
         isDegraded(branches) ? (

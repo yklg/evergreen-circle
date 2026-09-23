@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Sprout, ArrowRight, SkipForward, Loader2, AlertTriangle, RefreshCw, Clock } from 'lucide-react'
@@ -45,6 +45,13 @@ export default function ClarifyPage() {
   // 用户自定义补充的目的地（按题 id 存，目前主要用于 destinations 题）
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({})
 
+  // 条件题（show_if，rough-cliff-vole）：可见题集 = 无 show_if 的题 + 被当前答案触发的题。
+  // 判据与后端 missing_conditional_answers 同语义（悬空条件由后端元测试钉死）。
+  const visible = useMemo(
+    () => questions.filter((item) => !item.show_if ||
+      String(answers[item.show_if.qid] ?? '') === item.show_if.equals),
+    [questions, answers])
+
   // 每步切换 / 进入问卷时把焦点移到当前题容器，保证键盘 / 读屏可达
   const titleRef = useRef<HTMLDivElement>(null)
   // 自动前进定时器句柄：单选选中后延时跳下一题，用 ref 持有以便 clearTimeout，
@@ -64,8 +71,8 @@ export default function ClarifyPage() {
 
   // 跟踪是否已进入核对屏（供 clarify_update 到达时保持核对屏，C5）
   useEffect(() => {
-    reviewReachedRef.current = ready && questions.length > 0 && step === questions.length
-  }, [ready, questions, step])
+    reviewReachedRef.current = ready && questions.length > 0 && step === visible.length
+  }, [ready, questions, visible.length, step])
 
   // 挂载后通过 SSE 懒生成问卷；loading 阶段绝不跳转（修 P0#3：原 questions.length===0 误跳）
   useEffect(() => {
@@ -176,6 +183,25 @@ export default function ClarifyPage() {
     setAnswers((a) => ({ ...a, [qid]: val }))
   }
 
+  // 答案残留回退：改答使条件题隐藏时清掉它的旧答案——残留即脏数据，
+  // 后端硬约束（如 child_age）绝不能读到「情侣同行却带娃龄」的过期值。
+  useEffect(() => {
+    setAnswers((a) => {
+      const hidden = questions.filter(
+        (it) => it.show_if && a[it.id] != null &&
+          String(a[it.show_if.qid] ?? '') !== it.show_if.equals)
+      if (!hidden.length) return a
+      const next = { ...a }
+      for (const it of hidden) delete next[it.id]
+      return next
+    })
+  }, [answers, questions])
+
+  // 可见题集收缩后钳制步号（核对屏 = visible.length，防越界取到 undefined 题）
+  useEffect(() => {
+    setStep((s) => Math.min(s, Math.max(0, questions.length ? visible.length : s)))
+  }, [visible.length, questions.length])
+
   // 自动前进：单选选中后快速跳（350ms），多选选中 ≥1 项后停顿跳（1200ms，每次勾选重置）。
   // 文本/滑块不自动跳（需显式确认）。delay 默认单选档，multi 传 MULTI_ADVANCE_MS。
   function scheduleAdvance(delay = SINGLE_ADVANCE_MS) {
@@ -276,12 +302,12 @@ export default function ClarifyPage() {
     )
   }
 
-  const isReview = step === questions.length
+  const isReview = step === visible.length
   // 空问卷守卫：既有 effect 会跳 workspace，但 React 渲染先于 navigate 一帧，
-  // 直接 questions[step] 会取到 undefined 而崩溃，故前置返回。
-  if (!isReview && questions.length === 0) return null
-  const q = !isReview ? questions[step] : null
-  const pct = questions.length ? Math.round(((step + 1) / questions.length) * 100) : 0
+  // 直接 visible[step] 会取到 undefined 而崩溃，故前置返回。
+  if (!isReview && visible.length === 0) return null
+  const q = !isReview ? visible[step] : null
+  const pct = visible.length ? Math.round(((step + 1) / visible.length) * 100) : 0
   const destinationsPresent = questions.some((item) => item.id === 'destinations')
 
   // 派生：当前题是否为单选/多选（自动前进适用），及已选数量。
@@ -348,7 +374,7 @@ export default function ClarifyPage() {
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line/60">
                 <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
               </div>
-              <span className="whitespace-nowrap text-tag text-ink-3">第 {step + 1} / {questions.length} 题</span>
+              <span className="whitespace-nowrap text-tag text-ink-3">第 {step + 1} / {visible.length} 题</span>
             </div>
 
             <motion.div
@@ -457,7 +483,7 @@ export default function ClarifyPage() {
               animate="animate"
               className="mt-6 flex flex-col gap-5 outline-none"
             >
-              {questions.map((item) => (
+              {visible.map((item) => (
                 <div key={item.id} className="rounded-card border border-line/60 bg-card p-5 shadow-card">
                   <p className="text-body font-medium text-ink">{item.question}</p>
                   {item.hint && <p className="mt-1 text-tag text-ink-3">{item.hint}</p>}

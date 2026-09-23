@@ -29,6 +29,7 @@ def compute_report_metrics(
     issues_resolved: int = 0,
     objective_stats: Optional[Dict[str, Any]] = None,
     research_type: str = DEFAULT_RESEARCH_TYPE,
+    perspective_section_id: str = "",
 ) -> Dict[str, Any]:
     indep_domains = len({domain_of(getattr(e, "source_url", "")) for e in evidences
                          if getattr(e, "source_url", "")} - {""})
@@ -64,7 +65,7 @@ def compute_report_metrics(
 
     # 一致性（结构化程度）= 0.5×挂证据claim比 + 0.5×schema填充率
     from app.core.schemas import schema_completeness
-    sc = schema_completeness(structured, research_type)
+    sc = schema_completeness(structured, research_type, perspective_section_id)
     consistency = round(0.5 * (claims_with_evidence / total_claims) + 0.5 * sc, 3)
 
     # 准确率 = 高置信占比

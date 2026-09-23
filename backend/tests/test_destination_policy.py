@@ -511,7 +511,9 @@ def test_empty_fast_model_name_does_not_break_chain(monkeypatch):
 
 # ── M7/S7 · 档位属用户显式选择，问卷只下发事实量 ─────────────────
 def test_mode_config_is_not_rewritten_by_orchestration():
-    assert [O.MODE_CONFIG[m]["max_angles"] for m in ("quick", "deep", "expert")] == [4, 6, 9]
+    # deep/expert 的 max_angles 因视角槽位（rough-cliff-vole）6→8、9→11：
+    # reserve（days/origin/视角 2）不再挤占模型角度，quick 无槽位不变。
+    assert [O.MODE_CONFIG[m]["max_angles"] for m in ("quick", "deep", "expert")] == [4, 8, 11]
     assert [O.MODE_CONFIG[m]["fetch_per_destination"] for m in ("quick", "deep", "expert")] == \
         [6, 12, 16]
     for mode in ("quick", "deep", "expert"):
@@ -539,7 +541,7 @@ def test_enhanced_questions_carry_workload_facts_per_mode():
         return qs["destinations"]
 
     assert dest_q("quick")["workload"]["max_angles"] == 4
-    assert dest_q("deep")["workload"]["max_angles"] == 6
+    assert dest_q("deep")["workload"]["max_angles"] == 8
     no_budget = {q["id"]: q for q in O._build_enhanced_questions(scope, baseline)}
     assert "workload" not in no_budget["destinations"], "未下发 budget 时该题不带 workload 键"
 

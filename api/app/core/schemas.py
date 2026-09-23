@@ -362,7 +362,12 @@ def coerce_shop_list(raw: Any, valid_eids: Optional[set] = None) -> List[Dict[st
 
 # ── 调研评估 assessment ───────────────────────────────────
 def coerce_access_matrix(raw: Any, valid_eids: Optional[set] = None) -> List[Dict[str, Any]]:
-    """规整为 [{destination, routes:[{mode,duration,cost,frequency,note,evidence_ids}]}]"""
+    """规整为 [{destination, routes:[{mode,duration,cost,frequency,note,[duration_minutes],[cost_yuan],evidence_ids}]}]
+
+    duration_minutes / cost_yuan 是**可选**数值字段（供确定性算分消费）：无法从证据
+    确证时省略键而非填 0——「未知」与「0 元/0 分钟」在降级契约里语义不同（缺字段
+    则该交通方式不计分，0 会污染均分）。原 duration/cost 文本字段原样保留用于展示。
+    """
     valid = valid_eids or set()
     items = raw if isinstance(raw, list) else (raw.get("access_matrix") if isinstance(raw, dict) else None)
     out: List[Dict[str, Any]] = []
@@ -377,14 +382,21 @@ def coerce_access_matrix(raw: Any, valid_eids: Optional[set] = None) -> List[Dic
             mode = _str(r.get("mode"))
             if not mode:
                 continue
-            routes.append({
+            route = {
                 "mode": mode,
                 "duration": _str(r.get("duration")),
                 "cost": _str(r.get("cost")),
                 "frequency": _str(r.get("frequency")),
                 "note": _str(r.get("note")),
                 "evidence_ids": _filter_eids(r.get("evidence_ids"), valid),
-            })
+            }
+            dm = _num(r.get("duration_minutes"))
+            if dm is not None and dm > 0:
+                route["duration_minutes"] = round(dm, 1)
+            cy = _num(r.get("cost_yuan"))
+            if cy is not None and cy > 0:
+                route["cost_yuan"] = round(cy, 1)
+            routes.append(route)
         out.append({"destination": dest, "routes": routes})
     return out
 
@@ -478,10 +490,12 @@ def _has_content(item: Dict[str, Any]) -> bool:
 
 
 def schema_completeness(structured: Dict[str, Any],
-                        research_type: str = RT.DEFAULT_RESEARCH_TYPE) -> float:
+                        research_type: str = RT.DEFAULT_RESEARCH_TYPE,
+                        perspective_section_id: str = "") -> float:
     """估算该类型全部结构化对象的填充率（0-1），供质检与一致性指标用。
-    分母 = 注册表声明的 structured_keys 数，随类型与改造演进，不硬编码。"""
-    keys = RT.type_spec(research_type)["structured_keys"]
+    分母 = `structured_keys_for` 的**本卷有效键集**（类型基础键 + 视角命中时追加的
+    视角键），随类型、视角与改造演进，不硬编码——非视角卷分母逐值不变（评审 P0-1）。"""
+    keys = RT.structured_keys_for(research_type, perspective_section_id)
     filled = sum(1 for k in keys
                  if any(_has_content(b) for b in (structured.get(k) or []) if isinstance(b, dict)))
     expected = len(keys)
