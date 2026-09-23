@@ -9,9 +9,66 @@ LLM 有 Key 时仅替换解读文案，结构/数值不变（无 Key 也不阻�
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.data import expert_by_id
+from app.living_circle.isochrone import reach_flags
+
+
+def sampling_counts(lc: Dict[str, Any]) -> Tuple[int, int, int]:
+    """报告的采样点分档 ``(已测时, 圈内可达, 采样总数)`` —— 叙述文案的**唯一取值口径**。
+
+    ⚠️ 不要在这里 filter points 自己数。阶段 −1 之前本模块有 5 处
+    ``sum(1 for p in points if p.get("reachable"))``，而 ``reachable`` 的语义是
+    「测时返回了值」不是「可达」，且字段已更名为 ``timed``/``in_reach`` ——
+    ``dict.get`` 遇到旧名**不报错、只返回 None**，文案会静默变成「0/1049 个采样点可达」。
+    这正是本计划要消灭的「静默漂移」，所以取值收敛到本函数一处。
+
+    汇总数缺失时（历史快照）按点回算，**回算也走同一个 ``reach_flags`` 判据**。
+    """
+    s = (lc.get("sampling") or {})
+    pts = s.get("points") or []
+    timed, in_reach = s.get("timed_count"), s.get("in_reach_count")
+    if timed is None or in_reach is None:
+        f = reach_flags(pts)
+        return f.timed_count, f.in_reach_count, len(pts)
+    return int(timed), int(in_reach), len(pts)
+
+
+def poi_metric_label(poi: Dict[str, Any]) -> str:
+    """POI 指标文案 —— 与前端 ``lib/livingCircle.poiMetricLabel`` **逐字同口径**（阶段 2.5 / D2）。
+
+    三段式 ``采集 N · 圈内 M · 已展示 K``：
+
+    - **N** = ``poi.total``：**采集口径**（研究范围内检索到的总数，含圈外）。保留它是为了不把
+      额度账讲错 —— 删掉会让人以为「只用 98 次检索就采到了图例里全部设施」。
+    - **M** = ``sum(categories[].in_circle)``：**可达口径**。⚠️ **重算，不读 ``poi.in_circle``**：
+      那是一个「与 categories 可能不一致的冗余自我声明」，读它等于把两个数各算各的老毛病
+      搬到文案层（阶段 1 的教训）。
+    - **K** = ``len(points)``：**下发给渲染层的点数**。装配层守恒时 ``K == M``。
+
+    第四段**仅当装配层真的截断过**（``poi.truncated.dropped > 0``）才出现 —— 这是「静默截断」
+    被消灭的可见证据：截断过一次，报告里就永久留痕。
+
+    同一句话在 Py/TS 各有一份实现（前端不能执行 Python），口径漂移靠契约测试对齐；
+    ``frontend/src/mocks/livingCircleReports.ts`` 必须调 TS 那份，**不得手写字符串**。
+    """
+    poi = poi or {}
+    declared = sum(int((c or {}).get("in_circle") or 0) for c in (poi.get("categories") or []))
+    actual = len(poi.get("points") or [])
+    base = f"采集 {int(poi.get('total') or 0)} · 圈内 {declared} · 已展示 {actual}"
+    tr = poi.get("truncated") or {}
+    dropped = int(tr.get("dropped") or 0)
+    if dropped <= 0:
+        return base
+    detail = "/".join(
+        f"{(x or {}).get('category')} {int((x or {}).get('dropped') or 0)}"
+        for x in (tr.get("categories") or [])
+        if int((x or {}).get("dropped") or 0) > 0
+    )
+    cap = tr.get("cap_per_cat")
+    cap_note = f"，每类上限 {cap}" if cap is not None else ""
+    return f"{base} · 另有 {dropped} 处未展示（{detail}{cap_note}）"
 
 
 def _expert(eid: str) -> Dict[str, str]:
@@ -146,8 +203,7 @@ def _chart_isochrone(lc: dict) -> dict:
 def _sec_overview(lc: dict, ev_id: str) -> dict:
     scene = lc.get("scene") or {}
     total = (lc.get("scores") or {}).get("total", 0)
-    reachable = sum(1 for p in (lc.get("sampling") or {}).get("points", []) if p.get("reachable"))
-    n = len((lc.get("sampling") or {}).get("points", []))
+    reachable, in_reach, n = sampling_counts(lc)
     area15 = next((z["area_km2"] for z in (lc.get("isochrones") or []) if z["minutes"] == 15), 0)
     miss = [t["facility"] for t in (lc.get("scores") or {}).get("triads", []) if not t.get("covered")]
     triad_note = f"三要素中「{'、'.join(miss)}」存在 1km 覆盖缺口" if miss else "菜市场/药店/小学三要素 1km 内均可达"
@@ -158,14 +214,13 @@ def _sec_overview(lc: dict, ev_id: str) -> dict:
         "level": 2,
         "key_takeaway": (
             f"本样区综合评分 {total}（{_grade(total)}），15 分钟步行可达圈约 {area15:.2f} km²，"
-            f"{reachable}/{n} 个采样点可达；设施总量 {poi.get('total', 0)} 处"
-            f"（圈内 {poi.get('in_circle', 0)}）。"
+            f"{in_reach}/{n} 个采样点圈内可达（已测时 {reachable}）；设施 {poi_metric_label(poi)}。"
             f"{triad_note}，共识别 {len((lc.get('blindspots') or []))} 处服务盲区。"
         ),
         "paragraphs": [
             f"本次体检由常青圈规划专家队按「intake→plan→measure→collect→diagnose→report→audit」流水线完成，"
             f"中心点「{scene.get('name', '')}」（{scene.get('city', '')} · {scene.get('address', '')}）。",
-            f"数据口径：{lc.get('data_origin')}；采样 {n} 点、可达 {reachable}；分级等时圈由"
+            f"数据口径：{lc.get('data_origin')}；采样 {n} 点、已测时 {reachable}、圈内可达 {in_reach}；分级等时圈由"
             f"{(lc.get('sampling') or {}).get('interpolation')} 推导（M 阶段为 IDW 插值）。",
         ],
         "charts": [{"chart_id": "chart-overview-radar", "type": "radar", "title": "生活圈维度评分雷达", "option": _chart_radar(lc)},
@@ -262,11 +317,10 @@ def _sec_elderly(lc: dict) -> dict:
 
 def _sec_isochrone(lc: dict, ev_id: str) -> dict:
     areas = [(z["minutes"], z["area_km2"]) for z in lc.get("isochrones", [])]
-    n = len(lc.get("sampling", {}).get("points", []))
-    reachable = sum(1 for p in lc.get("sampling", {}).get("points", []) if p.get("reachable"))
+    reachable, in_reach, n = sampling_counts(lc)
     return {
         "id": "isochrone", "title": "可达性与等时圈", "level": 2,
-        "key_takeaway": f"5/10/15/20 分钟等时圈面积 {' / '.join(f'{a:.2f}' for _, a in areas)} km²；采样 {reachable}/{n} 点可达；方式：{lc.get('sampling', {}).get('interpolation')}",
+        "key_takeaway": f"5/10/15/20 分钟等时圈面积 {' / '.join(f'{a:.2f}' for _, a in areas)} km²；采样 {n} 点，圈内可达 {in_reach}（已测时 {reachable}）；方式：{lc.get('sampling', {}).get('interpolation')}",
         "paragraphs": [
             f"以中心点为原点按 400m 粗网格 + 15min 边界带 150m 加密采样（{n} 点），步行测时后对耗时场做"
             f"{'IDW 反距离加权插值，提取 5/10/15/20 分钟等值线族' if lc.get('sampling', {}).get('interpolation') == 'idw' else '圆形近似（演示数据；M5 覆写为真实路网等时圈）'}。",
@@ -381,11 +435,12 @@ def _build_suggestions(lc: dict) -> List[str]:
 
 def build_evidence(lc: dict) -> List[dict]:
     """证据链（出处=测时/POI/判定记录，延续可溯源卖点）。"""
+    _timed, _in_reach, _n = sampling_counts(lc)
     ev = [{
         "evidence_id": "ev-lc-measure",
         "source_url": "live://measure", "source_type": "api_measure",
-        "title": f"采样点测时记录（{len(lc.get('sampling', {}).get('points', []))} 点）",
-        "excerpt": f"批量算路返回 {sum(1 for p in lc.get('sampling', {}).get('points', []) if p.get('reachable'))} 条可达耗时",
+        "title": f"采样点测时记录（{_n} 点）",
+        "excerpt": f"批量算路返回 {_timed} 条耗时，其中圈内可达 {_in_reach} 条",
         "credibility": 0.95, "collected_by": "路遥川", "captured_at": lc.get("generated_at", ""), "domain": "walkability",
     }]
     for c in lc.get("poi", {}).get("categories", []):
@@ -412,7 +467,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
     scene = lc.get("scene") or {}
     areas = [(z["minutes"], z["area_km2"]) for z in lc.get("isochrones", [])]
     n = len((lc.get("sampling") or {}).get("points", []))
-    reachable = sum(1 for p in (lc.get("sampling") or {}).get("points", []) if p.get("reachable"))
+    reachable, in_reach, _n = sampling_counts(lc)
     area15 = next((a for m, a in areas if m == 15), 0)
     return [
         {
@@ -421,7 +476,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
             "paragraphs": [
                 f"中心点「{scene.get('name', '')}」（{scene.get('city', '')} · {scene.get('address', '')}）由内置全国区划库定位（区县中心近似），研究范围 {(scene.get('study_radius_m') or 1000) / 1000:.1f}km。",
                 f"数据口径：data_origin=offline · interpolation={(lc.get('sampling') or {}).get('interpolation')}。15 分钟等时圈约 {area15:.2f} km²（圆形近似，非真实路网形状）。",
-                f"采样 {n} 点（直线距离 × 绕行系数 1.3 测时，可达 {reachable}）；未联网采集 POI，设施清单、盲区与评分需发起实时体检后给出。",
+                f"采样 {n} 点（直线距离 × 绕行系数 1.3 测时，已测时 {reachable}、圈内可达 {in_reach}）；未联网采集 POI，设施清单、盲区与评分需发起实时体检后给出。",
             ],
             "charts": [{"chart_id": "chart-offline-isochrone", "type": "bar",
                         "title": "分级步行等时圈面积（km² · 距离模型）", "option": _chart_isochrone(lc)}],

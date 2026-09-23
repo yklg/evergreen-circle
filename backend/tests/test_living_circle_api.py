@@ -3,6 +3,7 @@ import asyncio
 import json
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +19,12 @@ client = TestClient(app)
 FIXTURES = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
 KAILI_FX = json.loads((FIXTURES / "kaili.json").read_text(encoding="utf-8"))
 JINSONG_FX = json.loads((FIXTURES / "beijing-jinsong.json").read_text(encoding="utf-8"))
+
+# R6 · 对比页差异表契约夹具 —— 两侧测试读**同一份**文件、断言**同一串期望字面量**
+# （范式同 `poi_metric_label`/`poiMetricLabel`）。前端侧：`frontend/src/lib/__tests__/compareDiffContract.test.ts`。
+PROJECT = Path(__file__).resolve().parent.parent.parent  # skip/
+CONTRACT_FIXTURE = PROJECT / "frontend" / "src" / "__tests__" / "fixtures" / "compareDiffContract.json"
+CONTRACT = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
 
 
 def _make_record(scene_name: str, center, city: str) -> str:
@@ -91,12 +98,27 @@ def test_compare_endpoint_diff_and_reports():
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["reports"]) == 2
-    assert len(body["diff"]) == 5
+    # ⭐ 行名**集合 + 行序**与契约夹具逐项相同。**不是**数量断言：`len(diff) == N` 一旦红了
+    # 只说「行数不对」，说不出缺了/多了哪一行、也没覆盖行序。
+    got = [r["metric"] for r in body["diff"]]
+    want = [r["key"] for r in CONTRACT["rows"]]
+    assert got == want, (
+        f"行名/行序与契约夹具不符\n  期望 {want}\n  实际 {got}\n"
+        f"  差集(缺) {[k for k in want if k not in got]}\n  差集(多) {[k for k in got if k not in want]}"
+    )
     metric = {r["metric"]: r for r in body["diff"]}
     assert metric["综合评分"]["a_value"] == KAILI_FX["scores"]["total"]  # 凯里
     assert metric["综合评分"]["b_value"] == JINSONG_FX["scores"]["total"]  # 劲松
     assert metric["服务盲区"]["a_value"] == len(KAILI_FX["blindspots"])
     assert metric["服务盲区"]["b_value"] == len(JINSONG_FX["blindspots"])
+    # ⭐ 「方向」断言：契约夹具里 `服务盲区 a=0 b=1` 那条用例的**期望串**直接拿来用 ——
+    # 先证「本用例这对真实值恰好就是那条判别样本」（否则方向写错也照绿），再断言 desc。
+    blind = next(c for c in CONTRACT["desc_cases"]
+                 if c["row"] == "服务盲区" and c["a"] == 0 and c["b"] == 1)
+    assert (metric["服务盲区"]["a_value"], metric["服务盲区"]["b_value"]) == (blind["a"], blind["b"]), (
+        "真实夹具的盲区值不再是 0/1 ⇒ 这条方向断言失去判别力，请改用当前夹具实际值的判别样本"
+    )
+    assert metric["服务盲区"]["desc"] == blind["desc"]  # 「A盲区更少」（越小越好；写反则得 B…）
 
 
 def test_compare_requires_two_ids():
@@ -106,6 +128,8 @@ def test_compare_requires_two_ids():
 
 def test_map_config_endpoint():
     """C7 · 地图配置端点：浏览器 AK + 个性化 styleId 明文下发（公开键，供 BMapGL）。"""
+    from app.core.config import get_settings
+
     resp = client.get("/api/life-circle/map-config")
     assert resp.status_code == 200
     body = resp.json()
@@ -115,6 +139,43 @@ def test_map_config_endpoint():
     # 本地 .env 已配浏览器 AK → 非空；styleId 有值则透传（测试环境空值也允许）
     assert isinstance(body["browser_ak"], str)
     assert isinstance(body["map_style_id"], str)
+    # 阶段 0.2 · **真实配置下的运行时不变量**（不是补丁出来的假象）：
+    # 未开 opt-in 时，无论 .env 里写了什么 styleId，端点都必须下发空串。
+    s = get_settings()
+    if not s.baidu_allow_console_style:
+        assert body["map_style_id"] == "", (
+            f"未开 BAIDU_ALLOW_CONSOLE_STYLE 却下发了 styleId {body['map_style_id']!r} —— "
+            "前置注记纪律（poilabel 关闭）会被绕过"
+        )
+
+
+def test_map_config_suppresses_console_style_by_default():
+    """阶段 0.2（D4）· **styleId 默认不下发**（负对照：配了也不给，除非显式 opt-in）。
+
+    被守护的事故：`bmapStyle.ts` 的 `poilabel` 关闭规则**从未生效**，因为 `.env` 配了
+    控制台 styleId（带「清晰标注」），前端分支就走 styleId 去了 —— 内置模板成了死代码，
+    百度第三方设施名照旧上屏，被读成自家数据。
+
+    所以纪律不能挂在「.env 里恰好没配」这种偶然状态上：**默认抑制**，只有显式
+    `BAIDU_ALLOW_CONSOLE_STYLE=1`（确知该样式已关 POI 注记）才下发。
+    """
+    from app.core.config import get_settings
+
+    s = get_settings()
+    # ① 即便 .env 里配了 styleId，只要没开 opt-in，就必须下发空串
+    monkey = s.model_copy(update={"baidu_map_style_id": "f3d9141a57e8ca87b05984cce4d726a4",
+                                  "baidu_allow_console_style": False})
+    assert monkey.baidu_map_style_id and not monkey.baidu_allow_console_style
+
+    with patch("app.core.config.get_settings", return_value=monkey):
+        body = client.get("/api/life-circle/map-config").json()
+    assert body["map_style_id"] == "", "未显式 opt-in 时不得下发控制台 styleId（注记纪律会被绕过）"
+
+    # ② 显式 opt-in 后才下发
+    optin = monkey.model_copy(update={"baidu_allow_console_style": True})
+    with patch("app.core.config.get_settings", return_value=optin):
+        body2 = client.get("/api/life-circle/map-config").json()
+    assert body2["map_style_id"] == "f3d9141a57e8ca87b05984cce4d726a4"
 
 
 # ── I3/I4 · regions 端点 + 分享端点（T1/E1，无 AK 依赖）───────────────
@@ -205,6 +266,65 @@ def test_offline_compare_marks_not_comparable(monkeypatch):
     assert metric["服务盲区"]["b_value"] == "离线估算"
     assert metric["POI 采集"]["desc"] == "离线估算未采集 POI"
     assert metric["综合评分"]["a_value"] == KAILI_FX["scores"]["total"]  # 凯里实时分不受影响
+
+
+# ── R6 · 对比页口径对齐：契约夹具 / 两态行序 / 离线字面量单一真源 ──────────────
+
+
+def test_compare_diff_desc_table_matches_contract_fixture():
+    """desc 用例表逐项相符 —— 与前端读**同一份**夹具、断言**同一串**期望字面量。
+
+    覆盖 6 行 × 3 方向（A>B / A<B / 相等）= 18 条。⚠️ 其中「服务盲区 a=0 b=1 ⇒ A盲区更少」
+    是**方向**的负对照：盲区越小越好，若误用「大者胜」就会输出「B盲区更少」（事实相反，
+    正是旧实现用字符串字典序比较时的形态）。
+    """
+    from app.main import _diff_desc
+
+    by_key = {r["key"]: r for r in CONTRACT["rows"]}
+    name_a, name_b = CONTRACT["names"]
+    bad = []
+    for case in CONTRACT["desc_cases"]:
+        spec = by_key[case["row"]]
+        got = _diff_desc(spec["better"], spec["template"], case["a"], case["b"], name_a, name_b)
+        if got != case["desc"]:
+            bad.append(f'{case["row"]} a={case["a"]} b={case["b"]}: 期望 {case["desc"]!r} 实得 {got!r}')
+    assert len(CONTRACT["desc_cases"]) >= 18, "用例表至少要有 6 行 × 3 方向"
+    assert not bad, f"desc 用例不符 {len(bad)} 条:\n" + "\n".join(bad)
+
+
+def test_offline_compare_keeps_the_same_row_sequence(monkeypatch):
+    """在线态与离线态的 **metric 行名集合与行序逐项相同** —— 成对断言。
+
+    ⚠️ 为什么需要这条：`_lc_diff()` 的离线分支是**逐行**标注的，而
+    `test_offline_compare_marks_not_comparable` 只断言了 `综合评分 / 服务盲区 / POI 采集` 三行。
+    新增的「可达采样点数」行（或将来再加行）若漏掉离线处理，那条用例**不会红** ——
+    这里补上「两态行集合与行序必须一致」，让它必红。
+    """
+    rid_a = _make_record("凯里老街", [107.9758, 26.5734], "贵州·凯里")
+    rid_off = _make_offline_record("上海市浦东新区陆家嘴", monkeypatch)
+    resp = client.get(f"/api/life-circle/compare?ids={rid_a},{rid_off}")
+    assert resp.status_code == 200
+    got = [r["metric"] for r in resp.json()["diff"]]
+    want = [r["key"] for r in CONTRACT["rows"]]
+    assert got == want, (
+        f"离线态行名/行序与契约夹具不符\n  期望 {want}\n  实际 {got}\n"
+        f"  ⇒ 离线态漏了哪些行的处理，看差集就知道"
+    )
+
+
+def test_offline_diff_literals_match_contract_fixture():
+    """离线三个字面量的**单一真源**是契约夹具；`main.py` 的模块常量必须与它逐字相同。
+
+    离线分支是 P0-2 的既有需求（`test_offline_compare_marks_not_comparable` 在守，**不动**），
+    本用例只把「这三个串写在哪」收成一处 —— 防止改了一边忘另一边。
+    （这三个串只有后端会产出，故夹具里放在 `offline_backend_only` 段。）
+    """
+    from app.main import _DIFF_DESC_NOT_COLLECTED, _DIFF_DESC_NOT_COMPARABLE, _DIFF_VALUE_OFFLINE
+
+    off = CONTRACT["offline_backend_only"]
+    assert _DIFF_DESC_NOT_COLLECTED == off["not_collected_desc"]
+    assert _DIFF_DESC_NOT_COMPARABLE == off["not_comparable_desc"]
+    assert _DIFF_VALUE_OFFLINE == off["not_comparable_value"]
 
 
 # ── T6 · 入口校验与时间戳格式契约（I12/I13）──────────────────────────

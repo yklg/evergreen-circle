@@ -121,16 +121,24 @@ def _build_index() -> None:
                     module="isochrone", label=f"{mode}·{pname}", value=str(val),
                 )
 
-    # 6. report :: 契约字段 + reachable_count/sample_count
+    # 6. report :: 契约字段 + 采样点分档（timed_count / in_reach_count / sample_count）
     live_required = getattr(report_contract, "_LIVE_REQUIRED", ())
     for fname in live_required:
         _INDEX[f"report::{fname}"] = CaliberView(
             ref=f"report::{fname}", kind="field", module="report_contract",
             label=f"报告字段·{fname}", value=f"living_circle.{fname}",
         )
-    _INDEX["report::reachable_count"] = CaliberView(
-        ref="report::reachable_count", kind="field", module="report_contract",
-        label="可达采样点数", value="living_circle.reachable_count",
+    # ⚠️ 旧名 `report::reachable_count` 的语义其实是「测时返回了值的点数」，
+    # 不是「可达点数」——阶段 −1 改名为 timed_count，并**新增** in_reach_count
+    # 承载真正的「可达」（≤ caliber.reach_full_min 分钟）。两个数都不能省：
+    # 只有一个时，要么把不可达说成可达（旧病），要么把测时覆盖率的信息丢掉。
+    _INDEX["report::timed_count"] = CaliberView(
+        ref="report::timed_count", kind="field", module="report_contract",
+        label="已测时采样点数", value="living_circle.timed_count",
+    )
+    _INDEX["report::in_reach_count"] = CaliberView(
+        ref="report::in_reach_count", kind="field", module="report_contract",
+        label="可达采样点数（≤reach_full_min）", value="living_circle.in_reach_count",
     )
     _INDEX["report::sample_count"] = CaliberView(
         ref="report::sample_count", kind="field", module="report_contract",

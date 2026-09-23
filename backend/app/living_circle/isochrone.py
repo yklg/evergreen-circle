@@ -2,7 +2,7 @@
 
 对齐 F0 契约（src/types.ts IsochroneZone / SamplingPoint）：
   - 输出 5/10/15/20 分钟等值线族（GeoJSON Polygon 环 + area_km2）
-  - sampling.points 采样点（idx/lng/lat/minutes/reachable）
+  - sampling.points 采样点（idx/lng/lat/minutes/timed/in_reach）
   - interpolation='idw'，is_scattered 表示是否双阶段（粗扫+边界加密）散点采样
 
 算法要点（赛题 30% 评分点——不取底层路网）：
@@ -15,7 +15,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -31,6 +32,54 @@ from app.living_circle.geo_utils import (
 
 # ── 兼容旧接口：保留常量名但改为引用 caliber（防外部直接 import 断裂）───
 ISO_MINUTES = list(get_caliber("walking").iso_minutes)
+
+# 可达判定阈值（分钟）：单一事实源 = `caliber.reach_full_min`（当前 20.0）。
+#
+# ⚠️ 严禁把分钟数硬编码进本模块。阶段 −1 之前这里只有 `reachable = m is not None`，
+# 语义其实是「测时返回了值」而非「在可达区内」——于是「采样点 1049 个（可达 1049）」
+# 把 938 个 >20min 的点也算成了可达。现在拆成两个语义互不重叠的字段：
+#   timed    = 测时返回了分钟值（可插值，与是否可达无关）
+#   in_reach = timed 且 minutes ≤ 本阈值（这才是「可达」）
+REACH_FULL_MIN = float(get_caliber("walking").reach_full_min)
+
+
+@dataclass(frozen=True)
+class ReachFlags:
+    """采样点可达性分档（两字段语义互不重叠，见模块顶部说明）。"""
+    timed_count: int
+    in_reach_count: int
+
+
+def reach_flags(points: Sequence[Mapping[str, Any]]) -> ReachFlags:
+    """从 ``sampling.points`` 统计可达性分档 —— **全项目唯一实现**。
+
+    为什么要有这个函数：``timed`` / ``in_reach`` 的判定必须先于统计统一，
+    否则「产出点」与「数点数」会像 ``assemble.poi`` 那样各算各的（同一个对象的
+    两个字段由两条链路装配），一旦漂移就无人发现。三个调用点共用本函数：
+    ``IsochroneEngine.compute``（live）、``pipeline.living_circle``（fixture 分支）、
+    ``scripts/lc_healthcheck``。
+
+    判据（与 ``_flag_of`` 同源）：
+      - ``timed``    = ``minutes is not None``
+      - ``in_reach`` = ``timed`` 且 ``minutes <= REACH_FULL_MIN``
+    """
+    timed = 0
+    in_reach = 0
+    for p in points:
+        m = p.get("minutes")
+        if m is None:
+            continue
+        timed += 1
+        if round(float(m), 1) <= REACH_FULL_MIN:
+            in_reach += 1
+    return ReachFlags(timed_count=timed, in_reach_count=in_reach)
+
+
+def _flag_of(m: Optional[float]) -> Tuple[bool, bool]:
+    """单点分档 → ``(timed, in_reach)``。阈值取整后再比：``minutes`` 已 ``round(…, 1)``，
+    避免 20.0000001 这类浮点噪声被误判为不可达。"""
+    timed = m is not None
+    return timed, bool(timed and round(float(m), 1) <= REACH_FULL_MIN)
 
 # 采样档位预设（与 travel_mode 解耦；travel_mode 的半径/grid_n 由 caliber 提供）
 MODE_PARAMS = {
@@ -61,18 +110,14 @@ def _aligned_axis(half: float, n: int) -> List[float]:
     return [round(-half + i * step, 3) for i in range(n)]
 
 
-def build_sample_points(
+def _two_stage_points(
     center: LngLat,
-    study_radius_m: float = 2500.0,
-    coarse_m: float = 400.0,
-    fine_m: Optional[float] = None,
-    fine_band: Optional[Tuple[float, float]] = None,
+    study_radius_m: float,
+    coarse_m: float,
+    fine_m: Optional[float],
+    fine_band: Optional[Tuple[float, float]],
 ) -> List[LngLat]:
-    """生成测时采样点：粗网格全覆盖 + 边界环带细网格加密。
-
-    返回 (lng, lat) 列表；粗网格用奇数对称格（中心恰落在 (0,0) 采样点）。
-    fine_band 未指定时由口径派生（最内圈半径 → 研究半径），防最内圈坍缩（B8/I10）。
-    """
+    """旧双阶段采样点（粗网格全覆盖 + 边界环带加密），完整保留原语义。"""
     pts: List[LngLat] = []
     half = study_radius_m
     # 粗网格（奇数点数使中心点落格）
@@ -107,6 +152,61 @@ def build_sample_points(
         seen.add(key)
         dedup.append(p)
     return dedup
+
+
+def _budget_stage_points(
+    center: LngLat,
+    study_radius_m: float,
+    max_points: int,
+) -> List[LngLat]:
+    """预算受限单阶段粗网格（v5 B2/O3）：放弃 fine 带，把点数压到 ≤ max_points。
+
+    - 圆内网格点 ≈ π/4·n²（圆内接于 n×n 方网格），取满足 π/4·n² ≤ max_points 的
+      最大奇数 n（奇数保证中心点恰落格）；
+    - 步长 = 2·R/(n−1)：预算下标准档步长 ≤ 内圈半径 308m，不触发最内圈坍缩（D1）；
+    - 边构建边校验 len ≤ max_points，越界则 n 减 2 重试（保证不变量成立，杜绝边界效应破限）。
+    """
+    n = int(math.floor(math.sqrt(4.0 * max_points / math.pi)))
+    if n % 2 == 0:
+        n -= 1
+    if n < 1:
+        n = 1
+    while n > 1:
+        axis = _aligned_axis(study_radius_m, n)
+        pts = [
+            xy_to_lnglat(center, x, y)
+            for x in axis
+            for y in axis
+            if math.hypot(x, y) <= study_radius_m
+        ]
+        if len(pts) <= max_points:
+            return pts
+        n -= 2
+    return [xy_to_lnglat(center, 0.0, 0.0)]
+
+
+def build_sample_points(
+    center: LngLat,
+    study_radius_m: float = 2500.0,
+    coarse_m: float = 400.0,
+    fine_m: Optional[float] = None,
+    fine_band: Optional[Tuple[float, float]] = None,
+    max_points: Optional[int] = None,
+) -> List[LngLat]:
+    """生成测时采样点：粗网格全覆盖 + 边界环带细网格加密（或预算受限单阶段）。
+
+    返回 (lng, lat) 列表；粗网格用奇数对称格（中心恰落在 (0,0) 采样点）。
+    fine_band 未指定时由口径派生（最内圈半径 → 研究半径），防最内圈坍缩（B8/I10）。
+
+    ``max_points``（v5 B2）：
+      - 为空/≤0 → 保持旧双阶段（离线源与测试合成场零回归，D4）；
+      - 有限且 ≥ 旧双阶段点数 → 直接用旧双阶段（O3 恢复判据，付费档全精度）；
+      - 否则 → 预算受限单阶段（D1，免费档：coarse 步长仍 < 内圈半径，不坍缩）。
+    """
+    two_stage = _two_stage_points(center, study_radius_m, coarse_m, fine_m, fine_band)
+    if max_points is None or max_points <= 0 or len(two_stage) <= max_points:
+        return two_stage
+    return _budget_stage_points(center, study_radius_m, max_points)
 
 
 def idw_from_local(
@@ -186,18 +286,20 @@ class IsochroneEngine:
         meter_fn: Callable[[List[LngLat]], Awaitable[List[Optional[float]]]],
         study_radius_m: float = 2500.0,
         mode: str = "standard",
+        max_points: Optional[int] = None,
     ) -> Dict[str, Any]:
         """执行等时圈计算 → 契约结构。
 
         meter_fn(points) -> 步行耗时(分钟)列表（None=不可达）；由调用方注入
         （live=百度 route_matrix 批量；fixture 测试=合成场）。
+        ``max_points``（v5 B2）：预算感知采样上限（免费档 375）；None/≤0 保持双阶段。
         """
         params = MODE_PARAMS.get(mode, MODE_PARAMS["standard"])
         coarse = params["coarse"]
         fine = params["fine"]
         grid_n = params["grid_n"]
 
-        sample_pts = build_sample_points(center, study_radius_m, coarse, (fine or coarse))
+        sample_pts = build_sample_points(center, study_radius_m, coarse, (fine or coarse), max_points=max_points)
         minutes = await meter_fn(sample_pts)
 
         grid_xy, step = self._grid_coords(center, study_radius_m, grid_n)
@@ -236,26 +338,38 @@ class IsochroneEngine:
             })
         zones.sort(key=lambda z: z["minutes"])
 
-        reachable_count = sum(1 for m in minutes if m is not None)
+        # ── 采样点可达性：两个字段，语义互不重叠（见模块顶部 REACH_FULL_MIN 说明）──
+        # timed    = 测时返回了分钟值 → 可参与插值（与「可达」无关）
+        # in_reach = timed 且 minutes ≤ REACH_FULL_MIN → 这才是「可达」
+        point_rows: List[Dict[str, Any]] = []
+        for i, (p, m) in enumerate(zip(sample_pts, minutes)):
+            is_timed, is_in_reach = _flag_of(m)
+            point_rows.append({
+                "idx": i,
+                "lng": round(p[0], 6),
+                "lat": round(p[1], 6),
+                "minutes": round(m, 1) if m is not None else None,
+                "timed": is_timed,
+                "in_reach": is_in_reach,
+            })
+        flags = reach_flags(point_rows)  # 统一实现，不在产出处另算一遍
         sampling = {
-            "points": [
-                {
-                    "idx": i,
-                    "lng": round(p[0], 6),
-                    "lat": round(p[1], 6),
-                    "minutes": round(m, 1) if m is not None else None,
-                    "reachable": m is not None,
-                }
-                for i, (p, m) in enumerate(zip(sample_pts, minutes))
-            ],
+            "points": point_rows,
             "interpolation": "idw",
             "is_scattered": fine is not None and fine > 0,
+            # ⚠️ 汇总数**放在 sampling 内**，而不是叫 iso 顶层：
+            # `assemble.py` 只把 `iso["sampling"]` 透传进报告，顶层字段会被丢掉，
+            # 于是每个消费方（前端文案 / 诊断模板 / 专家）只好各自 filter 一遍点集 ——
+            # 同一语义 N 处实现，改名或改阈值时必有一处静默漂移。放这里才能单源。
+            # 已测时点数（旧名 reachable_count 的语义即此，改名以免与「可达」混淆）
+            "timed_count": flags.timed_count,
+            # 真正可达点数（≤ REACH_FULL_MIN 分钟）；「可达率」只能用它算
+            "in_reach_count": flags.in_reach_count,
         }
         return {
             "isochrones": zones,
             "sampling": sampling,
             "sample_count": len(sample_pts),
-            "reachable_count": reachable_count,
         }
 
 

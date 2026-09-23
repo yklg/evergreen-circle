@@ -19,6 +19,7 @@ import pytest  # noqa: E402
 
 import app.core.db as db  # noqa: E402
 import app.core.runtime_config as rc  # noqa: E402
+import app.living_circle.request_guard as request_guard  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -31,5 +32,11 @@ def _isolate():
     rc._MODEL_MIGRATED = False
     rc._MIGRATED = False
     rc.invalidate_cache()
+    # P0-2 复核：进程级限流闸 / 日预算也是**模块级单例**，跨用例持久。
+    # 原先只在 test_rate_limiter_shared.py 内用 autouse 夹具清理 ⇒ **作用域过窄**：
+    # 该文件内污染被抹平、其他文件（与真实运行环境）不可见。夹具的作用域本身就是一条
+    # 隐性断言 —— 共享状态必须在**全局** conftest 清，才谈得上「用例互不污染」。
+    request_guard._limiter_cache.clear()
+    request_guard._daily_cache.clear()
     yield
     # 用例后无需清理：下个用例开头会再次重置

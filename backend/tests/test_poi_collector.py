@@ -111,3 +111,30 @@ class TestCollectPOIConvergence:
     @pytest.mark.skipif(not hasattr(pc, "GAIN_STOP_THRESHOLD"), reason="渐进式停止阈值尚未定义")
     def test_stop_threshold_is_positive(self):
         assert pc.GAIN_STOP_THRESHOLD > 0
+
+    def test_u38_budget_tight_admission_set_under_concurrency(self):
+        """U38（延迟优化 B2）：预算紧张时准入集合与串行一致 —— 并发 A 阶段不漂移。
+
+        budget=2 → `poi_page_depth(30+, 2)=1`，每词恰耗 1 额度。8 类关键词并发
+        `asyncio.gather` 下，consume 是同步原子操作、按任务创建顺序先到先得：
+        恰好前 2 词获批、其余拒绝 → **总调用恰 2 次**，预算耗尽后三要素/B 阶段
+        同样零调用。这正是「并发只改墙钟、不改预算数学」的锁定（B2 契约）。
+        """
+        import asyncio
+
+        class Stub:
+            def __init__(self):
+                self.calls = 0
+
+            async def place_search(self, *a, **k):
+                self.calls += 1
+                return []
+
+        stub = Stub()
+        b = pc.POIBudget(total=2)
+        per_cat, triads = asyncio.run(
+            self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
+        )
+        assert stub.calls == 2, f"预算紧张应恰好 2 次调用（准入集合不漂移），实际 {stub.calls}"
+        assert b.remaining == 0, "预算必须被恰好花完（2 词 × 1 页）"
+        assert isinstance(per_cat, dict) and isinstance(triads, dict)

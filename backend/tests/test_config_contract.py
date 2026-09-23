@@ -144,3 +144,22 @@ def test_mask_effective_masks_all_secrets():
         assert m == "" or "****" in m, f"{k} 应被脱敏（未配置为空串，已配置含 ****），实际 {m!r}"
     # 非密钥透传
     assert masked["llm_timeout"] == eff["llm_timeout"]
+
+
+# ── B-07-5：百度日预算开关默认禁用（R7e / ②）──────────────
+def test_baidu_daily_quota_default_zero_disabled():
+    """G10：``baidu_daily_quota`` 默认 0 = 禁用日预算约束（零行为变化、向后兼容）。
+
+    这是 R7 的「安全阀」契约：日预算必须**显式开启**（.env 设正整数）才会约束调用，
+    默认禁用确保现有部署不会因为新增开关而误熔断、误降级。
+    """
+    s = get_settings()
+    assert hasattr(s, "baidu_daily_quota"), "Settings 必须存在 baidu_daily_quota 字段"
+    assert isinstance(s.baidu_daily_quota, int) and not isinstance(s.baidu_daily_quota, bool)
+    assert s.baidu_daily_quota == 0, "默认必须为 0（禁用），避免低额度 AK 被默认熔断"
+    # _default_guard 据此构造的 GlobalDailyBudget 必须 exhausted 永 False（无害）
+    from app.living_circle.request_guard import get_daily_budget
+    budget = get_daily_budget("g10-ak", s.baidu_daily_quota)
+    budget.consume(1)
+    assert budget.exhausted is False, "cap=0 时 consume 不得触发熔断"
+    assert budget.calls == 0, "cap=0 时 consume 为 no-op（不计数）"

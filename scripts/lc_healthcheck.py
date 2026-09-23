@@ -14,7 +14,8 @@ A 可见集              读路径能取到的报告，逐条必须合规       
 B 隐藏集              被读路径挡下的历史产物：列出原因，**不计异常**              ❌ 只留痕
 C 任务终态            ``done`` 的任务必须有报告，且报告必须合规                  ✅ 计入
                      ``failed`` 的任务不得签发合规报告
-D 数字自洽            类别聚合 == 总数；``points ⊆ in_circle``；盲区面积有界       ✅ 计入
+D 数字自洽            类别聚合 == 总数；``sum(in_circle) == len(points)``（阶段 1 点数守恒）； ✅ 计入
+                     等时圈面积单调递增。阶段 1 之前落库的报告**另列留痕**不计数
 E 夹具                后端 + 前端夹具必须全部合规（前端演示与后端同源）            ✅ 计入
 F 几何明细            逐份报告的关键几何量（人工核查用，不判定）                  ❌ 只展示
 ====================  ====================================================  ==========
@@ -25,9 +26,12 @@ A（可见集不合规）与 C（done 却签发了不合规报告）—— 而�
 
 ## 单一实现
 
-契约判定全部走 ``app.living_circle.report_contract.assess_geometry`` —— 与写路径
-（落库前置 ``failed``）、读路径（``db.list_living_circle_reports`` 隐藏）**同一份代码**。
-本脚本不复制任何几何判据，只负责「分组 + 计数 + 打印原因」。
+- 几何判定全部走 ``app.living_circle.report_contract.assess_geometry`` —— 与写路径
+  （落库前置 ``failed``）、读路径（``db.list_living_circle_reports`` 隐藏）**同一份代码**；
+- 点数守恒判定走 ``app.living_circle.poi.check_poi_conservation`` —— 与装配层出口自检
+  （``assemble.build_poi_block``）**同一份代码**。
+
+本脚本不复制任何判据，只负责「分组 + 计数 + 打印原因」。
 
 用法：``python skip/scripts/lc_healthcheck.py``（``--verbose`` 追加 F 段几何明细）
 退出码：异常项 > 0 → 1（可直接接 CI）。
@@ -51,6 +55,7 @@ FRONTEND_FIXTURES = ROOT / "frontend" / "src" / "mocks" / "fixtures" / "livingCi
 # 契约模块在 backend 包内（纯函数，无 DB / 无网络依赖）
 sys.path.insert(0, str(ROOT / "backend"))
 from app.living_circle.report_contract import assess_geometry  # noqa: E402
+from app.living_circle.poi import check_poi_conservation  # noqa: E402
 from app.living_circle.geo_utils import (  # noqa: E402
     haversine_m,
     ring_area_km2,
@@ -103,9 +108,20 @@ def shoelace_km2(center, ring) -> float:
 
 
 # ── D 段：数字自洽 ──────────────────────────────────────────────
-def numeric_consistency(lc: Dict[str, Any]) -> List[str]:
-    """报告内部数字必须自洽（读者据此下结论，不自洽即误导）。"""
+def numeric_consistency(lc: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    """报告内部数字必须自洽（读者据此下结论，不自洽即误导）。
+
+    返回 ``(bad, legacy)``：
+
+    - ``bad``    —— **计入异常**：现役口径（阶段 1 之后产出）的报告必须自洽；
+    - ``legacy`` —— **只留痕**：阶段 1 之前落库的报告无 ``poi.truncated`` 标记，
+      其「面板数 vs 图上点数」的不一致**无法回溯修正**（实测库里 25 份有 15 份不一致，
+      且**两个方向都有**：截断方向 104/98、旧版圈外点全送方向 18/151）。
+      与 D 段采样点的 ``is_legacy``、C 段的 ``era_start`` 是同一套处置纪律 ——
+      历史产物留痕，但不算成「现在还有问题」。
+    """
     bad: List[str] = []
+    legacy: List[str] = []
     poi = lc.get("poi") or {}
     cats = poi.get("categories") or []
     pts = poi.get("points") or []
@@ -125,12 +141,51 @@ def numeric_consistency(lc: Dict[str, Any]) -> List[str]:
     n_total = int(poi.get("total") or 0)
     if n_in > n_total:
         bad.append(f"圈内数 {n_in} > 采集总数 {n_total}")
-    if len(pts) > n_in:
-        bad.append(f"送达点位数 {len(pts)} > 圈内数 {n_in}（points 应是 in_circle 的子集）")
     for p in pts:
         if p.get("in_circle") is not True:
             bad.append(f"点位 {p.get('name')!r} in_circle={p.get('in_circle')!r} 却出现在 points 里")
             break
+
+    # ── 阶段 1 · 点数守恒：sum(categories[].in_circle) == len(points) ──
+    # 旧防线只有**单向** `len(pts) <= in_circle`，于是「面板写圈内 104 处 / 图上 98 个点」
+    #（截断方向）照样全绿 —— 而它正是用户报的「点位与图例对不上」。
+    # 判据走 `poi.check_poi_conservation`（**唯一实现**，与装配层出口自检同一份代码）。
+    # 新口径标记 = `poi.truncated` 存在（`build_poi_block` 恒下发）。
+    issue = check_poi_conservation(poi)
+    if issue is not None:
+        msg = f"POI 点数不守恒 —— {issue}（面板数字与图上点数对不上）"
+        if isinstance(poi.get("truncated"), dict):
+            bad.append(msg)
+        else:
+            legacy.append(msg + "　［阶段 1 之前落库，无 poi.truncated 标记，无法回溯修正］")
+
+    # ── 采样点分档（阶段 −1）：timed ≠ 可达，汇总数必须与逐点一致 ──
+    # 旧报告把 `reachable`（= 测时返回了值）当「可达」用，产出「采样 1049 点（可达 1049）」
+    # 而实际 ≤reach_full_min 的只有 126 个。
+    #
+    # ⚠️ 分两种形态，**只有后者是缺陷**（前者见 numeric_notices）：
+    #   ① 阶段 −1 之前的旧快照：点带 `reachable`、无分档汇总数 —— 前端按点回算，是已支持状态；
+    #   ② 半迁移：点已带 `timed`/`in_reach` 却仍不下发汇总数 —— 真缺陷（消费方必然各数一遍）。
+    smp = lc.get("sampling") or {}
+    sp = smp.get("points") or []
+    n_s = len(sp)
+    is_legacy = any("reachable" in p for p in sp)
+    n_timed = sum(1 for p in sp if p.get("timed"))
+    n_reach = sum(1 for p in sp if p.get("in_reach"))
+    if not is_legacy:
+        if smp.get("timed_count") is None or smp.get("in_reach_count") is None:
+            bad.append(
+                "sampling 缺 timed_count / in_reach_count（汇总数不下发 ⇒ 每个消费方各自 filter，口径必然漂移）"
+            )
+        else:
+            if int(smp["timed_count"]) != n_timed:
+                bad.append(f"timed_count {smp['timed_count']} ≠ 逐点统计 {n_timed}")
+            if int(smp["in_reach_count"]) != n_reach:
+                bad.append(f"in_reach_count {smp['in_reach_count']} ≠ 逐点统计 {n_reach}")
+    if n_reach > n_timed:
+        bad.append(f"圈内可达数 {n_reach} > 已测时数 {n_timed}")
+    if n_timed > n_s:
+        bad.append(f"已测时数 {n_timed} > 采样点数 {n_s}")
 
     iso = lc.get("isochrones") or []
     areas = [z.get("area_km2") for z in sorted(iso, key=lambda z: z.get("minutes") or 0)]
@@ -138,7 +193,7 @@ def numeric_consistency(lc: Dict[str, Any]) -> List[str]:
         bad.append("等时圈缺少 area_km2")
     elif areas != sorted(areas):
         bad.append(f"等时圈面积未随 minutes 单调递增 {areas}")
-    return bad
+    return bad, legacy
 
 
 # ── F 段：几何明细（人读） ───────────────────────────────────────
@@ -233,6 +288,7 @@ def main() -> int:
     visible_n = 0
     d_checked: List[str] = []
     d_bad: List[str] = []
+    d_legacy: List[str] = []
     for r in rows:
         rid, name, origin = r["report_id"], r["scene_name"], r["data_origin"]
         try:
@@ -253,9 +309,12 @@ def main() -> int:
 
         # D 段：数字自洽（只对可见报告判 —— 隐藏的历史产物不参与）
         d_checked.append(rid)
-        for msg in numeric_consistency(lc):
+        num_bad, num_legacy = numeric_consistency(lc)
+        for msg in num_bad:
             d_bad.append(f"{rid}({name}): {msg}")
             problems.append(f"{rid}({name}): 数字不自洽 —— {msg}")
+        for msg in num_legacy:
+            d_legacy.append(f"{rid}({name}): {msg}")
 
     print(f"\n  可见 {visible_n} 份 / 隐藏 {len(hidden)} 份（合计 {len(rows)}）")
     if hidden:
@@ -350,8 +409,14 @@ def main() -> int:
         for m in d_bad:
             print(f"  ❌ {m}")
     else:
-        print("  ✅ 全部通过：类别求和 = poi.total / poi.in_circle；points ⊆ in_circle；"
+        print("  ✅ 全部通过：类别求和 = poi.total / poi.in_circle；"
+              "sum(categories[].in_circle) = len(points)（阶段 1 点数守恒）；"
               "等时圈面积随 minutes 单调递增")
+    if d_legacy:
+        print(f"\n  ── 旧口径留痕 {len(d_legacy)} 条（阶段 1 之前落库，无 poi.truncated 标记，"
+              f"数字对不上但**无法回溯修正**；不计异常）──")
+        for m in d_legacy:
+            print(f"  · {m}")
 
     # ── E 段：夹具 ────────────────────────────────────────────
     rule("E. 夹具 —— 后端 + 前端必须全部合规（演示与真实同源）")
@@ -365,10 +430,12 @@ def main() -> int:
             lc = lc.get("living_circle") or lc
             issues = assess_geometry(lc)
             rel = f"{d.parent.parent.name}/{f.name}"
-            num_bad = numeric_consistency(lc)
+            num_bad, num_legacy = numeric_consistency(lc)
             print(f"  {'✅' if issues.ok and not num_bad else '❌'} {rel}"
                   f"{'' if issues.ok else '（几何不合规）'}"
                   f"{'' if not num_bad else '（数字不自洽）'}")
+            if num_legacy:
+                problems.append(f"夹具 {rel}: 缺 poi.truncated 标记（阶段 1 之后的夹具必须带）")
             if not issues.ok:
                 problems.append(f"夹具 {rel} 不合几何契约：{issues.reason}")
             for msg in num_bad:

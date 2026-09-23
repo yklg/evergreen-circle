@@ -189,15 +189,133 @@ def test_t2_5_cache_hit_requires_identical_key():
     assert src.calls == 0
 
 
-def test_t2_5_travel_mode_is_not_a_cache_key_dimension_yet():
-    """**记录当前行为**：身份键维度包含 travel_mode（R5 已加入）。
+def test_u34_travel_mode_is_a_cache_key_dimension():
+    """U34（种子改写锚点）：travel_mode **是**键维度（E3 行为变更的显式测试锚）。
 
-    CheckParams 现在有 sample_profile（采样档位）和 travel_mode（出行方式）两个独立字段。
-    caliber_payload_key 现在为 5 段：scene|lng,lat|radius|sample_profile|travel_mode
+    v4 之前键缺 travel_mode（riding/driving 与 walking 串同一份缓存）；E3 修复后
+    5 参键必须能区分出行方式 —— 同一场景换出行方式 = 不同缓存条目（骑行/驾车可达区不同）。
+    旧名 `test_t2_5_travel_mode_is_not_a_cache_key_dimension_yet` 断言「暂不是维度」，
+    本版改写为正向断言，防止键维度回退。
     """
-    p = CheckParams(scene_name="x", center=(0.0, 0.0))
-    assert hasattr(p, "sample_profile") and p.sample_profile == "standard"
-    assert hasattr(p, "travel_mode") and p.travel_mode == "walking"
-    # caliber_payload_key 已加入 travel_mode 维度：现在为 5 段
-    assert len(CachingDataSource._payload(_params(PAYLOAD)).split("|")) == 5  # 键维度 = 5 段 (含 travel_mode)
+    p = _params(PAYLOAD)
+    assert len(CachingDataSource._payload(p).split("|")) == 5  # 键维度 = 5 段（含 travel_mode）
+    for tm_a, tm_b in (("walking", "riding"), ("walking", "driving"), ("riding", "driving")):
+        pa = CheckParams(scene_name=p.scene_name, center=p.center, study_radius_m=p.study_radius_m,
+                         sample_profile=p.sample_profile, travel_mode=tm_a)
+        pb = CheckParams(scene_name=p.scene_name, center=p.center, study_radius_m=p.study_radius_m,
+                         sample_profile=p.sample_profile, travel_mode=tm_b)
+        assert CachingDataSource._payload(pa) != CachingDataSource._payload(pb), \
+            f"{tm_a}/{tm_b} 不得串同一缓存键"
+    # 端到端：同场景同中心换出行方式 → **精确键不命中**（键含 travel_mode），
+    # 只可能经邻近兜底复用（served_from='nearby_cache' 而非 'cache'）——串键会直接 'cache' 命中。
+    repo = Repository()
+    src = CountingSource()
+    ds = _ds(repo, src)
+    asyncio.run(ds.compute(pa := CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734),
+                                             study_radius_m=2500.0, sample_profile="standard", travel_mode="walking")))
+    assert src.calls == 1
+    pb = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734),
+                     study_radius_m=2500.0, sample_profile="standard", travel_mode="riding")
+    hit_b = ds.peek(pb)
+    assert hit_b is not None
+    assert hit_b["served_from"] == "nearby_cache"  # 精确键未命中（travel_mode 是键维度）→ 邻近兜底
+    assert src.calls == 1
+
+
+# ── v5 U23-U25/U32-U33 · 缓存单一入口 peek / 邻近缓存 / 键一致性（E0/D24/D25）──
+
+def test_u23_peek_nearby_cache_hit_zero_calls():
+    """U23：peek 精确未命中 + 500m 内有报告 → `served_from='nearby_cache'`，零调用（O1/D9）。"""
+    from app.living_circle.geo_utils import haversine_m
+
+    repo = Repository()
+    src = CountingSource()
+    ds = _ds(repo, src)
+    p1 = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734), study_radius_m=2500.0, sample_profile="standard")
+    asyncio.run(ds.compute(p1))
+    assert src.calls == 1
+    # 同社区 ~290m 微调中心（GPS 抖动尺度）：精确未命中 → 邻近命中，原中心语义保留
+    p2 = CheckParams(scene_name="凯里老街", center=(107.9787, 26.5734), study_radius_m=2500.0, sample_profile="standard")
+    assert haversine_m(p1.center, p2.center) < 500.0
+    hit = ds.peek(p2)
+    assert hit is not None
+    assert hit["served_from"] == "nearby_cache"
+    assert hit["scene"]["center"] == [107.9758, 26.5734]  # 报告仍以原中心为准（D9 诚实呈现）
+    assert src.calls == 1  # 零新增调用
+    # 中心未解析（0,0）→ 跳过邻近（无意义且易误命中），返回 None
+    p0 = CheckParams(scene_name="未定位", center=(0.0, 0.0), study_radius_m=2500.0, sample_profile="standard")
+    assert ds.peek(p0) is None
+
+
+def test_u24_caliber_payload_key_five_params_agree():
+    """U24：5 参键 —— `CachingDataSource._payload` == 管线 `_scene_key`（E0 唯一实现，D24）。"""
+    from app.core.pipeline.living_circle import _scene_key
+
+    for tm in ("walking", "riding", "driving"):
+        for profile in ("quick", "standard", "precise"):
+            p = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734), study_radius_m=2500.0,
+                            sample_profile=profile, travel_mode=tm)
+            params = {"scene_name": "凯里老街", "center": [107.9758, 26.5734], "study_radius_m": 2500.0,
+                      "sample_profile": profile, "travel_mode": tm}
+            assert CachingDataSource._payload(p) == _scene_key(params), f"{tm}/{profile} 键漂移"
+
+
+def test_u25_find_recent_report_near_radius_and_nearest():
+    """U25：`find_recent_report_near` —— 半径过滤 + 取最近 + data_mode 前缀隔离。"""
+    repo = Repository()
+
+    def report(center, name):
+        return {"scene": {"name": name, "center": [center[0], center[1]]}, "data_origin": "live"}
+
+    far = (107.9858, 26.5734)    # 东 ~1km → 500m 半径外
+    near = (107.9787, 26.5734)   # 东 ~290m → 半径内
+    repo.cache_report("live", "seed-far", report(far, "远"))
+    repo.cache_report("live", "seed-near", report(near, "近"))
+    best = repo.find_recent_report_near("live", (107.9758, 26.5734), 500.0)
+    assert best is not None and best["scene"]["name"] == "近"  # 取最近
+    # data_mode 前缀隔离：fixture 域同名报告不参与 live 检索
+    repo.cache_report("fixture", "seed-near-fixture", report((107.9758, 26.5734), "fixture域"))
+    assert repo.find_recent_report_near("live", (107.9758, 26.5734), 500.0)["scene"]["name"] == "近"
+    # 半径不足 → None
+    assert repo.find_recent_report_near("live", (107.9758, 26.5734), 100.0) is None
+
+
+def test_u32_peek_and_compute_share_payload_key():
+    """U32：`peek` 与 `compute` 共享 `_payload`（R4/D24）—— 键构建唯一实现，peek 键 == compute 键。"""
+    repo = Repository()
+    src = CountingSource()
+    ds = _ds(repo, src)
+    p = _params(PAYLOAD)
+    # compute 写缓存（键 = _payload）；peek 用同一键直接命中 → 共享键构建
+    asyncio.run(ds.compute(p))
+    assert src.calls == 1
+    hit = ds.peek(p)
+    assert hit is not None and hit["served_from"] == "cache"
+    assert src.calls == 1  # peek 未触发新的 compute
+    # 反向验证：手工以 `_payload` 为键落缓存，peek 必须命中（读路径唯一实现）
+    repo2 = Repository()
+    ds2 = _ds(repo2, CountingSource())
+    repo2.cache_report("live", CachingDataSource._payload(p), {"scene": {"name": "手工键"}, "data_origin": "live"})
+    assert ds2.peek(p)["scene"]["name"] == "手工键"
+
+
+def test_u33_find_recent_report_near_skips_expired_and_dirty():
+    """U33：`find_recent_report_near` 预过滤 —— 过期条目不返回 / 缺 scene.center 脏条目跳过 / 500m 边界严格 <。"""
+    import time
+
+    # 过期：scan（SQL 预过滤）不返回过期行 → 邻近检索视为不存在
+    repo = Repository(backend=MemoryCache(), default_ttl_s=0.05)
+    repo.cache_report("live", "seed-exp", {"scene": {"name": "过期", "center": [107.9758, 26.5734]}, "data_origin": "live"})
+    time.sleep(0.08)
+    assert repo.find_recent_report_near("live", (107.9758, 26.5734), 500.0) is None
+    # 脏条目（缺 scene.center）→ 跳过不抛
+    repo2 = Repository()
+    repo2.cache_report("live", "dirty", {"scene": {"name": "缺中心"}, "data_origin": "live"})
+    assert repo2.find_recent_report_near("live", (107.9758, 26.5734), 500.0) is None
+    # 500m 边界严格 <（与 U11 同语义）：恰 ≥500m 不命中
+    # （haversine 按实现常量计算：500/99400 度 ≈ 500.24m，确保落在边界之外）
+    repo3 = Repository()
+    d500 = (107.9758 + 500.0 / 99400.0, 26.5734)  # 东 500.24m（lat 26.57 处 1°≈99400m）
+    repo3.cache_report("live", "b500", {"scene": {"name": "恰500m", "center": [d500[0], d500[1]]}, "data_origin": "live"})
+    assert repo3.find_recent_report_near("live", (107.9758, 26.5734), 500.0) is None
 

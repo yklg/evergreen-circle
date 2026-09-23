@@ -22,6 +22,14 @@ const OUT = resolve(__dirname, '../src/mocks/fixtures/livingCircle')
 /** 步行速度 m/min（15min → 1080m 半径口径） */
 const WALK = 72 // m/min
 
+/**
+ * 可达区口径分钟数。**真值在 `backend/app/living_circle/caliber.py:36`
+ * （ReachCaliber.reach_full_min = 20.0）**，本脚本是纯 JS 无法 import 之，故在此复述一份。
+ * 改了后端那份，这里与生成产物（`src/mocks/fixtures/livingCircle/*.json`）都要同步 ——
+ * 三处不一致时以前端 `sampling.timed_count/in_reach_count` 与报告点集对不上为信号。
+ */
+const REACH_FULL_MIN = 20
+
 /** 以米为单位沿方位角取点（简易等距方位投影，局部精度足够） */
 function offsetKm([lng, lat], dLngM, dLatM) {
   const dLat = dLatM / 111320
@@ -61,8 +69,12 @@ function samplePoints(center, radius = 2400) {
         idx: idx++,
         lng: +lng.toFixed(6),
         lat: +lat.toFixed(6),
-        minutes: minutes <= 20 ? +minutes.toFixed(1) : null,
-        reachable: minutes <= 20,
+        minutes: minutes <= REACH_FULL_MIN ? +minutes.toFixed(1) : null,
+        // ⚠️ 字段语义与后端 isochrone.py 对齐：timed=测时返回了值；in_reach=且 ≤reach_full_min。
+        // 本脚本是**圆形近似合成器**，超阈值的点直接判为「未测时」（minutes=null），
+        // 故此处 timed ⇔ in_reach。真实链路两者不等（>20min 的点 minutes 仍有值）。
+        timed: minutes <= REACH_FULL_MIN,
+        in_reach: minutes <= REACH_FULL_MIN,
       })
     }
   }

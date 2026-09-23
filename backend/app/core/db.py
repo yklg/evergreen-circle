@@ -1260,6 +1260,10 @@ def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False
             "blindspot_count": int(d["blindspot_count"] or 0),
             "data_origin": d["data_origin"] or lc.get("data_origin", ""),
             "interpolation": (lc.get("sampling") or {}).get("interpolation", "circular_approx"),
+            # R-7(q-3)：降级成因必须随列表下发。否则历史列表里「离线估算」同样分不清
+            # 「本来就没联网」和「配额被掐断」，用户在找旧报告的地方反而看不到成因。
+            # 整节点透传（前端用 `degradeDetailLabel()` 取标签，不在消费点自己 switch）。
+            "degraded": lc.get("degraded") or None,
         })
     if hidden:
         # 不静默：隐藏了哪些、为什么，逐条留痕（数据仍在库中，可用 include_incomplete=True 取回）
@@ -1279,3 +1283,37 @@ def delete_living_circle_report(report_id: str) -> bool:
         cur = c.execute("DELETE FROM living_circle_reports WHERE report_id=?", (report_id,))
         c.commit()
         return cur.rowcount > 0
+
+
+def delete_living_circle_reports_for_scene(scene_key: str) -> int:
+    """删除同一 scene_key 的全部旧报告（v5 D21/R1 补实现）。
+
+    ``_finalize_living_report(replace_scene=True)``（精报替换粗报）依赖此函数，
+    但此前全库无定义 → 潜伏 AttributeError。与 save/list 同锁、逐行清关联任务，
+    保证「同场景仅保留最新」的写路径语义与并发安全一致。
+    """
+    with _LOCK:
+        c = _connect()
+        rows = c.execute("SELECT report_id FROM living_circle_reports WHERE scene_key=?", (scene_key,)).fetchall()
+        ids = [r["report_id"] for r in rows]
+        for rid in ids:
+            c.execute("DELETE FROM tasks WHERE report_id=?", (rid,))
+        cur = c.execute("DELETE FROM living_circle_reports WHERE scene_key=?", (scene_key,))
+        c.commit()
+        return cur.rowcount
+
+
+def get_latest_report_id_for_scene(scene_key: str) -> Optional[str]:
+    """解析 scene_key 下**最新**报告 id（v5 D22/R2 新增，E2 缓存命中幂等收尾用）。
+
+    读路径唯一收口：不把 report_id 塞进缓存条目（避免缓存/落库两处维护 id），
+    db 为唯一事实源。无记录返回 None。
+    """
+    if not scene_key:
+        return None
+    c = _connect()
+    row = c.execute(
+        "SELECT report_id FROM living_circle_reports WHERE scene_key=? ORDER BY created_at DESC LIMIT 1",
+        (scene_key,),
+    ).fetchone()
+    return row["report_id"] if row else None

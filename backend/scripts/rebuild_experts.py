@@ -38,7 +38,7 @@ NEW = {
     "扮演魔鬼代言人：对 POI 溯源、采样点可达率、盲区判定逐一复核，决定是否打回重算。",
     ["溯源复核", "可达率审裁", "闭环裁定"],
     ["POI溯源", "采样点可达率", "盲区复核", "返工闭环"],
-    "精通点位溯源与数据质量核查，掌握采样点可达率（reachable_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点不可达、盲区误判等情况决定返工重算。",
+    "精通点位溯源与数据质量核查，掌握采样点分档口径（in_reach_count / sample_count —— **已测时≠可达**，可达率只能取 in_reach_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点未测时、可达率异常、盲区误判等情况决定返工重算。",
     "shield-check"),
   # ── L2 策略（设施类别 × 规划理念） ──
   "L2-001": ("谷穗安", "医疗顾问", "strategy", "基层医疗配置顾问 / Primary-care Planning Advisor",
@@ -370,12 +370,18 @@ PRESENTATION = {
 # 口径绑定（Phase 4）：专家与真实代码标识符的机器可验证映射。
 # 仅当 ref 存在于 caliber_index.all_refs() 中时才有效；改名/删除即刻导致校验失败。
 CALIBER_REFS: Dict[str, List[dict]] = {
+    # 5 条硬上限（校验 2~5），且 group='decision' 强制含 caliber/scoring 两类。
+    # 取舍：可达率必须同时有「真可达数 in_reach_count」与「分母 sample_count」——
+    #   旧名 reachable_count 语义是「测时返回了值的点数」，拿它当可达数会让质检把
+    #   1049 读成「可达 1049」（实际 ≤20min 仅 126）。故 in_reach_count 首选。
+    #   让位的是 report::timed_count：它只解释「低可达率是因为没测时还是因为真的远」，
+    #   是原因诊断而非判据本身；需要时可由 sample_count 与报告逐点字段自行推断。
     "L3-003": [
-        {"ref": "report::reachable_count", "note": "质检可达采样点数"},
-        {"ref": "report::sample_count", "note": "质检总采样点数"},
+        {"ref": "report::in_reach_count", "note": "质检可达采样点数（≤reach_full_min）"},
+        {"ref": "report::sample_count", "note": "质检总采样点数（可达率分母）"},
         {"ref": "poi::norm_name", "note": "质检名称归一与聚簇去重"},
         {"ref": "scoring::BLINDSPOT_PENALTY_CAP", "note": "质检盲区惩罚上限"},
-        {"ref": "caliber::walking.reach_full_min", "note": "质检步行可达性满分阈值"},
+        {"ref": "caliber::walking.reach_full_min", "note": "质检步行可达性满分阈值（in_reach 的判定阈值）"},
     ],
 }
 

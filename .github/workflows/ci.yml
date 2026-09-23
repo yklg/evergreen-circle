@@ -9,7 +9,7 @@ on:
 
 jobs:
   backend:
-    name: 后端（pytest 全量，含 A6 镜像守卫）
+    name: 后端（γ 静态守卫 + pytest 全量，含 A6 镜像守卫）
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,6 +26,8 @@ jobs:
       - name: 安装依赖（不装真实 AK，全 mock）
         run: |
           pip install -r requirements.txt -r requirements-dev.txt
+      - name: γ 静态守卫（进程级治理不得被绕过 · AST，非正则）
+        run: python scripts/check_guard_construction.py
       - name: 全量 pytest（living_circle 域 + research 回归 + A6 mirror guard）
         run: python -m pytest -q
 

@@ -26,11 +26,16 @@ from app.living_circle.geo_index.offline_geocoder import OfflineGeocoder
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.caliber import get_caliber, caliber_payload_key
 from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes
+from app.living_circle.degrade_policy import degrade_reason, degraded_block
 from app.living_circle.repository import Repository
 from app.living_circle.scope import SpatialScope
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 _DEFAULT_CENTER = (107.9758, 26.5734)  # 最终兜底：凯里老街（演示样区）
+
+# 邻近缓存半径（O1/D9）：距既有实时中心 ≤500m 的新体检直接复用，零额度消耗。
+# 500m ≈ 一个街区尺度，覆盖「定位到我」的 GPS 抖动与同社区内微调中心。
+NEARBY_CACHE_M = 500.0
 
 
 async def load_poi(
@@ -125,7 +130,9 @@ class LiveDataSource(DataSource):
         await self.client.aclose()
 
     def _scene_payload(self, p: CheckParams) -> str:
-        return caliber_payload_key(p.scene_name, p.center, p.study_radius_m, p.sample_profile)
+        return caliber_payload_key(
+            p.scene_name, p.center, p.study_radius_m, p.sample_profile, p.travel_mode
+        )
 
     async def compute(self, params: CheckParams) -> Dict[str, Any]:
         payload_key = self._scene_payload(params)
@@ -136,26 +143,40 @@ class LiveDataSource(DataSource):
         center = params.center
         caliber = get_caliber(params.travel_mode)
 
-        # 1) 等时圈（批量矩阵测时 → IDW → 等值线族）
+        # 1) 等时圈（批量矩阵测时 → IDW → 等值线族）；max_points 预算感知（v5 B3）
         async def meter_fn(pts: List[Tuple[float, float]]) -> List[Optional[float]]:
             return await self.client._measure_matrix(params.travel_mode, pts, center)
+
+        from app.living_circle.quota import max_matrix_origins_for
 
         iso = await self.engine.compute(
             center,
             meter_fn,
             study_radius_m=params.study_radius_m,
             mode=params.sample_profile,
+            max_points=max_matrix_origins_for(params.travel_mode),
         )
 
         # 2) 空间口径绑定：按 minutes 选可达区环（禁止 iso["isochrones"][-1] 按位置取环）
-        scope = SpatialScope.from_iso(caliber, center, params.study_radius_m, iso)
-        scope.invariant()
+        #    R-4：走 `scope_or_degrade`（`from_iso` 唯一调用封装），空等时圈时诚实降级而非抛错
+        scope, degraded = await scope_or_degrade(
+            caliber=caliber, center=center, radius_m=params.study_radius_m,
+            iso=iso, params=params, guard=getattr(self.client, "guard", None),
+        )
+        if degraded is not None:
+            return degraded
 
         # 3) POI 采集（半径唯一来自 scope.collect_radius_m）
         per_category, triads = await load_poi(self.client, center, scope.collect_radius_m, scope=scope)
+        degraded = await degrade_if_incomplete(
+            per_category=per_category, params=params, guard=getattr(self.client, "guard", None),
+        )
+        if degraded is not None:
+            return degraded
 
         # 4) 组装（唯一实现，与 pipeline 共用）
         report = assemble_living_circle(params, iso, per_category, triads, scope)
+        # 写缓存（「live 命名空间不装 offline 报告」由 `Repository.cache_report` 唯一拦截）
         self.repo.cache_report("live", payload_key, report)
         return report
 
@@ -255,19 +276,50 @@ class CachingDataSource(DataSource):
     @staticmethod
     def _payload(params: CheckParams) -> str:
         c = params.center or (0.0, 0.0)
-        return caliber_payload_key(params.scene_name, c, params.study_radius_m, params.sample_profile)
+        return caliber_payload_key(
+            params.scene_name, c, params.study_radius_m, params.sample_profile, params.travel_mode
+        )
 
-    async def compute(self, params: CheckParams) -> Dict[str, Any]:
+    def peek(self, params: CheckParams) -> Optional[Dict[str, Any]]:
+        """**单一缓存入口**（v5 E0/I1）：精确命中 → 邻近 500m 命中 → None。
+
+        - 键构建与 `compute` 共用 `_payload`（D24：同参同键，唯一实现）；
+        - 命中时深度拷贝 + 标注 `served_from`（'cache' | 'nearby_cache'）+ `cached_at`，
+          **不污染缓存原值**（调用方注入 team 等元数据不影响下次命中）；
+        - 精确未命中才查邻近（`repo.find_recent_report_near`，SQL 预过滤 D25）；
+          中心未解析（(0,0)）时跳过邻近（无意义且易误命中原点附近缓存）。
+        """
         payload = self._payload(params)
         hit = self.repo.get_report(self.data_mode, payload)
+        served_from = "cache"
+        if hit is None:
+            c = params.center or (0.0, 0.0)
+            if c != (0.0, 0.0):
+                hit = self.repo.find_recent_report_near(self.data_mode, c, NEARBY_CACHE_M)
+                served_from = "nearby_cache"
+        if hit is None:
+            return None
+        hit = copy.deepcopy(hit)
+        hit["served_from"] = served_from
+        hit["cached_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return hit
+
+    def backfill(self, params: CheckParams, report: Dict[str, Any]) -> None:
+        """实时重算结果回填缓存（E0：回填逻辑唯一实现，编排器不摸 repo/键细节）。
+
+        ``read_only``（无 AK 离线包装）时不写 live 缓存。
+        """
+        if self.read_only:
+            return
+        self.repo.cache_report(self.data_mode, self._payload(params), report)
+
+    async def compute(self, params: CheckParams) -> Dict[str, Any]:
+        """命中短路 / 未命中委托内层数据源并回填（E0：compute 与管线 live 分支共用 peek）。"""
+        hit = self.peek(params)
         if hit is not None:
-            hit = copy.deepcopy(hit)
-            hit["served_from"] = "cache"
-            hit["cached_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
             return hit
         report = await self.source.compute(params)
-        if not self.read_only:
-            self.repo.cache_report(self.data_mode, payload, report)
+        self.backfill(params, report)
         return report
 
 
@@ -296,6 +348,51 @@ def get_data_source(
 
     logging.getLogger(__name__).warning("baidu AK 缺失：先查历史实时缓存，未命中走离线估算（data_origin=offline）")
     return CachingDataSource(OfflineDataSource(geocoder=geocoder), repo=repo, data_mode="live", read_only=True)
+
+
+async def scope_or_degrade(
+    *,
+    caliber: Any,
+    center: Any,
+    radius_m: float,
+    iso: Dict[str, Any],
+    params: "CheckParams",
+    guard: Any = None,
+) -> Tuple[Any, Optional[Dict[str, Any]]]:
+    """`SpatialScope.from_iso` 的**唯一调用封装**（γ 守卫 G-4：`app/**` 内只允许本函数调用它）。
+
+    先把「可降级」的情况分流走，再让 `from_iso` 对真正的口径错误照旧 `raise`
+    —— **不许弱化、不许删**（`scope.py:111` 拦的是「静默空壳报告」，本身是对的）。
+
+    返回 `(scope, degraded_report)`，二者**恰一**为 None。
+    """
+    has_iso = bool(iso.get("isochrones") or [])
+    reason = degrade_reason(guard, has_isochrones=has_iso)
+    if reason is not None:
+        report = await degrade_to_offline(params)
+        report["degraded"] = degraded_block(guard, isochrone_empty=not has_iso)
+        return None, report
+    scope = SpatialScope.from_iso(caliber, center, radius_m, iso)
+    scope.invariant()
+    return scope, None
+
+
+async def degrade_if_incomplete(
+    *,
+    per_category: Dict[str, Any],
+    params: "CheckParams",
+    guard: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """采集后校验：POI 全空 **或** guard 提前中止（⇒ 数据残缺）时产出降级报告，否则 None。
+
+    ⚠️ 「POI 非空」**不等于**「数据完整」：`total_meltdown` 可能在采集中途置位 ⇒ 只看空会漏。
+    """
+    has_poi = bool(per_category) and any(bool(v) for v in per_category.values())
+    if degrade_reason(guard, has_isochrones=True, has_poi=has_poi) is None:
+        return None
+    report = await degrade_to_offline(params)
+    report["degraded"] = degraded_block(guard, poi_empty=not has_poi)
+    return report
 
 
 async def degrade_to_offline(params: CheckParams) -> Dict[str, Any]:
@@ -331,15 +428,33 @@ async def refine_live_with_profile(
     async def meter_fn(pts: List[Tuple[float, float]]) -> List[Optional[float]]:
         return await client.measure_matrix(check.travel_mode, pts, center)
 
-    iso = await engine.compute(center, meter_fn, study_radius_m=check.study_radius_m, mode=sample_profile)
+    from app.living_circle.quota import max_matrix_origins_for
+
+    iso = await engine.compute(
+        center,
+        meter_fn,
+        study_radius_m=check.study_radius_m,
+        mode=sample_profile,
+        max_points=max_matrix_origins_for(check.travel_mode),
+    )
     caliber = get_caliber(check.travel_mode)
-    scope = SpatialScope.from_iso(caliber, center, check.study_radius_m, iso)
-    scope.invariant()
+    scope, degraded = await scope_or_degrade(
+        caliber=caliber, center=center, radius_m=check.study_radius_m,
+        iso=iso, params=check, guard=getattr(client, "guard", None),
+    )
+    if degraded is not None:
+        return degraded
     per_category, triads = await load_poi(client, center, scope.collect_radius_m, scope=scope)
+    degraded = await degrade_if_incomplete(
+        per_category=per_category, params=check, guard=getattr(client, "guard", None),
+    )
+    if degraded is not None:
+        return degraded
 
     report_data = assemble_living_circle(check, iso, per_category, triads, scope)
     payload_key = caliber_payload_key(
         check.scene_name, center, check.study_radius_m, sample_profile, check.travel_mode
     )
+    # 写缓存（同 `LiveDataSource.compute`：不变量由 `Repository.cache_report` 唯一拦截）
     repo.cache_report("live", payload_key, report_data)
     return report_data

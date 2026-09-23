@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
+import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -34,13 +36,110 @@ from app.living_circle.blindspot import TRIAD_LABEL, find_blindspots_with_stats
 from app.living_circle.caliber import get_caliber
 from app.living_circle.geo_utils import point_in_ring, ring_area_km2, to_local_xy
 from app.living_circle.isochrone import idw_for_points
-from app.living_circle.poi import to_points, to_stats
+from app.living_circle.poi import (
+    POI_CAP_PER_CAT,
+    PoiConservationError,
+    check_poi_conservation,
+    derive_stats_from_points,
+    to_points,
+    to_stats,
+)
 from app.living_circle.scope import SpatialScope
 from app.living_circle.scoring import compute_scores, triad_from_points
+
+logger = logging.getLogger(__name__)
 
 # 受影响人群估算口径（规划基准，非采集实测；见 R4/诚实代理）
 DEMAND_DENSITY_HH_KM2 = 1200.0
 HH_SIZE = 2.6
+
+
+# ── POI 段：单一出口 + 点数守恒（计划 §6 阶段 1 / §8-D5）────────────────
+def conservation_policy() -> str:
+    """守恒自检的处置口径：``'strict'``（硬失败）或 ``'degrade'``（照出 + 留痕）。
+
+    判定顺序：
+
+    1. 显式环境变量 ``LC_POI_CONSERVATION=strict|degrade`` 优先（部署/演练可控）；
+    2. 否则 **测试 / CI 一律 strict** —— 依据是 pytest 注入的 ``PYTEST_CURRENT_TEST``
+       与通用 ``CI``：护栏在测试环境若允许降级，就等于没有护栏；
+    3. 其余（生产 / 演示）**degrade** —— 评审现场不该因为一次口径不一致跑不出报告。
+
+    §8-D5 的底线：**任何环境都不静默** —— degrade 分支也必须往报告里写
+    ``poi.conservation.ok=false`` 并打 ERROR 日志，只是不中断体检。
+    """
+    explicit = (os.environ.get("LC_POI_CONSERVATION") or "").strip().lower()
+    if explicit in {"strict", "degrade"}:
+        return explicit
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("CI"):
+        return "strict"
+    return "degrade"
+
+
+def _handle_conservation_violation(issue: str) -> None:
+    """按 :func:`conservation_policy` 处置守恒违规：strict 抛错，degrade 响亮留痕。"""
+    msg = f"POI 点数守恒自检失败（sum(categories[].in_circle) ≠ len(points)）：{issue}"
+    if conservation_policy() == "strict":
+        raise PoiConservationError(msg)
+    logger.error(
+        "%s —— 已按 degrade 口径照出报告（poi.conservation.ok=false），未静默降级", msg
+    )
+
+
+def build_poi_block(
+    per_category: Dict[str, List[Dict[str, Any]]],
+    times_by_cat: Dict[str, List[Optional[float]]],
+    scope: SpatialScope,
+    center: tuple,
+    stats: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """`poi` 段的**唯一出口**（计划 §6 阶段 1.1/1.2）—— 报告里所有 POI 数字只在这里成型。
+
+    改前：同一个 `poi` 对象的 4 个字段由**两条独立链路**装配
+    （`to_stats` 不截断算 `categories/total/in_circle`，`to_points` 内部截断 25 算 `points`），
+    两条链共享同一份 `per_category` 却各自截断、中间无任何守恒契约
+    ⇒ 实测 fixture「面板写圈内 104 处 / 图上只有 98 个点」且无人发现。
+
+    装配顺序**固定**，两条口径不得互相污染：
+
+    1. ``to_points`` 定型 ``points``（含**唯一一次**截断）并拿回 ``truncated`` 披露；
+    2. ``in_circle`` / ``coverage`` **从 `points` 派生**（可达口径：图上几个点，报告就说几个）；
+    3. ``total`` 仍从 `per_category` 派生（**采集口径**，含圈外）——
+       审查 R1 修正：不得从 points 反算，否则「采集 217」会塌成 98，信息永久丢失。
+
+    出口处做守恒自检（:func:`check_poi_conservation`），违规按 §8-D5 分环境处置：
+    测试/CI 硬失败；生产/演示在 `poi.conservation` 留痕（**不静默**）。
+
+    ``stats`` 必须**尚未**参与评分：本函数会就地收敛它的 `in_circle`/`coverage`，
+    调用方须在本函数之后再 `compute_scores`，否则评分仍按截断前的覆盖度算。
+    """
+    out = to_points(per_category, times_by_cat, scope, center)
+    derive_stats_from_points(stats, out.points)
+
+    block: Dict[str, Any] = {
+        "categories": stats,
+        "total": sum(int(s.get("total") or 0) for s in stats),
+        "in_circle": sum(int(s.get("in_circle") or 0) for s in stats),
+        "points": out.points,
+        # 截断披露（阶段 1.3）：无截断时 dropped=0 / categories=[]，**字段恒存在**
+        # —— 它同时充当「本报告是新口径产物」的机器可读标记（读侧与体检脚本据此判别）。
+        "truncated": {
+            "cap_per_cat": POI_CAP_PER_CAT,
+            "dropped": sum(int(t["dropped"]) for t in out.truncated),
+            "categories": out.truncated,
+        },
+    }
+    issue = check_poi_conservation(block)
+    conservation: Dict[str, Any] = {
+        "ok": issue is None,
+        "declared_in_circle": block["in_circle"],
+        "actual_points": len(out.points),
+    }
+    if issue is not None:
+        conservation["detail"] = issue
+        _handle_conservation_violation(issue)
+    block["conservation"] = conservation
+    return block
 
 
 def _now_iso() -> str:
@@ -140,6 +239,10 @@ def assemble_living_circle(
     def full(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [{"lng": it["lng"], "lat": it["lat"], "name": it.get("name", "")} for it in items]
 
+    # ── POI 段：唯一出口（阶段 1.1）。**必须在 compute_scores 之前**：
+    #    build_poi_block 会就地收敛 stats 的 in_circle/coverage，评分读的正是这两个字段。
+    poi_block = build_poi_block(per_category, times_by_cat, scope, center, stats)
+
     triads_conclusion = triad_from_points(
         full(triads.get("market", [])),
         full(triads.get("pharmacy", [])),
@@ -176,12 +279,7 @@ def assemble_living_circle(
         "caliber": caliber_report,
         "isochrones": iso["isochrones"],
         "sampling": iso["sampling"],
-        "poi": {
-            "categories": stats,
-            "total": sum(s["total"] for s in stats),
-            "in_circle": sum(s["in_circle"] for s in stats),
-            "points": to_points(per_category, times_by_cat, scope, center),
-        },
+        "poi": poi_block,
         "blindspots": blindspots,
         "scores": scores,
     }

@@ -2,7 +2,11 @@
 import asyncio
 
 from app.living_circle.data_source import CheckParams, OfflineDataSource
-from app.living_circle.isochrone import WALK_SPEED_M_PER_MIN  # noqa: F401  (口径同源校验)
+from app.living_circle.isochrone import (  # noqa: F401  (口径同源校验)
+    REACH_FULL_MIN,
+    WALK_SPEED_M_PER_MIN,
+    reach_flags,
+)
 
 
 def _compute(scene_name="上海市浦东新区陆家嘴", center=None, city="上海市", address="", sample_profile="standard"):
@@ -31,10 +35,20 @@ def test_u2_2_engine_reuse_isomorphic_with_live():
         assert z["geojson"]["type"] == "Polygon"
         assert z["area_km2"] > prev  # 距离模型下大圈必然更大
         prev = z["area_km2"]
-    # 采样点可达性自洽（距离模型无不可达）
+    # 采样点自洽：距离模型下无「测时失败」的点（timed 恒真），
+    # 但**可达性仍要分档** —— 超出 REACH_FULL_MIN 的点 in_reach=False。
     for p in r["sampling"]["points"]:
-        assert p["reachable"] is True
+        assert p["timed"] is True
+        assert isinstance(p["in_reach"], bool)
         assert p["minutes"] is not None and p["minutes"] >= 0
+        assert p["in_reach"] is (p["minutes"] <= REACH_FULL_MIN)
+    # 分档汇总数与逐点一致，且随 sampling 一起落报告（消费方不再自行 filter）
+    flags = reach_flags(r["sampling"]["points"])
+    assert r["sampling"]["timed_count"] == flags.timed_count == len(r["sampling"]["points"])
+    assert r["sampling"]["in_reach_count"] == flags.in_reach_count
+    assert 0 < r["sampling"]["in_reach_count"] < flags.timed_count, (
+        "in_reach 与 timed 未分离：距离模型下必然存在 >20min 的采样点"
+    )
 
 
 def test_u2_3_no_comparable_score():

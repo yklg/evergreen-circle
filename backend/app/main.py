@@ -550,12 +550,20 @@ def life_circle_map_config():
 
     浏览器 AK 是公开键：百度侧按 Referer 白名单限域（localhost/部署域名），
     随页面源码公开属设计内行为，故不走 mask_effective 脱敏；空值表示未配置。
-    styleId 为空时前端回退内置 S2 低饱和浅色 styleJson 模板。
+
+    ⚠️ **styleId 默认不下发**（阶段 0.2 / 决策 D4，详见 config.py 同名注释）：
+    控制台样式里的「底图 POI 注记是否关闭」**代码无法验证**，而百度第三方设施名与我们
+    的应用 Marker 同款呈现，会被读成自家数据（本计划 §1 症状成因之一）；且 `setMapStyleV2`
+    的 `styleId` 与 `styleJson` 互斥二选一，无法「用它的配色 + 代码关 poilabel」。
+    故前端**默认**拿到空值 → 回退内置 `LC_MAP_STYLE_LIGHT`（`poilabel` 整层关闭、
+    保留行政区名/路名），纪律随代码进版本控制。
+    只有显式置 `BAIDU_ALLOW_CONSOLE_STYLE=1` 才下发 styleId（确知该样式已关 POI 注记时）。
     """
     from app.core.config import get_settings
 
     s = get_settings()
-    return {"ok": True, "browser_ak": s.baidu_browser_ak, "map_style_id": s.baidu_map_style_id}
+    style_id = s.baidu_map_style_id if s.baidu_allow_console_style else ""
+    return {"ok": True, "browser_ak": s.baidu_browser_ak, "map_style_id": style_id}
 
 
 @app.get("/api/life-circle")
@@ -613,33 +621,100 @@ def get_life_circle_report(report_id: str):
     return rep
 
 
+# 对比差异表的三处固定字面量 —— 与前端/契约夹具**同一份**（见 compareDiffContract.json）。
+_DIFF_VALUE_OFFLINE = "离线估算"
+_DIFF_DESC_NOT_COLLECTED = "离线估算未采集 POI"
+_DIFF_DESC_NOT_COMPARABLE = "不可比 · 离线估算"
+_DIFF_EQUAL_WORD = "持平"
+
+
+def _as_num(x: Any) -> float:
+    """比较用的数值兜底（`None` / 缺字段 / 非数 → 0）。**只影响比较，不影响展示值**。"""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _diff_desc(better: str, template: str, na: float, nb: float,
+               name_a: str = "A", name_b: str = "B") -> str:
+    """「{胜者}{template}」/「持平」—— 与前端 `lib/livingCircle.compareDesc()` **逐字同源**。
+
+    ⚠️ **方向由 `better` 承载，不是一句 `na > nb`**：服务盲区是「越小越好」，
+    误用「大者胜」会把「盲区更少」挂在盲区**更多**那一侧 —— 即事实相反
+    （旧实现用字符串比较时的形态：`'0 处' > '1 处'` 为 false ⇒ 输出「B盲区更少」）。
+    契约夹具里 `服务盲区 a=0 b=1` 那条用例就是这条的负对照。
+
+    称呼（`name_a`/`name_b`）是**参数**：真实态用 `"A"/"B"`（城市名太长，表格放不下），
+    前端演示态传场景实名 —— 对齐的是**句式骨架**，称呼本身保留各自形态。
+    """
+    if _as_num(na) == _as_num(nb):
+        return _DIFF_EQUAL_WORD
+    a_wins = na > nb if better == "higher" else na < nb
+    return f"{name_a if a_wins else name_b}{template}"
+
+
 def _lc_diff(a: dict, b: dict) -> List[dict]:
     """双样例指标差异表（对齐前端 diff 字段：metric / a_value / b_value / desc）。
 
+    行名、行序、解读句式与前端 `lib/livingCircle.COMPARE_ROWS` **逐项相同**（Py/TS 各一份实现，
+    靠**同一份契约夹具**的期望字面量在两侧测试各自断言对齐 —— 范式同
+    `poi_metric_label`/`poiMetricLabel`）。夹具：`frontend/src/__tests__/fixtures/compareDiffContract.json`。
+
     P0-2：offline 报告不产出可比评分/盲区 → 相关行标注「离线估算·不可比」，不参与比较。
+    ⚠️ 该离线分支**逐行保留**，不得因「两模式对齐」而被吞掉（`test_living_circle_api.py:236` 在守）。
+
+    实现形态：**一张行规格表 + 一个循环**。加一行只改这张表一处 —— 而不是在返回值里
+    手工拼一行（那样行名/行序/句式会分散，与前端分叉时无人发现）。
     """
+    # 局部导入：`diagnosis_templates` 依赖 pipeline，放模块级易生循环依赖（项目内既有惯例）。
+    from app.core.pipeline.diagnosis_templates import sampling_counts
+
     a15 = next((z["area_km2"] for z in a.get("isochrones", []) if z["minutes"] == 15), 0)
     b15 = next((z["area_km2"] for z in b.get("isochrones", []) if z["minutes"] == 15), 0)
+    # ⚠️ 面积**先定成两位小数再用**：展示值与比较值必须是同一个数，否则 `1.561` 与 `1.564`
+    # 会显示成两个 `1.56` 却判出「B 更大」——读者无法用看到的数复核结论。前端 `_isoArea15()`
+    # 同样先 `toFixed(2)`（两模式显示值必须一致：此前前端吐 1.562、后端吐 1.56）。
+    ra15, rb15 = round(a15, 2), round(b15, 2)
     pa, pb = a.get("poi", {}), b.get("poi", {})
     a_off, b_off = a.get("data_origin") == "offline", b.get("data_origin") == "offline"
+    off = a_off or b_off
     sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
     ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
-    rows: List[dict] = [
-        {"metric": "15min 等时圈面积 (km²)", "a_value": round(a15, 2), "b_value": round(b15, 2),
-         "desc": ("A 更大" if a15 > b15 else "B 更大") if a15 != b15 else "相当"},
-        {"metric": "POI 采集", "a_value": pa.get("total", 0), "b_value": pb.get("total", 0),
-         "desc": "设施密度" if not (a_off or b_off) else "离线估算未采集 POI"},
-        {"metric": "圈内 POI", "a_value": pa.get("in_circle", 0), "b_value": pb.get("in_circle", 0),
-         "desc": "可达覆盖" if not (a_off or b_off) else "离线估算未采集 POI"},
-        {"metric": "综合评分",
-         "a_value": "离线估算" if a_off else sa,
-         "b_value": "离线估算" if b_off else sb,
-         "desc": "不可比 · 离线估算" if (a_off or b_off) else (("A 更优" if sa > sb else "B 更优") if sa != sb else "持平")},
-        {"metric": "服务盲区",
-         "a_value": "离线估算" if a_off else ba,
-         "b_value": "离线估算" if b_off else bb,
-         "desc": "不可比 · 离线估算" if (a_off or b_off) else (("A 更多" if ba > bb else "B 更多") if ba != bb else "持平")},
+    # 「可达采样点数」走 sampling_counts()（叙述文案的**唯一取值口径**）：汇总数缺失的历史快照
+    # 由它内部按点回算，且回算走同一个 reach_flags 判据 —— 与前端 samplingReach() 同口径。
+    a_reach, b_reach = sampling_counts(a)[1], sampling_counts(b)[1]
+    a_total, b_total = pa.get("total", 0), pb.get("total", 0)
+    # 「圈内 POI」**重算** Σ categories[].in_circle，**不读**顶层冗余的 `poi.in_circle`
+    # （顶层那个是「与 categories 可能不一致的自我声明」——与 `poi_metric_label` 同处置）。
+    # ⚠️ 实测 25/25 份两种读法同值 ⇒ 这是**口径归位，不改任何显示值**，不是行为修复。
+    a_in = sum(int((c or {}).get("in_circle") or 0) for c in (pa.get("categories") or []))
+    b_in = sum(int((c or {}).get("in_circle") or 0) for c in (pb.get("categories") or []))
+
+    # 行规格表 —— (行名, A/B 比较值, A/B 展示值, 方向, 句式, 离线时的替代 desc)
+    # ⚠️ 数值行上「比较值」与「展示值」**故意取同一个数**（面积取两位小数后的值）——
+    #    判据必须挂在读者看得到的那个数上，否则同一对数字配两种结论。
+    specs: List[tuple] = [
+        ("15min 等时圈面积 (km²)", ra15, rb15, ra15, rb15,
+         "higher", "可达范围更大", None),
+        ("可达采样点数", a_reach, b_reach, a_reach, b_reach,
+         "higher", "可达采样点更多", None),
+        ("POI 采集", a_total, b_total, a_total, b_total,
+         "higher", "采集面更广", _DIFF_DESC_NOT_COLLECTED),
+        ("圈内 POI", a_in, b_in, a_in, b_in,
+         "higher", "可达设施更密", _DIFF_DESC_NOT_COLLECTED),
+        ("服务盲区", ba, bb,
+         _DIFF_VALUE_OFFLINE if a_off else ba, _DIFF_VALUE_OFFLINE if b_off else bb,
+         "lower", "盲区更少", _DIFF_DESC_NOT_COMPARABLE),
+        ("综合评分", _as_num(sa), _as_num(sb),
+         _DIFF_VALUE_OFFLINE if a_off else sa, _DIFF_VALUE_OFFLINE if b_off else sb,
+         "higher", "更成熟", _DIFF_DESC_NOT_COMPARABLE),
     ]
+
+    rows: List[dict] = []
+    for metric, na, nb, va, vb, better, template, off_desc in specs:
+        desc = off_desc if (off and off_desc) else _diff_desc(better, template, na, nb)
+        rows.append({"metric": metric, "a_value": va, "b_value": vb, "desc": desc})
     return rows
 
 

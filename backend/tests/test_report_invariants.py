@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Tuple
 import pytest
 
 from app.living_circle.geo_utils import haversine_m, ring_area_km2, to_local_xy
+from app.living_circle.isochrone import _flag_of, reach_flags
 from app.living_circle.poi import CATEGORY_DEFS, TRIAD_KEYWORDS
 
 FIXTURES = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
@@ -156,6 +157,40 @@ def test_fixture_collect_covers_reach(path):
     )
 
 
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_fixture_blindspot_judged_coverage_disclosed(path):
+    """T-BE-15 · 判盲覆盖度必须可审（阶段 −1.5 后端半）。
+
+    为什么需要：`cells_judged=9 / cells_inside=72` 说明**只有 12.5% 的可达区被判定过**，
+    但 UI 只写「服务盲区 0 处」，读起来像「全圈都没问题」。`cells_unknown` 是设计好的
+    可观测性出口（`blindspot.py:111`、`scope.py:136`），**出口存在不等于被使用**——
+    本用例锁住「后端确实把三个数写进报告了」，前端披露断言见
+    `frontend/src/__tests__/livingCircleContract.test.ts`（同一判据两端各锁一次）。
+
+    说明：本仓两份 fixture 的 `cells_unknown` 均 > 0（kaili 63/72、jinsong 90/99），
+    因此前端披露路径有真实输入、不是空转；此处**不**断言 unknown 的具体占比，
+    以免将来修好判盲半径（unknown→0，见计划 §9）时误报。
+    """
+    lc = _load(path)
+    cal = lc.get("caliber") or {}
+    inside = cal.get("cells_inside")
+    judged = cal.get("cells_judged")
+    unknown = cal.get("cells_unknown")
+    assert inside is not None, f"{path.name}: caliber 缺 cells_inside（判盲覆盖率无从计算）"
+    assert judged is not None, f"{path.name}: caliber 缺 cells_judged"
+    assert unknown is not None, (
+        f"{path.name}: caliber 缺 cells_unknown —— 「0 处盲区」将无法解读"
+        "（可能是全扫完真没有，也可能是大半没判）"
+    )
+    assert judged + unknown == inside, (
+        f"{path.name}: 判盲分账不闭合 {judged}+{unknown}={judged + unknown} ≠ {inside}"
+    )
+    assert 0 <= judged <= inside, f"{path.name}: cells_judged={judged} 越界 [0,{inside}]"
+    # 盲区数不可能超过「判定过的格数」——上界由可判定面决定，不由扫描面决定
+    n_bs = len(lc.get("blindspots") or [])
+    assert n_bs <= judged, f"{path.name}: 盲区数 {n_bs} > 可判定格数 {judged}"
+
+
 # ── B. live 组装路径（合成输入，不依赖网络）────────────────────
 def _synthetic_iso(center: Tuple[float, float]):
     """同心方环 5/10/15/20min（半径 200/400/700/1000m）+ 5×5 采样点。"""
@@ -179,10 +214,20 @@ def _synthetic_iso(center: Tuple[float, float]):
             y = (j - 2) * 750.0
             lng, lat = xy_to_lnglat(center, x, y)
             dist = (x * x + y * y) ** 0.5
+            minutes = dist / 80.0
+            is_timed, is_in_reach = _flag_of(minutes)
             points.append(
-                {"lng": lng, "lat": lat, "minutes": dist / 80.0, "reachable": True}
+                {
+                    "lng": lng, "lat": lat, "minutes": minutes,
+                    "timed": is_timed, "in_reach": is_in_reach,
+                }
             )
-    return {"isochrones": rings, "sampling": {"points": points}, "sample_count": len(points), "reachable_count": len(points)}
+    flags = reach_flags(points)
+    return {
+        "isochrones": rings, "sampling": {"points": points},
+        "sample_count": len(points),
+        "timed_count": flags.timed_count, "in_reach_count": flags.in_reach_count,
+    }
 
 
 def _build_report(triads_near_center: bool):
@@ -292,7 +337,84 @@ def test_assemble_declares_collect_and_reach_caliber():
     assert cal["collect_radius_m"] >= cr * 0.999
 
 
+def test_assemble_poi_conservation_holds_end_to_end():
+    """阶段 1 核心不变量（端到端）：``sum(categories[].in_circle) == len(points)``。
+
+    合成输入每类 2 个圈内（±300m）+ 2 个圈外（±3000m）⇒ 采集口径 32、可达口径 16。
+    两条口径**必须各自成立且互不污染**：`total` 保留圈外（32），`in_circle` = 图上点数（16）。
+
+    为什么单独端到端测一遍（单测已在 `test_poi_conservation.py`）：装配层还有
+    「`stats` 先被 IDW 回填、后被派生收敛、再交给 compute_scores」的时序耦合，
+    只在 `build_poi_block` 单元里测是看不到这条链的。pytest 下 strict 口径生效
+    ⇒ 本用例变红即装配层真的破了守恒。
+    """
+    lc = _build_report(triads_near_center=False)
+    poi = lc["poi"]
+    declared = sum(int(c["in_circle"]) for c in poi["categories"])
+    assert declared == len(poi["points"]) == int(poi["in_circle"])
+    assert poi["total"] > poi["in_circle"], "夹具须含圈外点，否则「两条口径之别」测不出来"
+    assert poi["truncated"] == {"cap_per_cat": 200, "dropped": 0, "categories": []}
+    assert poi["conservation"] == {
+        "ok": True,
+        "declared_in_circle": declared,
+        "actual_points": declared,
+    }
+
+
+def test_assemble_scoring_sees_derived_in_circle():
+    """派生收敛必须发生在 `compute_scores` **之前**（否则评分仍按截断前的覆盖度算）。
+
+    判据：每个类别的 ``coverage`` 与其**派生后**的 ``in_circle`` 自洽 ——
+    ``coverage == min(1, in_circle / ideal_circle)``。若时序颠倒，
+    ``in_circle`` 会被覆盖而 ``coverage`` 保持旧值，二者立刻对不上。
+    """
+    from app.living_circle.category_rule import CATEGORY_RULES
+
+    lc = _build_report(triads_near_center=False)
+    for c in lc["poi"]["categories"]:
+        ideal = int(CATEGORY_RULES[c["category"]]["ideal_circle"])
+        assert c["coverage"] == pytest.approx(min(1.0, c["in_circle"] / ideal), abs=1e-4), c
+
+
 # ── 副标题：口径 + 分隔符（读者会照抄这两个东西） ──────────────────────
+
+
+def _all_text(node: Any) -> str:
+    """把 Report 里所有字符串拼成一个平面文本（用于全文断言，避免逐字段找）。"""
+    if isinstance(node, str):
+        return node + "\n"
+    if isinstance(node, dict):
+        return "".join(_all_text(v) for v in node.values())
+    if isinstance(node, (list, tuple)):
+        return "".join(_all_text(v) for v in node)
+    return ""
+
+
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_narrative_reach_count_is_not_silently_zero(path):
+    """T-BE-13 · 叙述文案的「可达」数必须等于采样汇总数，且**不得静默为 0**。
+
+    为什么必须专门锁：`diagnosis_templates` 原有 5 处
+    ``sum(1 for p in points if p.get("reachable"))``。字段更名为 ``timed``/``in_reach`` 后，
+    ``dict.get`` 遇到旧名**不报错、只返回 None** ⇒ 文案静默变成「0/1049 个采样点可达」——
+    全量测试当时没有任何一条会失败（阶段 −1 实测，804 passed 全绿）。
+    这类「改名后靠 .get 静默归零」是本项目最贵的一类缺陷，故把等式钉成契约。
+    """
+    from app.core.pipeline.diagnosis_templates import assemble_report
+
+    lc = _load(path)
+    s = lc["sampling"]
+    n = len(s["points"])
+    in_reach = int(s["in_reach_count"])
+    assert in_reach > 0, f"{path.name}: 夹具的 in_reach_count={in_reach}，断言将失去判别力"
+
+    text = _all_text(assemble_report(lc, "lc-test", "syn", ""))
+    assert f"{in_reach}/{n} 个采样点圈内可达" in text, (
+        f"{path.name}: 叙述文案未出现真实可达数 {in_reach}/{n}\n{text[:1200]}"
+    )
+    assert f"0/{n} 个采样点" not in text, (
+        f"{path.name}: 叙述文案出现 0/{n} —— 汇总数被静默归零（读到了已废字段名？）"
+    )
 
 
 def test_subtitle_counts_in_circle_not_total():
@@ -311,6 +433,22 @@ def test_subtitle_counts_in_circle_not_total():
     sub = assemble_report(lc, "lc-test", "syn", "")["subtitle"]
     assert f"共 {in_circle} 处设施" in sub, sub
     assert f"共 {total} 处设施" not in sub, sub
+
+
+def test_subtitle_count_equals_rendered_point_count():
+    """阶段 3.3 · 副标题「共 N 处设施」必须 == **图上实际能数出来的点数**（``len(poi.points)``）。
+
+    `in_circle` 与 `len(points)` 在阶段 1 之后恒等，但把「读者在图上数得出来的那个数」
+    直接钉进文案契约，才是用户最初的诉求（「地图上看到的点必须能追到报告里的数字」）：
+    只钉 `in_circle` 的话，一旦两个字段**一起**算错，文案与图会一起漂移而无人发现。
+    """
+    from app.core.pipeline.diagnosis_templates import assemble_report
+
+    lc = _build_report(triads_near_center=False)
+    rendered = len(lc["poi"]["points"])
+    assert rendered > 0, "夹具未产出点位，断言将失去判别力"
+    sub = assemble_report(lc, "lc-test", "syn", "")["subtitle"]
+    assert f"共 {rendered} 处设施" in sub, sub
 
 
 def test_subtitle_separator_spacing_is_intact():
@@ -364,3 +502,99 @@ def test_subtitle_keeps_address_when_present():
 
     sub = assemble_report(lc, "lc-test", "syn", "")["subtitle"]
     assert sub.startswith("测试 · 西门街道老街片区｜综合 "), sub
+
+
+# ── 阶段 2.5 · POI 指标文案（`采集 N · 圈内 M · 已展示 K`）────────────────────
+# 为什么要专门锁：旧文案 `N 个（圈内 M）` 只讲两个数，而「图上到底画了几个点」是第三个、
+# 也是读者唯一能**亲眼数出来**的数。三者不对账时，用户原始诉求（点必须能追到数字）就不成立。
+# ⚠️ 本组与前端 `src/lib/__tests__/livingCirclePoiRender.test.ts` 断言**同一批字面量**
+#    （`采集 217 · 圈内 98 · 已展示 98` / `采集 175 · 圈内 104 · 已展示 104`）——
+#    文案在 Py/TS 各有一份实现，靠「同一份夹具 + 同一串期望值」把两端口径钉在一起。
+
+
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_poi_metric_label_three_segments_match_data(path):
+    """三段必须各来自自己的来源：采集=total / 圈内=Σcategories.in_circle / 已展示=len(points)。"""
+    from app.core.pipeline.diagnosis_templates import poi_metric_label
+
+    lc = _load(path)
+    poi = lc["poi"]
+    declared = sum(int(c["in_circle"]) for c in poi["categories"])
+    label = poi_metric_label(poi)
+    assert label == f"采集 {int(poi['total'])} · 圈内 {declared} · 已展示 {len(poi['points'])}", label
+    assert "另有" not in label, f"{path.name}: 未截断却出现了截断披露 → {label}"
+
+
+def test_poi_metric_label_pins_cross_language_literals():
+    """与前端测试断言**同一串**字面量 —— 两端口径漂移时必有一侧变红。"""
+    from app.core.pipeline.diagnosis_templates import poi_metric_label
+
+    kaili = _load(FIXTURES / "kaili.json")
+    jinsong = _load(FIXTURES / "beijing-jinsong.json")
+    assert poi_metric_label(kaili["poi"]) == "采集 217 · 圈内 98 · 已展示 98"
+    assert poi_metric_label(jinsong["poi"]) == "采集 175 · 圈内 104 · 已展示 104"
+
+
+def test_poi_metric_label_discloses_truncation_with_category_detail():
+    """真的截断过 ⇒ 必须出现第四段，且带类别明细与上限（静默截断 = 本计划要消灭的缺陷）。"""
+    from app.core.pipeline.diagnosis_templates import poi_metric_label
+
+    label = poi_metric_label(
+        {
+            "categories": [{"category": "shopping", "in_circle": 25}],
+            "total": 500,
+            "in_circle": 25,
+            "points": [{}] * 25,
+            "truncated": {
+                "cap_per_cat": 200,
+                "dropped": 6,
+                "categories": [{"category": "shopping", "kept": 25, "dropped": 6}],
+            },
+        }
+    )
+    assert label == "采集 500 · 圈内 25 · 已展示 25 · 另有 6 处未展示（shopping 6，每类上限 200）", label
+
+
+def test_poi_metric_label_ignores_redundant_in_circle_field():
+    """冗余的 ``poi.in_circle`` 谎报时必须无视 —— 一律重算 ``categories``。
+
+    `total`/`in_circle` 是**派生冗余字段**（阶段 1 定稿：`points` 才是唯一真身）。
+    文案若读它们，就等于把「自我声明的数字」当真，两个数各算各的老毛病会在文案层复发。
+    """
+    from app.core.pipeline.diagnosis_templates import poi_metric_label
+
+    label = poi_metric_label(
+        {
+            "categories": [{"category": "shopping", "in_circle": 25}],
+            "total": 500,
+            "in_circle": 999,  # ← 谎报
+            "points": [{}] * 25,
+            "truncated": {"cap_per_cat": 200, "dropped": 0, "categories": []},
+        }
+    )
+    assert label == "采集 500 · 圈内 25 · 已展示 25", label
+
+
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_overview_takeaway_carries_the_same_label(path):
+    """概览章结论必须带上与 `poi_metric_label` **逐字一致**的三段式文案。
+
+    ⚠️ 这里**同时**断言「函数产物」与「由夹具算出的字面量」，而不是只断言前者：
+    只断言 `f"设施 {poi_metric_label(poi)}" in text` 的话，一旦有人把函数本身改回旧文案，
+    等号两边**一起变**、测试照样绿（负对照实测：模板接线版 2/2 全绿，只有字面量版红）。
+    判据必须锚在**不随实现移动的常量**上，否则它校验的是「自己等于自己」。
+    """
+    from app.core.pipeline.diagnosis_templates import assemble_report, poi_metric_label
+
+    lc = _load(path)
+    poi = lc["poi"]
+    declared = sum(int(c["in_circle"]) for c in poi["categories"])
+    literal = f"设施 采集 {int(poi['total'])} · 圈内 {declared} · 已展示 {len(poi['points'])}"
+
+    text = _all_text(assemble_report(lc, "lc-test", "syn", ""))
+    assert literal in text, text[:1500]
+    assert f"设施 {poi_metric_label(poi)}" in text, text[:1500]
+    # 旧文案形态不得残留（注意：`设施 总量` 与 `设施总量` 两种写法都要拦 ——
+    # 只拦不带空格的那种时，负对照实测漏掉过一次）
+    assert "设施总量" not in text and "设施 总量" not in text, "旧文案「设施总量 N 处（圈内 M）」残留"
+    assert "个（圈内" not in text, "旧文案「N 个（圈内 M）」残留"

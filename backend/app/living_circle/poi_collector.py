@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -24,8 +25,10 @@ GAIN_STOP_THRESHOLD = 1
 # 扩词请求只取第 1 页（就近召回已足够触发达标或再扩，rev3 §2.8）。
 _EXPANSION_PAGES = 1
 
-# 每类点位截断上限（渲染/报告体积，与 to_points 默认一致）。
-_CAP_PER_CAT = 25
+# ⚠️ 阶段 1.5：本模块**不再持有任何截断常量**（原 `_CAP_PER_CAT = 25` 已删除）。
+# 理由（两条口径不可混）：采集侧截断会把 `poi.total`（**采集口径**，含圈外）一并压小，
+# 让「展示上限」篡改「采集事实」。唯一截断点收敛到 `poi.to_points`（展示层），
+# 由它产出 `truncated` 披露；上限值 = `poi.POI_CAP_PER_CAT`。
 
 
 @dataclass
@@ -215,20 +218,32 @@ async def collect_poi(
         all_keywords.extend(defn["keywords"])
     plan = plan_initial({"keywords": all_keywords}, budget)  # [(term, pages)]
     pages_of = {term: pages for term, pages in plan}
-    for cat, defn in CATEGORY_RULES.items():
-        items: list = []
-        for kw in defn["keywords"]:
-            if kw not in ctx.used_terms:
-                ctx.used_terms.add(kw)
-            pages = pages_of.get(kw, 1)
-            if not budget.consume(cat, units=pages):
-                break
-            raw = await client.place_search(kw, center, radius_m=radius_m, max_pages=pages)
-            if raw is None:
-                budget.refund(cat, units=pages)
-                break
-            items += raw
-        per_category[cat] = _dedupe(items)
+
+    async def _initial_search(cat: str, kw: str, pages: int) -> Optional[List[Dict[str, Any]]]:
+        # 与串行同语义：词先登记已用（set.add 幂等），再原子预扣；拒绝即跳过（不发起调用）
+        ctx.used_terms.add(kw)
+        if not budget.consume(cat, units=pages):
+            return None
+        raw = await client.place_search(kw, center, radius_m=radius_m, max_pages=pages)
+        if raw is None:
+            budget.refund(cat, units=pages)
+            return None
+        return raw
+
+    a_plan: List[Tuple[str, str, int]] = [
+        (cat, kw, pages_of.get(kw, 1))
+        for cat, defn in CATEGORY_RULES.items()
+        for kw in defn["keywords"]
+    ]
+    # B2 并发（延迟优化）：A 阶段词间无依赖，asyncio.gather 并发发出；预算准入仍是
+    # 先到先得（consume 为同步原子操作，事件循环内按任务序确定）→ 准入集合与串行一致
+    # （U38 锚定）。三要素检索保持在其后串行 —— 预算顺序与现行为完全一致，防准入漂移。
+    results = await asyncio.gather(*(_initial_search(cat, kw, pages) for cat, kw, pages in a_plan))
+    raw_by_cat: Dict[str, list] = {}
+    for (cat, _kw, _pages), raw in zip(a_plan, results):
+        if raw:
+            raw_by_cat.setdefault(cat, []).extend(raw)
+    per_category = {cat: _dedupe(raw_by_cat.get(cat, []) or []) for cat in CATEGORY_RULES}
 
     # ── 三要素（盲区硬判）：market 复用类目；pharmacy/primary 另检索 ──
     triads: Dict[str, list] = {"market": per_category.get("market", [])}  # 复用类目，省 1 次调用
@@ -272,16 +287,17 @@ async def collect_poi(
     return merge_all(per_category), triads
 
 
-def merge_all(per_category: Dict[str, list], cap: int = _CAP_PER_CAT) -> Dict[str, list]:
-    """扩词后的合并出口：逐类聚簇去重 + 单类截断（不排序）。
+def merge_all(per_category: Dict[str, list]) -> Dict[str, list]:
+    """扩词后的合并出口：逐类聚簇去重（**不排序、不截断**）。
 
-    排序由 `poi.to_points` 单一实现承担，本函数仅保证数量收敛；
-    C 阶段与外部合并方共用此入口，避免去重/截断逻辑散落。
+    - 排序由 `poi.to_points` 单一实现承担；
+    - **截断只在 `poi.to_points` 一处发生**（阶段 1.5）。采集侧若也截一次，
+      `poi.total`（采集口径）会被「展示上限」压小 —— 两个口径混成一个，
+      正是本计划要消灭的缺陷形态（旧实现此处静默砍到 25，报告里毫无痕迹）。
+    - 复杂度不受影响：去重本来就在**全量**原始列表上做（`_dedupe(raw_by_cat[cat])`），
+      这里的 cap 从未减少过计算量，只减少了写进报告的量。
     """
-    out: Dict[str, list] = {}
-    for cat, items in (per_category or {}).items():
-        out[cat] = _dedupe(items)[:cap]
-    return out
+    return {cat: _dedupe(items or []) for cat, items in (per_category or {}).items()}
 
 
 def _poi_budget(n_terms: Optional[int]) -> int:
@@ -291,25 +307,11 @@ def _poi_budget(n_terms: Optional[int]) -> int:
 
 
 def _dedupe(items: List[Dict[str, Any]], radius_m: float = 50.0) -> List[Dict[str, Any]]:
-    """坐标聚簇去重（复用 poi.clean 的 50m 语义；保留先到者优先）。"""
-    kept: List[Dict[str, Any]] = []
-    for it in items:
-        if not it or it.get("lat") is None or it.get("lng") is None:
-            continue
-        dup = False
-        for k in kept:
-            if _dist_m(it, k) < radius_m:
-                dup = True
-                break
-        if not dup:
-            kept.append(it)
-    return kept
+    """聚簇去重（v5 D3）：去重判据**唯一实现**在 `poi.dedupe_pois`（同名才合并），
+    本模块不再维护 50m 双份漂移实现，只做薄委托。"""
+    from app.living_circle.poi import dedupe_pois
 
-
-def _dist_m(a: Dict[str, Any], b: Dict[str, Any]) -> float:
-    from app.living_circle.geo_utils import haversine_m
-
-    return haversine_m((a["lng"], a["lat"]), (b["lng"], b["lat"]))
+    return dedupe_pois(items, radius_m)
 
 
 def _in_circle_count(items: List[Dict[str, Any]], scope: Any) -> int:

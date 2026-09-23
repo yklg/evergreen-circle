@@ -89,8 +89,15 @@ class Settings(BaseSettings):
     baidu_server_ak: str = ""
     baidu_browser_ak: str = ""
     # 个性化地图 styleId（百度控制台「个性化地图」发布后获得，C7 底图风格调适）：
-    # 空则前端回退内置 S2 低饱和浅色 styleJson 模板。
+    # 空则前端回退内置 S2 低饱和浅色 styleJson 模板（frontend/src/lib/bmapStyle.ts）。
+    #
+    # ⚠️ 阶段 0.2（决策 D4）：**本值默认被忽略** —— 只有同时置 `BAIDU_ALLOW_CONSOLE_STYLE=1`
+    #    才会下发给前端。原因见 `life_circle_map_config()`：控制台样式里的「底图 POI 注记」
+    #    是否关闭**代码无法验证**，而它与我们的应用 Marker 同款呈现，会让第三方设施名
+    #    被读成自家数据（本计划 §1 症状成因之一）。纪律必须活在版本控制里，不能挂配置。
     baidu_map_style_id: str = ""
+    # 显式风险开关：确知该 styleId 已关闭 POI 注记时才置 1（默认关）。
+    baidu_allow_console_style: bool = False
 
     # ── 百度 AK 配额档位（根治「单次体检打爆个人免费额度 → 调研失败」的限流参数）──
     # 个人免费档并发≈3、QPS≈3。`CallGuard` 默认并发 4 / 间隔 0.25s（≈4QPS）**已经高于免费档**，
@@ -98,6 +105,13 @@ class Settings(BaseSettings):
     # （并发 2 ≈ 2QPS，留足余量），升级付费/商用额度后可在 .env 放大换取更高采样精度。
     baidu_max_qps: float = 3.0
     baidu_max_concurrency: int = 2
+    # R7e：进程级「当日百度调用总量」硬上限（根治「每日总量超额」短信）。
+    # - 0（默认）= 禁用日预算约束（向后兼容、零行为变化，等用户按 .env 显式开启）；
+    # - 设为正整数 = 当日该 AK 累计调用达到此数即全局熔断 → 流水线诚实降级离线，
+    #   不再硬算、不再触发百度「每日总量超额」短信。
+    # 经验起点：单份 15 分钟生活圈体检约 80~120 次真实调用（含失败重试均计费），
+    # 免费档日配额若约 2000~6000，可设 1500 留缓冲；付费档按需上调。
+    baidu_daily_quota: int = 0
 
     # 澄清问卷：竞品发现超时（秒）与发现结果缓存 TTL（天）。
     # 发现走 LLM（_discover_scope），设短超时 + 正则兜底，确保基础题不被阻塞（P0-①/②）。

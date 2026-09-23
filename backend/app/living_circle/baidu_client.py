@@ -3,58 +3,153 @@
 职责边界（A3）：只做真实 HTTP 调用与参数组装，**不含业务快照/Fixture 回退**；
 数据源选择与回退在 `data_source.py`。单测经 httpx.MockTransport 注入，
 不产生真实网络请求。
+
+**进程级治理是构造期不变量（β，2026-09-22）**：任何 `BaiduClient`（无论 `guard=` 从哪来）
+的调用**恒**受「按 AK 共享的并发/QPS 闸 + 当日总量预算」约束 —— 此前它是 **opt-in**
+（`guard` 一有值就整条跳过 `_default_guard` ⇒ 拿到私有闸），即一条**静默脱离治理**的后门。
+唯一例外：显式书写、打 WARNING、并被静态守卫（γ）限制在 `tests/**` 的 `allow_ungated=True`。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from app.living_circle.request_guard import CallGuard
+from app.living_circle.request_guard import (
+    CallGuard,
+    GlobalDailyBudget,
+    GlobalRateLimiter,
+    get_daily_budget,
+    get_rate_limiter,
+)
 
 logger = logging.getLogger(__name__)
 
 BASE = "https://api.map.baidu.com"
 
-# 批量距离矩阵单次上限（百度个人免费额度保守值，M0 探针 4×1 通过）
-MATRIX_CHUNK = 25
-
 # 翻页收益止损：place/search 某页去重后新增条数低于此值即停止翻页（rev3 §2.3）
 PAGE_STOP_MIN_NEW = 3
 
 
-def _default_guard() -> "CallGuard":
-    """按百度 AK 配额档位构造**保守**韧性层。
+def _shared_gate_params(ak: str) -> Tuple[int, float, GlobalRateLimiter, GlobalDailyBudget]:
+    """进程级共享闸参数的**唯一取数口**：并发 / 级间间隔 / 闸对象 / 日预算对象。
 
-    个人免费档并发≈3 / QPS≈3。旧默认 ``CallGuard()``（并发 4 / 间隔 0.25s ≈ 4QPS）
-    **已经高于免费档**，是「100/3 超限短信」与后续调研失败的推手之一。
-    现纳入 `Settings.baidu_max_qps/concurrency`：默认并发 ≤ QPS、间隔 ≥ 1/QPS（留余量），
-    升级到付费/商用额度后经 .env 放大换取更高采样精度。
+    ⚠️ 唯一出口纪律（本项目反复验证有效）：**不得**在别处重算 ``1/qps`` 或另取一次
+    ``get_daily_budget`` —— 一旦存在两处取数，`_default_guard` 与 `_attach_shared_gates`
+    就会各持一份口径，「按 AK 共享」随即退化为「看起来共享」（B-2 同族形态）。
+    下面两个消费方都吃这一份。
+
+    参数源自 `Settings`（默认并发 ≤ QPS、间隔 ≥ 1/QPS，留余量）；升级到付费/商用额度后
+    经 ``.env`` 放大换取更高采样精度。
     """
     from app.core.config import get_settings
 
     s = get_settings()
     qps = max(float(s.baidu_max_qps or 3.0), 1.0)
     concurrency = max(1, int(s.baidu_max_concurrency or 2))
+    min_interval_s = round(1.0 / qps, 3)
+    # R4：按 AK 共享进程级「并发+QPS 闸」
+    rate_limiter = get_rate_limiter(ak, concurrency, min_interval_s)
+    # R7d：按 AK 共享「当日调用总量预算」（cap<=0 ⇒ 禁用，默认 0）
+    daily_budget = get_daily_budget(ak, int(getattr(s, "baidu_daily_quota", 0) or 0))
+    return concurrency, min_interval_s, rate_limiter, daily_budget
+
+
+def _default_guard(ak: str = "") -> "CallGuard":
+    """按百度 AK 配额档位构造**保守**默认韧性层。
+
+    个人免费档并发≈3 / QPS≈3。旧默认 ``CallGuard()``（并发 4 / 间隔 0.25s ≈ 4QPS）
+    **已经高于免费档**，是「100/3 超限短信」与后续调研失败的推手之一。
+
+    ``max_total_calls``（v5 B4/R2b）：接 `quota.total_calls_hard_ceiling()`（免费档 45），
+    让管线 L277-281 的 ``total_meltdown`` 降级路径真正可触发——预算耗尽 → 诚实离线，
+    绝不硬算。预算公式唯一归属 `quota.py`，此处只消费数值（I2 同哲学）。
+    ⚠️ **本字段必须留在这里**：`test_u16_default_guard_wired_to_hard_ceiling` 钉住它；
+    把它降成裸 ``CallGuard()``（方案 §12.3 B-2 的**字面**写法）会让所有生产 client
+    丢掉 per-task 熔断上限 ⇒ 「一次体检烧穿 45 次」的旧缺陷复发（见 §12.10 D-5）。
+
+    ⚠️ **本函数不再独自承担「共享」职责**（β）：闸的挂接已收口到 `_attach_shared_gates`，
+    本函数只负责「取一份保守参数 + 一个 guard 壳」；二者共用 `_shared_gate_params()`，
+    故「显式 guard」与「默认 guard」拿到的**必是同一把闸**。
+    """
+    from app.living_circle.quota import total_calls_hard_ceiling
+
+    concurrency, min_interval_s, rate_limiter, daily_budget = _shared_gate_params(ak)
     return CallGuard(
         max_concurrency=concurrency,
-        min_interval_s=round(1.0 / qps, 3),
+        min_interval_s=min_interval_s,
         timeout_s=12.0,
+        max_total_calls=total_calls_hard_ceiling(),
+        rate_limiter=rate_limiter,
+        daily_budget=daily_budget,
     )
 
 
+def _attach_shared_gates(guard: "CallGuard", ak: str) -> None:
+    """β（2026-09-22 裁决）：把进程级共享闸**无条件**接到 guard 上。
+
+    此前共享是 **opt-in**：``self.guard = guard or _default_guard(self.ak)`` —— ``guard``
+    一旦有值，``_default_guard`` **整个不被调用** ⇒ 该 client 拿私有闸
+    （``rate_limiter is None`` ⇒ 回退每实例 ``_sem`` / ``_pace``）。
+    于是「显式传 guard」成了一条**静默脱离进程级治理**的后门
+    （同族：空 AK 缓存键、``LiveDataSource(client=…)`` 注入真实 client）。
+    现在：无论 guard 从哪来，都以**共享闸为准**；guard 只保留其
+    ``timeout_s`` / ``max_retries`` / ``backoff*`` / ``max_total_calls`` 定制。
+
+    ⚠️ **只覆盖 `rate_limiter` / `daily_budget` 两个字段**，**不动**每实例的
+    ``_max_concurrency`` / ``min_interval`` —— 那两者是「无共享闸时」的兜底；
+    连它们一起覆盖，会让「拆掉共享闸」这件事在**行为上不可观测**
+    （负对照 J4 随即失去判别力，退化成假护栏）。
+
+    ⚠️ **契约（B-7 / K10）**：经本函数绑定的闸只约束**真实流量**；
+    ``allow_ungated=True`` 的豁免 client 调用**不计入**共享日预算、**不占**共享闸
+    ⇒ 「当日已用 N 次」**不是**全部调用数，**不得**用作计量 / 告警 / 报表的真源
+    （本计数器是**节流状态**，见 `GlobalDailyBudget` docstring）。
+    """
+    _, _, rate_limiter, daily_budget = _shared_gate_params(ak)
+    guard.rate_limiter = rate_limiter
+    guard.daily_budget = daily_budget
+
+
 class BaiduClient:
+    """百度服务端客户端。**进程级治理是构造期不变量**（见模块 docstring / β）。"""
+
     def __init__(
         self,
         ak: str = "",
         guard: Optional[CallGuard] = None,
         transport: Optional[httpx.BaseTransport] = None,
         base: str = BASE,
+        allow_ungated: bool = False,
     ) -> None:
+        """构造客户端。``allow_ungated`` 是**唯一**的进程级闸豁免开关（默认关）。
+
+        ⚠️ ``allow_ungated=True`` **仅在同时显式传入 `guard=` 时才有意义**
+        （否则没有可豁免的对象），且只许出现在 ``tests/**``：生产代码里出现会被
+        静态守卫 γ（`scripts/check_guard_construction.py`，G-2）判红。
+        豁免意味着该 client 的调用**不计入**共享日预算、**不占**共享并发/QPS 闸。
+
+        设计理由（为何留一条后门而不是无条件覆盖）：无条件覆盖会逼测试改用**更隐蔽**的
+        绕过方式（干脆不经过 `BaiduClient`、或不测真实路径），后门照样存在 ——
+        那正是本线要根治的「静默旁路」形态。让绕过**显式、具名、打日志、被守卫限制范围**
+        才是正确边界（详见方案 §12.3 裁决 乙）。
+        """
         self.ak = ak
-        self.guard = guard or _default_guard()
+        # 显式 guard 只贡献它的 timeout / retry / max_total_calls 定制，闸一律以共享为准（β）
+        self.guard = guard if guard is not None else _default_guard(self.ak)
+        if guard is not None and allow_ungated:
+            logger.warning(
+                "[living_circle] BaiduClient 显式豁免进程级闸（allow_ungated=True，仅限测试）："
+                "该 client 的调用**不计入**全局并发 / QPS / 日预算。",
+            )
+        else:
+            # `_default_guard` 内部已挂过同一份闸；此处是**无条件再声明一次**
+            # （工厂按 AK 缓存 ⇒ 取回同一对象、参数相同故不告警）—— 让不变量
+            # 「无论 guard 从哪来都受共享闸约束」在代码结构上无分支可绕。
+            _attach_shared_gates(self.guard, self.ak)
         self.base = base.rstrip("/")
         self._transport = transport
         self._client: Optional[httpx.AsyncClient] = None
@@ -229,10 +324,9 @@ class BaiduClient:
         matrix_path = api.matrix_path
         fallback_path = api.fallback_path
 
-        out: List[Optional[float]] = []
         dest = f"{destination[1]},{destination[0]}"
 
-        for start in range(0, len(origins), chunk):
+        async def _measure_batch(start: int) -> List[Optional[float]]:
             chunk_origins = origins[start : start + chunk]
             origins_str = "|".join(f"{lat},{lng}" for lng, lat in chunk_origins)
             resp = await self._get(
@@ -249,18 +343,20 @@ class BaiduClient:
                     "[living_circle] %s routematrix 块行数不足（need=%d got=%d），降级单点兜底",
                     travel_mode, len(chunk_origins), len(rows),
                 )
+                batch: List[Optional[float]] = []
                 for p in chunk_origins:
-                    out.append(await self._direction_single(travel_mode, p, destination, fallback_path))
-                continue
+                    batch.append(await self._direction_single(travel_mode, p, destination, fallback_path))
+                return batch
 
+            batch = []
             for row in rows:
                 if not isinstance(row, dict):
-                    out.append(None)
+                    batch.append(None)
                     continue
                 # 不可达判定：duration.value == null（探针 P3 结论：restrictions_status 不可靠）
                 duration_obj = row.get("duration")
                 if duration_obj is None:
-                    out.append(None)
+                    batch.append(None)
                     continue
                 
                 # 兼容两种格式：{duration: {value: N}} 或 {duration: N}（裸数字）
@@ -273,12 +369,18 @@ class BaiduClient:
                     dur_value = None
                 
                 if dur_value is None:
-                    out.append(None)
+                    batch.append(None)
                     continue
                 # duration 单位为秒 → 转分钟
-                out.append(round(float(dur_value) / 60.0, 1))
+                batch.append(round(float(dur_value) / 60.0, 1))
+            return batch
 
-        return out
+        # B1 分块并发（延迟优化）：块间无数据依赖，asyncio.gather 并发发出。
+        # 并发受 CallGuard 闸门（sem + 级间限速）约束 → 总调用数/QPS 与串行一致，
+        # 墙钟从「块数×(延迟+限速间隔)」降为「块数÷QPS + 延迟尾」；
+        # gather 返回顺序即输入顺序（asyncio 语言级保证）→ 结果顺序与串行版一致。
+        batches = await asyncio.gather(*[_measure_batch(start) for start in range(0, len(origins), chunk)])
+        return [item for sublist in batches for item in sublist]
 
     async def measure_matrix(
         self,

@@ -1,8 +1,8 @@
-"""百度调用预算唯一事实源（rev3 §四F / v3 §3.3）。
+"""百度调用预算唯一事实源（rev3 §四F / v3 §3.3 / v5 §B）。
 
 职责边界（架构分治，rev3 §二）：
   - **只定义预算怎么算**（纯函数），是 `total_budget / mat_budget / poi_budget /
-    poi_page_depth / effective_density` 的**唯一归属**。
+    poi_page_depth / max_matrix_origins / total_calls_hard_ceiling` 的**唯一归属**。
   - 其他模块**不得重复定义预算公式**——只消费本模块产出的数值/分配快照。
   - 预算口径：免费档按「QPS × 体检窗口秒数 × 负载安全系数」推导，付费/商用档经
     `.env` 放大 `baidu_max_qps` 后自动外推（写入即外推，无需改代码）。
@@ -16,8 +16,10 @@ BUDGET_WINDOW_S = 20.0
 # 负载安全系数：留给重试/抖动/边界，避免贴满 QPS 打爆.
 LOAD_FACTOR = 0.7
 
-# 等时圈「全精度不降」所需的最低矩阵预算（临界值，v3 §五：mat≥11）。
-MATRIX_FULL_NEEDED = 11.0
+# 熔断头寸：地理编码/逆地理/坐标转换等 intake 阶段调用（v5 D2：42 为矩阵+POI 精度预算，
+# 熔断定位是防失控循环，须给 intake 留 3 次头寸）。
+INTAKE_MARGIN = 3
+
 # 分块/翻页异常时的保守页深默认（非 0、非除零产物）。
 _DEFAULT_PAGE_DEPTH = 1
 
@@ -60,15 +62,36 @@ def quota_budget() -> tuple[int, int]:
 budget_partition = quota_budget
 
 
-def effective_density() -> float:
-    """等时圈随矩阵预算的自适应密度：未达全精度临界值则按比例降采样；达到则 1.0。
+def max_matrix_origins(chunk: int) -> int:
+    """等时圈矩阵的**最大采样点数** = 矩阵预算 × 分块上限（免费档 15×25=375）。
 
-    免费档 mat=15 ≥ 11 → 返回 1.0（等时圈全精度，不降）。
+    语义：把整个矩阵预算花在**一批批量算路上**，ceil(点/分块) 恰好 ≤ mat_budget。
+    调用方（isochrone 预算感知采样）把采样点数压到该值以下，即保证不超预算。
+    ``chunk`` 从 `get_caliber(travel_mode).api.chunk` 读取（见 `max_matrix_origins_for`）。
     """
-    mat = mat_budget()
-    if mat <= 0:
-        return 0.0
-    return min(1.0, mat / MATRIX_FULL_NEEDED)
+    return mat_budget() * max(int(chunk or 0), 1)
+
+
+def max_matrix_origins_for(travel_mode: str) -> int:
+    """按出行方式口径的矩阵采样上限——**唯一 chunk 读取点**（v5 I2）。
+
+    消除三处各自从 caliber 读 chunk 的派生漂移（pipeline / LiveDataSource /
+    refine_live_with_profile 统一走本助手）。默认兜底 chunk=25（manifest 缺失时）。
+    """
+    from app.living_circle.caliber import get_caliber
+
+    cal = get_caliber(travel_mode)
+    api = cal.api
+    return max_matrix_origins(api.chunk if api else 25)
+
+
+def total_calls_hard_ceiling() -> int:
+    """单次体检**全局调用熔断上限**（免费档 42+3=45）。
+
+    42 是矩阵+POI 的精度预算；intake 阶段（地理编码/逆地理/坐标转换）还需头寸。
+    熔断定位是**防失控循环**（扩词/翻页空转），不是替代分区预算。
+    """
+    return total_budget() + INTAKE_MARGIN
 
 
 def poi_page_depth(n_terms: int, poi_budget: Optional[int] = None) -> int:

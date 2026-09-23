@@ -28,14 +28,17 @@ from app.living_circle.assemble import assemble_living_circle
 from app.living_circle.caliber import caliber_payload_key, get_caliber
 from app.living_circle.data_source import (
     CheckParams,
+    degrade_if_incomplete,
     degrade_to_offline,
     load_poi,
     refine_live_with_profile,
+    scope_or_degrade,
 )
+from app.living_circle.degrade_policy import detail_label
 from app.living_circle.geo_utils import haversine_m
-from app.living_circle.isochrone import IsochroneEngine
+from app.living_circle.isochrone import REACH_FULL_MIN, IsochroneEngine, reach_flags
+from app.living_circle.quota import max_matrix_origins_for
 from app.living_circle.report_contract import assess_geometry
-from app.living_circle.scope import SpatialScope
 
 from .diagnosis_templates import assemble_report
 
@@ -174,16 +177,6 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     # 回写实际中心到任务参数：下游 _scene_key / 报告 scene 使用同一坐标
     params["center"] = [center[0], center[1]]
 
-    # ── 城市解析（阶段 2：与中心点同源）─────────────────────
-    # ⚠️ 历史缺陷：前端把「当前展示报告」的城市塞进本次任务 —— 那是与本次查询**无关**的
-    # 第三个来源（实测产出「名称=北京劲松 / 中心=昆明 / 城市=北京·朝阳」的自相矛盾报告）。
-    # 现改为：显式 city > 中心点逆地理 > 留空。绝不从别的报告取。
-    if not (params.get("city") or "").strip() and getattr(source, "client", None) is not None:
-        rev = await source.client.reverse_geocoding(center)
-        if rev and rev.get("city"):
-            params["city"] = rev["city"]
-            yield _ev("message", {"stage": "intake", "text": f"中心点逆地理定位：{rev.get('name') or rev['city']}"})
-
     # ── 名称/坐标同源校验（阶段 2 软守卫）───────────────────
     # 实测样本 lc-d3cfa371：scene_name=北京劲松、center=(102.76, 25.03) 昆明。
     # 此处**不拦截**（在自定义坐标上做体检是合法用法），只把「不同源」变成**可见**。
@@ -243,6 +236,71 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         sample_profile=sample_profile,
         travel_mode=travel_mode,
     )
+    scene_key = _scene_key(params)
+
+    # ── E1 缓存前置（v5 E0/E1）：peek 单一入口，命中零客户端调用 ──
+    # fixture 源无 peek（getattr 判空）；CachingDataSource（live/offline 包装）命中即短路。
+    # peek 是**同步**读（repo 内存/SQLite，无网络 I/O），不可 await（await 同步返回值
+    # 会在未命中返回 None 时抛 "object NoneType can't be used in 'await' expression"）。
+    # ⚠️ A 计划契约（延迟优化，防复发）：**缓存键相关步骤（center 解析/参数回写）必须在
+    # peek 前**；**仅计算需要的富化（逆地理/地址补城市）必须延迟到 miss 后** ——
+    # 命中路径零百度调用（U39 锚定 geocode/reverse/poi 四类计数器全为 0）。
+    peek = getattr(source, "peek", None)
+    cached_hit = peek(check) if peek is not None else None
+    if cached_hit is not None:
+        geometry = assess_geometry(cached_hit)
+        if geometry.ok:
+            served_from = cached_hit.get("served_from", "cache")
+            if served_from == "nearby_cache":
+                hit_text = "邻近既有体检结果：原中心距此 ≤500m（未消耗百度额度），直接复用"
+            else:
+                hit_text = "缓存命中：同地点 30 天内已有体检结果，直接复用（未消耗百度额度）"
+            yield _ev("message", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "text": hit_text})
+            yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 0})
+            yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 0})
+            yield _ev("progress", {"stage": "diagnose", "percent": STAGE_PERCENT["diagnose"], "stage_seq": 5, "evidence_count": 0})
+
+            report_data = cached_hit
+            report_data["team"] = {"expert_ids": dispatch_ids, "reasons": dispatch_reasons}
+
+            # E2 幂等收尾（D19/D22）：复用既有 report_id，不重复落库
+            report_id = db.get_latest_report_id_for_scene(scene_key)
+            if report_id is not None:
+                db.mark_task_done(task_id, report_id)
+                yield _ev("message", {"stage": "report", "percent": STAGE_PERCENT["report"], "text": f"报告已签发（复用既有体检结果 · {served_from}）"})
+                yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report_data.get("evidence") or [])})
+                yield _ev("progress", {"stage": "audit", "percent": 100, "stage_seq": 7, "evidence_count": len(report_data.get("evidence") or [])})
+                yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report_data.get("title") or report_data.get("scene", {}).get("name", "生活圈体检")})
+                yield _ev("done", {"reportId": report_id, "report_id": report_id})
+                return
+            # 异常态：缓存有数据但落库缺失 → 兜底重算落库（D23：明确不走 replace_scene=True）
+            logger.warning("[living_circle] 缓存命中但落库缺失（异常态），兜底重算落库（不 replace_scene）：%s", scene_key)
+            report_id, reason, report = _finalize_living_report(report_data, scene_key, replace_scene=False)
+            if reason is not None:
+                msg = f"质检未通过：{reason}。请更换中心点或检查配额"
+                db.set_task_failed(task_id, msg)
+                yield _ev("error", {"stage": "audit", "code": "invalid_geometry", "message": msg})
+                yield _ev("done", {"reportId": None, "report_id": None, "status": "failed", "error": msg})
+                return
+            db.mark_task_done(task_id, report_id)
+            yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report["title"]})
+            yield _ev("done", {"reportId": report_id, "report_id": report_id})
+            return
+        # 理论罕见：缓存报告几何不成立 → 记日志，继续实时重算
+        logger.warning("[living_circle] 缓存命中但几何校验不通过（%s），转为实时重算", geometry.reason)
+
+    # ── 城市解析（阶段 2：与中心点同源；**miss 路径才执行**）────────
+    # ⚠️ 历史缺陷：前端把「当前展示报告」的城市塞进本次任务 —— 那是与本次查询**无关**的
+    # 第三个来源（实测产出「名称=北京劲松 / 中心=昆明 / 城市=北京·朝阳」的自相矛盾报告）。
+    # 现改为：显式 city > 中心点逆地理 > 留空。绝不从别的报告取。
+    # A 计划契约（延迟优化）：逆地理富化**必须**在 peek 之后 —— 缓存键不含 city
+    # （_scene_key 5 段，test_u34 锚定），命中时缓存报告自带 city/address，miss 才需要补。
+    if not (params.get("city") or "").strip() and getattr(source, "client", None) is not None:
+        rev = await source.client.reverse_geocoding(center)
+        if rev and rev.get("city"):
+            params["city"] = rev["city"]
+            check.city = rev["city"]  # check 在 peek 前已构造，城市解析后须回写保持一致
+            yield _ev("message", {"stage": "intake", "text": f"中心点逆地理定位：{rev.get('name') or rev['city']}"})
 
     # ── measure（测时采样 + IDW 等时圈）────────────────────
     # CachingDataSource 透传 .client 但可能为 None（内层离线源）——判 None 决定 live/offline 分支
@@ -254,31 +312,46 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             center,
             lambda pts: live_client.measure_matrix(travel_mode, pts, center),
             study_radius_m=check.study_radius_m, mode=check.sample_profile,
+            max_points=max_matrix_origins_for(travel_mode),
         )
-        sample_minutes = [p["minutes"] for p in iso["sampling"]["points"]]
-        n_reach = sum(1 for m in sample_minutes if m is not None)
-        yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（可达 {n_reach}），5/10/15/20 分钟等值线族已提取"})
+        n_timed = iso["sampling"]["timed_count"]
+        n_in_reach = iso["sampling"]["in_reach_count"]
+        yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取"})
         yield _ev("evidence", {"stage": "measure", "evidence": {
             "evidence_id": f"ev-{task_id}-measure", "source_url": "live://measure", "source_type": "api_measure",
-            "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_reach} 条可达耗时",
+            "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_timed} 条耗时，其中 ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach} 条",
             "credibility": 0.95, "collected_by": "L2-005", "captured_at": _now_iso(),
         }})
         yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 1})
 
         # 空间口径绑定（可达区/采集区/研究区三概念显式化）—— 与 LiveDataSource 同一构造，
         # 「圈内」从此只由 scope 决定，不再有 iso["isochrones"][-1] 这类按位置取环。
-        scope = SpatialScope.from_iso(get_caliber(travel_mode), center, check.study_radius_m, iso)
-        scope.invariant()
+        # R-3（根因 B）：降级判定必须排在 `from_iso` **之前** —— 配额超限时等时圈族必然为空，
+        # `from_iso` 会先 `raise`（`scope.py:111`）⇒ 降级代码根本到不了，任务停在 measure 失败。
+        # 该 raise 本身是对的（拦「静默空壳报告」）⇒ 不弱化、不删除，只把可降级的分流到它之前。
+        guard = getattr(live_client, "guard", None)
+        scope, degraded = await scope_or_degrade(
+            caliber=get_caliber(travel_mode), center=center, radius_m=check.study_radius_m,
+            iso=iso, params=check, guard=guard,
+        )
 
         # collect：POI 采集（半径唯一来自 scope.collect_radius_m；不再硬编码 2000）
-        per_category, triads = await load_poi(live_client, center, scope.collect_radius_m, scope=scope)
+        if degraded is None:
+            per_category, triads = await load_poi(live_client, center, scope.collect_radius_m, scope=scope)
+            # 采集中途熔断 ⇒ POI 非空但残缺，同样必须降级（架构评审 P1-2）
+            degraded = await degrade_if_incomplete(per_category=per_category, params=check, guard=guard)
+
         # 总量熔断降级（rev3 §四G / v3 §3.5）：预算耗尽时产出诚实离线报告（data_origin=offline,
         # 可视化占位、评分/盲区留待实时重检），**绝不**拿空 POI 硬算后被几何质检拦成「调研失败」。
-        guard = getattr(live_client, "guard", None)
-        if guard is not None and getattr(guard, "total_meltdown", False):
-            report_data = await degrade_to_offline(check)
-            report_data["degraded"] = {"reason": "baidu_quota_exhausted", "note": "百度调用预算耗尽，实时采集被熔断，已降级为离线估算"}
-            yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": "百度配额已用尽（总量熔断）：降级为离线估算，评分与盲区需配额恢复后实时重检"})
+        # R-2：判据统一走 `degrade_policy` —— 触发=数据缺失/提前中止，归因=配额信号**只填 detail**
+        # （不用 `stats.quota_hits` 触发：它计在重试内，一次抖动+重试成功就会过度降级）。
+        if degraded is not None:
+            report_data = degraded
+            _label = detail_label((degraded.get("degraded") or {}).get("detail") or "unknown")
+            yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"百度{_label}：降级为离线估算，评分与盲区需配额恢复后实时重检"})
+            # U36：熔断降级同样发 collect progress —— 保持 STAGES 进度连续（48→72→86），
+            # 否则前端进度条在降级路径从 measure 直接跳到 diagnose。
+            yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 0})
         else:
             yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"8 类民生设施采集完成：总量 {sum(len(v) for v in per_category.values())} 处"})
             yield _ev("evidence", {"stage": "collect", "evidence": {
@@ -290,17 +363,30 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
 
             # diagnose：统计/盲区/评分（确定性）—— 组装走全项目唯一实现
             report_data = assemble_living_circle(check, iso, per_category, triads, scope, intake_meta=intake_meta)
+            # v5 E1：实时重算结果回填缓存（编排器不摸 repo/键，走数据源层 backfill）。
+            # 「live 缓存不装 offline 报告」不再在此判 —— 该不变量的唯一出口是
+            # `Repository.cache_report`（本分支只会是实时产物，且新入口也一并被拦住）。
+            backfill = getattr(source, "backfill", None)
+            if backfill is not None:
+                backfill(check, report_data)
     else:
         # fixture：整包加载（含场景缓存）
         report_data = await source.compute(check)
         report_data["scene"].update(intake_meta)
-        iso = {"isochrones": report_data["isochrones"], "sampling": report_data["sampling"],
-               "sample_count": len(report_data["sampling"]["points"]),
-               "reachable_count": sum(1 for p in report_data["sampling"]["points"] if p.get("reachable"))}
-        yield _ev("message", {"stage": "measure", "text": f"演示数据：fixture 等时圈（圆形近似）已加载，采样 {iso['sample_count']} 点"})
+        # 分档汇总数的**唯一真身是 points**：无论夹具里存的是什么，一律按点重算后覆盖，
+        # 保证「报告内自洽」。夹具里存的数字若与点不符，由 CI 侧断言揪出（不在运行时静默放过）。
+        fx_sampling = dict(report_data["sampling"])
+        fx_points = fx_sampling.get("points") or []
+        fx_flags = reach_flags(fx_points)  # 与 live 分支同一实现
+        fx_sampling["timed_count"] = fx_flags.timed_count
+        fx_sampling["in_reach_count"] = fx_flags.in_reach_count
+        report_data["sampling"] = fx_sampling
+        iso = {"isochrones": report_data["isochrones"], "sampling": fx_sampling,
+               "sample_count": len(fx_points)}
+        yield _ev("message", {"stage": "measure", "text": f"演示数据：fixture 等时圈（圆形近似）已加载，采样 {iso['sample_count']} 点（已测时 {iso['sampling']['timed_count']} · ≤{REACH_FULL_MIN:g}min 可达 {iso['sampling']['in_reach_count']}）"})
         yield _ev("evidence", {"stage": "measure", "evidence": {
             "evidence_id": f"ev-{task_id}-measure", "source_url": "fixture://measure", "source_type": "api_measure",
-            "title": "采样点测时记录（fixture）", "excerpt": f"{iso['sample_count']} 点 · 可达 {iso['reachable_count']}",
+            "title": "采样点测时记录（fixture）", "excerpt": f"{iso['sample_count']} 点 · 已测时 {iso['sampling']['timed_count']} · ≤{REACH_FULL_MIN:g}min 可达 {iso['sampling']['in_reach_count']}",
             "credibility": 0.95, "collected_by": "L2-005", "captured_at": _now_iso(),
         }})
         yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 1})
@@ -348,8 +434,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     #   · Tier A 内容缺件（live 无等时圈/无 POI）        → 报告不成立
     #   · Tier B 几何不自洽（盲区越出可达区、圈外点混入） → 报告会误导，同样不签发
     # 配额降级为 offline 的空白是**有意降级**（已有 P0-2 标注）→ 契约内部豁免，不受此守卫影响。
-    _scene_key_ = _scene_key(params)
-    report_id, reason, report = _finalize_living_report(report_data, _scene_key_, replace_scene=False)
+    report_id, reason, report = _finalize_living_report(report_data, scene_key, replace_scene=False)
     yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report.get("evidence") or [])})
 
     if reason is not None:
@@ -396,6 +481,15 @@ def _schedule_refine(client, check, repo, scene_key, dispatch_ids, sample_profil
     async def _run():
         try:
             refined = await refine_live_with_profile(check, client, repo, sample_profile)
+            # S-1（架构评审 P0-1）：精报若降级为离线估算 ⇒ **直接放弃，不落库、不替换**。
+            # 否则 `replace_scene=True` 会先删后存（:462），而 `assess_geometry` 对 offline 整段
+            # 豁免 ⇒ reason=None ⇒ 用离线骨架**覆盖并删除**已交付给用户的实时粗报。
+            if (refined.get("data_origin") or "") == "offline":
+                logger.warning(
+                    "[living_circle] 精报降级为离线估算，保留粗报不替换（scene_key=%s, detail=%s）",
+                    scene_key, (refined.get("degraded") or {}).get("detail") or "unknown",
+                )
+                return
             refined["team"] = {"expert_ids": dispatch_ids, "reasons": []}
             _, reason, _ = _finalize_living_report(refined, scene_key, replace_scene=True)
             if reason is not None:

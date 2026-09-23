@@ -67,3 +67,26 @@ class TestQuotaSingleSourceGuard:
                 if re.search(rf"^def\s+{re.escape(n)}\s*\(", src, flags=re.M):
                     violators.append(f"{py.name}:{n}")
         assert violators == [], f"预算公式必须单一归属 quota.py，不得在其它模块重定义: {violators}"
+
+
+class TestMaxMatrixOriginsAndCeiling:
+    """v5 B2/B4（U14-U15）：矩阵采样上限契约 + 熔断上限接线。"""
+
+    def test_u14_max_matrix_origins_default_chunk(self):
+        assert quota.max_matrix_origins(25) == 15 * 25 == 375
+
+    def test_u14_chunk_zero_falls_back_one(self):
+        # chunk=0/负 → 兜底 1，杜绝 0 上限（采样坍缩成空）
+        assert quota.max_matrix_origins(0) == 15
+        assert quota.max_matrix_origins(-3) == 15
+
+    def test_u14_qps_escalation_extrapolates(self, monkeypatch):
+        # 付费档写入即外推：qps 3→10 → total=140、mat=49、矩阵上限等比放大
+        monkeypatch.setattr(quota, "_qps", lambda: 10.0)
+        assert quota.total_budget() == 140
+        assert quota.mat_budget() == 49
+        assert quota.max_matrix_origins(25) == 49 * 25 == 1225
+
+    def test_u15_ceiling_is_total_plus_margin(self):
+        # D2：42 为矩阵+POI 精度预算；intake ≤3 次头寸；熔断是防失控循环
+        assert quota.total_calls_hard_ceiling() == quota.total_budget() + quota.INTAKE_MARGIN == 45

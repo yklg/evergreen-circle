@@ -1,13 +1,21 @@
 """M1 · 百度客户端（httpx.MockTransport 注入，无真实网络）：
 参数组装 / 响应解析 / 批量矩阵分块 / 韧性重试。"""
 import asyncio
+import logging
+import time
 
 import httpx
 import pytest
 
 from app.living_circle.baidu_client import BaiduClient
 from app.living_circle.caliber import get_caliber
-from app.living_circle.request_guard import CallGuard, GuardStats, RATE_LIMIT_STATUS
+from app.living_circle.data_source import LiveDataSource
+from app.living_circle.request_guard import (
+    CallGuard,
+    GuardStats,
+    RATE_LIMIT_STATUS,
+    get_daily_budget,
+)
 
 # 步骤 3：chunk 从 caliber 读取（walking=100）
 WALKING_CHUNK = get_caliber("walking").api.chunk
@@ -353,6 +361,22 @@ def test_guard_returns_none_on_non_dict_body():
     assert asyncio.run(guard.call(work)) is None
 
 
+# ── v5 U16 · 默认韧性层接线（B4：总量熔断上限必须真正生效）──────────
+
+def test_u16_default_guard_wired_to_hard_ceiling():
+    """U16：`_default_guard()` 无参构造 → `.max_total_calls == total_calls_hard_ceiling()`。
+
+    R2b 根因：旧默认 `CallGuard()` 的 ``max_total_calls=0``（不启用）→ 管线 L277-281 的
+    ``total_meltdown`` 降级路径永不触发。本用例钉住接线：预算耗尽 → 熔断 → 诚实离线。
+    """
+    from app.living_circle.baidu_client import _default_guard
+    from app.living_circle.quota import total_calls_hard_ceiling
+
+    guard = _default_guard()
+    assert guard.max_total_calls == total_calls_hard_ceiling()  # 免费档 45，非 0
+    assert guard.max_total_calls > 0
+
+
 def test_direction_walking_variants():
     """单点兜底自身的三条分支：正常 / 无 routes / status!=0。"""
     def lite(payload):
@@ -364,6 +388,185 @@ def test_direction_walking_variants():
     assert asyncio_run(c.direction_walking((107.9758, 26.5734), (107.99, 26.59))) is None
     c = BaiduClient(ak="t", transport=lite({"status": 302, "message": "no route"}), guard=_fast_guard())
     assert asyncio_run(c.direction_walking((107.9758, 26.5734), (107.99, 26.59))) is None
+
+
+def test_u37_matrix_batches_concurrent_and_ordered():
+    """U37（延迟优化 B1）：矩阵分块并发锚 —— gather 期间真实并发、调用数不变、顺序不变。
+
+    fake transport 内 `await asyncio.sleep(0)` 让出事件循环 + 在飞计数：
+      - max in-flight ≥ 2 → 并发**真实发生**（不是串行 for 循环，B1 白改的防线）；
+      - 调用总数 == 块数 → 并发不改变调用数（预算数学不变）；
+      - 结果顺序 == 输入顺序（asyncio.gather 返回顺序即输入顺序，语言级保证）。
+    不做时间断言（禁 flaky）。
+
+    ⚠️ 语义注记：`CallGuard._sem` 只闸**限速入口**（`_pace`），HTTP 工作本身并发执行
+    —— 故 in-flight 上界是**块数**而非 `max_concurrency`；QPS 上限由级间 pacing 单独
+    锁定（`_pace` 的 `min_interval_s`），不在此断言。
+
+    ⚠️ **为何本用例是全文件唯一的 `allow_ungated=True`（β · 2026-09-22 实测）**：
+    它断言的是 `gather` 的**并发机制本身**，而进程级闸的级间 pacing
+    （`min_interval = 1/QPS ≈ 0.333s`）会把三块的**入闸**串起来 —— mock transport 瞬时
+    返回 ⇒ 第 2 块入闸时第 1 块早已收工 ⇒ 实测 `max_in_flight == 1`（**未豁免必红**）。
+    生产侧不受影响：真实 routematrix 延迟 ≫ 0.333s，块间重叠照常发生。
+    替代方案（把 mock 的 `await asyncio.sleep(0)` 改成 `sleep(0.5)` 以便在 pacing 下
+    仍重叠）**被否决**：那会让本用例变成**墙钟 + 配置耦合**（`.env` 把 QPS 调到 1
+    ⇒ 间隔 1s ⇒ 又红），与本节末「不做时间断言（禁 flaky）」的纪律直接冲突。
+    ⇒ 判据：**断言依赖「零 pacing」才可观测** ⇒ 豁免；其余 16 处不豁免（它们经共享闸
+    照常逐条断言通过 = β 的「合法必绿」半边）。
+    """
+    n = WALKING_CHUNK * 2 + 5  # 100+100+5 → 3 块
+    in_flight = 0
+    max_in_flight = 0
+    total_calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, max_in_flight, total_calls
+        total_calls += 1
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0)  # 让出循环 → 其余块并发进入 handler（确定性 ≥2）
+        in_flight -= 1
+        qp = dict(httpx.QueryParams(request.url.query))
+        n_orig = len(qp["origins"].split("|"))
+        rows = [
+            {"distance": {"text": f"{i + 1}米", "value": i + 1},
+             "duration": {"text": f"{i + 1}分钟", "value": 60 * (i + 1)}}
+            for i in range(n_orig)
+        ]
+        return httpx.Response(200, json={"status": 0, "result": rows})
+
+    # allow_ungated=True —— 本文件唯一的进程级闸豁免（理由见 docstring 末段）
+    c = BaiduClient(
+        ak="t",
+        transport=httpx.MockTransport(handler),
+        guard=CallGuard(min_interval_s=0),
+        allow_ungated=True,
+    )
+    origins = [(107.9758 + i * 0.001, 26.5734) for i in range(n)]
+    out = asyncio_run(c.route_matrix_walking(origins, (107.9758, 26.5734)))
+    assert len(out) == n
+    # gather 顺序 == 输入顺序：块内局部序号 i → minutes = i+1
+    assert out == [pytest.approx((i % WALKING_CHUNK) + 1) for i in range(n)], "并发后结果顺序必须与输入一致"
+    assert total_calls == 3, f"并发不改变调用数：期望 3 块 3 次，实际 {total_calls}"
+    assert max_in_flight >= 2, f"并发未发生（max in-flight={max_in_flight}），B1 串行化失效"
+    assert max_in_flight <= 3, f"in-flight 上界应为块数 3，实际 {max_in_flight}"
+
+
+# ── J4 / J11 · β：构造期绑定共享闸（2026-09-22 · 批次 2）────────────
+
+
+def test_j04_three_construction_styles_share_one_gate():
+    """J4（🔴→🟢 · P0 集成）：`BaiduClient` 三种**构造风格**必须落在**同一把**进程级闸上。
+
+    被测范围：`BaiduClient.__init__` 的**构造期绑定**（β = `_attach_shared_gates`）。
+    修复前「显式传 `guard=`」会**静默整条跳过** `_default_guard` ⇒ 风格 ② 的
+    `rate_limiter is None` ⇒ 拿私有闸、零级间间隔、不计入共享日预算 = **静默脱离治理**。
+
+    触发规则：同 AK 以 ① 默认 ② `guard=CallGuard(min_interval_s=0)`
+    ③ `LiveDataSource(ak=…, client=<②造的那个>)` 三种风格各并发 2 次，记录每次 work 进入时刻。
+
+    期望：合并后**相邻入闸间隔 ≥ 闸的 `min_interval_s`**（🔴 修复前**必红**：风格 ② 零间隔），
+    且**调用总数守恒 6**（🔵 配对哨兵 —— 否则「把并发改成串行」或「少发请求」也能满足间隔）。
+
+    ⚠️ **风格 ③ 的定位（E14 订正）**：它与 ② **同源**（`LiveDataSource` 只在 `client` 为空时
+    才自建 `BaiduClient`），**不是独立后门**；本用例据它确认「经数据源传递不改闸」。
+    真正独立的生产入口是 `LiveDataSource(ak=ak)` 自建那条（`data_source.py:124`）—— 一并断言。
+    """
+    ak = "a-j4"
+    per = 2                      # 每种风格并发次数
+    entries: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        entries.append(time.monotonic())          # 「入闸之后」的时刻：闸生效则其间隔被拉平
+        return httpx.Response(200, json={"status": 0, "result": {"location": {"lng": 1.0, "lat": 2.0}}})
+
+    tr = httpx.MockTransport(handler)
+    c1 = BaiduClient(ak=ak, transport=tr)                                        # ① 默认
+    c2 = BaiduClient(ak=ak, transport=tr, guard=CallGuard(min_interval_s=0))     # ② 显式 guard
+    c3 = LiveDataSource(ak=ak, client=c2).client                                 # ③ 经数据源传入
+
+    shared = c1.guard.rate_limiter
+    assert shared is not None, "① 默认风格竟未挂共享闸"
+    assert c2.guard.rate_limiter is shared, "② 显式 guard 未共享同一把闸（β 未生效）"
+    assert c3.guard.rate_limiter is shared, "③ 经 LiveDataSource 传入后闸被换掉"
+    assert LiveDataSource(ak=ak).client.guard.rate_limiter is shared, (
+        "`LiveDataSource(ak=ak)` 自建 client 那条生产入口未落同一把闸"
+    )
+
+    interval = shared.min_interval_s
+    assert interval > 0, (
+        "前置条件不成立：共享闸 `min_interval_s == 0` ⇒ 间隔断言对**任何**实现都成立"
+        "（= 假护栏）。本用例要求 `Settings.baidu_max_qps` 为正常值（默认 3.0 ⇒ 0.333s）。"
+    )
+
+    async def scenario():
+        await asyncio.gather(
+            *[c1.geocoding(f"a{i}") for i in range(per)],
+            *[c2.geocoding(f"b{i}") for i in range(per)],
+            *[c3.geocoding(f"c{i}") for i in range(per)],
+        )
+
+    asyncio.run(scenario())
+
+    assert len(entries) == 3 * per, f"调用总数应守恒 {3 * per}（并发不改变调用数），实际 {len(entries)}"
+    gaps = [b - a for a, b in zip(entries, entries[1:])]
+    tol = 0.05   # 仅吸收「记账时刻」的调度抖动（µs 级）；间隔本身由闸保证
+    assert all(g >= interval - tol for g in gaps), (
+        f"相邻入闸间隔必须 ≥ min_interval_s={interval}s（风格 ② 此前零间隔）——"
+        f"实测 gaps={[round(g, 3) for g in gaps]}"
+    )
+
+
+def test_j11_ungated_traffic_is_not_counted(caplog):
+    """J11（🟠 · P2 · K10 契约）：`allow_ungated=True` 的流量**不计入**共享日预算、**不占**共享闸。
+
+    被测范围：`BaiduClient(allow_ungated=True)` 与 `_attach_shared_gates` 的**不施加**分支。
+    必要性：该计数器**看起来完全像个准确数字**，任何拿它做计量 / 告警 / 报表的地方都会
+    **系统性低估** ⇒ 必须显式钉死语义，避免日后有人拿它当真源（K10 裁决）。
+
+    ⚠️ **两个必须**（否则本用例是假绿）：
+    1. **cap 必须 > 0**：`GlobalDailyBudget.consume` 在 `cap <= 0` 时**直接 return、不累加**
+       —— 用测试环境默认的 `cap=0` 断言「计数不变」会**恒真**（什么都不计，当然不变）。
+       故先以非零 cap 播种缓存（工厂键只含 AK ⇒ 后续 `_shared_gate_params` 取回同一个对象）。
+    2. **必须配「计入路径是活的」正控**：先让一个**非豁免** client 计数，证明这条路真的会涨；
+       否则「不变」无法区分「豁免生效」与「整体就不计数」。
+    """
+    ak = "j11"
+    tr = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"status": 0, "result": {"location": {"lng": 1.0, "lat": 2.0}}})
+    )
+    budget = get_daily_budget(ak, 100)          # 播种非零 cap（先建为准）
+    assert budget.cap == 100, "前置条件：cap 必须 > 0，否则计数恒不增长（假绿）"
+    assert budget.calls == 0
+
+    # ① 🔵 配对正控：非豁免 client 的流量**必须**被计入
+    gated = BaiduClient(ak=ak, transport=tr)
+    assert gated.guard.daily_budget is budget, "非豁免 client 未接到共享日预算"
+    asyncio.run(gated.geocoding("gated-a"))
+    asyncio.run(gated.geocoding("gated-b"))
+    assert budget.calls == 2, f"计入路径未生效（calls={budget.calls}）—— 本用例的正控失效"
+
+    # ② 被测：豁免 client 的流量**不得**改变计数
+    with caplog.at_level(logging.WARNING, logger="app.living_circle.baidu_client"):
+        exempt = BaiduClient(ak=ak, transport=tr, guard=CallGuard(min_interval_s=0), allow_ungated=True)
+        warnings = [r.getMessage() for r in caplog.records if "显式豁免进程级闸" in r.getMessage()]
+
+        assert exempt.guard.daily_budget is None, "豁免 client 仍被挂上了共享日预算"
+        assert exempt.guard.rate_limiter is None, "豁免 client 仍被挂上了共享闸"
+        for i in range(3):
+            asyncio.run(exempt.geocoding(f"exempt-{i}"))
+
+    assert len(warnings) == 1, f"豁免必须**显式留痕**（WARNING 恰好 1 条），实际 {len(warnings)} 条"
+    assert budget.calls == 2, (
+        f"豁免流量不得计入共享日预算：期望仍为 2，实际 {budget.calls}"
+        "（> 2 说明豁免被绕过，K10 契约失守）"
+    )
+
+    # ③ 配对哨兵：`allow_ungated` **不得**成为「不传 guard 也能绕过」的通用旁路
+    naked = BaiduClient(ak=ak, transport=tr, allow_ungated=True)   # 无显式 guard ⇒ 豁免无对象
+    assert naked.guard.daily_budget is budget, (
+        "`allow_ungated=True` 但未传 `guard=` 时仍必须受共享闸约束（否则它就是通用旁路）"
+    )
 
 
 def asyncio_run(coro):

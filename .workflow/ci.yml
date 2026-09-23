@@ -19,17 +19,17 @@ triggers:
 stages:
   - stage:
       name: backend-test
-      displayName: 后端 pytest（含 A6 镜像守卫）
+      displayName: 后端 γ 静态守卫 + pytest（含 A6 镜像守卫）
       failFast: true
       steps:
         - step: pythonbuild@1
           name: backend-pytest
-          displayName: 安装依赖并跑全量 pytest
+          displayName: 安装依赖 → γ 静态守卫 → 全量 pytest（与 .github/workflows/ci.yml 同序）
           inputs:
             pythonVersion: '3.12'
             goals: |
               pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-              cd backend && python -m pytest -q
+              cd backend && python scripts/check_guard_construction.py && python -m pytest -q
   - stage:
       name: frontend-check
       displayName: 前端 lint/typecheck/test/build

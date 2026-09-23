@@ -109,8 +109,11 @@ class TestExpertDirectiveCalibration:
         assert directive, "L3-003 directive 不应为空"
 
         # 应包含具体的数值或标识符，而非泛泛而谈
-        # L3-003 的 caliber_refs 包含 report::reachable_count 等
-        assert "可达采样点数" in directive or "reachable_count" in directive
+        # L3-003 的 caliber_refs 含 report::in_reach_count / caliber::walking.reach_full_min 等
+        # （阶段 −1 前是 report::reachable_count —— 该名语义为「已测时」而非「可达」，已废弃）
+        assert "可达采样点数" in directive or "in_reach_count" in directive
+        # 旧名必须已从画像中消失，否则专家会把「已测时」当「可达」用
+        assert "reachable_count" not in directive
 
     def test_directive_appends_fabrication_constraint(self):
         """所有专家的 directive 末尾都应附加防编造约束。"""

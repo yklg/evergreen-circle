@@ -74,7 +74,7 @@
       "可达率审裁",
       "闭环裁定"
     ],
-    "knowledge_base": "精通点位溯源与数据质量核查，掌握采样点可达率（reachable_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点不可达、盲区误判等情况决定返工重算。",
+    "knowledge_base": "精通点位溯源与数据质量核查，掌握采样点分档口径（in_reach_count / sample_count —— **已测时≠可达**，可达率只能取 in_reach_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点未测时、可达率异常、盲区误判等情况决定返工重算。",
     "knowledge_tags": [
       "POI溯源",
       "采样点可达率",
@@ -92,12 +92,12 @@
     },
     "caliber_refs": [
       {
-        "ref": "report::reachable_count",
-        "note": "质检可达采样点数"
+        "ref": "report::in_reach_count",
+        "note": "质检可达采样点数（≤reach_full_min）"
       },
       {
         "ref": "report::sample_count",
-        "note": "质检总采样点数"
+        "note": "质检总采样点数（可达率分母）"
       },
       {
         "ref": "poi::norm_name",
@@ -109,7 +109,7 @@
       },
       {
         "ref": "caliber::walking.reach_full_min",
-        "note": "质检步行可达性满分阈值"
+        "note": "质检步行可达性满分阈值（in_reach 的判定阈值）"
       }
     ]
   },
