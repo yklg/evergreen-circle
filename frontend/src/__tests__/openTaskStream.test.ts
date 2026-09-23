@@ -105,7 +105,12 @@ describe('openTaskStream · 真实态传输语义', () => {
     const onError = vi.fn()
     openTaskStream('t-1', { onEvent: vi.fn(), onError })
     const s = instance()
-    s.fireError(new ErrorEvent('error', { message: 'Connection refused' }))
+    // ⚠️ 不用 `new ErrorEvent(...)`：`ErrorEvent` 在 Node 22 里**不是全局**（Node 26 才有），
+    // 本文件跑在 node 环境 ⇒ 直接用它会 ReferenceError，且失败与代码无关（纯环境差异）。
+    // 改用本体 Event + 定义 message，语义不变：测的仍是「能否从事件上取到可读 message」。
+    const ev = new Event('error')
+    Object.defineProperty(ev, 'message', { value: 'Connection refused' })
+    s.fireError(ev)
     expect(onError).not.toHaveBeenCalled() // 延迟确认期间不上报
     vi.advanceTimersByTime(4000)
     expect(onError).toHaveBeenCalledWith('SSE 连接中断：Connection refused')

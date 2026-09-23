@@ -68,7 +68,7 @@ export function VTracePanel({ traces }: { traces: TraceSpan[] }) {
 
       {!collapsed && (
         <>
-          <div className="flex items-center gap-3 border-b border-line bg-paper px-3.5 py-2 text-tag text-ink-3">
+          <div className="flex items-center gap-3 border-b border-line bg-bg px-3.5 py-2 text-tag text-ink-3">
             <span className="flex items-center gap-1"><Cpu size={11} /> 累计 {totalTokens.toLocaleString()} tokens</span>
             <span className="flex items-center gap-1"><Clock size={11} /> {traces.length} 次调用</span>
           </div>
@@ -95,7 +95,7 @@ export function VTracePanel({ traces }: { traces: TraceSpan[] }) {
                           <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary-tint text-tag font-bold text-primary-deep">
                             {sp.seq}
                           </span>
-                          <span className="rounded-chip bg-paper px-1.5 py-0.5 text-tag text-ink-3">
+                          <span className="rounded-chip bg-bg px-1.5 py-0.5 text-tag text-ink-3">
                             {STAGE_LABEL[sp.stage] || sp.stage}
                           </span>
                           <span className="min-w-0 flex-1 truncate text-tag text-ink-2">
@@ -112,13 +112,13 @@ export function VTracePanel({ traces }: { traces: TraceSpan[] }) {
                           <div className="mt-2 space-y-1.5 border-t border-line pt-2 pl-1">
                             <div>
                               <div className="text-tag font-medium text-ink-3">Prompt</div>
-                              <p className="mt-0.5 max-h-24 overflow-y-auto rounded bg-paper p-1.5 text-tag leading-relaxed text-ink-2">
+                              <p className="mt-0.5 max-h-24 overflow-y-auto rounded bg-bg p-1.5 text-tag leading-relaxed text-ink-2">
                                 {sp.prompt}
                               </p>
                             </div>
                             <div>
                               <div className="text-tag font-medium text-ink-3">Output</div>
-                              <p className="mt-0.5 max-h-24 overflow-y-auto rounded bg-paper p-1.5 text-tag leading-relaxed text-ink-2">
+                              <p className="mt-0.5 max-h-24 overflow-y-auto rounded bg-bg p-1.5 text-tag leading-relaxed text-ink-2">
                                 {sp.response}
                               </p>
                             </div>

@@ -20,7 +20,7 @@ import type {
   ReportSection,
 } from '../types'
 import { SAMPLE_COMMUNITIES } from './livingCircleMock'
-import { lcLocPrefix, scoreGrade } from '../lib/livingCircle'
+import { lcLocPrefix, poiMetricLabel, samplingReach, scoreGrade } from '../lib/livingCircle'
 
 /** D4 · 专家署名表（与 backend/app/data/experts.json 及 api 副本的 id 对齐；M2 换血后仅文案微调） */
 export const LC_EXPERT: Record<string, { name: string; role: string }> = {
@@ -64,13 +64,14 @@ function pct(v: number): string {
 /** 依评分档位给一句话总评（规则模板 → M 阶段 LLM 解读的降级同构） */
 function overviewNote(r: LivingCircleReport): string {
   const grade = scoreGrade(r.scores.total)
-  const reachable = r.sampling.points.filter((p) => p.reachable).length
+  // 分档走唯一口径（timed≠可达）。mock 与真报告必须同源，否则演示态与实时态文案会打架。
+  const reach = samplingReach(r)
   const area = r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0
   const miss = r.scores.triads.filter((t) => !t.covered)
   const triadNote = miss.length
     ? `三要素中「${miss.map((t) => t.facility).join('、')}」存在 1km 覆盖缺口`
     : '菜市场/药店/小学三要素 1km 内均可达'
-  return `本样区综合评分 ${r.scores.total}（${grade.label}），15 分钟步行可达圈约 ${area.toFixed(2)} km²，${reachable}/${r.sampling.points.length} 个采样点可达；设施总量 ${r.poi.total} 处（圈内 ${r.poi.in_circle}）。${triadNote}，共识别 ${r.blindspots.length} 处服务盲区。`
+  return `本样区综合评分 ${r.scores.total}（${grade.label}），15 分钟步行可达圈约 ${area.toFixed(2)} km²，${reach.inReach}/${reach.total} 个采样点圈内可达（已测时 ${reach.timed}）；设施 ${poiMetricLabel(r)}。${triadNote}，共识别 ${r.blindspots.length} 处服务盲区。`
 }
 
 function charter(ids: string[]): { id: string; reason: string }[] {
@@ -204,12 +205,12 @@ function secElderly(r: LivingCircleReport): ReportSection {
 
 function secIsochrone(r: LivingCircleReport): ReportSection {
   const areas = r.isochrones.map((z) => ({ minutes: z.minutes, area: z.area_km2 }))
-  const reachable = r.sampling.points.filter((p) => p.reachable).length
+  const reach = samplingReach(r)
   return {
     id: 'isochrone',
     title: '可达性与等时圈',
     level: 2,
-    key_takeaway: `5/10/15/20 分钟步行等时圈面积 ${areas.map((a) => a.area.toFixed(2)).join(' / ')} km²；采样 ${reachable}/${r.sampling.points.length} 点可达；方式：${r.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值' : '圆形近似（演示数据）'}`,
+    key_takeaway: `5/10/15/20 分钟步行等时圈面积 ${areas.map((a) => a.area.toFixed(2)).join(' / ')} km²；采样 ${reach.total} 点，圈内可达 ${reach.inReach}（已测时 ${reach.timed}）；方式：${r.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值' : '圆形近似（演示数据）'}`,
     paragraphs: [
       `以中心点为原点按 400m 粗网格 + 15min 边界带 150m 加密采样（共 ${r.sampling.points.length} 个点），调用步行测时接口后对耗时场做${r.sampling.interpolation === 'idw' ? ' IDW 反距离加权插值，提取 5/10/15/20 分钟等值线族' : ' 圆形近似（fixture 演示阶段；M5 覆写为真实路网等时圈）'}。`,
       `「不取底层路网、仅基于分布点位测时推导连通区域」是赛题鼓励的 30% 评分项：本流程${r.sampling.is_scattered ? '采用散点扇形双层采样，' : ''}全程未获取路网数据，并通过抽样回验控制误差。`,
@@ -415,7 +416,7 @@ function buildEvidence(r: LivingCircleReport): Evidence[] {
       source_url: `fixture://living-circle/${r.scene.name}/sampling`,
       source_type: 'api_measure',
       title: `采样点测时记录（${r.sampling.points.length} 点）`,
-      excerpt: `批量算路 walking 返回 ${r.sampling.points.filter((p) => p.reachable).length} 条可达耗时，15min 圈面积约 ${(r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`,
+      excerpt: `批量算路 walking 返回 ${samplingReach(r).timed} 条耗时，其中圈内可达 ${samplingReach(r).inReach} 条，15min 圈面积约 ${(r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`,
       credibility: 0.95,
       collected_by: 'L2-005',
       captured_at: at,

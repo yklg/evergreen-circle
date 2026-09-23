@@ -112,4 +112,56 @@ describe('LifeCirclePage（fixture 态）', () => {
       expect(screen.getAllByText('北京劲松').length).toBeGreaterThan(0)
     })
   })
+
+  // ── 阶段 −1 新增：两个「结论可信度」护栏（此前体检台完全没披露） ──────────────
+
+  it('盲区数必须与判盲覆盖度同屏（kaili 只有 9/72 格被判定过）', async () => {
+    renderScene('kaili')
+    await screen.findByText(/内置快照/)
+    const cal = kaili.caliber
+    // 前提守卫：夹具确实存在大量未判定格，否则本条断言是空转
+    expect(cal.cells_unknown).toBeGreaterThan(0)
+    expect(cal.cells_inside).toBe(cal.cells_judged + cal.cells_unknown)
+
+    // ① StatRow「服务盲区」旁的一行紧凑披露
+    expect(
+      screen.getByText(
+        new RegExp(`可达区 ${cal.cells_inside} 格中仅判 ${cal.cells_judged} 格，${cal.cells_unknown} 格数据不足未判`),
+      ),
+    ).toBeTruthy()
+    // ② 0 处盲区时的结论句不得说「三要素齐备」而隐去未判定面
+    expect(screen.getByText(new RegExp(`仍有 ${cal.cells_unknown} 格无法判定`))).toBeTruthy()
+    // ③ 完整脚注（含少报提示）
+    expect(screen.getByText(/判定覆盖：网格 72 格中已判定 9 格/)).toBeTruthy()
+  })
+
+  it('劲松样例（有盲区）同样披露判盲覆盖度', async () => {
+    renderScene('kaili')
+    fireEvent.click(screen.getByRole('button', { name: /北京劲松/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByText(new RegExp(`可达区 99 格中仅判 9 格，90 格数据不足未判`)),
+      ).toBeTruthy()
+    })
+  })
+
+  it('采样点分档上屏：可达数必须小于采样总数（旧口径「可达 = 全部」不得回流）', async () => {
+    renderScene('kaili')
+    await screen.findByText(/内置快照/)
+    const s = kaili.sampling
+    const total = s.points.length
+    const inReach = s.in_reach_count!
+    // 前提守卫：可达数必须明显小于采样数，否则这条断言没有判别力
+    expect(inReach).toBeLessThan(total)
+    expect(inReach).toBeGreaterThan(0)
+
+    expect(
+      screen.getByText(
+        new RegExp(`采样 ${total} 个（≤${kaili.caliber.reach_full_min} 分钟内可达 ${inReach}）`),
+      ),
+    ).toBeTruthy()
+    // 旧口径：把采样总数当成可达数（「可达 1049」）——必须不再出现
+    expect(screen.queryByText(new RegExp(`可达 ${total}\\)`))).toBeNull()
+    expect(screen.queryByText(new RegExp(`可达 ${total}）`))).toBeNull()
+  })
 })

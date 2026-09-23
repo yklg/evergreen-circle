@@ -43,6 +43,13 @@ import {
   lcSnapshotPoiLayer,
   scoreGrade,
   dataOriginBadge,
+  blindspotCoverageNote,
+  emptyBlindspotNote,
+  samplingReach,
+  poiConservationNote,
+  poiMetricLabel,
+  poiRenderSet,
+  degradeBanner,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
@@ -90,12 +97,17 @@ function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; sha
         </g>
       ))}
       {/* POI 真实点位：共享投影层（与 LcMap 降级画布同口径，点位与详细报告数字一致）；
-          离线（poi.points 恒为空）时自然降级为空数组，不绘制 */}
-      {lcSnapshotPoiLayer(center, lc.poi.points).map((p) => (
-        <circle key={p.key} cx={p.cx} cy={p.cy} r={6} fill={p.fill} stroke="#fff" strokeWidth={1.5} opacity={0.92}>
-          {p.title && <title>{p.title}</title>}
-        </circle>
-      ))}
+          离线（poi.points 恒为空）时自然降级为空数组，不绘制。
+          阶段 2.1/2.2：**不再传 cap** —— 报告给几个点就画几个点（旧默认 120 是渲染侧
+          静默第二权威）。取数走 `poiRenderSet()` 与 LcMap live 路径同一份 `reps`。 */}
+      {(() => {
+        const set = poiRenderSet(lc.poi.points)
+        return lcSnapshotPoiLayer(center, set.reps, Number.POSITIVE_INFINITY, set.counts).map((p) => (
+          <circle key={p.key} cx={p.cx} cy={p.cy} r={6} fill={p.fill} stroke="#fff" strokeWidth={1.5} opacity={0.92}>
+            {p.title && <title>{p.cluster > 1 ? `${p.title}（该网格聚合 ${p.cluster} 点）` : p.title}</title>}
+          </circle>
+        ))
+      })()}
       {(() => {
         const [x, y] = lcToPx(center, center[0], center[1])
         return (
@@ -177,41 +189,14 @@ function jumpToSection(id: string) {
   document.getElementById(`lc-sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-/**
- * 盲区判定的**覆盖度**（有则返回，无则 null）。
+/** 覆盖度脚注：只要存在未判定格，就必须写出来（否则盲区数会被读成「全貌」）。
  *
- * 这三个数把「判不了」与「没问题」分开：网格扫了 `inside` 格，其中只有 `judged` 格
- * 的 1km 判定邻域被采集区完整覆盖，其余 `unknown` 格**既不算有盲区、也不算没盲区**。
- * 没有它的「0 处盲区」是无法解读的（可能是全扫完真没有，也可能是 90% 没判）。
- */
-function blindspotCoverage(lc: LivingCircleReport): { inside: number; judged: number; unknown: number } | null {
-  const c = lc.caliber
-  if (!c || c.cells_inside == null || c.cells_judged == null) return null
-  return { inside: c.cells_inside, judged: c.cells_judged, unknown: c.cells_unknown ?? c.cells_inside - c.cells_judged }
-}
-
-/** 覆盖度脚注：只要存在未判定格，就必须写出来（否则盲区数会被读成「全貌」） */
+ * ⚠️ 判定与文案都来自 `lib/livingCircle`（体检台共用同一实现）——本组件不再自带一份，
+ * 否则两处披露文案会各自漂移（旧版正是如此：报告页写了、体检台没写）。 */
 function coverageNote(lc: LivingCircleReport) {
-  const cov = blindspotCoverage(lc)
-  if (!cov || cov.unknown <= 0) return null
-  const pctJudged = cov.inside > 0 ? Math.round((cov.judged / cov.inside) * 100) : 0
-  return (
-    <p className="mt-2 border-t border-line/60 pt-2 text-tag text-ink-3">
-      判定覆盖：网格 {cov.inside} 格中已判定 {cov.judged} 格（{pctJudged}%），
-      {cov.unknown} 格因采集半径（{lc.caliber?.collect_radius_m ?? '—'}m）不足以覆盖 1km 判定邻域而未判定 ——
-      盲区数不含这些区域，存在少报可能。
-    </p>
-  )
-}
-
-/** 0 处盲区时的结论句：有未判定格就不能说「三要素齐备」 */
-function emptyBlindspotNote(lc: LivingCircleReport): string {
-  const cov = blindspotCoverage(lc)
-  if (!cov) return '按赛题口径（1km 内无菜市场/药店/小学）扫描，本次未发现服务盲区。'
-  if (cov.unknown > 0) {
-    return `已在可判定范围内（${cov.judged} 格）确认三要素齐备，未发现 1km 服务盲区；但仍有 ${cov.unknown} 格无法判定，不能据此判定全圈无障碍。`
-  }
-  return `网格扫描 ${cov.inside} 格全部完成判定，菜市场/药店/小学三要素齐备，未发现 1km 服务盲区。`
+  const note = blindspotCoverageNote(lc)
+  if (!note) return null
+  return <p className="mt-2 border-t border-line/60 pt-2 text-tag text-ink-3">{note}</p>
 }
 
 export default function LifeCircleReportView({ report }: { report: Report }) {
@@ -222,7 +207,11 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   const grade = scoreGrade(lc.scores.total)
   // 报告 id 形如 lc-{sceneId}，反推样区路由参数（如 lc-kaili → kaili）
   const sceneKey = report.id.startsWith('lc-') ? report.id.slice(3) : 'kaili'
-  const reachable = lc.sampling.points.filter((p) => p.reachable).length
+  // 采纳分档走唯一口径（lib/livingCircle.samplingReach）：timed≠可达，
+  // 旧写法 `.filter(p => p.reachable)` 会把 1049 个点全说成「可达」（实际仅 inReach 个）
+  const reach = samplingReach(lc)
+  // R-7：降级披露唯一出口（存在 `degraded` 才是「被熔断」，否则只是未联网离线估算）
+  const dgBanner = degradeBanner(lc)
   const area15 = lc.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0
   const isShared = typeof window !== 'undefined' && window.location.search.includes('share=1')
   // C1：左竖排章节导航的当前高亮（scroll-spy，与 research 报告页同模式）
@@ -340,11 +329,24 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
         {lc.served_from === 'cache' && (
           <div className="mx-auto mt-4 max-w-6xl px-6">
             <div className="flex items-center gap-2 rounded-card border border-primary-soft bg-primary-tint/70 px-4 py-2 text-tag text-ink-2">
-              <InfoBadge /> 历史实时结果 · 离线可查：真实百度路网测时快照（{lc.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值等时圈' : '等时圈'} · 采样 {lc.sampling.points.length} 点，可达 {reachable}）
+              <InfoBadge /> 历史实时结果 · 离线可查：真实百度路网测时快照（{lc.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值等时圈' : '等时圈'} · 采样 {reach.total} 点，≤{reach.reachFullMin} 分钟内可达 {reach.inReach}）
             </div>
           </div>
         )}
-        {lc.data_origin === 'offline' && (
+        {lc.data_origin === 'offline' && dgBanner && (
+          <div className="mx-auto mt-4 max-w-6xl px-6">
+            <div className="flex items-start gap-2 rounded-card border border-risk/50 bg-risk/10 px-4 py-2 text-tag text-ink-2">
+              <RiskBadge />
+              <span>
+                <b className="text-[#8F5E56]">{dgBanner.title}</b>
+                <br />
+                {dgBanner.body}
+                <span className="mt-0.5 block text-ink-3">{dgBanner.action}</span>
+              </span>
+            </div>
+          </div>
+        )}
+        {lc.data_origin === 'offline' && !dgBanner && (
           <div className="mx-auto mt-4 max-w-6xl px-6">
             <div className="flex items-center gap-2 rounded-card border border-warn/40 bg-warn/10 px-4 py-2 text-tag text-ink-2">
               <InfoBadge /> 离线估算 · 距离模型（未联网采集 POI）：区县中心近似 + 直线距离 × 绕行系数测时，等时圈为圆形近似——评分与盲区需实时体检后给出，不可与实时分比较
@@ -354,7 +356,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
         {lc.data_origin === 'live' && lc.served_from !== 'cache' && (
           <div className="mx-auto mt-4 max-w-6xl px-6">
             <div className="flex items-center gap-2 rounded-card border border-primary-soft bg-primary-tint/70 px-4 py-2 text-tag text-ink-2">
-              <InfoBadge /> 真实百度路网测时数据（{lc.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值等时圈' : '等时圈'} · 采样 {lc.sampling.points.length} 点，可达 {reachable}）
+              <InfoBadge /> 真实百度路网测时数据（{lc.sampling.interpolation === 'idw' ? 'IDW 反距离加权插值等时圈' : '等时圈'} · 采样 {reach.total} 点，≤{reach.reachFullMin} 分钟内可达 {reach.inReach}）
             </div>
           </div>
         )}
@@ -428,8 +430,13 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                     </span>
                   ))}
                 </div>
-                <StatRow label="POI 采集" value={`${lc.poi.total} 个（圈内 ${lc.poi.in_circle}）`} />
-                <StatRow label="采样点" value={`${lc.sampling.points.length} 个（可达 ${reachable}）`} />
+                {/* 阶段 2.5：三段式单一口径（见 lib/livingCircle.poiMetricLabel） */}
+                <StatRow label="POI 采集" value={poiMetricLabel(lc)} />
+                {/* 阶段 1.8：历史报告的面板数/图上点数打架时如实披露 */}
+                {poiConservationNote(lc) && (
+                  <p className="mt-1 text-tag text-risk">{poiConservationNote(lc)}</p>
+                )}
+                <StatRow label="采样点" value={`${reach.total} 个（≤${reach.reachFullMin} 分钟内可达 ${reach.inReach}）`} />
                 <StatRow label="15min 等时圈面积" value={`${area15.toFixed(2)} km²`} />
                 <StatRow label="服务盲区" value={`${lc.blindspots.length} 处`} />
               </div>
@@ -659,4 +666,9 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
 
 function InfoBadge() {
   return <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn/20 text-[11px] font-bold text-warn">i</span>
+}
+
+/** R-7：降级横幅的图标（q-1 选 risk —— 降级是事故不是提示，色阶需与「未联网离线」拉开） */
+function RiskBadge() {
+  return <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-risk/20 text-[11px] font-bold text-[#8F5E56]">!</span>
 }

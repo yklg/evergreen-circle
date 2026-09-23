@@ -106,6 +106,18 @@ vi.mock('../lib/bmap', () => {
     openInfoWindow() {}
     setViewport() {}
     centerAndZoom() {}
+    // HeatFieldOverlay（延迟优化 C）契约：getContainer 挂 canvas、pointToPixel 投影、
+    // 地图级事件订阅。jsdom 容器尺寸为 0 → draw() 防御性早退，无碍本文件拖拽契约。
+    private _c: HTMLElement | null = null
+    getContainer() {
+      this._c ??= document.createElement('div')
+      return this._c
+    }
+    pointToPixel(p: { lng: number; lat: number }) {
+      return { x: p.lng * 100, y: p.lat * 100 }
+    }
+    addEventListener() {}
+    removeEventListener() {}
   }
   return {
     // AK 非空 → 走 live 分支（本文件只测真实态地图；降级态由 geo.ts / LcMap 降级画布用例覆盖）

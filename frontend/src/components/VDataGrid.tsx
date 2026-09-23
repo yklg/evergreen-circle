@@ -27,7 +27,7 @@ export function VDataGrid({ grid, title = '数据空间' }: { grid: DataGrid; ti
 
   return (
     <div className="mt-4 overflow-hidden rounded-card border border-line bg-white">
-      <div className="flex items-center justify-between bg-paper px-4 py-2">
+      <div className="flex items-center justify-between bg-bg px-4 py-2">
         <div className="flex items-center gap-1.5 text-aux font-semibold text-ink">
           <Table2 size={14} className="text-primary" /> {title} · {grid.rows.length} 条数据
         </div>
@@ -69,7 +69,7 @@ export function VDataGrid({ grid, title = '数据空间' }: { grid: DataGrid; ti
         </tbody>
       </table>
       {!open && grid.rows.length > 3 && (
-        <button onClick={() => setOpen(true)} className="w-full bg-paper/60 py-1.5 text-tag text-ink-3 hover:text-primary-deep">
+        <button onClick={() => setOpen(true)} className="w-full bg-bg/60 py-1.5 text-tag text-ink-3 hover:text-primary-deep">
           点击查看全部 {grid.rows.length} 条数据 →
         </button>
       )}

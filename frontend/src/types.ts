@@ -496,9 +496,24 @@ export interface SamplingPoint {
   idx: number
   lng: number
   lat: number
-  /** 距中心点步行耗时(分钟)，不可达时为空 */
+  /** 距中心点步行耗时(分钟)，测时未返回时为空 */
   minutes: number | null
-  reachable: boolean
+  /**
+   * 测时返回了分钟值（⇒ 可参与插值）。**这不等于「可达」**。
+   *
+   * 旧字段名 `reachable` 的语义其实就是本字段，被 UI 读成「可达」后
+   * 产出「采样点 1049 个（可达 1049）」——而 ≤reach_full_min 的只有一小部分。
+   *
+   * ⚠️ 阶段 −1 之前落库的历史报告**没有本字段**（只有旧名 `reachable`）。
+   * 因此**不要直接读 `p.timed`**，一律走 `isTimedPoint(p)`（内含旧快照回退）——
+   * 直接读会让历史报告的热力层被静默清空（老点全为 `undefined` ⇒ filter 全 false）。
+   */
+  timed?: boolean
+  /**
+   * 在可达区内：`timed && minutes <= caliber.reach_full_min`。**这才是「可达」**。
+   * 同样**不要直接读**，走 `isInReachPoint(p, reachFullMin)`（缺省按 minutes 回算）。
+   */
+  in_reach?: boolean
 }
 
 /** POI 类别统计（覆盖/可达/最近设施） */
@@ -516,6 +531,31 @@ export interface FacilityCategoryStat {
   min_minutes: number | null
   /** 最近设施名 */
   nearest_name: string | null
+}
+
+/** POI 截断披露（阶段 1.3）：`poi.truncated`。无截断时 `dropped=0 / categories=[]`，字段恒存在。 */
+export interface PoiTruncation {
+  /** 本次装配所用的每类展示上限（`POI_CAP_PER_CAT`） */
+  cap_per_cat: number
+  /** 被截掉的点位总数（0 = 无截断） */
+  dropped: number
+  /** 逐类明细，只含真的发生截断的类别 */
+  categories: { category: string; kept: number; dropped: number }[]
+}
+
+/**
+ * POI 点数守恒自检结论（阶段 1.4）：`poi.conservation`。
+ *
+ * 不变量 `sum(categories[].in_circle) === points.length`。后端在装配出口自检：
+ * 测试/CI 违规即硬失败；生产/演示照出报告但把 `ok=false` 落在这里（**不静默**）。
+ * 消费方请走 `poiConservation()`，不要自己求和下结论。
+ */
+export interface PoiConservationMeta {
+  ok: boolean
+  declared_in_circle: number
+  actual_points: number
+  /** 仅 `ok=false` 时存在：可读的违规描述（含逐类差额） */
+  detail?: string
 }
 
 /** 单个 POI 点位（真实坐标，供 BMapGL 地图渲染；契约增量字段） */
@@ -643,6 +683,20 @@ export interface LifeCircleScores {
 }
 
 /** 生活圈体检报告主体（挂载到 Report.living_circle） */
+/**
+ * 降级标记（后端 `degrade_policy.degraded_block()` 唯一产出；R-7）
+ *
+ * - **存在即降级**：`data_origin='offline'` 且本节点存在 ⇒ 是「想实时采集但被熔断」；
+ *   不存在 ⇒ 只是「未联网 / 无 AK」那一类离线估算。两者对用户的意义完全不同。
+ * - `reason` 是**机器用的闭集**（当前仅 `baidu_quota_exhausted`），**不要拿它做文案**；
+ *   用户可见归因一律走 `detail`（前端 `degradeDetailLabel()` 与后端 `detail_label()` 同一张表）。
+ */
+export interface LifeCircleDegraded {
+  reason: string
+  detail?: string
+  note?: string
+}
+
 export interface LivingCircleReport {
   scene: LifeCircleScene
   generated_at: string
@@ -652,10 +706,15 @@ export interface LivingCircleReport {
    * - fixture_sample=内置演示数据；cache 命中时保持原值 + served_from='cache'
    */
   data_origin: 'live' | 'offline' | 'fixture_sample'
-  /** 缓存命中标识（无 AK 时返回历史实时结果） */
-  served_from?: 'cache'
+  /**
+   * 缓存命中标识（无 AK 时返回历史实时结果）：
+   * - cache=精确命中（同中心 30 天）；nearby_cache=邻近命中（原中心距此 ≤500m，v5 O1/D9）
+   */
+  served_from?: 'cache' | 'nearby_cache'
   /** 缓存命中时间（ISO） */
   cached_at?: string
+  /** R-7：降级标记（存在即降级）。文案请走 `degradeDetailLabel()`，不要在消费点自己 switch。 */
+  degraded?: LifeCircleDegraded
   /** R2/R6：测算口径举证对象（出行方式、速度、绕行系数等） */
   caliber?: {
     travel_mode: string
@@ -694,13 +753,26 @@ export interface LivingCircleReport {
     interpolation: 'idw' | 'circular_approx'
     /** 是否通过了散点扇形/双阶段采样（30% 评分点叙事） */
     is_scattered: boolean
+    /**
+     * 已测时点数（= `points` 中 `timed` 为真的个数）。**不等于可达数**。
+     * 由后端随点集一起下发；旧快照可能缺，缺失时请用 `samplingReach()` 回算，不要自行 filter。
+     */
+    timed_count?: number
+    /** 可达点数（`minutes <= caliber.reach_full_min`）。「可达率」的分子只能是它 */
+    in_reach_count?: number
   }
   poi: {
     categories: FacilityCategoryStat[]
+    /** **采集口径**（含圈外）：研究范围内检索到的总数 */
     total: number
+    /** **可达口径**：`sum(categories[].in_circle)`，恒等于 `points.length`（守恒不变量） */
     in_circle: number
     /** 逐 POI 点位（真实坐标，BMapGL 渲染）；旧快照/降级可能为空数组 */
     points: PoiPoint[]
+    /** 截断披露（阶段 1.3）；**历史快照缺此字段** ⇒ 消费方需容忍 */
+    truncated?: PoiTruncation
+    /** 守恒自检结论（阶段 1.4）；**历史快照缺此字段** ⇒ 走 `poiConservation()` 回算 */
+    conservation?: PoiConservationMeta
   }
   blindspots: BlindSpot[]
   scores: LifeCircleScores
@@ -732,6 +804,8 @@ export interface LifeCircleRecord {
   blindspot_count: number
   data_origin: 'live' | 'offline' | 'fixture_sample'
   interpolation: 'idw' | 'circular_approx'
+  /** R-7(q-3)：历史列表同样要能区分「未联网离线」与「配额熔断降级」 */
+  degraded?: LifeCircleDegraded | null
 }
 
 /** 全国省市区三级区划（D1 联动选择器；后端 regions 端点仅返回名称树） */

@@ -1,0 +1,22 @@
+{
+  "_why": "R-7 · 降级成因标签的跨语言唯一真源。后端 app/living_circle/degrade_policy.py::DETAIL_LABELS 与前端 lib/livingCircle.ts::DEGRADE_DETAIL_LABELS 必须是同一张表（范式同 compareDiffContract.json / poiMetricLabel）。两侧测试都读本文件，改一处必须改三处。",
+  "_fallback": "配额耗尽",
+  "_note_en": "百度调用预算耗尽，实时采集被熔断，已降级为离线估算",
+  "labels": {
+    "total_meltdown": "总量熔断",
+    "daily_budget_exhausted": "日预算熔断",
+    "quota_blocked": "配额受限",
+    "isochrone_empty": "测时失败",
+    "poi_empty": "采集为空",
+    "unknown": "配额耗尽"
+  },
+  "_unknown_inputs": ["", null, "NO_SUCH_DETAIL", "total-meltdown"],
+  "_cases": [
+    { "detail": "total_meltdown", "label": "总量熔断", "title": "百度总量熔断：本次实时采集被熔断，已降级为离线估算" },
+    { "detail": "daily_budget_exhausted", "label": "日预算熔断", "title": "百度日预算熔断：本次实时采集被熔断，已降级为离线估算" },
+    { "detail": "quota_blocked", "label": "配额受限", "title": "百度配额受限：本次实时采集被熔断，已降级为离线估算" },
+    { "detail": "isochrone_empty", "label": "测时失败", "title": "百度测时失败：本次实时采集被熔断，已降级为离线估算" },
+    { "detail": "poi_empty", "label": "采集为空", "title": "百度采集为空：本次实时采集被熔断，已降级为离线估算" },
+    { "detail": "unknown", "label": "配额耗尽", "title": "百度配额耗尽：本次实时采集被熔断，已降级为离线估算" }
+  ]
+}

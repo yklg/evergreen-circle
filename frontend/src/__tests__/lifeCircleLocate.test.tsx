@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /**
- * 阶段 2 · P0「名称与坐标同源」的**回归防线**（LiveCirclePage live 态）。
+ * 阶段 2 · P0「名称与坐标同源」的**回归防线**（LiveCirclePage live 态）
+ * + v5 A「定位确认弹窗」的确认/取消决策（U21 种子改写锚点）。
  *
  * ## 被守护的事故
  *
@@ -13,12 +14,16 @@
  *   `city` 取**当前展示的报告** —— 三字段三个来源。
  * 实测产出报告 `lc-d3cfa371`：名称「北京劲松」+ 中心「昆明」+ 城市「北京·朝阳」。
  *
+ * v5 A：真实模式「定位到我」不再直接发起体检 —— 先弹确认框
+ * （定位名称/坐标/坐标系/额度提示），**确认才发起、取消不发起**（U21）。
+ *
  * ## 本文件的判据
  *
  * 1. 输入框里故意留一个**与定位结果不同**的旧值（北京劲松）；
- *    定位返回昆明坐标 + 昆明地名 → 请求的 `query` 必须是**定位结果**，不是旧值。
- * 2. 请求**不得携带 city**（城市改由后端按中心点逆地理；前端传城市必是错的那个）。
+ *    定位返回昆明坐标 + 昆明地名 → 确认后请求的 `query` 必须是**定位结果**，不是旧值。
+ * 2. 请求**不得携带 city**（城市改由后端按中心点逆地理；前端传 city 必是错的那个）。
  * 3. 坐标系标签必须随坐标同行（降级定位是 WGS-84，需由服务端转换）。
+ * 4. 确认框展示定位名称/坐标/坐标系；「取消」不调用创建任务、不消耗额度。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -85,7 +90,7 @@ const { useDataModeStore } = await import('../store/dataModeStore')
 const { getLivingCircleReportMock } = await import('../mocks/livingCircleReports')
 
 beforeEach(() => {
-  useDataModeStore.setState({ mode: 'live' }) // 真实态：定位才走 startRealCheck
+  useDataModeStore.setState({ mode: 'live' }) // 真实态：定位走确认框 → 确认才 startRealCheck
   // 让 live 分支拿到一份报告（页面才有地图与「定位到我」按钮）
   api.fetchLifeCircleReports.mockResolvedValue([{ id: 'lc-kaili' }])
   api.fetchLifeCircleReport.mockResolvedValue(getLivingCircleReportMock('lc-kaili'))
@@ -115,11 +120,30 @@ async function renderAndStaleType() {
   return input
 }
 
-describe('LifeCirclePage（live 态）· 定位发起体检的名称/坐标同源', () => {
-  it('名称取自定位结果，而非输入框旧值（setState 同 tick 竞态回归）', async () => {
-    await renderAndStaleType()
-    fireEvent.click(screen.getByRole('button', { name: /定位到我/ }))
+/** v5 A：点「定位到我」→ 等确认框出现 → 返回确认框元素 */
+async function locateToConfirm() {
+  fireEvent.click(screen.getByRole('button', { name: /定位到我/ }))
+  const dialog = await screen.findByRole('dialog', { name: '确认发起体检' })
+  return dialog
+}
 
+describe('LifeCirclePage（live 态）· 定位发起体检的名称/坐标同源（经确认框）', () => {
+  it('v5 A：定位后先弹确认框（名称/坐标/WGS-84 提示），确认才发起', async () => {
+    await renderAndStaleType()
+    await locateToConfirm()
+
+    // 确认框内容：定位名称 / 坐标 / 坐标系（wgs84 → 服务端转 BD-09）
+    expect(screen.getByText(LOCATED_NAME)).toBeTruthy()
+    expect(screen.getByText(/102\.75960, 25\.02950/)).toBeTruthy()
+    expect(screen.getByText(/WGS-84（提交时服务端转 BD-09）/)).toBeTruthy()
+    // 额度提示：新中心点消耗配额；同地点/邻近（≤500m）30 天内有结果走缓存
+    expect(screen.getByText(/将消耗本次体检所需百度配额/)).toBeTruthy()
+    expect(screen.getByText(/邻近（≤500m）/)).toBeTruthy()
+
+    // 尚未确认：不得发起任务（U21：确认框不发起）
+    expect(api.createLivingCircleTask).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /确认体检/ }))
     await waitFor(() => expect(api.createLivingCircleTask).toHaveBeenCalledTimes(1))
     const arg = api.createLivingCircleTask.mock.calls[0][0] as Record<string, unknown>
 
@@ -135,11 +159,23 @@ describe('LifeCirclePage（live 态）· 定位发起体检的名称/坐标同�
 
   it('请求不得携带 city（城市由后端按中心点逆地理，前端传的必是无关值）', async () => {
     await renderAndStaleType()
-    fireEvent.click(screen.getByRole('button', { name: /定位到我/ }))
+    await locateToConfirm()
+    fireEvent.click(screen.getByRole('button', { name: /确认体检/ }))
 
     await waitFor(() => expect(api.createLivingCircleTask).toHaveBeenCalledTimes(1))
     const arg = api.createLivingCircleTask.mock.calls[0][0] as Record<string, unknown>
 
     expect(arg).not.toHaveProperty('city')
+  })
+
+  it('U21：取消不发起体检、不创建任务、不耗额度', async () => {
+    await renderAndStaleType()
+    await locateToConfirm()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    // 取消后确认框关闭，且从未创建任务
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认发起体检' })).toBeNull())
+    expect(api.createLivingCircleTask).not.toHaveBeenCalled()
+    expect(nav.to).toBe('')
   })
 })

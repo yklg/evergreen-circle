@@ -13,7 +13,7 @@ import {
   LC_REPORT_ID,
 } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream, LC_STAGES } from '../mocks/livingCircleStream'
-import { dataOriginBadge, LC_CANVAS, LC_ISO_COLORS, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcToPx, LC_CO_LOCATED_M, planComparisonOverlay } from '../lib/livingCircle'
+import { dataOriginBadge, heatSamplePoints, isInReachPoint, isTimedPoint, LC_CANVAS, LC_ISO_COLORS, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcSnapshotPoiLayer, lcToPx, LC_CO_LOCATED_M, LC_REACH_FULL_MIN_FALLBACK, planComparisonOverlay, poiConservation, poiConservationNote, poiMetricLabel, poiRenderSet, POI_THIN_THRESHOLD, samplingReach, samplingReachLabel } from '../lib/livingCircle'
 import { BD_LAT_ABS_MAX, BD_LNG_ABS_MAX, parseBdLngLat } from '../lib/geo'
 
 const reports = [kaili as unknown as LivingCircleReport, jinsong as unknown as LivingCircleReport]
@@ -110,21 +110,147 @@ describe('LivingCircleReport fixture 契约', () => {
     }
   })
 
-  it('采样点可达性自洽（reachable ⇔ minutes 非空）', () => {
-    // 真实路网测时语义：reachable ⇔ 有分钟值；分钟本身无 ≤20 上限（2.5km 研究域步行可到 75min）
+  // ── 阶段 −1（T-FE-02）：本用例原为「reachable ⇔ minutes 非空」──────────────
+  // 那条断言**把错误语义固化成了契约**：`reachable` 的语义其实是「测时返回了值」，
+  // 却被 UI 读成「可达」，于是「采样点 1049 个（可达 1049）」上了屏，而真正
+  // ≤reach_full_min 的只有 126 个。字段已拆为 `timed`（测时返回了值）+ `in_reach`
+  //（且不超过阈值），因此这里改为断言**两个字段各自的语义与二者关系**，
+  // 并显式禁止旧名回流（旧名若被 `.get()` 读走会静默变 0，比报错更危险）。
+  it('采样点分档自洽（timed ⇔ minutes 非空；in_reach ⇒ timed 且 ≤reach_full_min）', () => {
     for (const r of reports) {
+      const threshold = r.caliber?.reach_full_min ?? 20
       expect(r.sampling.points.length).toBeGreaterThan(0)
       for (const p of r.sampling.points) {
         expect(typeof p.lng).toBe('number')
         expect(typeof p.lat).toBe('number')
-        expect(p.reachable).toBe(p.minutes !== null)
-        if (p.reachable) {
+        expect(p.timed).toBe(p.minutes !== null)
+        expect(typeof p.in_reach).toBe('boolean')
+        if (p.timed) {
           expect(typeof p.minutes).toBe('number')
           expect(p.minutes!).toBeGreaterThanOrEqual(0)
         }
+        // 可达 ⇒ 必然已测时，且不超过可达区口径（分钟本身无 ≤20 上限，2.5km 研究域可到 75min）
+        if (p.in_reach) {
+          expect(p.timed).toBe(true)
+          expect(p.minutes!).toBeLessThanOrEqual(threshold)
+        }
+        expect('reachable' in p).toBe(false)
       }
     }
   })
+
+  it('采样分档汇总数与逐点一致，且 timed ≠ in_reach（T-FE-02 配偶断言）', () => {
+    for (const r of reports) {
+      const s = r.sampling
+      const timed = s.points.filter((p) => p.timed).length
+      const inReach = s.points.filter((p) => p.in_reach).length
+      expect(s.timed_count).toBe(timed)
+      expect(s.in_reach_count).toBe(inReach)
+      // 两者相等意味着 in_reach 退化成了「测时返回了值」——正是本阶段修掉的旧 bug
+      expect(s.in_reach_count!).toBeLessThan(s.timed_count!)
+    }
+  })
+
+/**
+ * T-FE-02b · **历史快照读侧兼容**（阶段 −1 迁移的另一半）。
+ *
+ * 库里 25 份报告的采样点全部只有旧名 `reachable`（实测 1049/1049），没有 `timed`/`in_reach`，
+ * 也没有汇总数。若读侧只认新字段，历史报告的热力层会被**静默清空**、可达数会显示 0 ——
+ * 又一个「看着是 0，其实是字段没读到」。因此本组用例同时钉住两件事：
+ *   ① 回退判定必须生效（守住真实用户可见的历史报告）；
+ *   ② **朴素读法确实会归零**（负对照：证明这条守卫不是装饰，一旦有人「简化」回
+ *      `p.timed` 就必须红）。
+ */
+describe('T-FE-02b · 历史快照（无 timed / 无汇总数）读侧兼容', () => {
+  /** 造一份阶段 −1 之前形态的报告：点只有 `reachable`，sampling 无汇总数。 */
+  function legacyReport(): LivingCircleReport {
+    const mk = (idx: number, minutes: number | null) => ({
+      idx,
+      lng: 107.95 + idx * 0.001,
+      lat: 26.57,
+      minutes,
+      reachable: minutes != null, // 旧名：语义 =「测时返回了值」
+    })
+    return {
+      scene: { name: '凯里老街', city: '凯里市', address: '老街', center: [107.95, 26.57], study_radius_m: 2500 },
+      generated_at: '2026-09-19T00:00:00.000Z',
+      data_origin: 'live',
+      caliber: { reach_full_min: 20 },
+      isochrones: [
+        { minutes: 5, area_km2: 0.1, geojson: { type: 'Polygon', coordinates: [[[107.94, 26.56], [107.96, 26.56], [107.96, 26.58], [107.94, 26.58], [107.94, 26.56]]] } },
+        { minutes: 10, area_km2: 0.4, geojson: { type: 'Polygon', coordinates: [[[107.93, 26.55], [107.97, 26.55], [107.97, 26.59], [107.93, 26.59], [107.93, 26.55]]] } },
+        { minutes: 15, area_km2: 0.9, geojson: { type: 'Polygon', coordinates: [[[107.92, 26.54], [107.98, 26.54], [107.98, 26.6], [107.92, 26.6], [107.92, 26.54]]] } },
+        { minutes: 20, area_km2: 1.5, geojson: { type: 'Polygon', coordinates: [[[107.91, 26.53], [107.99, 26.53], [107.99, 26.61], [107.91, 26.61], [107.91, 26.53]]] } },
+      ],
+      // ⚠️ 故意不写 timed_count / in_reach_count，也不写 timed / in_reach
+      sampling: {
+        points: [mk(0, 3.2), mk(1, 12.5), mk(2, 20), mk(3, 20.1), mk(4, 45.7), mk(5, null)],
+        interpolation: 'idw',
+        is_scattered: true,
+      },
+      poi: { categories: [], total: 0, in_circle: 0, points: [] },
+      blindspots: [],
+      scores: { total: 60, radar: [], bars: [], triads: [], note: '' },
+    } as unknown as LivingCircleReport
+  }
+
+  it('汇总数缺失时按点回算：timed=5 / inReach=3（不是 0）', () => {
+    const r = legacyReport()
+    const reach = samplingReach(r)
+    expect(reach.total).toBe(6)
+    expect(reach.timed).toBe(5) // 5 个 minutes 非空
+    expect(reach.inReach).toBe(3) // 3.2 / 12.5 / 20.0 ≤ 20
+    expect(reach.reachFullMin).toBe(20)
+    // 文案层同源：不能出现「可达 0」
+    const label = samplingReachLabel(r)
+    expect(label).toContain('可达 3')
+    expect(label).not.toContain('可达 0')
+  })
+
+  it('负对照：朴素读 `p.timed` 对历史快照必然归零（守卫不是装饰）', () => {
+    const r = legacyReport()
+    const naive = r.sampling.points.filter((p) => (p as { timed?: boolean }).timed).length
+    expect(naive).toBe(0) // ← 直接读新字段 = 全丢
+    expect(heatSamplePoints(r).length).toBe(5) // ← 走单一入口 = 保住
+  })
+
+  it('heatSamplePoints：取「已测时」而非「仅可达」，且 cap 截断不改顺序', () => {
+    const r = legacyReport()
+    const all = heatSamplePoints(r)
+    expect(all.map((p) => p.idx)).toEqual([0, 1, 2, 3, 4]) // idx=5 的 minutes=null 被剔除
+    expect(all.every((p) => typeof p.minutes === 'number')).toBe(true)
+    expect(heatSamplePoints(r, 2).map((p) => p.idx)).toEqual([0, 1])
+    // 只画可达点会让高耗时区凭空消失（正片 45.7min 是最该被看见的地方）
+    expect(all.some((p) => p.minutes > 20)).toBe(true)
+  })
+
+  it('isTimedPoint / isInReachPoint：显式 false 优先于 minutes，阈值含边界且带一位舍入', () => {
+    // 显式 false 必须压过 minutes 非空（`??` 而非 `||`，否则「已测时但明确排除」的点会被翻回来）
+    expect(isTimedPoint({ minutes: 5, timed: false })).toBe(false)
+    expect(isTimedPoint({ minutes: 5 })).toBe(true)
+    expect(isTimedPoint({ minutes: null })).toBe(false)
+    expect(isTimedPoint({ minutes: null, timed: true })).toBe(true)
+
+    expect(isInReachPoint({ minutes: 20 }, 20)).toBe(true) // 边界含
+    expect(isInReachPoint({ minutes: 20.1 }, 20)).toBe(false) // 边界外
+    expect(isInReachPoint({ minutes: 20.0000001 }, 20)).toBe(true) // 浮点噪声：与后端 round(_,1) 同口径
+    expect(isInReachPoint({ minutes: null }, 20)).toBe(false)
+    // 阈值缺省取兜底 20（老快照没有 caliber.reach_full_min 时）
+    expect(LC_REACH_FULL_MIN_FALLBACK).toBe(20)
+    expect(isInReachPoint({ minutes: 20 })).toBe(true)
+    // 后端已下发的 in_reach 具备权威性（不再本地重算，避免两处判据漂移）
+    expect(isInReachPoint({ minutes: 25, in_reach: true }, 20)).toBe(true)
+  })
+
+  it('夹具（新口径）与历史快照（旧口径）走同一入口，结果口径一致', () => {
+    for (const r of reports) {
+      const reach = samplingReach(r)
+      expect(reach.timed).toBe(r.sampling.timed_count) // 汇总数权威
+      expect(heatSamplePoints(r).length).toBe(reach.timed) // 热力点数 = 已测时数
+      expect(reach.inReach).toBeLessThan(reach.timed)
+    }
+  })
+})
 
   it('poi.points 点位契约（M5.1 增量字段）', () => {
     // points 允许为空（权威快照未采集/配额受限时优雅降级），非空时逐字段校验
@@ -162,6 +288,82 @@ describe('LivingCircleReport fixture 契约', () => {
       }
       expect(r.poi.total).toBeGreaterThanOrEqual(r.poi.in_circle)
     }
+  })
+
+  // ── 阶段 1 · 点数守恒（本计划的核心不变量）────────────────────────
+  // 旧防线只断言 `total >= in_circle`，**不约束 points** ⇒ fixture 里
+  // 「面板写圈内 104 处 / 图上只有 98 个点」照样全绿（实测 6 条差额无人发现）。
+
+  it('POI 点数守恒：sum(categories[].in_circle) === points.length', () => {
+    for (const r of reports) {
+      const c = poiConservation(r)
+      expect(c.declared).toBe(c.actual)
+      expect(c.delta).toBe(0)
+      expect(c.ok).toBe(true)
+      // 新口径夹具必须自带后端下发的自检结论（缺它 ⇒ 本条退化成「按点回算」的弱判据）
+      expect(r.poi.conservation?.ok).toBe(true)
+      expect(r.poi.conservation?.declared_in_circle).toBe(r.poi.points.length)
+      expect(r.poi.truncated?.dropped).toBe(0)
+      expect(r.poi.truncated?.cap_per_cat).toBe(200)
+    }
+  })
+
+  it('负对照：shopping.in_circle 改回 31（旧截断前的数）→ 守恒判据必须变红', () => {
+    // 这正是 fixture 当初的形态（104 vs 98）；护栏不会响 = 没有护栏。
+    const r = kaili as unknown as LivingCircleReport
+    const broken = {
+      ...r,
+      poi: {
+        ...r.poi,
+        categories: r.poi.categories.map((c) =>
+          c.category === 'shopping' ? { ...c, in_circle: 31 } : c,
+        ),
+      },
+    } as LivingCircleReport
+    const c = poiConservation(broken)
+    expect(c.ok).toBe(false)
+    expect(c.declared).toBe(104)
+    expect(c.actual).toBe(98)
+    expect(c.delta).toBe(-6)
+  })
+
+  it('历史报告（无 poi.conservation）按点集回算 —— 两个方向都必须判为不守恒', () => {
+    // 实测库里 25 份报告有 15 份不守恒，且**方向相反**：
+    //   ① 截断方向（旧 cap=25）：in_circle 104 / points 98；
+    //   ② 旧版「圈外点全送」方向：in_circle 18 / points 151。
+    // 方向相反 ⇒ **不可统一反算修正**，只能如实披露（`poiConservationNote`）。
+    const truncated = {
+      poi: {
+        categories: [{ category: 'shopping', in_circle: 31 }],
+        total: 76,
+        in_circle: 104,
+        points: Array.from({ length: 25 }, () => ({ category: 'shopping' })),
+      },
+    } as unknown as LivingCircleReport
+    const a = poiConservation(truncated)
+    expect(a.source).toBe('derived')
+    expect(a).toMatchObject({ declared: 31, actual: 25, delta: -6, ok: false })
+    expect(poiConservationNote(truncated)).toContain('少 6 处')
+
+    const oversent = {
+      poi: {
+        categories: [{ category: 'medical', in_circle: 18 }],
+        total: 258,
+        in_circle: 18,
+        points: Array.from({ length: 151 }, () => ({ category: 'medical' })),
+      },
+    } as unknown as LivingCircleReport
+    const b = poiConservation(oversent)
+    expect(b).toMatchObject({ declared: 18, actual: 151, delta: 133, ok: false })
+    expect(poiConservationNote(oversent)).toContain('旧版口径')
+  })
+
+  it('离线报告（categories 为空）不误报不守恒', () => {
+    const offline = {
+      poi: { categories: [], total: 0, in_circle: 0, points: [] },
+    } as unknown as LivingCircleReport
+    expect(poiConservation(offline)).toMatchObject({ declared: 0, actual: 0, ok: true })
+    expect(poiConservationNote(offline)).toBeNull()
   })
 
   it('盲区口径：1km 半径、缺失∈三要素、多边形闭合；且盲区必须落在可达区内', () => {
@@ -344,6 +546,15 @@ describe('F1 · data_origin 四态徽标映射（P0-1 单一真相源）', () =>
     const b = dataOriginBadge({ data_origin: 'live', served_from: 'cache' })
     expect(b.label).toBe('历史实时 · 离线可查')
     expect(b.tone).toBe('info')
+  })
+
+  it('U26：served_from=nearby_cache（邻近命中）→ 邻近历史实时（蓝，非"真实数据"）', () => {
+    // 邻近缓存（原中心 ≤500m）同样是缓存复用、未消耗额度 —— 徽标必须为 info 基调
+    // 而非默认 live 分支的「真实数据」，否则与横幅「未消耗百度额度」自相矛盾
+    const b = dataOriginBadge({ data_origin: 'live', served_from: 'nearby_cache' })
+    expect(b.label).toBe('邻近历史实时')
+    expect(b.tone).toBe('info')
+    expect(b.detail).toMatch(/未消耗百度额度/)
   })
 
   it('offline → 离线估算（黄），且与 cache 态不冲突', () => {
@@ -581,5 +792,191 @@ describe('L10 · 对比呈现决策原语（选谁 → 怎么呈现一体决策�
       normalize: true,
       reason: 'cross-location',
     })
+  })
+})
+
+/* ── 阶段 3 · 机制层护栏（让「图上点数 == 面板数字」不再靠人工核对） ──────────────
+ *
+ * 为什么必须再加一层：阶段 1 已经有守恒判据（`poiConservation`），但它只校验
+ * **报告数据自洽**（`sum(categories[].in_circle) === len(points)`），
+ * 不校验**渲染层是否照数画完**。阶段 2 之前，渲染层各自还有 120/60 的静态上限，
+ * 于是「数据守恒但图上少画」照样能全绿 —— 护栏只守住了半程。
+ *
+ * 本组把后半程也钉住：面板的「已展示 K」必须 == 下发给渲染层的点数，
+ * 且未聚合时 == 图上标记数。三条一起成立，「点位能追到数字」才是**机器可校验**的。
+ * ------------------------------------------------------------------------- */
+
+describe('阶段 3 · 图上点数与面板数字的可对账契约', () => {
+  /** 从指标文案里取出三段数字（断言用它，而不是在测试里重算 —— 重算就变成"自己等于自己"）。 */
+  function segments(label: string): { total: number; declared: number; actual: number } {
+    const m = label.match(/采集 (\d+) · 圈内 (\d+) · 已展示 (\d+)/)
+    expect(m, `指标文案不符合三段式口径：${label}`).not.toBeNull()
+    return { total: Number(m![1]), declared: Number(m![2]), actual: Number(m![3]) }
+  }
+
+  it('3.3 面板「已展示」== 下发给渲染层的点数（`poiRenderSet().handed`）', () => {
+    for (const r of reports) {
+      const set = poiRenderSet(r.poi.points)
+      expect(segments(poiMetricLabel(r)).actual).toBe(set.handed)
+      expect(set.handed).toBe(r.poi.points.length)
+    }
+  })
+
+  it('3.3 未聚合时「图上标记数 == 面板已展示」（用户最初的诉求，机器可校验）', () => {
+    for (const r of reports) {
+      const set = poiRenderSet(r.poi.points)
+      expect(set.thinned).toBe(false) // 当前量级不触发聚合
+      expect(set.shown).toBe(segments(poiMetricLabel(r)).actual)
+    }
+  })
+
+  it('3.4 三处渲染入口取用同一份点集（同一 fixture → 同一 reps，逐点一致）', () => {
+    // live 是 BMapGL DOM、另两处是 SVG，产出形态不同、无法断言"同构节点"；
+    // 可断言的是**取数同源**：三处都经 `poiRenderSet()`，故对同一份报告必须得到同一份 reps。
+    for (const r of reports) {
+      const a = poiRenderSet(r.poi.points).reps
+      const b = poiRenderSet(r.poi.points).reps
+      expect(a.map((p) => p.id)).toEqual(b.map((p) => p.id))
+      // 三处画的是同一批点 ⇒ 点数 = 面板已展示（无聚合时）
+      expect(a).toHaveLength(segments(poiMetricLabel(r)).actual)
+    }
+  })
+
+  it('3.4 渲染层不再有静态数量上限（阈值是安全阀，不是新口径）', () => {
+    // 旧实现：`lcSnapshotPoiLayer` 默认 cap=120、降级画布 60、live POI_MARKER_CAP=120。
+    // 这三处都是"报告说有 98 处、图上只画 N 个"的第二权威。用行为断言它们不可复发：
+    const many = Array.from({ length: POI_THIN_THRESHOLD - 1 }, (_, i) => ({
+      id: `x-${i}`,
+      name: `点${i}`,
+      category: 'market',
+      lnglat: [107.95 + i * 1e-5, 26.57] as LngLat,
+      minutes: 5,
+      in_circle: true,
+    }))
+    expect(POI_THIN_THRESHOLD).toBeGreaterThan(300)
+    // ① 投影层默认不截断（旧默认 120 会砍掉 279 个）
+    expect(lcSnapshotPoiLayer(kaili.scene.center as LngLat, many)).toHaveLength(many.length)
+    // ② 点集入口在阈值内原样放行
+    const set = poiRenderSet(many)
+    expect(set.thinned).toBe(false)
+    expect(set.shown).toBe(many.length)
+  })
+
+  it('3.2 `poi.truncated` 恒存在，且未截断时 dropped=0 / cap 有值', () => {
+    for (const r of reports) {
+      expect(r.poi.truncated, '新口径报告的 poi.truncated 必须存在（无截断也要留痕）').toBeDefined()
+      expect(r.poi.truncated!.dropped).toBe(0)
+      expect(r.poi.truncated!.categories).toEqual([])
+      expect(r.poi.truncated!.cap_per_cat).toBe(200)
+    }
+  })
+
+  it('3.2 截断披露必须能与实际点集对账（kept == 实到；dropped == 逐类之和）', () => {
+    const src = kaili as unknown as LivingCircleReport
+    // 造一份"真的截断过"的报告：shopping 采集到 30、留下 25、砍掉 5
+    const truncated = {
+      ...src,
+      poi: {
+        ...src.poi,
+        categories: [{ category: 'shopping', in_circle: 25 }],
+        total: 60,
+        in_circle: 25,
+        points: src.poi.points.filter((p) => p.category === 'shopping').slice(0, 25),
+        truncated: {
+          cap_per_cat: 200,
+          dropped: 5,
+          categories: [{ category: 'shopping', kept: 25, dropped: 5 }],
+        },
+      },
+    } as LivingCircleReport
+    const tr = truncated.poi.truncated!
+    const actualCat = truncated.poi.points.filter((p) => p.category === 'shopping').length
+    // ⭐ 关键：披露里的 `kept` 必须等于**真的画出去的点数**，否则披露本身又是一套算法
+    expect(tr.categories[0].kept).toBe(actualCat)
+    expect(tr.categories[0].kept).toBe(truncated.poi.categories[0].in_circle) // 守恒
+    // `dropped` 总量必须等于逐类之和（否则「另有 N 处未展示」会与明细打架）
+    expect(tr.dropped).toBe(tr.categories.reduce((s, x) => s + x.dropped, 0))
+    expect(tr.categories[0].dropped).toBe(5)
+    expect(tr.dropped).toBe(5)
+    // 被砍掉的 5 处确实**不在**点集里（截断 = 少给点，不是少计数）
+    expect(truncated.poi.points).toHaveLength(25)
+    // 且必然被披露（不许静默）
+    expect(poiMetricLabel(truncated)).toContain('另有 5 处未展示')
+  })
+
+  it('3.6 负对照：in_circle=8 / points=6 的违规样本 → 守恒判据必须红', () => {
+    // 8 vs 6 是审查给的最小样本：差额小到"肉眼看着差不多"，守卫若靠阈值就会漏掉。
+    const bad = {
+      poi: {
+        categories: [{ category: 'medical', in_circle: 8 }],
+        total: 40,
+        in_circle: 8,
+        points: kaili.poi.points.slice(0, 6),
+        truncated: { cap_per_cat: 200, dropped: 0, categories: [] },
+      },
+    } as unknown as LivingCircleReport
+    const c = poiConservation(bad)
+    expect(c.declared).toBe(8)
+    expect(c.actual).toBe(6)
+    expect(c.delta).toBe(-2)
+    expect(c.ok).toBe(false)
+    expect(poiConservationNote(bad)).toContain('少 2 处')
+    // 同一份违规样本，指标文案必须**把差额摆在明面上**（而不是显示成自洽的样子）
+    expect(poiMetricLabel(bad)).toBe('采集 40 · 圈内 8 · 已展示 6')
+  })
+
+  it('3.6 负对照的另一半：数字自洽时**不得**误报（避免把合法报告判红/刷屏）', () => {
+    // 与上条互为对照 —— 判据既要在违规时红，也要在合法时绿。只测前者会得到
+    // 一个"永远返回 red"的假护栏（例如把判据写成恒 false），它同样毫无价值。
+    const okReport = {
+      poi: {
+        categories: [{ category: 'medical', in_circle: 6 }],
+        total: 40,
+        in_circle: 6,
+        points: kaili.poi.points.slice(0, 6),
+        truncated: { cap_per_cat: 200, dropped: 0, categories: [] },
+      },
+    } as unknown as LivingCircleReport
+    expect(poiConservation(okReport).ok).toBe(true)
+    expect(poiConservationNote(okReport)).toBeNull()
+    expect(poiMetricLabel(okReport)).toBe('采集 40 · 圈内 6 · 已展示 6')
+    expect(poiMetricLabel(okReport)).not.toContain('另有')
+  })
+
+  it('3.7 软上限告警：单类 > 200 ⇒ dropped>0 且被**显式披露**（不许静默）', () => {
+    const src = kaili as unknown as LivingCircleReport
+    // 真正造 200 个点（夹具只有 98 个，直接 slice 会得到 98 ⇒ 断言退化成"已展示 98"，测不到上限）
+    const pts200 = Array.from({ length: 200 }, (_, i) => ({
+      id: `poi-shopping-${i}`,
+      name: `购物点${i}`,
+      category: 'shopping',
+      lnglat: [107.95 + i * 1e-5, 26.57] as LngLat,
+      minutes: 6,
+      in_circle: true,
+    }))
+    const capped = {
+      ...src,
+      poi: {
+        ...src.poi,
+        categories: [{ category: 'shopping', in_circle: 200 }],
+        total: 431,
+        in_circle: 200,
+        points: pts200,
+        truncated: {
+          cap_per_cat: 200,
+          dropped: 31,
+          categories: [{ category: 'shopping', kept: 200, dropped: 31 }],
+        },
+      },
+    } as LivingCircleReport
+    expect(capped.poi.points).toHaveLength(200)
+    expect(capped.poi.truncated!.dropped).toBeGreaterThan(0)
+    const label = poiMetricLabel(capped)
+    expect(label).toContain('已展示 200')
+    expect(label).toContain('另有 31 处未展示')
+    expect(label).toContain('shopping 31')
+    expect(label).toContain('每类上限 200')
+    // 反例护栏：没截断时**不得**出现第四段（否则披露会退化成噪声、进而被忽略）
+    expect(poiMetricLabel(kaili as unknown as LivingCircleReport)).not.toContain('另有')
   })
 })

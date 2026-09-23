@@ -12,30 +12,20 @@ import { ArrowLeftRight, ArrowUpRight, GitCompare, Inbox } from 'lucide-react'
 import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
-import { planComparisonOverlay } from '../lib/livingCircle'
+import { COMPARE_ROWS, compareDesc, planComparisonOverlay, poiConservationNote } from '../lib/livingCircle'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
 import LcMap from '../components/lifecircle/LcMap'
 import type { LivingCircleReport, LifeCircleCompare, LifeCircleRecord } from '../types'
 
-function statList(r: LivingCircleReport) {
-  return {
-    '等时圈面积(15min)': `${(r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`,
-    采样点数: `${r.sampling.points.length}（可达 ${r.sampling.points.filter((p) => p.reachable).length}）`,
-    'POI 采集': `${r.poi.total} 个（圈内 ${r.poi.in_circle}）`,
-    服务盲区: `${r.blindspots.length} 处`,
-    综合评分: r.scores.total,
-  } as Record<string, number | string>
-}
-
-const ROWS = ['等时圈面积(15min)', '采样点数', 'POI 采集', '服务盲区', '综合评分'] as const
-
-function deriveDesc(row: string, av: number | string, bv: number | string, titleA: string, titleB: string): string {
-  if (row === '综合评分') return av > bv ? `${titleA}更成熟` : `${titleB}设施配置更强`
-  if (row === '服务盲区') return av > bv ? `${titleA}盲区更多，需重点补配` : `${titleB}盲区更少`
-  if (row === 'POI 采集') return bv > av ? `${titleB}设施密度更高` : `${titleA}主城区覆盖尚可`
-  return bv > av ? `${titleB}可达范围更大` : `${titleA}可达范围更大`
-}
+/**
+ * 差异表的行定义**不在这里** —— 已收进 `lib/livingCircle.ts` 的 `COMPARE_ROWS`（单一真源）。
+ *
+ * 原来此处是**三份平行行数据**：`statList()`（卡片）+ `ROWS`（差异表）+ `deriveDesc()` 的
+ * 行名字符串分派。卡片与差异表**同屏**却各有一套行名；`deriveDesc()` 又把 `statList()` 的
+ * **显示串**交给 `>` 比较（JS 字符串走逐字符字典序）⇒ 盲区行 `'0 处' > '1 处'` 为 false，
+ * 输出「北京劲松盲区更少」= **事实相反**。现在行名 / 取值 / 方向 / 句式都收在 `COMPARE_ROWS`。
+ */
 
 /** 对比对象下拉（原生 select，风格随项目，A/B 不可相同）。 */
 function SceneSelect({ label, value, taken, options, onChange }: {
@@ -141,8 +131,6 @@ export default function ComparePage() {
   const [a, b] = SAMPLE_COMMUNITIES
   const ra: LivingCircleReport = a.report
   const rb: LivingCircleReport = b.report
-  const sa = statList(ra)
-  const sb = statList(rb)
 
   if (!isFixture && loading) {
     return (
@@ -187,14 +175,30 @@ export default function ComparePage() {
   const useReal = !isFixture && cmp != null
   const names = useReal ? [cmp!.reports[0].scene.name, cmp!.reports[1].scene.name] : [a.title, b.title]
   const cards = useReal ? cmp!.reports : [ra, rb]
-  const diffRows = useReal
-    ? cmp!.diff.map((d) => ({ metric: d.metric, av: d.a_value, bv: d.b_value, desc: d.desc }))
-    : ROWS.map((row) => ({
-        metric: row,
-        av: sa[row],
-        bv: sb[row],
-        desc: deriveDesc(row, sa[row], sb[row], a.title, b.title),
-      }))
+  /* 真实态的行由后端按**同一份行定义表**产出（一致性靠两侧测试读同一份契约夹具对齐）；
+     演示态由 `COMPARE_ROWS` 就地算。两模式**形状相同**，故不再有「a_value → av」这层改名。 */
+  const diffRows: LifeCircleCompare['diff'] = useReal
+    ? cmp!.diff
+    : COMPARE_ROWS.map((def) => {
+        const na = def.num(cards[0])
+        const nb = def.num(cards[1])
+        return {
+          metric: def.key,
+          a_value: na,
+          b_value: nb,
+          desc: compareDesc(def, na, nb, names[0], names[1]),
+        }
+      })
+
+  /* R6.9：拆行把「圈内 POI」单列成一个数 —— 若不与拆行**同批**披露，图与数的矛盾就从
+     「肉眼可见」变成「看不见」（症状转移）。文案直接调 poiConservationNote()，不新写一套。 */
+  const conservationNotes =
+    cards.length >= 2
+      ? cards.slice(0, 2).flatMap((r, i) => {
+          const note = poiConservationNote(r)
+          return note ? [`${names[i]}：${note}`] : []
+        })
+      : []
 
   // 「选谁」与「怎么呈现」由同一决策驱动：同片→单图真实叠加；跨城→双图+归一示意
   const plan = cards.length >= 2 ? planComparisonOverlay(cards[0].scene.center, cards[1].scene.center) : null
@@ -218,14 +222,17 @@ export default function ComparePage() {
             {diffRows.map((row) => (
               <tr key={row.metric} className="border-b border-line/60 text-body text-ink">
                 <td className="py-2.5 pr-3 font-medium text-ink">{row.metric}</td>
-                <td className="py-2.5 pr-3">{row.av}</td>
-                <td className="py-2.5 pr-3">{row.bv}</td>
+                <td className="py-2.5 pr-3">{row.a_value}</td>
+                <td className="py-2.5 pr-3">{row.b_value}</td>
                 <td className="py-2.5 text-aux text-ink-2">{row.desc}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {conservationNotes.length > 0 && (
+        <p className="mt-3 text-tag text-risk">{conservationNotes.join('　')}</p>
+      )}
       <button
         onClick={() => navigate('/life-circle/kaili')}
         className="mt-4 inline-flex items-center gap-1.5 rounded-chip bg-primary px-3.5 py-2 text-aux font-medium text-white hover:bg-primary-deep"
@@ -308,10 +315,10 @@ export default function ComparePage() {
               <MiniRadar report={r} />
             </div>
             <div className="mt-2 border-t border-line pt-3">
-              {(Object.keys(statList(r)) as string[]).map((k) => (
-                <div key={k} className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0">
-                  <span className="text-tag text-ink-3">{k}</span>
-                  <span className="text-aux font-medium text-ink">{statList(r)[k]}</span>
+              {COMPARE_ROWS.map((def) => (
+                <div key={def.key} className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0">
+                  <span className="text-tag text-ink-3">{def.key}</span>
+                  <span className="text-aux font-medium text-ink">{def.cell(r)}</span>
                 </div>
               ))}
             </div>

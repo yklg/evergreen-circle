@@ -40,6 +40,19 @@ export interface BMapMap {
   enableScrollWheelZoom(): void
   panTo(point: BMapPoint): void
   openInfoWindow(win: BMapInfoWindow, point: BMapPoint): void
+  /** 地理坐标 → 容器像素（HeatFieldOverlay 热力命中测试 / canvas 绘制用） */
+  pointToPixel(point: BMapPoint): { x: number; y: number }
+  /** 地图 DOM 容器（HeatFieldOverlay 挂 canvas 覆盖层；BMapGL Map 官方方法） */
+  getContainer(): HTMLElement
+  /** 地图级事件订阅（平移/缩放重绘热力覆盖层；SDK 支持，测试桩可缺省） */
+  addEventListener?(event: string, fn: () => void): void
+  removeEventListener?(event: string, fn: () => void): void
+  /** 当前中心（BD-09 GL Point）——C7 flyTo 起飞前视口快照；测试桩可缺省 */
+  getCenter?(): BMapPoint
+  /** 当前缩放级别——同上 */
+  getZoom?(): number
+  /** 平滑飞行到目标（C7「定位到此」）；GL 支持，测试桩可缺省（回退 centerAndZoom） */
+  flyTo?(point: BMapPoint, zoom: number): void
 }
 
 export interface BMapMapCtor {
@@ -87,7 +100,8 @@ export interface BMapMarkerCtor {
   new (point: BMapPoint, opts?: { icon?: BMapIcon; title?: string; enableDragging?: boolean }): BMapMarker
 }
 
-export type BMapPolygon = BMapMapOverlay
+/** GL Polygon 运行时自带事件订阅（与 Marker 同族）；类型面补齐为可选事件方法（调用处 ?. 防御桩缺失） */
+export type BMapPolygon = BMapMapOverlay & Partial<BMapEventListener>
 
 export interface BMapPolygonCtor {
   new (
@@ -101,6 +115,55 @@ export interface BMapPolygonCtor {
       strokeOpacity?: number
     },
   ): BMapPolygon
+}
+
+/**
+ * 可交互覆盖物（C1/C5 交互系列）：在 BMapMapOverlay 上补 GL 事件订阅面。
+ *
+ * ⚠️ GL 覆盖物事件是 **mouseover/mouseout**（无 mouseenter/mouseleave）——覆盖物无子元素，
+ * 两者语义等价，但 mock 与真机都必须按 mouseover/mouseout 派发。
+ * 事件载荷见 `BMapOverlayEvent`：取容器像素用 `pixel`；`point` 是投影平面坐标，**禁作经纬度**。
+ */
+export interface BMapEventListener {
+  addEventListener(type: 'click' | 'mouseover' | 'mouseout' | 'mousemove' | string, fn: (e: BMapOverlayEvent) => void): void
+  removeEventListener?(type: string, fn: (e: BMapOverlayEvent) => void): void
+}
+
+export type BMapInteractiveOverlay = BMapMapOverlay & BMapEventListener
+
+/** 圈线命中线 / 折线（C1：沿环线的透明加宽命中层） */
+export type BMapPolyline = BMapInteractiveOverlay
+
+export interface BMapPolylineCtor {
+  new (
+    points: BMapPoint[],
+    opts?: {
+      strokeColor?: string
+      strokeWeight?: number
+      strokeOpacity?: number
+      strokeStyle?: string
+      cursor?: string
+    },
+  ): BMapPolyline
+}
+
+/** 圆形覆盖物（C6：补点处方 1km 服务范围圈；radius 单位 = 米） */
+export type BMapCircle = BMapInteractiveOverlay
+
+export interface BMapCircleCtor {
+  new (
+    center: BMapPoint,
+    radius: number,
+    opts?: {
+      strokeColor?: string
+      strokeWeight?: number
+      strokeOpacity?: number
+      fillColor?: string
+      fillOpacity?: number
+      strokeStyle?: string
+      cursor?: string
+    },
+  ): BMapCircle
 }
 
 export interface BMapIconCtor {
@@ -157,6 +220,8 @@ export interface BMapGLNamespace {
   Map: BMapMapCtor
   Point: BMapPointCtor
   Polygon: BMapPolygonCtor
+  Polyline: BMapPolylineCtor
+  Circle: BMapCircleCtor
   Marker: BMapMarkerCtor
   Icon: BMapIconCtor
   Label: BMapLabelCtor

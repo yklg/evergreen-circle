@@ -52,7 +52,7 @@ export function VEvidenceCard({ ev, index, highlighted }: { ev: Evidence; index?
           <span className="text-tag text-ink-3">#{index + 1}</span>
         )}
         {freshLabel && (
-          <span className="rounded-chip bg-paper px-1.5 h-5 inline-flex items-center text-tag text-ink-3">{freshLabel}</span>
+          <span className="rounded-chip bg-bg px-1.5 h-5 inline-flex items-center text-tag text-ink-3">{freshLabel}</span>
         )}
         <span className="ml-auto inline-flex items-center gap-1 text-tag text-ink-3">
           可信度 {credPct}

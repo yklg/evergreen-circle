@@ -73,7 +73,7 @@ export function VDecisionReplay({
           </div>
         </div>
 
-        <div className="mt-2 max-h-28 overflow-y-auto rounded-btn bg-paper p-2 text-tag leading-relaxed text-ink-2">
+        <div className="mt-2 max-h-28 overflow-y-auto rounded-btn bg-bg p-2 text-tag leading-relaxed text-ink-2">
           {cur.response || cur.prompt}
         </div>
 

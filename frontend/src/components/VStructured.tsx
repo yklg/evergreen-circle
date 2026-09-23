@@ -46,7 +46,7 @@ export function VPricingTable({ data }: { data: Row[] }) {
     <div className="mt-4 space-y-4">
       {data.map((brand, bi) => (
         <div key={bi} className="overflow-hidden rounded-card border border-line bg-white">
-          <div className="flex items-center justify-between bg-paper px-4 py-2">
+          <div className="flex items-center justify-between bg-bg px-4 py-2">
             <span className="text-aux font-semibold text-ink">{String(brand.brand ?? '')}</span>
             <span className="rounded-chip bg-primary-tint px-2 py-0.5 text-tag text-primary-deep">
               {String(brand.model_type ?? '')}{brand.free_tier ? ' · 含免费版' : ''}
@@ -95,7 +95,7 @@ export function VPersonaCards({ data }: { data: Row[] }) {
             <div key={`${bi}-${pi}`} className="rounded-card border border-line bg-white p-4">
               <div className="flex items-center gap-2">
                 <span className="text-aux font-semibold text-ink">{String(p.name ?? '')}</span>
-                <span className="rounded-chip bg-paper px-2 py-0.5 text-tag text-ink-3">{String(brand.brand ?? '')}</span>
+                <span className="rounded-chip bg-bg px-2 py-0.5 text-tag text-ink-3">{String(brand.brand ?? '')}</span>
                 {p.segment ? <span className="text-tag text-ink-3">· {String(p.segment)}</span> : null}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-tag">
@@ -105,7 +105,7 @@ export function VPersonaCards({ data }: { data: Row[] }) {
                 {decisionFactors.length > 0 && <Field label="决策因素" items={decisionFactors} />}
               </div>
               {p.migration_cost ? (
-                <p className="mt-2 rounded-btn bg-paper px-2.5 py-1.5 text-tag text-ink-2">
+                <p className="mt-2 rounded-btn bg-bg px-2.5 py-1.5 text-tag text-ink-2">
                   迁移成本：{String(p.migration_cost)}
                 </p>
               ) : null}

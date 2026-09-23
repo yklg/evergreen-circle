@@ -94,11 +94,11 @@ export default function TracePage() {
                       <div className="mt-3 space-y-2 border-t border-line pt-3 text-tag">
                         <div>
                           <div className="font-medium text-ink-3">Prompt（输入）</div>
-                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-paper p-2 leading-relaxed text-ink-2">{sp.prompt}</pre>
+                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-bg p-2 leading-relaxed text-ink-2">{sp.prompt}</pre>
                         </div>
                         <div>
                           <div className="font-medium text-ink-3">Output（输出）</div>
-                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-paper p-2 leading-relaxed text-ink-2">{sp.response}</pre>
+                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-bg p-2 leading-relaxed text-ink-2">{sp.response}</pre>
                         </div>
                         <div className="flex gap-4 text-ink-3">
                           <span>输入 {sp.prompt_tokens} tok</span>

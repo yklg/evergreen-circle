@@ -11,7 +11,7 @@ import { getLifeCircleRecords } from '../mocks/livingCircleReports'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports } from '../lib/api'
 import type { LifeCircleRecord } from '../types'
-import { scoreGrade } from '../lib/livingCircle'
+import { scoreGrade, degradeDetailLabel } from '../lib/livingCircle'
 
 function fmtTime(iso: string): string {
   const d = new Date(iso)
@@ -130,13 +130,21 @@ export default function DashboardPage() {
                       </span>
                       <span>{fmtTime(r.checked_at)}</span>
                       {r.data_origin === 'fixture_sample' && (
-                        <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5">演示数据</span>
+                        <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5 text-[#8A6420]">演示数据</span>
                       )}
                       {r.data_origin === 'live' && (
                         <span className="rounded-chip bg-primary-tint px-1.5 py-0.5 text-primary-deep">真实路网测评</span>
                       )}
-                      {r.data_origin === 'offline' && (
-                        <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5 text-warn-deep">离线估算</span>
+                      {r.data_origin === 'offline' && !r.degraded && (
+                        <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5 text-[#8A6420]">离线估算</span>
+                      )}
+                      {r.data_origin === 'offline' && r.degraded && (
+                        <span
+                          className="rounded-chip border border-risk/60 bg-risk/10 px-1.5 py-0.5 text-[#8F5E56]"
+                          title={`${r.degraded.note ?? '百度调用预算耗尽，实时采集被熔断，已降级为离线估算'} · 配额恢复后可发起实时重检`}
+                        >
+                          配额降级 · {degradeDetailLabel(r.degraded.detail)}
+                        </span>
                       )}
                       {scorable && (
                         <span className="rounded-chip bg-primary-tint px-1.5 py-0.5 text-primary-deep">综合 {grade!.label}</span>

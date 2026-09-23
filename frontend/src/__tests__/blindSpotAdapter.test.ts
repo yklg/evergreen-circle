@@ -19,6 +19,7 @@ import {
   blindSevSpec,
   LC_BLIND_SEV,
   LC_FIX_DOT,
+  fixPlusSvg,
 } from '../lib/livingCircle'
 
 const CENTER: LngLat = [106.7, 26.6]
@@ -118,5 +119,16 @@ describe('盲区渲染：连续热力 + 严重度色带', () => {
 
   it('补点处方符号色（C3 绿核）', () => {
     expect(LC_FIX_DOT).toBe('#1f9e63')
+  })
+
+  it('补点图标单一出口契约（C4/R7 升级：图例与地图 Marker 消费同一 fixPlusSvg 导出）', () => {
+    // 旧断言只锚常量值——防不住「图例与地图标记不同源」这一真实缺陷（C4 的病根），
+    // 故升级为契约：SVG 串的形状由单一出口产出，两处消费方共吃同一函数。
+    const svg = fixPlusSvg(LC_FIX_DOT)
+    const strokes = svg.match(new RegExp(`stroke="${LC_FIX_DOT}"`, 'g')) ?? []
+    expect(strokes.length).toBe(2) // 圆环描边 + 绿色十字（各一处）
+    expect(svg).toContain('stroke="#ffffff"') // 白描边十字
+    expect(svg).toContain('viewBox="0 0 18 18"') // 固有尺寸（G5：尺寸归消费方 CSS 缩放）
+    expect(fixPlusSvg('#1677ff')).toContain('stroke="#1677ff"') // 颜色参数化（对比蓝系可复用）
   })
 })

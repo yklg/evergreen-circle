@@ -81,7 +81,7 @@ export function VMetricsPanel({ metrics }: { metrics?: ReportMetrics }) {
 
 function Pill({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-chip bg-paper px-2.5 py-1 text-ink-2">
+    <span className="inline-flex items-center gap-1 rounded-chip bg-bg px-2.5 py-1 text-ink-2">
       <span className="text-ink-3">{label}</span>
       <span className="font-semibold text-primary-deep">{value}</span>
     </span>

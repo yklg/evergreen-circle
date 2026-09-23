@@ -88,7 +88,7 @@ function renderSummaryMode(section: ReportSection) {
   if (elements.length === 0) return null
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-chip bg-gradient-to-r from-tint to-card p-2">
+    <div className="flex flex-wrap items-center gap-2 rounded-chip bg-gradient-to-r from-primary-tint to-card p-2">
       {elements.map((el, idx) => (
         <div key={idx} className="flex items-center gap-1.5">
           <div className={`flex h-7 w-7 items-center justify-center rounded-md text-white ${el.color}`}>
