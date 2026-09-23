@@ -39,14 +39,25 @@ DEGRADED_QUERY = "我想去个没去过的安静小城玩三天"
 _QUERIES_BY_TYPE = {"guide": [QUERIES["guide"], DEGRADED_QUERY],
                     "assessment": [QUERIES["assessment"]]}
 DEST = {"guide": ["大理"], "assessment": ["成都", "杭州"]}
+# ── 组队夹具 ─────────────────────────────────────────────
+# 一份**合法且非兜底**的团队（全部 id 真实存在于 experts.json）。
+# 刻意包含 3 位从未在真实调研里出镜过的专家（L2-003 / L1-012 / L1-003），
+# 使「节点出镜者是否真的跟随组队结果」成为可断言的事实 —— 见
+# test_expert_lineup_follows_dispatch。
+#
+# 历史教训：本夹具此前填的是 orchestrator.py:1288-1295 的硬编码兜底 6 人，
+# 于是这条流水线测试每次都把「真组队失败」验证成「通过」—— 测了等于没测。
 _DISPATCH_TEAM = [
-    {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-    {"id": "L2-001", "reason": "策略顾问负责目的地研判与方案取舍"},
-    {"id": "L2-002", "reason": "预算与合规顾问负责成本拆解"},
-    {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
-    {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
-    {"id": "L3-003", "reason": "质检负责四铁律审裁"},
+    {"id": "L3-001", "reason": "统筹拆解与终审"},
+    {"id": "L2-003", "reason": "亲子客群画像与动机分析"},
+    {"id": "L2-002", "reason": "成本拆解与预算建模"},
+    {"id": "L1-012", "reason": "亲子项目采集与设施核查"},
+    {"id": "L1-003", "reason": "古镇信息采集与门票核查"},
+    {"id": "L1-030", "reason": "舆情采集与情感分析"},
 ]
+# 已知病症样本：修复前 7 轮真实调研实际出镜的 6 人。保留它不是当作正确答案，
+# 而是供断言「出镜集合不得恒等于它」（外部经验里的 golden-sample 回归思路）。
+_LEGACY_FALLBACK_TEAM = ["L3-001", "L2-001", "L2-002", "L1-025", "L1-030", "L3-003"]
 _EID_RE = re.compile(r"\[(e_[0-9a-f]{8})\|")
 
 
@@ -170,7 +181,7 @@ def _analysis_payload(rtype, dests, eids):
     payload = {
         "claims": [
             {"text": f"{dests[0]} 的交通便利度与住宿性价比均优于同类目的地。", "field": "overview",
-             "evidence_ids": eids[:2], "author": "L2-001", "claim_type": "mixed"},
+             "evidence_ids": eids[:2], "author": "L2-003", "claim_type": "mixed"},
         ],
         "trends": {"x": ["2024", "2025", "2026"], "unit": "万人次",
                    "series": [{"name": d, "values": [12, 18, 27]} for d in dests]},
@@ -739,3 +750,91 @@ def test_midway_outage_degrades_with_visible_thought(monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_structured_truncation_emits_visible_degrade_once(monkeypatch):
+    """LT-2 / LT-2b（brisk-pond-finch L2）：spots 与结构化双双「截断致空」时，
+    全任务恰出 1 条 kind:reflect 降级 thought（共享去重）；事件协议不变
+    （无新事件类型、progress 单调、done 收尾、无 error）。正常路径零误报。"""
+    _install_fakes(monkeypatch)
+
+    def fake_signals(query, destinations, focus, evidences, top_n, model, trunc_report=None):
+        if trunc_report is not None:
+            trunc_report.append(True)  # 模拟工作线程内「截断且产物空」求值
+        return []
+
+    monkeypatch.setattr(O, "_extract_spot_signals", fake_signals)
+    real = O.chat_json
+
+    def wrapper(*a, **k):
+        if str(k.get("purpose") or "").startswith("结构化目的地知识"):
+            return None
+        return real(*a, **k)
+
+    monkeypatch.setattr(O, "chat_json", wrapper)
+    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    _, evs, report = _run_pipeline("guide")
+    notes = [e for e in evs if e["type"] == "thought" and e["data"].get("kind") == "reflect"
+             and "被截断" in (e["data"].get("text") or "")]
+    assert len(notes) == 1, "两处触发点共享去重，降级提示恰一次"
+    types = [e["type"] for e in evs]
+    assert types[-1] == "done" and "error" not in types
+    percents = [e["data"]["percent"] for e in evs if e["type"] == "progress"]
+    assert percents == sorted(percents)
+    assert report, "降级不崩：报告照常产出"
+
+
+def test_normal_pipeline_has_no_truncation_degrade_note(monkeypatch):
+    """LT-2 反例（防误报）：正常全量假 LLM（无截断）跑完，不得出现降级 thought。"""
+    _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("guide")
+    assert report and not [e for e in evs
+                           if e["type"] == "thought"
+                           and "被截断" in (e["data"].get("text") or "")]
+
+
+# ── 组队 → 出镜者 契约（quiet-shore-pike R2）──────────────────
+# 位置说明：本文件按定义顺序收集，且上方 LT-2/防误报两条对「多跑一轮完整流水线」
+# 引入的 ContextVar/去重状态敏感。故新增用例一律追加在文件末尾，不插在中间。
+def _node_expert(evs, node):
+    """取某 DAG 节点 working 帧上的 expert（E5 外部经验：断言中间状态而非报告文本）。"""
+    got = [e["data"].get("expert") for e in evs
+           if e["type"] == "node_update" and e["data"].get("node") == node
+           and e["data"].get("status") == "working"]
+    return got[0] if got else None
+
+
+def test_expert_lineup_follows_dispatch(monkeypatch):
+    """节点出镜者必须来自本次组队结果，而不是文件序首位或硬编码。
+
+    守护点：采集/分析的出镜者随 _DISPATCH_TEAM 变化。夹具里特意放进了
+    L1-012 / L2-003 这两位「真实 7 轮调研从未出镜」的专家 —— 若选人逻辑退回旧的
+    `startswith("L1")` 取首位，出镜者就会变回 L1-001 之类的文件序首位。
+    """
+    _install_fakes(monkeypatch)
+    _, evs, report = _run_pipeline("guide")
+    assert report is not None
+    assert sorted(report["experts"]) == sorted(m["id"] for m in _DISPATCH_TEAM), \
+        "报告署名应等于组队结果"
+    assert _node_expert(evs, "collect") == "L1-012", "采集出镜者未跟随组队（团队里首位 L1）"
+    assert _node_expert(evs, "analyze") == "L2-003", "分析出镜者未跟随组队（团队里首位 L2）"
+    assert report["experts"] != _LEGACY_FALLBACK_TEAM, \
+        "出镜集合恒等于兜底名单，说明真组队从未生效"
+
+
+@pytest.mark.xfail(strict=True, reason="quiet-shore-pike Stage B1 未实施："
+                                       "auditor 的 `next(... id==\"L3-003\", \"L3-003\")` "
+                                       "默认值即筛选条件，结构上永远得 L3-003，组队结果对它零影响")
+def test_auditor_follows_team_not_literal(monkeypatch):
+    """质检出镜者应由组队/能力解析决定，而不是被字面量钉死在 L3-003。
+
+    注意本钉**不要求**换掉质检总监的人设（docs/AGENTS.md §3 规定 audit 由 L3
+    决策层主导，这是设计意图）。它要求的是：当团队里没有 L3-003 时，出镜者应是
+    解析出来的某位决策层专家，而不是悄悄用一个不在队里的 id 顶上。
+    """
+    _install_fakes(monkeypatch)
+    _, evs, _ = _run_pipeline("guide")
+    assert "L3-003" not in [m["id"] for m in _DISPATCH_TEAM]
+    auditor = _node_expert(evs, "audit")
+    assert auditor in [m["id"] for m in _DISPATCH_TEAM], \
+        f"质检由队外专家出镜：{auditor}"

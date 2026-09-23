@@ -398,6 +398,12 @@ async def generate_clarify(task_id: str, query: str) -> AsyncIterator[Dict[str, 
         _GEN_INFLIGHT.pop(task_id, None)
 
 
+def _refine_scope_line(destinations: List[str]) -> str:
+    """精修提示的目的地约束：精修路径不经过 _analyze，拿不到行白名单，只能在提示层守。"""
+    names = "、".join(str(d) for d in (destinations or []) if str(d).strip())
+    return (f"本报告只调研 {names}，不得引入其它城市或目的地作为对比对象或举例。" if names else "")
+
+
 def _rewrite_section(section: Dict[str, Any], extra_context: Dict[str, Any],
                      system_prompt: Optional[str] = None) -> Dict[str, Any]:
     """基于补充材料（extra_context['digest']）重写单个章节段落，就地标注 refined + absorbed。
@@ -602,6 +608,7 @@ def refine_section(report_id: str, section_id: str, annotations: List[str]) -> D
     system_prompt = (
         "你是资深旅游调研分析师。用户对报告某章节提出了批注/进一步调研诉求，"
         "请基于已有证据与批注，把该章节重写得更深、更厚、更有针对性——补充论证、数据、对比与独立判断。"
+        + _refine_scope_line(destinations) +
         '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
     )
     user_digest = (
@@ -733,6 +740,7 @@ async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]
     system_prompt = (
         "你是资深旅游调研分析师。报告已归属了一批新的高可信度证据，请基于这些证据把章节重写得更深、更厚、"
         "更有针对性——补充论证、数据、对比与独立判断。"
+        + _refine_scope_line(rep.get("destinations") or []) +
         '输出 JSON：{"paragraphs":["段落"],"key_takeaway":"核心判断","highlights":["亮点"]}。只输出 JSON。'
     )
     sections = rep.get("sections", []) or []
@@ -1244,56 +1252,168 @@ def _plan_research(query: str, clar: Dict[str, Any], max_angles: int = 7,
     }
 
 
-# ── 编排：LLM 动态指派专家（含理由）─────────────────────────
+# ── 编排：LLM 动态指派专家（含理由 + 降级三态）────────────────
+# 团队配额：(职级, 下限, 上限, 名册里的角色称呼)。同一份常量既拼进指派 prompt、
+# 又驱动 _composition_violations —— 此前「1×L3 + 1-2×L2 + 3-6×L1」只是 prompt 里的
+# 口头承诺，代码一行没校验（TC-E07 钉的就是这个洞）。
+_TEAM_QUOTA = (("L3", 1, 1, "决策层统筹"), ("L2", 1, 2, "策略顾问"), ("L1", 3, 6, "执行专家"))
+_TEAM_QUOTA_DESC = "、".join(
+    (f"{lo}-{hi} 位 {lvl} {name}" if lo != hi else f"{lo} 位 {lvl} {name}")
+    for lvl, lo, hi, name in _TEAM_QUOTA)
+# 兜底组队按职级从名册现算（不再写死 id 清单）；函数组优先，保住舆情位的语义。
+_FALLBACK_PICK = {"L3": 1, "L2": 2, "L1": 3}
+
+
+def _levels_of(ids, level_of: Dict[str, str]) -> Counter:
+    return Counter(level_of.get(i, "?") for i in ids)
+
+
+def _composition_violations(member_ids: List[str], level_of: Dict[str, str]) -> List[str]:
+    """按 _TEAM_QUOTA 检查层级配比，返回违规说明（空列表即合规）。"""
+    n = _levels_of(member_ids, level_of)
+    out = []
+    for lvl, lo, hi, _name in _TEAM_QUOTA:
+        c = n.get(lvl, 0)
+        if not lo <= c <= hi:
+            out.append(f"{lvl} 期望 {lo}-{hi} 位，实得 {c} 位")
+    return out
+
+
+def _coerce_dispatch(raw: Any, valid_ids: set, level_of: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    """把指派产出规整成 {lead, members, repairs}；形状不符一律 None（交调用方判降级）。
+
+    三道处理都必须留痕，旧实现是三道无痕兜底：
+      - 幻觉/非法 id：丢弃（旧实现已有）；
+      - 重复 id：去重保序（旧实现会虚增 missions）；
+      - lead 悬空或非法：归一到队内决策层（旧实现直接 `members[0]`，无声换人）。
+    """
+    if not isinstance(raw, dict):
+        return None
+    members: List[Dict[str, str]] = []
+    seen: set = set()
+    dropped = 0
+    for m in raw.get("members") or []:
+        if not isinstance(m, dict):
+            dropped += 1
+            continue
+        mid = m.get("id")
+        if not isinstance(mid, str) or mid not in valid_ids:
+            dropped += 1
+            continue
+        if mid in seen:
+            dropped += 1
+            continue
+        seen.add(mid)
+        members.append({"id": mid, "reason": str(m.get("reason") or "").strip()})
+    if not members:
+        return None
+    repairs: List[str] = []
+    if dropped:
+        repairs.append(f"丢弃 {dropped} 个非法/重复指派项")
+    lead = raw.get("lead")
+    if not (isinstance(lead, str) and lead in seen):
+        if isinstance(lead, str) and lead:
+            repairs.append(f"lead {lead} 不在队内，已归一")
+        lead = next((m["id"] for m in members if level_of.get(m["id"]) == "L3"),
+                    members[0]["id"])
+    return {"lead": lead, "members": members, "repairs": repairs}
+
+
+def _fallback_team(experts: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """规则兜底组队：按职级从名册取，函数组 L1 排在行业组之前。
+
+    注意它**只在 LLM 完全不可用时**才到这里，且调用方必然同时给出 degraded ——
+    「兜底」与「真组队」在下游必须可区分，否则症状会伪装成业务决策。
+    """
+    def pick(level: str, want: int) -> List[Dict[str, Any]]:
+        pool = [e for e in experts if e["level"] == level]
+        # 函数组（采集/舆情）优先，保证降级轮里 collect/舆情两位仍有对口人
+        pool.sort(key=lambda e: 0 if e.get("group") == "function" else 1)
+        return pool[:want]
+
+    chosen = pick("L3", _FALLBACK_PICK["L3"]) + pick("L2", _FALLBACK_PICK["L2"]) \
+        + pick("L1", _FALLBACK_PICK["L1"])
+    return [{"id": e["id"], "reason": f"规则兜底：按 {e['level']} 职级配额选入"}
+            for e in chosen]
+
+
+def _record_dispatch_span(msgs: List[Dict[str, str]], decision: str) -> None:
+    """把降级原因写进 trace，让决策回放看得见「这次不是真组队」。
+
+    观测不得变成新的失败面：不在调研流程内（无 task_id）时 record_span 自行短路。
+    """
+    try:
+        trace.record_span(model=_model("fast"), messages=msgs, response="",
+                          decision=decision)
+    except Exception:  # noqa: BLE001  —— 观测失败不得带崩编排
+        pass
+
+
 def _dispatch_experts(query: str, destinations: List[str], focus: List[str]) -> Dict[str, Any]:
+    """动态指派专家团队，返回 {lead, members, degraded, degraded_reason, repairs}。
+
+    `degraded` 恒存在（成功为 None）：让「LLM 挑出来的队」与「规则凑出来的队」
+    在契约层可区分。三态取值见 _dispatch_experts 内注释。
+    降级标记只走 trace 与运行中 SSE，不进报告 payload（见 test_report_read_compat 的
+    plan_fallback 同源约定）。
+    """
     experts = load_experts()
+    valid_ids = {e["id"] for e in experts}
+    level_of = {e["id"]: e["level"] for e in experts}
     roster = [
         {"id": e["id"], "name": e["name"], "level": e["level"],
          "role": e["role_title"], "skills": e.get("skills", [])[:3]}
         for e in experts
     ]
-    try:
-        data = chat_json(
-            [
-                {"role": "system", "content": (
-                    "你是 Verda 首席指挥官。从专家名册中为本次旅游调研挑选最合适的团队。"
-                    "规则：必须含 1 位 L3 决策层统筹、1-2 位 L2 策略顾问、3-6 位 L1 执行专家。"
-                    "为每位被选专家给出一句具体的指派理由（说明他/她负责什么、为什么适合）。"
-                    '只输出 JSON：{"lead":"专家id","members":[{"id":"专家id","reason":"指派理由"}]}。'
-                )},
-                {"role": "user", "content": (
-                    f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点维度：{'、'.join(focus)}\n"
-                    f"专家名册：{json.dumps(roster, ensure_ascii=False)}"
-                )},
-            ],
-            max_tokens=2000,
-            temperature=0.4,
-            model=_model("fast"),
-            purpose="动态指派专家团队",
-        )
-        if isinstance(data, dict) and data.get("members"):
-            valid_ids = {e["id"] for e in experts}
-            members = [
-                {"id": m["id"], "reason": m.get("reason", "")}
-                for m in data["members"]
-                if isinstance(m, dict) and m.get("id") in valid_ids
-            ]
-            lead = data.get("lead") if data.get("lead") in valid_ids else None
-            if members:
-                if not lead:
-                    lead = members[0]["id"]
-                return {"lead": lead, "members": members}
-    except Exception:
-        pass
-    fallback = [
-        {"id": "L3-001", "reason": "决策层统筹全局与终审"},
-        {"id": "L2-001", "reason": "策略顾问负责目的地研判与方案取舍"},
-        {"id": "L2-002", "reason": "预算顾问负责成本拆解与性价比判断"},
-        {"id": "L1-025", "reason": "通用采集专家负责联网取证"},
-        {"id": "L1-030", "reason": "舆情专家负责口碑与情感分析"},
-        {"id": "L3-003", "reason": "质检负责四铁律审裁"},
+    msgs = [
+        {"role": "system", "content": (
+            "你是 Verda 首席指挥官。从专家名册中为本次旅游调研挑选最合适的团队。"
+            f"规则：必须含 {_TEAM_QUOTA_DESC}。"
+            "为每位被选专家给出一句指派理由（说明负责什么、为何适合），理由不超过 20 字。"
+            '只输出 JSON：{"lead":"专家id","members":[{"id":"专家id","reason":"指派理由"}]}。'
+        )},
+        {"role": "user", "content": (
+            f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n重点维度：{'、'.join(focus)}\n"
+            f"专家名册：{json.dumps(roster, ensure_ascii=False)}"
+        )},
     ]
-    return {"lead": "L3-001", "members": fallback}
+    # max_tokens 从 2000 提到 3600：2000 在「8 位 × 长中文理由 + 思考未可关」下必被
+    # 截空（实测 span sp_dc3935abad：completion=1999、推理占 1835、response 为空）。
+    # 理由上界已同时下发，二者一起构成该调用点的输出预算契约。
+    try:
+        data = chat_json(msgs, max_tokens=3600, temperature=0.4,
+                         model=_model("fast"), purpose="动态指派专家团队")
+    except Exception as e:  # noqa: BLE001
+        # 旧实现是 `except Exception: pass` —— 有 typed error（LLMModelUnavailable /
+        # LLMNotConfigured）却无人消费，故障被伪装成「指挥官选了这 6 个人」。
+        detail = f"{type(e).__name__}: {e}"
+        _record_dispatch_span(msgs, f"动态指派专家团队· 指派调用失败（{detail[:120]}）")
+        fb = _fallback_team(experts)
+        return {"lead": fb[0]["id"], "members": fb, "repairs": [],
+                "degraded": "llm_error", "degraded_reason": detail}
+
+    team = _coerce_dispatch(data, valid_ids, level_of)
+    if team is None:
+        # 拿到了回复但不可用（截断 / 非 JSON / 形状不符 / id 全非法）。
+        # 判据复用 brisk L2 的同一读数，避免两套「是不是截断」。
+        trunc = last_finish_reason() == "length"
+        detail = ("输出被截断（思考未关或预算不足），无可用团队" if trunc
+                  else "指派产出不可解析或全部指派非法")
+        _record_dispatch_span(msgs, f"动态指派专家团队· {detail}")
+        fb = _fallback_team(experts)
+        return {"lead": fb[0]["id"], "members": fb, "repairs": [],
+                "degraded": "llm_output_unusable",
+                "degraded_reason": detail + f"（finish_reason={last_finish_reason()}）"}
+
+    ids = [m["id"] for m in team["members"]]
+    bad = _composition_violations(ids, level_of)
+    if bad:
+        # 形状可用但配比违约：保留 LLM 的团队（它仍能干活），只把违约显性化。
+        # 不静默重挑，避免「谁在选人」又从 LLM 手里滑回规则。
+        detail = "团队层级配比不符：" + "；".join(bad)
+        _record_dispatch_span(msgs, f"动态指派专家团队· {detail}")
+        return {**team, "degraded": "spec_violation", "degraded_reason": detail}
+    return {**team, "degraded": None, "degraded_reason": ""}
 
 
 DAG_NODES = [
@@ -1554,6 +1674,15 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     for e in _drain_trace():
         yield e
     member_ids = [m["id"] for m in dispatch["members"]]
+    # 降级可见：兜底队与真组队过去在前端长得一模一样（「48 位专家永远那几个」的
+    # 直接观感来源）。标记只走运行流 thought/SSE，不进报告 payload（同 plan_fallback
+    # 与 brisk L2 的既有约定）。
+    if dispatch["degraded"]:
+        yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": "L3-001",
+                              "text": f"本次专家团队为规则兜底组队，未经 LLM 动态指派"
+                                      f"（{dispatch['degraded_reason']}）——"
+                                      f"专长匹配度低于正常轮次，建议核对模型配置后重跑。",
+                              "ts": _now()})
     lead_expert = expert_by_id(dispatch["lead"]) or {}
     yield _ev("thought", {"id": _sid("th"), "kind": "dispatch", "expert": "L3-001",
                           "text": f"由 {lead_expert.get('name','决策层')} 领衔组建 {len(member_ids)} 人专家队，"
@@ -1571,6 +1700,8 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     yield _ev("message", {"id": _sid("m"), "kind": "team", "expert": "L3-001",
                           "members": member_ids, "text": "专家队已就位，开始深度采集。",
                           "dispatch": dispatch["members"],
+                          "degraded": dispatch["degraded"] or "",
+                          "repairs": dispatch.get("repairs") or [],
                           "envelope": {"sender": env_collect.sender, "receiver": env_collect.receiver,
                                        "task_type": env_collect.task_type,
                                        "payload": env_collect.payload}})
@@ -1787,6 +1918,23 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
     # ---- 4.5 spots：景点实体形成（LLM 只抽可数信号 → scoring 规则算分 → 冻结 TopN 实体表）----
     # 实体唯一来源：景点榜单/路线卡/商铺/舆情引用下游一律挂 spot_id，
     # 禁止各章用自由文本重新匹配景点名（实体一致性的结构性防线）。分数全部由规则算出，LLM 无评分话语权。
+    # L2 可见降级：结构化产物「被截断致空」绝不静默——trunc_report 在线程内求值
+    # 传回（ContextVar 单向 copy，await 后父上下文读不到），每任务至多出 1 条降级
+    # thought（spots 抽取 / 首轮结构化 / 返工轮共享去重），报告 payload 不造假数据。
+    trunc_notified = False
+
+    def _trunc_degrade_evt(flag: List[bool]) -> Optional[Dict[str, Any]]:
+        nonlocal trunc_notified
+        if flag and flag[0] and not trunc_notified:
+            trunc_notified = True
+            return _ev("thought", {
+                "id": _sid("th"), "kind": "reflect", "expert": analyst,
+                "text": "模型输出被截断（思考未关或预算不足）：榜单/行程/价位带等"
+                        "结构化可视化本次缺位——建议在「模型配置」改用支持关闭思考的"
+                        "模型（或默认模型）后重新发起调研。",
+                "ts": _now()})
+        return None
+
     frozen_entities: Dict[str, Any] = {}
     spot_entities: List[Dict[str, Any]] = []
     if "spot_ranking" in spec["structured_keys"]:
@@ -1795,10 +1943,15 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                               "text": f"景点实体阶段：从证据抽取可数信号（声量/口碑/性价比），规则算分冻结 Top{cfg['spot_topn']} 实体表……",
                               "ts": _now()})
         trace.set_context(task_id, analyst, "spots", "景点信号抽取与规则算分")
+        spot_trunc: List[bool] = []
         spot_rows = await asyncio.to_thread(_extract_spot_signals, query, destinations, focus,
-                                            evidences, cfg["spot_topn"], _model("core"))
+                                            evidences, cfg["spot_topn"], _model("core"),
+                                            trunc_report=spot_trunc)
         for e in _drain_trace():
             yield e
+        evt = _trunc_degrade_evt(spot_trunc)
+        if evt:
+            yield evt
         ranked = SC.rank_spots(spot_rows, cfg["spot_topn"])
         frozen = coerce_spot_ranking(
             {"spot_ranking": [{"destination": primary_destination, "items": ranked}]},
@@ -1821,10 +1974,12 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
         frozen_entities["spot_routes"] = real_routes
         if baidu_ok:
             matched_n = sum(1 for r in spot_entities if r.get("matched"))
-            routes_n = len(real_routes[0]["items"]) if real_routes else 0
+            route_rows = real_routes[0]["items"] if real_routes else []
+            routes_n = sum(1 for r in route_rows if r.get("routes"))
             yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
                                   "text": f"百度实体解析：{matched_n}/{len(spot_entities)} 个景点命中坐标（未命中走地理编码兜底/占位），"
-                                          f"已批量规划 {routes_n} 条真实路线（公交/地铁 + 打车估算）。",
+                                          f"已为 {routes_n}/{len(route_rows)} 个景点规划真实路线（公交/地铁 + 打车估算），"
+                                          "其余景点保留占位卡。",
                                   "ts": _now()})
         elif spot_entities:
             yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
@@ -1858,10 +2013,15 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                           "text": f"构建结构化目的地知识：{' / '.join(k for k in spec['structured_keys'] if k not in _ENTITY_STAGE_KEYS)}（字段完整、引用强制）……",
                           "ts": _now()})
     trace.set_context(task_id, analyst, "analyze", "产出结构化目的地知识Schema")
+    struct_trunc: List[bool] = []
     structured = await asyncio.to_thread(_analyze_structured, query, destinations, focus, evidences,
-                                         rtype, cfg["structured_max_tokens"], entity_hint)
+                                         rtype, cfg["structured_max_tokens"], entity_hint,
+                                         trunc_report=struct_trunc)
     for e in _drain_trace():
         yield e
+    evt = _trunc_degrade_evt(struct_trunc)
+    if evt:
+        yield evt
     structured.update(frozen_entities)  # 冻结表覆盖回写：实体单一真相源，LLM 返回也不采纳
     if "shop_list" in structured:
         # 商铺实体保真：百度 POI 回填坐标/区域（缺 AK 静默跳过 → matched 保持 False 占位）
@@ -1989,10 +2149,14 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                     for e in _drain_trace():
                         yield e
                     claims = analysis["claims"]
+                    rework_trunc: List[bool] = []
                     structured = await asyncio.to_thread(_analyze_structured, query, destinations, focus,
                                                          evidences, rtype, cfg["structured_max_tokens"],
-                                                         entity_hint)
+                                                         entity_hint, trunc_report=rework_trunc)
                     structured.update(frozen_entities)
+                    evt = _trunc_degrade_evt(rework_trunc)
+                    if evt:
+                        yield evt
                     analysis["structured"] = structured
                     yield _ev("node_update", {"node": "analyze", "status": "done"})
             rework_rounds_done += 1
@@ -2036,6 +2200,11 @@ async def run_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dict[str
                               "issues_resolved": issues_resolved})
     yield _ev("node_update", {"node": "audit", "status": "done"})
     yield _ev("progress", prog(70, "audit", len(evidences)))
+
+    # ---- 5.5 目的地行白名单收口（必须在质检/返工决策之后、任何消费者之前）----
+    # 早于 quality：滤空会拉低 schema_completeness → 多触发一轮返工、压低 consistency；
+    # 晚于 _write_one/_build_charts：写稿提示会把 analysis 行 json.dumps 注入，滤晚了正文照样引用别城。
+    _enforce_dest_rows(analysis, destinations)
 
     # ---- 6. write：多模型并行逐章撰写 ----
     writer = next((m["id"] for m in dispatch["members"] if m["id"] == "L3-002"), dispatch["lead"])
@@ -2256,6 +2425,40 @@ def _num_or_none(v) -> Optional[float]:
 def _row_name(it: Dict[str, Any]) -> str:
     """行主键：目的地名（兼容 LLM 偶发写成 name/brand 的情况，避免整行丢失）。"""
     return str(it.get("destination") or it.get("brand") or it.get("name") or "").strip()
+
+
+def _row_dest_ok(name: Any, destinations: List[str]) -> bool:
+    """行主键是否属于本次调研目的地（兼容「大理↔大理市」这类行政名变体）。"""
+    core = _core_name(str(name or "").strip())
+    if not core:
+        return False
+    return any(_name_hit(core, _core_name(d)) for d in destinations)
+
+
+def _enforce_dest_rows(analysis: Dict[str, Any], destinations: List[str]) -> Dict[str, Any]:
+    """按注册表剔除不属于本次目的地的行：analysis ∪ structured 的行主键 ⊆ destinations。
+
+    为什么必须存在：这些键由 LLM 自由产出，提示里给了目的地却管不住它顺手加对照城市
+    （真机单目的地大理，雷达里冒出丽江/香格里拉）。只剔行、不剔键：整组被剔空时
+    该键仍保留为空列表，让下游按「无数据」降级而不是 KeyError。
+    destinations 为空时不过滤（没有可信白名单可比，宁可不动）。
+    """
+    if not destinations or not isinstance(analysis, dict):
+        return analysis
+    for path, _field in RT.DEST_KEYED_ROWS:
+        segs = path.split(".")
+        holder: Any = analysis
+        for seg in segs[:-1]:
+            holder = holder.get(seg) if isinstance(holder, dict) else None
+        leaf = segs[-1]
+        if not isinstance(holder, dict):
+            continue
+        rows = holder.get(leaf)
+        if not isinstance(rows, list):
+            continue
+        holder[leaf] = [r for r in rows
+                        if isinstance(r, dict) and _row_dest_ok(_row_name(r), destinations)]
+    return analysis
 
 
 def _sanitize_radar(raw, spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -2479,17 +2682,23 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
 def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
                         research_type: str = DEFAULT_RESEARCH_TYPE,
                         max_tokens_param: int = 8000,
-                        entity_hint: str = "") -> Dict[str, Any]:
+                        entity_hint: str = "",
+                        trunc_report: Optional[List[bool]] = None) -> Dict[str, Any]:
     """产出结构化目的地知识（严格 Schema + 引用强制）。
 
     对象集来自 spec["structured_keys"]，但剔除 _ENTITY_STAGE_KEYS（景点榜等由
     spots 实体阶段冻结后覆盖回写，不交 LLM 算分）。提示词片段同样按类型查表。
     entity_hint：已冻结的景点实体表（spot_id+名），供 shop_list 等下游挂接同一批实体。
+    trunc_report（L2 可见降级）：调用方传入的单元素列表，本函数在**工作线程内**
+    写入「本次结构化调用被截断且产物全空」判定——last_finish_reason 是 ContextVar，
+    经 asyncio.to_thread 单向 copy，await 之后在父上下文里读恒为空，只能这样传回。
     """
     spec = RT.type_spec(research_type)
     keys = [k for k in spec["structured_keys"] if k not in _ENTITY_STAGE_KEYS]
     fragments = [_STRUCTURED_SCHEMA.get(k) for k in keys]
     if any(f is None for f in fragments):
+        if trunc_report is not None:
+            trunc_report.append(False)
         return {k: [] for k in spec["structured_keys"]}
     digest = _evidence_digest(evidences, limit=24)
     valid_eids = {e.evidence_id for e in evidences}
@@ -2519,15 +2728,20 @@ def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
             out.update({k: v for k, v in coerced.items() if k not in _ENTITY_STAGE_KEYS})
     except Exception:
         pass
+    if trunc_report is not None:
+        trunc_report.append(last_finish_reason() == "length"
+                            and all(not out.get(k) for k in keys))
     return out
 
 
 def _extract_spot_signals(query, destinations, focus, evidences: List[Evidence],
-                          top_n: int, model: str) -> List[Dict[str, Any]]:
+                          top_n: int, model: str,
+                          trunc_report: Optional[List[bool]] = None) -> List[Dict[str, Any]]:
     """景点实体阶段：LLM 只做**可数信号的事实抽取**（声量提及数/正面口碑占比/性价比档），
     排序与算分交给 scoring.rank_spots——数值可复现，LLM 无评分话语权。
 
     失败或无信号时返回空表（上层出「实体表为空」的如实提示），不影响已完成的其他分析。
+    trunc_report：同 _analyze_structured 的 L2 线程内截断判定回传通道。
     """
     spec_digest = _evidence_digest(evidences, limit=24)
     valid_eids = {e.evidence_id for e in evidences}
@@ -2562,8 +2776,12 @@ def _extract_spot_signals(query, destinations, focus, evidences: List[Evidence],
             if isinstance(r, dict) and str(r.get("name") or "").strip():
                 r["evidence_ids"] = _filter_eids(r.get("evidence_ids"), valid_eids)
                 out.append(r)
+        if trunc_report is not None:
+            trunc_report.append(last_finish_reason() == "length" and not out)
         return out
     except Exception:
+        if trunc_report is not None:
+            trunc_report.append(False)
         return []
 
 
@@ -2672,9 +2890,13 @@ def _spot_routes_one(dest: str, origin: str, it: Dict[str, Any]) -> List[Dict[st
 
 
 async def _build_spot_routes(dest: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """对 matched 景点批量拉真实路线（并发 + 阶段预算），产出 coerce_spot_routes 同形结构。"""
-    targets = [it for it in items
-               if it.get("matched") and it.get("lat") is not None and it.get("spot_id")]
+    """为冻结榜每个景点规划真实路线（并发 + 阶段预算），产出 coerce_spot_routes 同形结构。
+
+    行集由榜单决定、不由解析成功决定：没坐标或路线算不出的景点仍出一行、routes=[]，
+    前端据此显示占位（旧实现按 matched 预筛，把未命中景点整行丢弃，
+    真机表现为「Top7 只有 1 张路线卡」）。
+    """
+    targets = [it for it in items if it.get("spot_id")]
     if not targets or not baidu_client.available():
         return []
     g = await asyncio.to_thread(baidu_client.geocode, dest, "")
@@ -2684,6 +2906,8 @@ async def _build_spot_routes(dest: str, items: List[Dict[str, Any]]) -> List[Dic
     results: Dict[str, List[Dict[str, Any]]] = {}
 
     async def one(it: Dict[str, Any]) -> None:
+        if it.get("lat") is None or it.get("lng") is None:
+            return  # 无坐标无从算路线：占位行，省掉必然失败的配额
         try:
             routes = await asyncio.to_thread(_spot_routes_one, dest, origin, it)
             if routes:
@@ -2693,8 +2917,8 @@ async def _build_spot_routes(dest: str, items: List[Dict[str, Any]]) -> List[Dic
 
     await _run_baidu_fanout([one(it) for it in targets])
     rows = [{"spot_id": it["spot_id"], "spot_name": it.get("name", ""),
-             "routes": results[it["spot_id"]]}
-            for it in targets if it["spot_id"] in results]  # 按榜单名次保序，可复现
+             "routes": results.get(it["spot_id"], [])}
+            for it in targets]  # 按榜单名次保序，可复现
     return [{"destination": dest, "items": rows}] if rows else []
 
 
@@ -3353,9 +3577,13 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
     def chart_eids(chart_type: str) -> List[str]:
         return eids(*_fields_for_chart(chart_type))
 
+    def own(rows_iter: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """消费侧兜底：只取属于本次目的地的行（装配前已过滤，这里防新调用点漏过收口）。"""
+        return [r for r in rows_iter if _row_dest_ok(_row_name(r), destinations)]
+
     radar = analysis.get(spec["radar_key"]) or {}
     dims = radar.get("dimensions") or []
-    scores = [s for s in (radar.get("scores") or [])
+    scores = [s for s in own(radar.get("scores") or [])
               if dims and isinstance(s.get("values"), list) and len(s["values"]) == len(dims)]
     if "radar" in allowed and dims and scores:
         series = [{"name": s["destination"], "values": s["values"]} for s in scores[:4]]
@@ -3364,18 +3592,47 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
                       "evidence_ids": chart_eids("radar")})
 
     cb = spec.get("cost_bar") or {}
-    rows = ([r for r in (analysis.get(cb["key"]) or [])
+    rows = ([r for r in own(analysis.get(cb["key"]) or [])
              if isinstance(r.get(cb["value_field"]), (int, float))] if cb else [])
+
+    def cost_labels(items: List[Dict[str, Any]]) -> List[str]:
+        """同目的地多档位时把档位拼进 x 轴，否则三根柱子都叫「大理」，看不出差异。"""
+        names = [_row_name(r) for r in items]
+        same_dest_multi = len(names) > 1 and len(set(names)) < len(names)
+        out: List[str] = []
+        for r in items:
+            dest_name = _row_name(r)
+            tier = str(r.get("tier") or "").strip()
+            out.append(f"{dest_name}·{tier}" if (same_dest_multi and tier) else (dest_name or "—"))
+        return out
+
     if "cost_bar" in allowed and rows:
         bar_title = RT.cost_bar_title(research_type, len(destinations))
         specs.append({"chart_id": _sid("ch"), "type": "cost_bar", "title": bar_title,
-                      "option": C.pricing_bar(bar_title, [r["destination"] for r in rows],
+                      "option": C.pricing_bar(bar_title, cost_labels(rows),
                                               [float(r[cb["value_field"]]) for r in rows],
                                               y_name=cb["unit"]),
                       "evidence_ids": chart_eids("cost_bar")})
 
+    # 花费构成柱：数据源是结构化 cost_breakdown（交通/住宿/餐饮…），此前有数据无图。
+    # 是否产出由图集声明决定（SOLO_ONLY_CHARTS 已在 charts_for 里按目的地数剔除）。
+    cb_items: List[Dict[str, Any]] = []
+    for grp in own((analysis.get("structured") or {}).get("cost_breakdown") or []):
+        cb_items.extend(i for i in (grp.get("items") or []) if isinstance(i, dict))
+    cb_items = [i for i in cb_items if isinstance(i.get("amount"), (int, float))
+                and str(i.get("category") or "").strip()]
+    if "cost_compose" in allowed and cb_items:
+        compose_unit = str(cb_items[0].get("unit") or "元/人").strip()
+        compose_title = f"人均花费构成（{compose_unit}）"
+        specs.append({"chart_id": _sid("ch"), "type": "cost_compose", "title": compose_title,
+                      "option": C.pricing_bar(compose_title,
+                                              [str(i["category"]).strip() for i in cb_items],
+                                              [float(i["amount"]) for i in cb_items],
+                                              y_name=compose_unit),
+                      "evidence_ids": chart_eids("cost_compose")})
+
     season = analysis.get("season") or {}
-    matrix = [m for m in (season.get("matrix") or [])
+    matrix = [m for m in own(season.get("matrix") or [])
               if isinstance(m.get("values"), list) and len(m["values"]) == 12]
     if "season_heat" in allowed and matrix:
         title = "逐月出行适宜度（1-12 月）"
@@ -3386,7 +3643,7 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
                                               str(season.get("note") or "")),
                       "evidence_ids": chart_eids("season_heat")})
 
-    share = [s for s in (analysis.get("share_estimate") or [])
+    share = [s for s in own(analysis.get("share_estimate") or [])
              if isinstance(s.get("value"), (int, float))]
     if "donut" in allowed and share:
         specs.append({"chart_id": _sid("ch"), "type": "donut", "title": spec["share_title"],
@@ -3396,7 +3653,7 @@ def _build_charts(destinations, analysis, sentiment, claims=None,
 
     tr = analysis.get("trends") or {}
     tx = tr.get("x") if isinstance(tr.get("x"), list) else []
-    tseries = [s for s in (tr.get("series") or [])
+    tseries = [s for s in own(tr.get("series") or [])
                if tx and isinstance(s.get("values"), list) and len(s["values"]) == len(tx)]
     if "trend" in allowed and tx and tseries:
         title = f"发展轨迹趋势（{tr.get('unit', '')}）".replace("（）", "")

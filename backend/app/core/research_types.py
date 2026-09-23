@@ -123,7 +123,7 @@ SECTION_FIELDS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "sentiment_report": (("sentiment",), ("sentiment_donut", "platform_bar", "wordcloud")),
     "transport": (("transport",), ()),
     "shops": (("food", "budget"), ()),
-    "budget": (("budget", "cost_breakdown"), ("cost_bar",)),
+    "budget": (("budget", "cost_breakdown"), ("cost_bar", "cost_compose")),
     "stay": (("stay", "stay_options"), ()),
     "season": (("season",), ("season_heat",)),
     "route": (("route", "route_plan"), ()),
@@ -193,7 +193,7 @@ SECTION_STRUCTURED: Dict[str, Tuple[str, ...]] = {
 
 # 图表类型白名单（charts.py 能力面 ∩ 本模块使用面）
 CHART_TYPES: Tuple[str, ...] = (
-    "radar", "cost_bar", "season_heat", "donut",
+    "radar", "cost_bar", "cost_compose", "season_heat", "donut",
     "trend", "sentiment_donut", "platform_bar", "wordcloud",
 )
 
@@ -207,6 +207,32 @@ DEPRECATED_CLAIM_FIELDS: Tuple[str, ...] = (
 # 新增此类产出只需往这两个元组里加一项，编排层无需写分支。
 MULTI_ONLY_ANALYSIS_KEYS: Tuple[str, ...] = ("share_estimate",)
 MULTI_ONLY_CHARTS: Tuple[str, ...] = ("donut",)
+
+# 与上表对称：只在「单一目的地」时才成立的产出项，N≥2 时由 charts_for() 剔除
+# （多目的地要看的是城市之间的档位对比，不是同城花费构成）。
+SOLO_ONLY_CHARTS: Tuple[str, ...] = ("cost_compose",)
+
+# 以目的地为**行主键**的产出登记：「点分键路径 → 行主键字段」。
+# 编排层据此在装配前统一剔除不属于本次调研目的地的行（analysis 行主键 ⊆ destinations），
+# 新增一类按目的地分行的产出只需往这里加一行，编排层无需写分支。
+# 路径首段是 analysis 的键；`structured.` 前缀指向结构化分组（组级主键即 destination）。
+DEST_KEYED_ROWS: Tuple[Tuple[str, str], ...] = (
+    ("comparison.scores", "destination"),
+    ("livability.scores", "destination"),
+    ("budget", "destination"),
+    ("cost", "destination"),
+    ("safety_index", "destination"),
+    ("season.matrix", "destination"),
+    ("share_estimate", "name"),
+    ("trends.series", "name"),
+    ("structured.spot_ranking", "destination"),
+    ("structured.food_ranking", "destination"),
+    ("structured.spot_routes", "destination"),
+    ("structured.shop_list", "destination"),
+    ("structured.route_plan", "destination"),
+    ("structured.stay_options", "destination"),
+    ("structured.cost_breakdown", "destination"),
+)
 
 _CN_NUM: Tuple[str, ...] = ("一", "二", "三", "四", "五", "六",
                             "七", "八", "九", "十", "十一", "十二", "十三", "十四")
@@ -374,13 +400,14 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
             "住宿选型": ("住宿", "酒店", "民宿"),
             "避坑防宰": ("避坑", "坑", "宰", "注意", "防"),
         },
-        "charts": ("radar", "cost_bar", "season_heat", "donut",
+        "charts": ("radar", "cost_bar", "cost_compose", "season_heat", "donut",
                    "trend", "sentiment_donut", "platform_bar", "wordcloud"),
         "data_grid_sections": ("spots", "food", "budget", "shops", "route"),
         # 信息密度硬约束（评分/篇幅等规模参数仍归 MODE_CONFIG；这里是编辑规则），
         # 由 orchestrator 在写稿提示中注入，仅 guide 类型声明。
         "density": (
-            "信息密度铁律：榜单/表格/清单等结构化数据先行，正文只做评注与解读，禁止把数据复述成散文；"
+            "信息密度铁律：榜单/表格/清单等结构化数据先行，正文各段直接给事实、数据与机理"
+            "（不写导语、总起句、评价性收束句——核心判断已单独成块，正文不得把它复述一遍）；"
             "景点/美食/商铺一律引用给定实体表中的名称与 spot_id，禁止另起别名或重新匹配；"
             "每段至少含 1 个具体数字（价格/耗时/占比/时长）或具体实体名，否则删掉该段；"
             "禁止「众所周知/随着社会发展/总而言之」等套话开头结尾，禁止空洞升华段。"
@@ -576,11 +603,12 @@ def analysis_keys_for(rtype: Optional[str], n_destinations: int) -> Tuple[str, .
 
 
 def charts_for(rtype: Optional[str], n_destinations: int) -> Tuple[str, ...]:
-    """按目的地数量取图集：N<2 时剔除多对象专属图（份额环形图）；雷达保留（单对象评分仍可读）。"""
+    """按目的地数量取图集：N<2 剔除多对象专属图（份额环形图），N≥2 剔除单对象专属图
+    （同城花费构成柱——多目的地要看的是城市之间的对比）；雷达保留（单对象评分仍可读）。"""
     spec = type_spec(rtype)
     charts = tuple(spec["charts"])
     if n_destinations >= 2:
-        return charts
+        return tuple(c for c in charts if c not in SOLO_ONLY_CHARTS)
     return tuple(c for c in charts if c not in MULTI_ONLY_CHARTS)
 
 

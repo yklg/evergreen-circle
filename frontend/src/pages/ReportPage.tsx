@@ -58,8 +58,8 @@ const HL_LABEL: Record<HighlightColor, string> = {
 }
 
 /**
- * 章节正文（C1）：首段作评注直出，其余段落收进 <details> 折叠。
- * 折叠只承载阅读态：编辑模式或本章有高亮命中时一次性置 open（评审②），
+ * 章节正文（C1）：移除首段评注直出，全部段落收进 <details> 折叠。
+ * 折叠无条件渲染：编辑模式或本章有高亮命中时一次性置 open（评审②），
  * 其后用户仍可手动折叠；段落编辑键 `${secId}-p${i}` 与折叠前一致。
  */
 function VSectionProse({
@@ -101,22 +101,18 @@ function VSectionProse({
       highlights={highlights}
     />
   )
-  const rest = paragraphs.slice(1)
   return (
     <div className="mt-4">
-      {renderP(paragraphs[0], 0)}
-      {rest.length > 0 && (
-        <details
-          ref={detailsRef}
-          data-section-body={secId}
-          className="report-body-collapse mt-3 rounded-card border border-line/60 bg-card/40 px-4 py-2"
-        >
-          <summary className="cursor-pointer select-none text-tag font-medium text-primary-deep">
-            展开完整正文（还有 {rest.length} 段）
-          </summary>
-          <div className="report-body-inner mt-3 space-y-3 pb-1">{rest.map((p, i) => renderP(p, i + 1))}</div>
-        </details>
-      )}
+      <details
+        ref={detailsRef}
+        data-section-body={secId}
+        className="report-body-collapse mt-3 rounded-card border border-line/60 bg-card/40 px-4 py-2"
+      >
+        <summary className="cursor-pointer select-none text-tag font-medium text-primary-deep">
+          展开完整正文（共 {paragraphs.length} 段）
+        </summary>
+        <div className="report-body-inner mt-3 space-y-3 pb-1">{paragraphs.map((p, i) => renderP(p, i))}</div>
+      </details>
     </div>
   )
 }

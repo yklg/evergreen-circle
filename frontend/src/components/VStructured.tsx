@@ -280,7 +280,9 @@ export function VSpotRoutes({ data }: { data: Row[] }) {
                     </div>
                   ))}
                   {!(sp.routes as Row[])?.length ? (
-                    <div className="text-tag text-ink-3">数据源暂不可用（路线待补充）</div>
+                    <div className="text-tag text-risk" data-route-missing>
+                      未定位到坐标（POI 未命中），路线待补充
+                    </div>
                   ) : null}
                 </div>
               </details>

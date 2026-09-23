@@ -318,7 +318,9 @@ def test_multi_only_items_declared_in_every_type(rtype):
 def test_adaptive_slices_preserve_order_and_type(rtype):
     spec = rt.RESEARCH_TYPES[rtype]
     assert isinstance(rt.charts_for(rtype, 2), tuple)
-    assert rt.charts_for(rtype, 2) == spec["charts"]
+    # N≥2 剔单对象专属图、N=1 剔多对象专属图：两条轴各剔各的，顺序与类型不变
+    assert rt.charts_for(rtype, 2) == tuple(c for c in spec["charts"]
+                                            if c not in rt.SOLO_ONLY_CHARTS)
     assert rt.analysis_keys_for(rtype, 2) == spec["analysis_keys"]
     assert rt.charts_for(rtype, 1) == tuple(c for c in spec["charts"]
                                             if c not in rt.MULTI_ONLY_CHARTS)

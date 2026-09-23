@@ -309,3 +309,40 @@ def test_signal_extraction_accepts_bare_list(monkeypatch):
 if __name__ == "__main__":
     import pytest as _pytest
     raise SystemExit(_pytest.main([__file__, "-q"]))
+
+
+# ── brisk-pond-finch L2 · trunc_report 线程内传回通道（LT-3 / LT-7 单元面）──
+def test_signals_trunc_report_true_only_when_length_and_empty(monkeypatch):
+    monkeypatch.setattr(O, "chat_json", lambda *a, **k: None)
+    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    rep: list = []
+    assert O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast",
+                                   trunc_report=rep) == []
+    assert rep == [True], "截断实锤（finish=length 且产物空）必须在线程内求值传回"
+    monkeypatch.setattr(O, "last_finish_reason", lambda: "stop")
+    rep2: list = []
+    O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast", trunc_report=rep2)
+    assert rep2 == [False], "模型真没数据（finish=stop）不报截断——防误报"
+
+
+def test_signals_llm_exception_is_not_truncation(monkeypatch):
+    """LT-7：TC-B03 吞异常语义保持（不抛、空表），但异常≠截断，不得误触发降级文案。"""
+    def boom(*a, **k):
+        raise RuntimeError("llm down")
+    monkeypatch.setattr(O, "chat_json", boom)
+    rep: list = []
+    assert O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast",
+                                   trunc_report=rep) == []
+    assert rep == [False]
+
+
+def test_analyze_structured_trunc_report(monkeypatch):
+    monkeypatch.setattr(O, "chat_json", lambda *a, **k: None)
+    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    rep: list = []
+    out = O._analyze_structured("q", ["大理"], ["f"], [], "guide", trunc_report=rep)
+    assert rep == [True] and all(not v for v in out.values())
+    monkeypatch.setattr(O, "last_finish_reason", lambda: "stop")
+    rep2: list = []
+    O._analyze_structured("q", ["大理"], ["f"], [], "guide", trunc_report=rep2)
+    assert rep2 == [False]

@@ -94,7 +94,7 @@ def test_request_carries_ak_and_query(monkeypatch):
 
     def handler(request):
         seen["url"] = str(request.url)
-        return httpx.Response(200, json={"status": 0, "result": []})
+        return httpx.Response(200, json={"status": 0, "results": []})
 
     _install(monkeypatch, handler)
     baidu.place_search("洱海", "大理")
@@ -103,10 +103,54 @@ def test_request_carries_ak_and_query(monkeypatch):
     assert "query=" in seen["url"]
 
 
+# ── 真实响应形状契约钉（P4-K）────────────────────────────────
+# 2026-09-23 实跑抓样（place/v2/search?query=大理古城&region=大理&region_limit=true&output=json）。
+# 用真实键名做 fixture：曾经把候选读成 body["result"]（真实是 body["results"]），
+# 导致 POI 精确匹配分支静默恒空、真机 7 景点只认出 1 个——假响应复刻了实现的错，
+# 所以这条钉的价值在于"形状来自抓样而非记忆"。
+_REAL_PLACE_SAMPLE = {
+    "status": 0,
+    "message": "ok",
+    "total": 66,
+    "result_type": "poi_type",
+    "query_type": "precise",
+    "results": [
+        {
+            "name": "大理古城",
+            "location": {"lat": 25.700801, "lng": 100.170478},
+            "address": "云南省大理白族自治州大理市一塔路42号",
+            "province": "云南省",
+            "city": "大理白族自治州",
+            "area": "大理市",
+            "uid": "44207646660fce16deee8bf6",
+            "detail_info": {"tag": "旅游景点;其他", "label": "AAAA景区,古城 古镇"},
+        },
+        {
+            "name": "大理古城-南门",
+            "location": {"lat": 25.693278, "lng": 100.170639},
+            "address": "云南省大理白族自治州大理市一塔路42号",
+            "area": "大理市",
+        },
+    ],
+}
+
+
+def test_place_search_parses_real_response_shape(monkeypatch):
+    """真实抓样必须被解析出候选（顶层 results，非 result）。"""
+    _install(monkeypatch, _json(200, _REAL_PLACE_SAMPLE))
+    out = baidu.place_search("大理古城", "大理")
+    assert out["ok"] is True
+    assert [p["name"] for p in out["places"]] == ["大理古城", "大理古城-南门"]
+    assert out["places"][0]["lat"] == 25.700801 and out["places"][0]["lng"] == 100.170478
+    assert out["places"][0]["area"] == "大理市"
+    # 旧口径（读 body["result"]）会在这里静默返回空——正是本次真机故障的形状
+    assert out["places"], "results 键被读成 result 时恒为空"
+
+
 def test_place_search_normalizes_rows(monkeypatch):
     payload = {
         "status": 0,
-        "result": [
+        "results": [
             {"name": " 大理古城 ", "location": {"lat": 25.69, "lng": 100.16},
              "area": "大理市", "address": "护国路1号", "tag": "文物古迹"},
             "junk-row-should-skip",
@@ -123,7 +167,7 @@ def test_place_search_normalizes_rows(monkeypatch):
 
 
 def test_place_search_empty_is_ok_not_failure(monkeypatch):
-    _install(monkeypatch, _json(200, {"status": 0, "result": []}))
+    _install(monkeypatch, _json(200, {"status": 0, "results": []}))
     out = baidu.place_search("不存在的地方", "大理")
     assert out == {"ok": True, "places": []}  # 空结果=检索成功，兜底决策归调用方
 

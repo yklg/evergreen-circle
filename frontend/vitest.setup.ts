@@ -101,3 +101,15 @@ if (typeof window !== 'undefined' && typeof window.HTMLCanvasElement !== 'undefi
     return ctx
   } as typeof window.HTMLCanvasElement.prototype.getContext
 }
+
+// jsdom 未实现 ResizeObserver（W3C 规范外的浏览器专有 API，jsdom 有意不做布局模拟）。
+// VWordCloud P5 用 ResizeObserver 测容器宽，组件侧已有 typeof 守卫回退 640；
+// 此处补最小桩使测试环境不抛 ReferenceError。
+if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  ;(window as any).ResizeObserver = ResizeObserverStub
+}

@@ -208,6 +208,11 @@ def _full_coverage_analysis(rtype: str) -> dict:
         "trends": {"x": ["2023", "2024"], "unit": "万人次",
                    "series": [{"name": "大理", "values": [100, 120]}]},
         "contradictions": [],
+        # cost_compose 的数据轴：结构化花费构成（P2 新增图必须有真实原料才谈得上"可生成"）
+        "structured": {"cost_breakdown": [{"destination": "大理", "items": [
+            {"category": "交通", "amount": 50.0, "unit": "元/人"},
+            {"category": "住宿", "amount": 100.0, "unit": "元/人"},
+        ]}]},
     }
     return analysis
 
@@ -219,15 +224,17 @@ _SENTIMENT = {"sample_size": 12, "overall_count": {"pos": 6, "neu": 4, "neg": 2}
 
 
 @pytest.mark.parametrize("rtype", list(charts_rt.RESEARCH_TYPES))
-def test_every_type_chart_set_generatable(rtype):
-    """数据齐备时，每类型声明的图表集必须**全部**可生成（防注册表声明了生不出的图）。"""
+@pytest.mark.parametrize("dests", [("大理",), ("大理", "丽江")], ids=["solo", "multi"])
+def test_every_type_chart_set_generatable(rtype, dests):
+    """数据齐备时，该类型在该目的地数量下声明的图表集必须**全部**可生成
+    （防注册表声明了生不出的图）。两条轴都跑：MULTI_ONLY / SOLO_ONLY 各自的 N 侧。"""
     from app.core import orchestrator
 
-    specs = orchestrator._build_charts(["大理", "丽江"], _full_coverage_analysis(rtype),
+    specs = orchestrator._build_charts(list(dests), _full_coverage_analysis(rtype),
                                        _SENTIMENT, [], rtype)
     emitted = {s["type"] for s in specs}
-    declared = set(charts_rt.RESEARCH_TYPES[rtype]["charts"])
-    assert emitted == declared, f"{rtype} 图表集生成不全：缺 {declared - emitted}"
+    declared = set(charts_rt.charts_for(rtype, len(dests)))
+    assert emitted == declared, f"{rtype}/N={len(dests)} 图表集生成不全：缺 {declared - emitted}"
     for s in specs:
         assert s["chart_id"] and s["title"]
         if s["type"] == "wordcloud":

@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from 'react'
 import type { ChartSpec, WordcloudWord } from '../types'
+import { layoutWords } from '../lib/wordcloudLayout'
 
 // 与后端 charts.SERIES 同序的莫兰迪色环（词云逐词轮换）。
 const PALETTE = ['#7C9885', '#E0B775', '#8FA8C0', '#CE9A92', '#A8C0A8', '#C2B59B']
@@ -22,15 +24,26 @@ function normalizeWords(spec: ChartSpec): WordcloudWord[] {
     .filter((w): w is WordcloudWord => w !== null)
 }
 
-/** 权重线性映射字号到 [13, 42]；全同权重取中值，单点不放大。 */
-export function wordFontSize(weight: number, min: number, max: number): number {
-  if (!(max > min)) return 27
-  return 13 + ((weight - min) / (max - min)) * 29
-}
-
-/** 纯 DOM/CSS 词云（E1）：权重→字号，色环轮换，flex-wrap 居中铺排。 */
+/** P5 词云散布布局：absolute 定位 + ResizeObserver 测容器宽。 */
 export function VWordCloud({ spec, height = 280 }: { spec: ChartSpec; height?: number }) {
   const words = normalizeWords(spec)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerW, setContainerW] = useState(640)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          setContainerW(entry.contentRect.width)
+        }
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   if (words.length === 0) {
     return (
       <div
@@ -41,24 +54,26 @@ export function VWordCloud({ spec, height = 280 }: { spec: ChartSpec; height?: n
       </div>
     )
   }
-  const weights = words.map((w) => w.weight)
-  const min = Math.min(...weights)
-  const max = Math.max(...weights)
-  const sorted = [...words].sort((a, b) => b.weight - a.weight)
+  const placed = layoutWords(words, containerW, height)
   return (
     <div
-      className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 overflow-hidden"
+      ref={containerRef}
+      className="relative overflow-hidden"
       style={{ height }}
       data-testid="wordcloud-dom"
     >
-      {sorted.map((w, i) => (
+      {placed.map((w, i) => (
         <span
           key={`${w.word}-${i}`}
           title={`${w.word}：权重 ${w.weight}`}
           style={{
-            fontSize: wordFontSize(w.weight, min, max),
+            position: 'absolute',
+            left: w.x,
+            top: w.y,
+            fontSize: w.fontSize,
             color: PALETTE[i % PALETTE.length],
             lineHeight: 1.15,
+            whiteSpace: 'nowrap',
           }}
           className="font-medium transition-transform hover:scale-105"
         >

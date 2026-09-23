@@ -6,7 +6,7 @@
  *   SP-1  spot_ranking：评分明细列（声量·口碑·性价比）、data-spot-id 挂接键、
  *        matched===false → 「位置未匹配」占位（不得静默消失）
  *   SP-2  spot_routes：路线卡默认展开 Top3（前 3 个 <details open>）、
- *        空 routes → 「数据源暂不可用（路线待补充）」如实占位
+ *        空 routes → 「未定位到坐标（POI 未命中），路线待补充」逐行占位
  *   SP-3  shop_list：人均标「参考价」；缺价 → 「未公开」（LLM 参考价不是实价）
  *   SP-4  空数组 / 缺字段容错 + VStructuredBlock 分发（未知类型静默跳过）
  */
@@ -83,11 +83,21 @@ describe('SP-2 逐景点路线卡', () => {
     expect(container.textContent).toContain('大理_spot_1')
   })
 
-  it('routes 为空 → 「数据源暂不可用（路线待补充）」占位不崩', () => {
-    const { container } = render(
+  it('routes 为空 → 占位写因果「未定位到坐标（POI 未命中），路线待补充」，不崩', () => {
+    const { container, unmount } = render(
       <VSpotRoutes data={[{ destination: '大理', items: [{ spot_id: 'x', spot_name: '古城' }] }]} />,
     )
-    expect(container.textContent).toContain('数据源暂不可用（路线待补充）')
+    expect(container.textContent).toContain('未定位到坐标（POI 未命中），路线待补充')
+    unmount()
+    // 占位行必须逐景点独立：有路线的行照常渲染路线，不被邻居的缺位带偏
+    const { container: box } = render(
+      <VSpotRoutes data={[{ destination: '大理', items: [
+        { spot_id: 'a', spot_name: '有路线', routes: [{ mode: '打车', duration: '约20分钟' }] },
+        { spot_id: 'b', spot_name: '缺坐标' },
+      ]}]} />,
+    )
+    expect(box.querySelectorAll('[data-route-missing]')).toHaveLength(1)
+    expect(box.textContent).toContain('约20分钟')
   })
 })
 

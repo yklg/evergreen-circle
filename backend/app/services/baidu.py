@@ -82,6 +82,8 @@ def place_search(
 ) -> Dict[str, Any]:
     """地点检索 v2（region 精确检索）。
 
+    真实响应把候选放在顶层 **results**（不是 result）；读错键会静默退化成
+    「永远 0 候选 → 全靠 geocode 兜底」，故键名单测钉死（见 test_baidu_client 契约形状钉）。
     成功：{"ok": True, "places": [{name, lat, lng, area, address, detail_info?}...]}
     无结果为 ok=True + places=[]（调用方据此走地理编码兜底，不算接口失败）。
     """
@@ -97,7 +99,7 @@ def place_search(
     )
     if not resp.get("ok"):
         return resp
-    rows = resp["body"].get("result") or []
+    rows = resp["body"].get("results") or []
     places: List[Dict[str, Any]] = []
     for item in rows:
         if not isinstance(item, dict):

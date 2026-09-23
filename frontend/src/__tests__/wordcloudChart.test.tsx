@@ -23,7 +23,6 @@ vi.mock('echarts-for-react', () => ({
 }))
 
 import { VChart } from '../components/VChart'
-import { wordFontSize } from '../components/VWordCloud'
 import { VSentimentPanel } from '../components/VSentimentPanel'
 import ReportBriefView from '../components/ReportBriefView'
 import type { ChartSpec, SentimentResult } from '../types'
@@ -159,10 +158,3 @@ describe('VChart wordcloud 通道（E1）', () => {
   })
 })
 
-describe('wordFontSize 映射', () => {
-  it('线性映射到 [13,42]；全同权重取中值不放大', () => {
-    expect(wordFontSize(0, 0, 10)).toBe(13)
-    expect(wordFontSize(10, 0, 10)).toBe(42)
-    expect(wordFontSize(5, 5, 5)).toBe(27)
-  })
-})
