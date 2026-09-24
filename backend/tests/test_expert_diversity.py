@@ -17,6 +17,7 @@ Stage A（降级可见）+ B1（槽位解析）+ B2（多采集者）落地后�
 """
 import pytest
 
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.data import load_experts
 
@@ -37,8 +38,8 @@ POOL_L1 = [e["id"] for e in load_experts() if e["level"] == "L1"]
 
 def _dead_llm(monkeypatch):
     """按生产实况注入：产出不可用（截断），且无任何真组队信息。"""
-    monkeypatch.setattr(O, "chat_json", lambda messages, **kw: None)
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    monkeypatch.setattr(llm, "chat_json", lambda messages, **kw: None)
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "length")
 
 
 def _appearances(monkeypatch):

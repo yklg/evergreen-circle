@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.services import baidu as baidu_mod
 from app.core.schemas import (coerce_food_ranking, coerce_shop_list,
@@ -280,7 +281,7 @@ def test_signal_extraction_swallows_llm_failure(monkeypatch):
     """LLM 不可用（异常/超时）→ 空表而非抛出：spots 阶段降级、任务照跑完。"""
     def boom(*a, **kw):
         raise RuntimeError("llm down")
-    monkeypatch.setattr(O, "chat_json", boom)
+    monkeypatch.setattr(llm, "chat_json", boom)
     assert O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast") == []
 
 
@@ -291,7 +292,7 @@ def test_signal_extraction_drops_nameless_and_filters_eids(monkeypatch):
         seen["purpose"] = kw.get("purpose")
         seen["user"] = messages[-1]["content"]
         return {"spots": [_spot("古城"), {"signals": {}}, None]}
-    monkeypatch.setattr(O, "chat_json", fake)
+    monkeypatch.setattr(llm, "chat_json", fake)
     out = O._extract_spot_signals("大理攻略", ["大理"], ["景点"], [_Ev()], 4, "fast")
     assert seen["purpose"] == "景点信号抽取（TopN 实体候选）"
     assert "[e_aaaaaaaa|" in seen["user"], "提示词必须携带真实证据 id（无证据不立论）"
@@ -301,7 +302,7 @@ def test_signal_extraction_drops_nameless_and_filters_eids(monkeypatch):
 
 def test_signal_extraction_accepts_bare_list(monkeypatch):
     """LLM 直接返回列表（无 spots 包装）也要接住——形状漂移不该清空实体表。"""
-    monkeypatch.setattr(O, "chat_json", lambda m, **k: [_spot("古城")])
+    monkeypatch.setattr(llm, "chat_json", lambda m, **k: [_spot("古城")])
     out = O._extract_spot_signals("q", ["大理"], [], [_Ev()], 4, "fast")
     assert [r["name"] for r in out] == ["古城"]
 
@@ -313,13 +314,13 @@ if __name__ == "__main__":
 
 # ── brisk-pond-finch L2 · trunc_report 线程内传回通道（LT-3 / LT-7 单元面）──
 def test_signals_trunc_report_true_only_when_length_and_empty(monkeypatch):
-    monkeypatch.setattr(O, "chat_json", lambda *a, **k: None)
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    monkeypatch.setattr(llm, "chat_json", lambda *a, **k: None)
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "length")
     rep: list = []
     assert O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast",
                                    trunc_report=rep) == []
     assert rep == [True], "截断实锤（finish=length 且产物空）必须在线程内求值传回"
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "stop")
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "stop")
     rep2: list = []
     O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast", trunc_report=rep2)
     assert rep2 == [False], "模型真没数据（finish=stop）不报截断——防误报"
@@ -329,7 +330,7 @@ def test_signals_llm_exception_is_not_truncation(monkeypatch):
     """LT-7：TC-B03 吞异常语义保持（不抛、空表），但异常≠截断，不得误触发降级文案。"""
     def boom(*a, **k):
         raise RuntimeError("llm down")
-    monkeypatch.setattr(O, "chat_json", boom)
+    monkeypatch.setattr(llm, "chat_json", boom)
     rep: list = []
     assert O._extract_spot_signals("q", ["大理"], ["f"], [_Ev()], 4, "fast",
                                    trunc_report=rep) == []
@@ -337,12 +338,12 @@ def test_signals_llm_exception_is_not_truncation(monkeypatch):
 
 
 def test_analyze_structured_trunc_report(monkeypatch):
-    monkeypatch.setattr(O, "chat_json", lambda *a, **k: None)
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    monkeypatch.setattr(llm, "chat_json", lambda *a, **k: None)
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "length")
     rep: list = []
     out = O._analyze_structured("q", ["大理"], ["f"], [], "guide", trunc_report=rep)
     assert rep == [True] and all(not v for v in out.values())
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "stop")
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "stop")
     rep2: list = []
     O._analyze_structured("q", ["大理"], ["f"], [], "guide", trunc_report=rep2)
     assert rep2 == [False]

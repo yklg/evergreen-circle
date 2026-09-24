@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.core.db as db
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
 from app.core import trace
@@ -64,7 +65,7 @@ MULTI_PLAN = {"subject": "大理", "destinations": ["大理", "丽江"],
 
 
 def test_plan_rejects_guide_multi_from_query_path(monkeypatch):
-    monkeypatch.setattr(O, "chat_json", _PlanLLM(MULTI_PLAN), raising=False)
+    monkeypatch.setattr(llm, "chat_json", _PlanLLM(MULTI_PLAN), raising=False)
     task_id = "t_single_dest_plan"
     trace.cleanup(task_id)
     with pytest.raises(O.GuideSingleDestinationError) as ei:
@@ -75,7 +76,7 @@ def test_plan_rejects_guide_multi_from_query_path(monkeypatch):
 
 
 def test_plan_assessment_multi_unaffected(monkeypatch):
-    monkeypatch.setattr(O, "chat_json", _PlanLLM(MULTI_PLAN), raising=False)
+    monkeypatch.setattr(llm, "chat_json", _PlanLLM(MULTI_PLAN), raising=False)
     out = O._plan_research("大理 丽江 5 天亲子游攻略", {}, 7, "assessment", "t_single_dest_plan")
     assert out["destinations"] == ["大理", "丽江"]
 

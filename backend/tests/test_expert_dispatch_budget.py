@@ -24,6 +24,7 @@ Stage A 已把 (2) 提到 3600 并给 (3) 加上 20 字上界；本文件随之�
 import json
 import re
 
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.data import load_experts
 
@@ -43,7 +44,7 @@ def _capture_kwargs(monkeypatch, payload=None):
         seen.update(kwargs)
         return payload
 
-    monkeypatch.setattr(O, "chat_json", fake)
+    monkeypatch.setattr(llm, "chat_json", fake)
     return seen
 
 

@@ -11,6 +11,7 @@
 """
 import pytest
 
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.core import research_types as rt
 from app.core import audit as AU
@@ -40,7 +41,7 @@ def _fake_chat(payload):
 
 
 def _fill(monkeypatch, payload):
-    monkeypatch.setattr(O, "chat_json", _fake_chat(payload))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat(payload))
     return O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")
 
 
@@ -90,7 +91,7 @@ def test_verified_without_real_evidence_is_downgraded(monkeypatch):
 def test_llm_total_failure_still_emits_placeholder_table(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("模型不可用")
-    monkeypatch.setattr(O, "chat_json", boom)
+    monkeypatch.setattr(llm, "chat_json", boom)
     out = O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")
     rows = out["family_checklist"][0]["items"]
     assert len(rows) == len(_SPOTS)
@@ -122,7 +123,7 @@ def test_packing_drops_items_without_evidence(monkeypatch):
 
 
 def test_unconfigured_perspective_assembles_nothing(monkeypatch):
-    monkeypatch.setattr(O, "chat_json", _fake_chat({"rows": []}))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat({"rows": []}))
     assert O._fill_persp_blocks("persp_couple", _DEST, _SPOTS, {}, _EVID, _CLAR, "m") == {}
 
 
@@ -149,7 +150,7 @@ def _write_capture(monkeypatch, sid: str, persp_line: str):
                                "段四。" * 40, "段五。" * 40],
                 "key_takeaway": "核心判断", "highlights": ["亮点"]}
 
-    monkeypatch.setattr(O, "chat_json", fake_chat)
+    monkeypatch.setattr(llm, "chat_json", fake_chat)
     O._write_single_section(sid, "标题", "大理攻略", [_DEST], [], [], [], {},
                             "model-x", "guide", persp_line=persp_line)
     return seen["all"]

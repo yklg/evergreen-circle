@@ -67,3 +67,12 @@ def _row_dest_ok(name: Any, destinations: List[str]) -> bool:
     if not core:
         return False
     return any(_name_hit(core, _core_name(d)) for d in destinations)
+
+
+# 行程天数的**准绳**正则：只认用户原文写法（阿拉伯数字 / 中文数词 / 周末），按序取首个命中。
+# 计划提示词不再向模型索取天数——没有通道就没有自扩。
+_DAY_PATTERNS: Tuple[re.Pattern, ...] = (
+    re.compile(r"\d+\s*[天日]"),
+    re.compile(r"[一两二三四五六七八九十]{1,2}\s*天"),
+    re.compile("周末"),
+)

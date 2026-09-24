@@ -14,6 +14,7 @@
 """
 import pytest
 
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
 from app.core import scoring as SC
@@ -52,7 +53,7 @@ def _gaps(analysis, *, dests=("成都", "杭州"), rtype="assessment"):
 @pytest.mark.parametrize("rtype", ["guide", "assessment"])
 def test_density_injected_into_section_prompt(monkeypatch, rtype):
     holder = []
-    monkeypatch.setattr(O, "chat_json",
+    monkeypatch.setattr(llm, "chat_json",
                         _capture({"key_takeaway": "判断", "highlights": [], "paragraphs": ["段"]},
                                  holder))
     O._write_single_section("accessibility", "二、交通可达性", "成都和杭州宜居吗",

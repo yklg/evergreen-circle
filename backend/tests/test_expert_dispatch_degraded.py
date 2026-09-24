@@ -39,6 +39,7 @@ import pytest
 import app.core.db as db
 import app.core.llm as llm
 import app.core.trace as trace
+from app.core import llm
 from app.core.pipeline.research import engine as O
 from app.core.llm import LLMModelUnavailable
 from app.data import load_experts
@@ -75,13 +76,13 @@ def _patch_chat_json(monkeypatch, payload, exc=None):
             raise exc
         return payload
 
-    monkeypatch.setattr(O, "chat_json", fake)
+    monkeypatch.setattr(llm, "chat_json", fake)
     return seen
 
 
 def _patch_finish(monkeypatch, value):
     """Stage A 的判定接缝：dispatch 应读 last_finish_reason()（orchestrator 已 import）。"""
-    monkeypatch.setattr(O, "last_finish_reason", lambda: value)
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: value)
 
 
 # ── ① 现状绿钉：组队结果必须 ⊆ 48 人池（INV-E1）────────────────

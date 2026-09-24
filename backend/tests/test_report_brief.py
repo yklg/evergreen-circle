@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
+from app.core import llm
 from app.core import db, runner
 from app.core.pipeline.research import engine as orchestrator
 from app.main import app
@@ -69,7 +70,7 @@ def _seed_brief(rid, calls_holder=None, monkeypatch=None):
     _make_report(rid)
     holder = calls_holder if calls_holder is not None else []
     if monkeypatch is not None:
-        monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(holder))
+        monkeypatch.setattr(llm, "chat_json", _fake_chat_json(holder))
     brief = orchestrator.generate_brief(rid)
     assert brief, "种子自检：generate_brief 应产出 brief"
     return brief
@@ -87,7 +88,7 @@ def _seed_brief_with_evidence(rid, specs, monkeypatch):
              "内容", cred, "tester", "目的地A", db._now()),
         )
     _conn().commit()
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json([]))
     brief = orchestrator.generate_brief(rid)
     assert brief, "种子自检：generate_brief 应产出 brief"
     return brief
@@ -113,7 +114,7 @@ async def _drain(pipeline_coro):
 def test_brief_idempotent_no_llm_call(monkeypatch):
     """首次生成后 data.brief 存在；再次调用不再调 chat_json，返回同一份 brief。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_idem_1")
 
     first = orchestrator.generate_brief("r_idem_1")
@@ -128,7 +129,7 @@ def test_brief_idempotent_no_llm_call(monkeypatch):
 # ── 端点：创建任务 {taskId} / 404 ─────────────────────────
 def test_brief_endpoint_creates_task(monkeypatch):
     """POST brief（G7 迁移后）→ 200 + {taskId}；不再同步返回 brief。"""
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json([]))
     _make_report("r_ep_ok")
     r = TestClient(app).post("/api/reports/r_ep_ok/brief")
     assert r.status_code == 200
@@ -155,7 +156,7 @@ def test_brief_endpoint_creates_task_returns_json_with_detail_on_missing():
 def test_brief_pipeline_generates_and_done(monkeypatch):
     """新建报告 → pipeline 产出 progress+done；brief 四段落库。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_pl_ok")
     tid = orchestrator.create_brief_task("r_pl_ok")["taskId"]
 
@@ -171,7 +172,7 @@ def test_brief_pipeline_generates_and_done(monkeypatch):
 def test_brief_full_chain_via_runner(monkeypatch):
     """全链路：runner.ensure_running(drive brief pipeline) → 任务 done + brief 落库（DB 终态由 _drive 落账）。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_chain")
     tid = orchestrator.create_brief_task("r_chain")["taskId"]
 
@@ -187,7 +188,7 @@ def test_brief_full_chain_via_runner(monkeypatch):
 def test_brief_pipeline_idempotent_no_llm_call(monkeypatch):
     """已有 brief → pipeline 只走 done 快路径，不再调 LLM。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _seed_brief("r_pl_idem", calls_holder=calls, monkeypatch=monkeypatch)
     n_before = len(calls)
     tid = orchestrator.create_brief_task("r_pl_idem")["taskId"]
@@ -202,7 +203,7 @@ def test_brief_pipeline_idempotent_no_llm_call(monkeypatch):
 
 def test_brief_pipeline_report_missing_error_failed(monkeypatch):
     """报告不存在 → error 事件 + 任务 failed 终态（不再 503/404 混合语义）。"""
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json([]))
     tid = orchestrator.create_brief_task("r_pl_missing")["taskId"]
 
     async def _real():
@@ -217,7 +218,7 @@ def test_brief_pipeline_unconfigured_error_failed(monkeypatch):
     """LLM 未配置 → error 事件（含可读消息）+ 任务 failed 终态。"""
     def _raise(*args, **kwargs):
         raise orchestrator.LLMNotConfigured("LLM 未配置")
-    monkeypatch.setattr(orchestrator, "chat_json", _raise)
+    monkeypatch.setattr(llm, "chat_json", _raise)
     _make_report("r_pl_503")
     tid = orchestrator.create_brief_task("r_pl_503")["taskId"]
 
@@ -233,7 +234,7 @@ def test_brief_pipeline_llm_failure_error_failed(monkeypatch):
     """LLM 普通失败 → error 事件 + 任务 failed；不写 brief 但保留 brief_failed_at。"""
     def _boom(*args, **kwargs):
         raise RuntimeError("upstream down")
-    monkeypatch.setattr(orchestrator, "chat_json", _boom)
+    monkeypatch.setattr(llm, "chat_json", _boom)
     _make_report("r_pl_fail")
     tid = orchestrator.create_brief_task("r_pl_fail")["taskId"]
 
@@ -249,7 +250,7 @@ def test_brief_pipeline_llm_failure_error_failed(monkeypatch):
 # ── SSE 传输层契约（HTTP）─────────────────────────────────
 def test_brief_sse_transport_done_event(monkeypatch):
     """GET /api/tasks/{tid}/stream → 200 + text/event-stream；body 含 event: done。"""
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json([]))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json([]))
     _make_report("r_sse_1")
     tid = orchestrator.create_brief_task("r_sse_1")["taskId"]
 
@@ -307,7 +308,7 @@ def test_invalidate_via_refine_pipeline_done(monkeypatch):
 def test_brief_rebuild_after_invalidate(monkeypatch):
     """invalidate 后再次 generate 可重建新 brief（派生数据完整闭环）。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_rebuild")
     first = orchestrator.generate_brief("r_rebuild")
     assert first
@@ -324,7 +325,7 @@ def test_brief_llm_failure_records_failed_at(monkeypatch):
     """LLM 失败 → 记 brief_failed_at、不写 brief。"""
     def _boom(*args, **kwargs):
         raise RuntimeError("upstream down")
-    monkeypatch.setattr(orchestrator, "chat_json", _boom)
+    monkeypatch.setattr(llm, "chat_json", _boom)
     _make_report("r_fail")
     brief = orchestrator.generate_brief("r_fail")
     assert brief is None, "失败不应产出 brief"
@@ -340,7 +341,7 @@ def test_brief_success_clears_failed_at(monkeypatch):
         if state["boom"]:
             raise RuntimeError("first try fails")
         return {"summary": "S", "judgments": ["J"], "key_data": [], "actions": []}
-    monkeypatch.setattr(orchestrator, "chat_json", _flaky)
+    monkeypatch.setattr(llm, "chat_json", _flaky)
     _make_report("r_retry")
     orchestrator.generate_brief("r_retry")
     assert db.get_report("r_retry").get("brief_failed_at")
@@ -373,7 +374,7 @@ def test_brief_concurrent_generate_serialized(monkeypatch):
         calls.append(messages)
         return real_fake(messages, **kwargs)
 
-    monkeypatch.setattr(orchestrator, "chat_json", _slow_fake)
+    monkeypatch.setattr(llm, "chat_json", _slow_fake)
     _make_report("r_conc")
     outs = []
 
@@ -396,7 +397,7 @@ def test_brief_concurrent_generate_serialized(monkeypatch):
 def test_brief_assembly_without_summary(monkeypatch):
     """无 summary 节 / 无 metrics 的存量报告：上下文组装降级，产出完整结构。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_nosum", with_summary=False)
     brief = orchestrator.generate_brief("r_nosum")
     assert brief and brief.get("summary") and isinstance(brief.get("judgments"), list)
@@ -411,7 +412,7 @@ def test_brief_facts_block_from_structured(monkeypatch):
     """新 8 章报告：spot_ranking/food_ranking/shop_list/cost_breakdown/stay_options 的
     真实数字进 brief prompt（key_data 有依据），缺字段行不猜值。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_facts")
     rep = db.get_report("r_facts")
     rep["sections"] += [
@@ -451,7 +452,7 @@ def test_brief_facts_block_from_structured(monkeypatch):
 def test_brief_legacy_report_prompt_unchanged(monkeypatch):
     """存量报告（无 structured 键）：不出现数据事实块，旧精炼 prompt 不受影响。"""
     calls = []
-    monkeypatch.setattr(orchestrator, "chat_json", _fake_chat_json(calls))
+    monkeypatch.setattr(llm, "chat_json", _fake_chat_json(calls))
     _make_report("r_legacy_facts")
     assert orchestrator.generate_brief("r_legacy_facts")
     assert "结构化数据事实" not in _user_prompt(calls[-1])

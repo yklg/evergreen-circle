@@ -10,6 +10,7 @@ LLM 边界：monkeypatch sentiment.chat_json 返回 None → 逐条情感走规�
 """
 import pytest
 
+from app.core import search
 from app.core import sentiment as S
 
 
@@ -90,7 +91,7 @@ def test_collect_spot_comments_filters_dedupes_and_orders(monkeypatch):
             return [{"url": "https://b1.example/x", "title": "洱海廊道骑行", "snippet": "洱海廊道风景好"}]
         return []
 
-    monkeypatch.setattr(O, "multi_search", fake_multi_search)
+    monkeypatch.setattr(search, "multi_search", fake_multi_search)
     spots = [{"spot_id": "大理_spot_1", "name": "大理古城（含崇圣寺）"},
              {"spot_id": "大理_spot_2", "name": "洱海廊道"}]
     seen = {"https://dup.example/x"}  # 基础采集已收 → 不得重复入样

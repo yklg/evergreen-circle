@@ -11,6 +11,8 @@
 """
 import pytest
 
+from app.core.pipeline.research import runtime
+from app.core import llm
 from app.core import db
 from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
@@ -51,7 +53,7 @@ class _PlanLLM:
 
 def _install(monkeypatch, **kw) -> _PlanLLM:
     fake = _PlanLLM(**kw)
-    monkeypatch.setattr(O, "chat_json", fake, raising=False)
+    monkeypatch.setattr(llm, "chat_json", fake, raising=False)
     return fake
 
 
@@ -504,7 +506,7 @@ def test_plan_model_unavailable_is_reraised(monkeypatch):
 
 def test_empty_fast_model_name_does_not_break_chain(monkeypatch):
     """G17：llm_model_fast 为空串（未配置）时兜底链仍按契约走完，不崩。"""
-    monkeypatch.setattr(O, "_model", lambda tier: "")
+    monkeypatch.setattr(runtime, "_model", lambda tier: "")
     _install(monkeypatch, retry={"destination": "候选小城"})
     assert O._fallback_destination(NO_CITY_QUERY, "guide", "") == ("候选小城", "retry")
 

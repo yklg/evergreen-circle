@@ -17,6 +17,7 @@ import json
 import pytest
 
 import app.core.db as db
+from app.core import llm
 from app.core.pipeline.research import engine as O
 
 _LEGACY_DATA = {
@@ -131,7 +132,7 @@ def test_legacy_report_refine_uses_normalized_destinations(monkeypatch):
 # ── ③ 旧报告 generate_brief：缺 summary/metrics 也不失败 ────
 def test_legacy_report_generate_brief_survives(monkeypatch):
     _insert_legacy_report()
-    monkeypatch.setattr(O, "chat_json", lambda messages, **kw: {
+    monkeypatch.setattr(llm, "chat_json", lambda messages, **kw: {
         "summary": "旧报告一页纸", "judgments": ["判断"], "key_data": ["数据"], "actions": ["行动"],
     })
     brief = O.generate_brief("r_legacy")

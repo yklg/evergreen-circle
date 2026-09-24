@@ -16,6 +16,7 @@ I5 结构补齐只对「有正文、无结构」的章节发起（调用数 = �
 （均为模块级 from-import 绑定）→ monkeypatch 假实现，不调真实 LLM。
 运行：backend/ 下 `pytest tests/test_section_structure_contract.py -q`
 """
+from app.core import llm
 from app.core.pipeline.research import engine as O
 
 # 服务商（api.deepseek.com）单次输出上限；预算超过它会被拒
@@ -32,7 +33,7 @@ def _capture(payload, holder):
 
 
 def _write(monkeypatch, payload, holder, sid="transport"):
-    monkeypatch.setattr(O, "chat_json", _capture(payload, holder))
+    monkeypatch.setattr(llm, "chat_json", _capture(payload, holder))
     return O._write_single_section(
         sid, "一、交通与抵达", "上海玩三天", ["上海"], ["交通"],
         [], [], {}, "test-model", "guide", 5, "180-280",
@@ -53,9 +54,9 @@ def test_output_contract_puts_structure_before_paragraphs(monkeypatch):
 
 def test_truncated_json_falls_to_text_retry_and_is_marked(monkeypatch):
     """首次 chat_json 返回 None（截断不可解析）→ 纯文本重试；诊断标 text_retry + truncated。"""
-    monkeypatch.setattr(O, "chat_json", lambda messages, **kw: None)
-    monkeypatch.setattr(O, "chat", lambda messages, **kw: "第一段" + "内容" * 20 + "\n" + "第二段" + "内容" * 20)
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    monkeypatch.setattr(llm, "chat_json", lambda messages, **kw: None)
+    monkeypatch.setattr(llm, "chat", lambda messages, **kw: "第一段" + "内容" * 20 + "\n" + "第二段" + "内容" * 20)
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "length")
     st = O._write_single_section(
         "transport", "一、交通与抵达", "上海玩三天", ["上海"], ["交通"],
         [], [], {}, "test-model", "guide", 5, "180-280", 8000,
@@ -151,7 +152,7 @@ def test_structureless_predicate_only_targets_body_without_structure():
 def test_repair_skips_llm_when_nothing_to_repair(monkeypatch):
     """成本上界：没有正文时不得发起任何 LLM 调用。"""
     calls = []
-    monkeypatch.setattr(O, "chat_json", _capture({"key_takeaway": "x"}, calls))
+    monkeypatch.setattr(llm, "chat_json", _capture({"key_takeaway": "x"}, calls))
     assert O._repair_missing_structure("transport", "一、交通与抵达",
                                        {"paragraphs": []}, [], "fast") is None
     assert calls == [], "无正文可提炼时不得调 LLM"
@@ -159,7 +160,7 @@ def test_repair_skips_llm_when_nothing_to_repair(monkeypatch):
 
 def test_repair_returns_patch_and_keeps_truncation_history(monkeypatch):
     calls = []
-    monkeypatch.setattr(O, "chat_json", _capture(
+    monkeypatch.setattr(llm, "chat_json", _capture(
         {"key_takeaway": "只有三天就别跨五地", "highlights": ["亮点1", "亮点2", "亮点3", "多余1", "多余2"]}, calls))
     st = {"paragraphs": ["段1", "段2"], "key_takeaway": "", "highlights": [],
           O.DIAG_KEY: {"recovered": "text_retry", "truncated": True}}
@@ -176,7 +177,7 @@ def test_repair_returns_patch_and_keeps_truncation_history(monkeypatch):
 
 def test_repair_failure_stays_lost(monkeypatch):
     """补齐失败必须返回 None 由上层保持 lost（绝不静默假装成功）。"""
-    monkeypatch.setattr(O, "chat_json", lambda messages, **kw: None)
+    monkeypatch.setattr(llm, "chat_json", lambda messages, **kw: None)
     st = {"paragraphs": ["段1"], "key_takeaway": "", "highlights": []}
     assert O._repair_missing_structure("transport", "一、交通与抵达", st, [], "fast") is None
     assert O._structure_status(st, True) == "lost"

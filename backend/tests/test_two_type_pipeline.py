@@ -18,6 +18,10 @@ import re
 
 import pytest
 
+from app.core import search
+from app.core import llm
+from app.core import fetcher
+from app.core import audit
 from app.core import db, runner
 from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
@@ -146,9 +150,9 @@ def _install_fakes(monkeypatch) -> dict:
         return {"text": text, "images": [], "ok": True, "degraded": False,
                 "captured_at": "2026-08-01", "url": url}
 
-    monkeypatch.setattr(O, "chat_json", fake_chat_json, raising=False)
-    monkeypatch.setattr(O, "multi_search", fake_multi_search, raising=False)
-    monkeypatch.setattr(O, "fetch_page", fake_fetch_page, raising=False)
+    monkeypatch.setattr(llm, "chat_json", fake_chat_json, raising=False)
+    monkeypatch.setattr(search, "multi_search", fake_multi_search, raising=False)
+    monkeypatch.setattr(fetcher, "fetch_page", fake_fetch_page, raising=False)
     # 舆情/质检各自持有 chat_json 引用（module-level / 函数内 import），逐一覆盖
     monkeypatch.setattr(sentiment, "chat_json", fake_chat_json, raising=False)
     import app.core.llm as llm_mod
@@ -680,13 +684,13 @@ def test_family_perspective_end_to_end_placeholder_table_and_timing(monkeypatch)
     """亲子视角端到端（rough-cliff-vole VR-D3）：核查表行=冻结榜、装配先于质量评估、块挂章。"""
     _install_fakes(monkeypatch)
     seen_structured_keys_at_quality: list = []
-    real_eq = O.evaluate_quality
+    real_eq = audit.evaluate_quality
 
     def spy_eq(destinations, focus, claims, evidences, structured, **kw):
         seen_structured_keys_at_quality.append(set(structured))
         return real_eq(destinations, focus, claims, evidences, structured, **kw)
 
-    monkeypatch.setattr(O, "evaluate_quality", spy_eq)
+    monkeypatch.setattr(audit, "evaluate_quality", spy_eq)
     clar = {"party": "亲子家庭", "child_age": "3-6 岁", "days": "1-2 天",
             "budget_level": "经济实惠（人均 <1000）", "origin": "昆明"}
     _, evs, report = _run_pipeline("guide", None, clar)
@@ -907,7 +911,7 @@ def test_provider_outage_hard_fails_with_real_reason(monkeypatch):
 
     def _dead(queries, **kw):
         raise SearchProviderError("博查账户余额不足，请充值")
-    monkeypatch.setattr(O, "multi_search", _dead, raising=False)
+    monkeypatch.setattr(search, "multi_search", _dead, raising=False)
     task_id = O.create_task(QUERIES["guide"], MODE, "", "guide")["taskId"]
 
     async def _scenario():
@@ -933,13 +937,13 @@ def test_midway_outage_degrades_with_visible_thought(monkeypatch):
     舆情位有含真因的可见 thought，全程不再白烧检索。"""
     from app.core.search import SearchProviderError
     calls = _install_fakes(monkeypatch)
-    real_ms = O.multi_search
+    real_ms = search.multi_search
 
     def _flaky(queries, **kw):
         if calls["search"] <= 1:
             return real_ms(queries, **kw)   # 首过：collect 主采集正常
         raise SearchProviderError("博查账户余额不足，请充值")
-    monkeypatch.setattr(O, "multi_search", _flaky, raising=False)
+    monkeypatch.setattr(search, "multi_search", _flaky, raising=False)
 
     _, evs, report = _run_pipeline("guide")
     assert report and evs[-1]["type"] == "done", "中途欠费必须降级继续出报告"
@@ -964,15 +968,15 @@ def test_structured_truncation_emits_visible_degrade_once(monkeypatch):
         return []
 
     monkeypatch.setattr(O, "_extract_spot_signals", fake_signals)
-    real = O.chat_json
+    real = llm.chat_json
 
     def wrapper(*a, **k):
         if str(k.get("purpose") or "").startswith("结构化目的地知识"):
             return None
         return real(*a, **k)
 
-    monkeypatch.setattr(O, "chat_json", wrapper)
-    monkeypatch.setattr(O, "last_finish_reason", lambda: "length")
+    monkeypatch.setattr(llm, "chat_json", wrapper)
+    monkeypatch.setattr(llm, "last_finish_reason", lambda: "length")
     _, evs, report = _run_pipeline("guide")
     notes = [e for e in evs if e["type"] == "thought" and e["data"].get("kind") == "reflect"
              and "被截断" in (e["data"].get("text") or "")]
@@ -1050,7 +1054,7 @@ def test_assessment_score_gap_reaches_report(monkeypatch):
     （`(chart_gaps or [])` 让两者都得到空集），那条测试测了等于没测。
     """
     _install_fakes(monkeypatch)
-    base = O.chat_json
+    base = llm.chat_json
 
     def _strip_numeric(messages, temperature=0.3, max_tokens=2048, model=None, *, purpose=""):
         payload = base(messages, temperature=temperature, max_tokens=max_tokens,
@@ -1062,7 +1066,7 @@ def test_assessment_score_gap_reaches_report(monkeypatch):
                     route.pop("cost_yuan", None)
         return payload
 
-    monkeypatch.setattr(O, "chat_json", _strip_numeric, raising=False)
+    monkeypatch.setattr(llm, "chat_json", _strip_numeric, raising=False)
     _, _, report = _run_pipeline("assessment")
     assert report is not None
     secs = {s["id"]: s for s in report["sections"]}

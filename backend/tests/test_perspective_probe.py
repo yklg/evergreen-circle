@@ -12,7 +12,10 @@ import asyncio
 
 import pytest
 
+from app.core import search
+from app.core import llm
 from app.core.pipeline.research import engine as O
+from app.core.pipeline.research import planning
 from app.core import research_types as rt
 from app.core.search import SearchProviderError
 
@@ -38,7 +41,7 @@ def test_probe_queries_carry_spot_name_and_template(monkeypatch):
         seen.extend(queries)
         return _mk_results(queries)
 
-    monkeypatch.setattr(O, "multi_search", fake_multi)
+    monkeypatch.setattr(search, "multi_search", fake_multi)
     out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS[:2], _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert len(seen) == 4  # 2 景点 × 2 模板
@@ -58,7 +61,7 @@ def test_probe_partial_failure_isolates_rows(monkeypatch):
             return []  # 搜不到（非异常）
         return _mk_results(queries)
 
-    monkeypatch.setattr(O, "multi_search", fake_multi)
+    monkeypatch.setattr(search, "multi_search", fake_multi)
     out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert len(out["by_spot"]) == 5
@@ -70,7 +73,7 @@ def test_probe_dedupes_urls_across_spots(monkeypatch):
     """跨景点 URL 去重共用 seen_urls 池（同一条转载不得给两个景点当证据）。"""
     same = [{"url": "https://dup.com/x", "title": "t", "snippet": "s 儿童票 免票",
              "captured_at": ""}]
-    monkeypatch.setattr(O, "multi_search", lambda qs, **kw: list(same))
+    monkeypatch.setattr(search, "multi_search", lambda qs, **kw: list(same))
     urls: set = set()
     out1 = asyncio.run(O._probe_spot_family(_DEST, _SPOTS[:1], _TPLS, "oneYear",
                                             urls, "L1-012", 7))
@@ -90,7 +93,7 @@ def test_probe_quota_error_aborts_remaining(monkeypatch):
             raise SearchProviderError("quota exceeded")
         return _mk_results(queries)
 
-    monkeypatch.setattr(O, "multi_search", fake_multi)
+    monkeypatch.setattr(search, "multi_search", fake_multi)
     out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert out["quota_error"] and "quota" in out["quota_error"]
@@ -104,7 +107,7 @@ def test_probe_topn_zero_calls_nothing(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("probe_topn=0 不得发起任何搜索")
 
-    monkeypatch.setattr(O, "multi_search", boom)
+    monkeypatch.setattr(search, "multi_search", boom)
     out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 0))
     assert out == {"by_spot": {}, "evidences": [], "failed": [], "quota_error": None}
@@ -168,8 +171,8 @@ def test_plan_research_wires_slots_only_for_family(monkeypatch):
         captured["persp"] = tuple(persp_angles)
         return list(raw)[:max_angles]
 
-    monkeypatch.setattr(O, "chat_json", fake_chat)
-    monkeypatch.setattr(O, "_orthogonal_angles", fake_orth)
+    monkeypatch.setattr(llm, "chat_json", fake_chat)
+    monkeypatch.setattr(planning, "_orthogonal_angles", fake_orth)
     fam = {"party": "亲子家庭", "destinations": ["大理"], "_type": "guide"}
     O._plan_research("大理攻略", fam, 8, "guide", "", persp_slots=2)
     assert captured["persp"] == rt.PERSPECTIVE_SPECS["persp_family"]["angle_tpls"]
