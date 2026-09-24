@@ -40,6 +40,8 @@ _ALLOW = [
      "flip 后为纯 re-export 外壳；run_pipeline 兼容别名的历史注释"),
     (r"^backend/app/core/schemas\.py$", r'it\.get\("brand"\)|旧键 brand',
      "LLM 偶发沿用旧键 brand 的主键兜底（防整行丢失）"),
+    (r"^backend/app/core/pipeline/research/_util\.py$", r'it\.get\("brand"\)|name/brand',
+     "M3 提取：行主键对 LLM 偶发旧键 brand 的读容忍（与 schemas 同理由），不写入新数据"),
     # ── M2-flip 临时：skip 旧中立模块/注释，M3 引擎提取与语义精修时清理 ──
     (r"^backend/app/core/(research_profile|source_type|expert_prompt)\.py$",
      r"竞品|brand",
