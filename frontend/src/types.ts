@@ -33,9 +33,9 @@ export interface ClarifyQuestion {
 }
 export interface CreateTaskResp {
   taskId: string
-  /** 后端归一化后的任务类型（research / travel_guide / travel_assess）。后端已随 purpose 落库。 */
+  /** 任务路由 kind（research / travel_guide / travel_assess / living_circle）；真实态由后端按 type 落库。 */
   kind?: string
-  /** 目的地产出体裁：''(通用 research) | guide | assess。 */
+  /** 仅演示回放桥使用（guide/assess 历史方言）；新代码建任务以权威 type 为准。 */
   purpose?: string
 }
 

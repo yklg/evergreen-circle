@@ -1,8 +1,9 @@
 // @vitest-environment node
 /**
- * researchFlow 统一发起入口：
- *  - buildResearchQuery 按 purpose 归一（评估/攻略）query 模板（唯一收敛点）；
- *  - launchResearch 调用 createTask 并在 taskRegistry 落 running。
+ * researchFlow 统一发起入口（权威 type 契约）：
+ *  - buildResearchQuery：用户原话透传，空值按类型给兜底句（不再用跨域模板包装）；
+ *  - launchResearch：createTask(query, depth, undefined, type) + registry 落 running，
+ *    purpose 字段仅为演示回放桥（guide/assess 方言）。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { launchResearch, buildResearchQuery } from '../lib/researchFlow'
@@ -19,31 +20,47 @@ beforeEach(() => {
 })
 
 describe('buildResearchQuery', () => {
-  it('purpose=assess → 评估报告模板', () => {
-    expect(buildResearchQuery('黄山', 'assess')).toBe('以15分钟便民生活圈视角调研「黄山」，产出评估报告')
+  it('用户原话非空 → 原样透传（不包装、不改写）', () => {
+    expect(buildResearchQuery('大理 5 天亲子游攻略，含住宿', 'guide'))
+      .toBe('大理 5 天亲子游攻略，含住宿')
+    expect(buildResearchQuery('评估成都和杭州哪个宜居', 'assessment'))
+      .toBe('评估成都和杭州哪个宜居')
   })
-  it('purpose=guide → 攻略报告模板', () => {
-    expect(buildResearchQuery('大理', 'guide')).toBe('以15分钟便民生活圈视角调研「大理」，产出攻略报告')
+  it('空/纯空白输入 → 按类型给兜底句（不抛、不跨域措辞）', () => {
+    expect(buildResearchQuery('', 'guide')).toContain('攻略')
+    expect(buildResearchQuery('   ', 'assessment')).toContain('评估')
+    expect(buildResearchQuery('')).toContain('攻略') // 默认 guide
   })
-  it('默认 purpose → 评估报告', () => {
-    expect(buildResearchQuery('凯里老街')).toContain('产出评估报告')
+  it('旧方言 assess 入参同样归一（读宽容）', () => {
+    expect(buildResearchQuery('', 'assess')).toContain('评估')
   })
 })
 
 describe('launchResearch', () => {
-  it('调用 createTask(query, depth, undefined, purpose) 并在 registry 落 running', async () => {
-    mockedCreateTask.mockResolvedValue({ taskId: 't1', kind: 'travel_assess' })
-    const r = await launchResearch('以15分钟便民生活圈视角调研「黄山」，产出评估报告', 'deep', 'assess')
-    expect(mockedCreateTask).toHaveBeenCalledWith(
-      '以15分钟便民生活圈视角调研「黄山」，产出评估报告',
-      'deep',
-      undefined,
-      'assess',
-    )
-    expect(r).toEqual({ taskId: 't1', kind: 'travel_assess' })
+  it('攻略：createTask(query, depth, undefined, guide) 并在 registry 落 running', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't1', kind: 'travel_guide', purpose: 'guide' })
+    const r = await launchResearch('大理 5 天亲子游', 'deep', 'guide')
+    expect(mockedCreateTask).toHaveBeenCalledWith('大理 5 天亲子游', 'deep', undefined, 'guide')
+    expect(r).toEqual({ taskId: 't1', kind: 'travel_guide' })
     const rec = useTaskRegistry.getState().tasks['t1']
     expect(rec?.status).toBe('running')
+    expect(rec?.kind).toBe('travel_guide')
+    expect(rec?.purpose).toBe('guide')
+  })
+
+  it('FE-9 · 演示态评估双写桥：registry kind=travel_assess 且 purpose=assess（喂回放器）', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't2', kind: 'travel_assess', purpose: 'assess' })
+    const r = await launchResearch('评估成都和杭州', 'deep', 'assessment')
+    expect(mockedCreateTask).toHaveBeenCalledWith('评估成都和杭州', 'deep', undefined, 'assessment')
+    expect(r.kind).toBe('travel_assess')
+    const rec = useTaskRegistry.getState().tasks['t2']
     expect(rec?.kind).toBe('travel_assess')
-    expect(rec?.purpose).toBe('assess')
+    expect(rec?.purpose).toBe('assess', '演示回放器按 purpose=assess 取评估话术')
+  })
+
+  it('默认参数：depth=deep、type=guide', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't3', kind: 'travel_guide', purpose: 'guide' })
+    await launchResearch('大理')
+    expect(mockedCreateTask).toHaveBeenCalledWith('大理', 'deep', undefined, 'guide')
   })
 })

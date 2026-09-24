@@ -25,7 +25,7 @@ import type {
   TraceSpan,
 } from '../types'
 import { isFixtureMode } from '../store/dataModeStore'
-import { kindForPurpose } from './viewRegistry'
+import { resolveTypeOr, kindOfType, demoPurposeOf } from './taskDomains'
 import { getLivingCircleReportMock } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream } from '../mocks/livingCircleStream'
 import { replayResearchStream } from '../mocks/researchStream'
@@ -46,9 +46,14 @@ async function safeJson<T>(path: string, init?: RequestInit, fallback?: T): Prom
 }
 
 /* 48 专家：优先后端，失败回退本地 JSON（绝不白屏） */
-export async function fetchExperts(): Promise<Expert[]> {
+/**
+ * 拉专家名册（按域）：travel（默认）/ living_circle。
+ * 后端不可达时回落静态资源；生活圈静态文件缺失时回落 travel 静态名册（不崩）。
+ */
+export async function fetchExperts(domain: 'travel' | 'living_circle' = 'travel'): Promise<Expert[]> {
+  const qs = domain === 'living_circle' ? '?domain=living_circle' : ''
   try {
-    const r = await fetch(`${API_BASE}/api/experts`)
+    const r = await fetch(`${API_BASE}/api/experts${qs}`)
     if (r.ok) {
       const data = await r.json()
       if (Array.isArray(data) && data.length) return data
@@ -57,8 +62,16 @@ export async function fetchExperts(): Promise<Expert[]> {
   } catch {
     /* fall through */
   }
-  const local = await fetch('/assets/experts.json')
-  return (await local.json()) as Expert[]
+  // 离线回落：生活圈有独立静态名册（若已部署），否则回落默认 travel 名册
+  const localFile = domain === 'living_circle' ? '/assets/experts/living_circle.json' : '/assets/experts.json'
+  try {
+    const local = await fetch(localFile)
+    if (local.ok) return (await local.json()) as Expert[]
+  } catch {
+    /* fall through to default */
+  }
+  const fallback = await fetch('/assets/experts.json')
+  return (await fallback.json()) as Expert[]
 }
 
 /* ── 模型配置 ─────────────────────────────────────────── */
@@ -107,24 +120,32 @@ export async function pingLLM(): Promise<PingLLMResp> {
   }
 }
 
+/**
+ * 建旅游调研任务。type 为**权威**类型（guide/assessment，默认 guide）；
+ * 真实态 POST body 只发 type（后端按 type 落 task meta；旧 purpose 方言后端已读宽容归一）。
+ * 返回附带 kind/demoPurpose，供 taskRegistry 与 fixture 回放桥接。
+ */
 export async function createTask(
   query: string,
   mode: string = 'deep',
   model?: string | null,
-  purpose: string = '',
+  type: string = 'guide',
 ): Promise<CreateTaskResp> {
-  const kind = kindForPurpose(purpose)
+  const domain = resolveTypeOr(type, 'guide')
+  const kind = kindOfType(domain)
+  // 演示回放器历史方言：guide/assess（taskDomains 是唯一桥，新代码其它处不写 assess）
+  const demoPurpose = demoPurposeOf(domain)
   // 演示态离线：不触后端，直接回传 demo taskId 走 fixture 流（与 createLivingCircleTask 同判据）。
-  if (isFixtureMode()) return { taskId: `demo-${Date.now()}`, kind, purpose }
+  if (isFixtureMode()) return { taskId: `demo-${Date.now()}`, kind, purpose: demoPurpose }
   return safeJson<CreateTaskResp>(
     '/api/tasks',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode, model: model ?? null, purpose }),
+      body: JSON.stringify({ query, mode, model: model ?? null, type: domain }),
     },
     // 真实态网络/离线兜底：仍回传 kind/purpose，前端据此走 taskViewProvider + fixture 流
-    { taskId: `demo-${Date.now()}`, kind, purpose },
+    { taskId: `demo-${Date.now()}`, kind, purpose: demoPurpose },
   )
 }
 
