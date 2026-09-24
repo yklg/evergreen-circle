@@ -19,6 +19,9 @@
 | **G-2** | `tests/**` **之外**出现 `allow_ungated=` **关键字实参** ⇒ 违例 | 进程级闸豁免只许测试用（K10 裁决） |
 | **G-3** | `tests/**` 的 **assert 被测表达式**内读挂钟（`date.today()` / `datetime.now()` / `datetime.today()`）⇒ 违例 | 断言不得依赖宿主机时钟（K3「口径不随宿主机漂移」同族） |
 | **G-4** | `tests/**` 之外出现 `SpatialScope.from_iso(...)` 调用 ⇒ **只允许 1 处**（在 `data_source.scope_or_degrade` 内） | 空等时圈时必须**先分流降级**再选环；任何新入口直接调它 ⇒ 降级代码不可达（根因 B 复发的机器判据） |
+| **G-5** | `app/core/pipeline/**` 任何模块 import `app.core.orchestrator` 或 `app.core.runner` ⇒ 违例 | 流水线是被调度的内层；反向握住外壳/调度器即成环，M3 提取的单向依赖被击穿 |
+| **G-6** | `app/core/orchestrator.py` 的 pipeline 导入**只能**打在 `app.core.pipeline.research.engine` 公共面 | 外壳不许伸手进 research 子模块/living_circle 内部（内部重提取会被它锁死）；需要的符号经 engine re-export |
+| **G-7** | research 包内除 `__init__.py`/`engine.py` 外，任何模块 import `engine`（绝对或相对回边）⇒ 违例 | engine 是编排顶层 + 兼容 re-export 面；子模块回握 engine 即环形依赖，子模块不再可独立测试 |
 
 白名单（**仅 G-1**，两处，都必须存在）
 ------------------------------------
@@ -133,6 +136,98 @@ def _called_name(node: ast.Call) -> str | None:
     return None
 
 
+# ── G-5/G-6/G-7：流水线分层 import 方向（M3 模块提取后的机器纪律）──────────
+# 流水线内层禁止回握上层：pipeline/** → orchestrator/runner 一律违例。
+_FORBIDDEN_UPPER = ("app.core.orchestrator", "app.core.runner")
+# 外壳只许依赖旅游引擎公共面；pipeline 下其余模块（research 子模块/living_circle）
+# 不是它的依赖目标。
+_ORCH_ALLOWED_PIPELINE = "app.core.pipeline.research.engine"
+_RESEARCH_DIR = "app/core/pipeline/research/"
+_RESEARCH_BACKEDGE_FILES = frozenset({"__init__.py", "engine.py"})
+
+
+def _resolve_relative(rel: str, level: int, module: str, imported_name: str) -> str | None:
+    """把包内相对导入解析成绝对点路径；无法落到 app 包内时返回 None。
+
+    rel 形如 app/core/pipeline/research/spots.py（4 级包路径）：
+    level=1 锚定 research、2→pipeline、3→core、4→app。
+    `from . import engine` 时 imported_name='engine'；其余尾部取 module 点路径。
+    """
+    parts = Path(rel).with_suffix("").parts
+    try:
+        idx = parts.index("app")
+    except ValueError:
+        return None
+    base = parts[idx:len(parts) - (level - 1)]
+    if not base:
+        return None
+    tail = module or imported_name
+    return ".".join((*base, tail)) if tail else ".".join(base)
+
+
+def _scan_layer_imports(rel: str, tree: ast.AST) -> list[str]:
+    """G-5/G-6/G-7：只看 app/ 生产代码（测试经 engine 命名空间打桩，天然豁免）。"""
+    if not rel.startswith("app/"):
+        return []
+    bad: list[str] = []
+
+    in_pipeline = rel.startswith("app/core/pipeline/")
+    is_orchestrator = rel == "app/core/orchestrator.py"
+    in_research = rel.startswith(_RESEARCH_DIR)
+    backedge_allowed = in_research and Path(rel).name in _RESEARCH_BACKEDGE_FILES
+
+    for node in ast.walk(tree):
+        targets: list[tuple[str, int]] = []
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                # 相对导入逐个解析（from . import a, b 可能有多目标）
+                for a in node.names:
+                    resolved = _resolve_relative(rel, node.level, node.module or "", a.name)
+                    if resolved:
+                        targets.append((resolved, node.lineno))
+            elif node.module:
+                # 同时登记来源模块与其下每个别名点路径：
+                # `from app.core import orchestrator` 必须与 `import app.core.orchestrator`
+                # 同判（否则换个写法就绕过）。
+                targets.append((node.module, node.lineno))
+                for a in node.names:
+                    targets.append((f"{node.module}.{a.name}", node.lineno))
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                targets.append((a.name, node.lineno))
+
+        for mod, lineno in targets:
+            # G-5：pipeline 内层不得回握 orchestrator/runner
+            if in_pipeline and (mod in _FORBIDDEN_UPPER
+                                or any(mod.startswith(u + ".") for u in _FORBIDDEN_UPPER)):
+                bad.append(
+                    f"{rel}:{lineno}: G-5 pipeline 模块不得导入上层 `{mod}`"
+                    "（流水线是被调度内层；回握外壳/调度器即成环形依赖）"
+                )
+            # G-6：orchestrator 只许依赖 research.engine 公共面
+            # （`from ...engine import X` 派生出的 ...engine.X 别名点路径同属放行面）
+            if is_orchestrator and (mod == "app.core.pipeline"
+                                    or mod.startswith("app.core.pipeline.")):
+                on_surface = (mod == _ORCH_ALLOWED_PIPELINE
+                              or mod.startswith(_ORCH_ALLOWED_PIPELINE + "."))
+                if not on_surface:
+                    bad.append(
+                        f"{rel}:{lineno}: G-6 orchestrator 的 pipeline 依赖只能打在 "
+                        f"`{_ORCH_ALLOWED_PIPELINE}` 公共面，不得直达 `{mod}`"
+                        "（内部符号经 engine re-export）"
+                    )
+            # G-7：research 子模块不得回握 engine（__init__/engine 自身豁免）
+            if in_research and not backedge_allowed:
+                if (mod == "app.core.pipeline.research.engine"
+                        or (mod.startswith("app.core.pipeline.research")
+                            and mod.split(".")[-1] == "engine")):
+                    bad.append(
+                        f"{rel}:{lineno}: G-7 research 子模块不得导入 engine 回边 `{mod}`"
+                        "（engine 是编排顶层；子模块须只依赖同层/下层叶子）"
+                    )
+    return bad
+
+
 def scan(root: Path) -> "tuple[list[str], int]":
     """返回 `(违例列表, 扫描文件数)`。"""
     bad: list[str] = []
@@ -147,6 +242,9 @@ def scan(root: Path) -> "tuple[list[str], int]":
             # 不静默跳过：跳过即「守卫有洞」而无人知晓（静默失败是更坏的失败）
             bad.append(f"{rel}:{getattr(e, 'lineno', 0) or 0}: SYNTAX 无法解析（不静默跳过）：{e}")
             continue
+
+        # G-5/G-6/G-7：分层 import 方向（与函数体无关，整文件一次扫）
+        bad.extend(_scan_layer_imports(rel, tree))
 
         in_tests = rel.startswith("tests/")
         for node, func in _walk_with_func(tree):
@@ -239,7 +337,8 @@ def main(argv: "list[str] | None" = None) -> int:
     print(
         f"✓ γ 静态守卫通过：{n} 个 .py（root={root}）· "
         "G-1 生产侧无直接构造 CallGuard · G-2 allow_ungated 仅在 tests/ · G-3 tests 断言未读挂钟 "
-        f"· G-4 SpatialScope.from_iso 恰 {FROM_ISO_EXPECTED_CALLS} 处调用"
+        f"· G-4 SpatialScope.from_iso 恰 {FROM_ISO_EXPECTED_CALLS} 处调用 · "
+        "G-5 pipeline 无上层回握 · G-6 orchestrator 只依赖 engine 公共面 · G-7 research 无 engine 回边"
     )
     return 0
 

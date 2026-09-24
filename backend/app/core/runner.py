@@ -55,7 +55,8 @@ _running: Dict[str, _Run] = {}
 # 封闭任务注册表：kind → 流水线工厂(task_id)。
 # 显式登记每一类可执行任务；未登记 kind 走 fail-loud，绝不落到「竞品/调研」兜底。
 # 值一律为「调用期才导入」的工厂，避免模块加载期循环依赖（H2 对比导入自洽）。
-# 契约约定：kind=路由键（task 类型），purpose=内容腔调（report_voice 档位），勿跨用途。
+# 契约约定：kind=路由键（task 类型）；业务类型由任务 meta `_type`（guide/assessment）
+# 承载并经 research_types 注册表解析，勿把第二套类型别名塞进路由。
 # --------------------------------------------------------------------------- #
 def _load_research(task_id: str):
     # 经模块属性查找（而非 from-import 绑定），使测试 monkeypatch engine.research_pipeline

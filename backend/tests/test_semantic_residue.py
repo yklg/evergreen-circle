@@ -43,9 +43,10 @@ _ALLOW = [
     (r"^backend/app/core/pipeline/research/_util\.py$", r'it\.get\("brand"\)|name/brand',
      "M3 提取：行主键对 LLM 偶发旧键 brand 的读容忍（与 schemas 同理由），不写入新数据"),
     # ── M2-flip 临时：skip 旧中立模块/注释，M3 引擎提取与语义精修时清理 ──
-    (r"^backend/app/core/(research_profile|source_type|expert_prompt)\.py$",
+    (r"^backend/app/core/(source_type|expert_prompt)\.py$",
      r"竞品|brand",
-     "简版时代模块的历史 docstring/注释；research_profile M3 随注册表收敛清理"),
+     "简版时代模块的历史 docstring/注释（research_profile 已随决策 8 删除，"
+     "注册表单一性由 test_registry_single_source 守卫）"),
     (r"^backend/app/core/runner\.py$", r"竞品",
      "封闭注册表注释（fail-loud 不回落竞品引擎），无代码语义"),
     (r"^backend/app/core/pipeline/diagnosis_templates\.py$", r'"brands"',

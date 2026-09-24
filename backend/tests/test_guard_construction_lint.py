@@ -1,7 +1,9 @@
-"""J6 · J3（批次 3）：γ 静态守卫 `scripts/check_guard_construction.py` 的**等价类**测试。
+"""J6 · J3（批次 3）+ M3 分层：γ 静态守卫 `scripts/check_guard_construction.py` 的**等价类**测试。
 
-被测范围：γ 的三条规则（G-1 生产侧不得直接构造 `CallGuard` · G-2 `allow_ungated=` 只许
-`tests/**` · G-3 `tests/**` 的 assert 被测表达式内不得读挂钟）。
+被测范围：γ 的规则（G-1 生产侧不得直接构造 `CallGuard` · G-2 `allow_ungated=` 只许
+`tests/**` · G-3 `tests/**` 的 assert 被测表达式内不得读挂钟 · G-4
+`SpatialScope.from_iso` 唯一出口 · G-5 pipeline 不得回握 orchestrator/runner ·
+G-6 orchestrator 只许依赖 research.engine 公共面 · G-7 research 子模块不得回握 engine）。
 判据：**违规必红 且 合法必绿**，两半都要（只测一半会得到恒红或恒绿的假护栏）。
 
 ⚠️ 为什么用 **subprocess 跑真实 CLI**，而不是 import 进来调内部函数：
@@ -219,6 +221,100 @@ def test_j03_violation_clock_read_inside_assert_expression(tmp_path):
     assert cp.returncode == 1, "assert 表达式内读挂钟未被拦下"
     for frag in ("tests/test_d.py:6: G-3", "tests/test_n.py:6: G-3", "tests/test_t.py:6: G-3"):
         assert frag in cp.stderr, f"漏检 {frag}：\n{cp.stderr}"
+
+
+# ── M3 分层守卫 G-5/G-6/G-7：合法必绿 ──────────────────────────────
+def test_m3_layer_imports_legitimate_shapes_pass(tmp_path):
+    """真实分层形态全部合法：外壳→engine 公共面、__init__→engine、engine→子模块、
+    子模块→同层叶子与 core 叶子、pipeline→core 叶子；tests/ 触达内部不属生产代码。"""
+    root = _tree(tmp_path / "layers_ok", {
+        "app/core/orchestrator.py": (
+            "# 外壳只依赖公共面（符号级导入派生出的 engine.X 点路径同属放行面）\n"
+            "from app.core.pipeline.research.engine import (\n"
+            "    research_pipeline, GuideSingleDestinationError,\n)\n"
+        ),
+        "app/core/runner.py":
+            "def ensure_running():\n    return 1\n",
+        "app/core/pipeline/research/__init__.py":
+            "from .engine import research_pipeline\n",
+        "app/core/pipeline/research/engine.py": (
+            "# engine 是顶层：可导入任一子模块（re-export 兼容面）\n"
+            "from app.core.pipeline.research.collect import _ev\n"
+            "from app.core.pipeline.research.spots import _assemble_itinerary\n"
+        ),
+        "app/core/pipeline/research/spots.py": (
+            "# 子模块只依赖同层/下层叶子与 core 叶子（含 level-1 相对导入）\n"
+            "from .collect import _evidence_digest\n"
+            "from . import runtime\n"
+            "from app.core import llm\n"
+            "from app.core.fetcher import domain_of\n"
+        ),
+        "app/core/pipeline/living_circle.py":
+            "from app.core import db\n",
+        # tests/ 触达 pipeline 内部与 orchestrator 是打桩需要，不得被 G-5/6/7 误判
+        "tests/test_x.py":
+            "from app.core.pipeline.research import engine\n"
+            "from app.core import orchestrator\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 0, (
+        f"合法分层被误判：\nstdout={cp.stdout!r}\nstderr={cp.stderr!r}")
+
+
+# ── M3 分层守卫：违规必红（每条钉住一种绕过写法）──────────────────────
+def test_m3_g5_pipeline_importing_orchestrator_via_from_form(tmp_path):
+    """G-5：`from app.core import orchestrator` 与整路径导入同判（换写法不许绕过）。"""
+    root = _tree(tmp_path / "bad_g5", {
+        "app/core/pipeline/research/spots.py":
+            "from app.core import orchestrator\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "spots.py:1: G-5" in cp.stderr, cp.stderr
+
+
+def test_m3_g5_pipeline_importing_runner_module(tmp_path):
+    """G-5：pipeline 回握 runner 调度器同样违例。"""
+    root = _tree(tmp_path / "bad_g5b", {
+        "app/core/pipeline/living_circle.py":
+            "from app.core.runner import ensure_running\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "living_circle.py:1: G-5" in cp.stderr, cp.stderr
+
+
+def test_m3_g6_orchestrator_reaching_into_research_internals(tmp_path):
+    """G-6：外壳直达 research 子模块（绕过 engine 公共面）⇒ 红。"""
+    root = _tree(tmp_path / "bad_g6", {
+        "app/core/orchestrator.py":
+            "from app.core.pipeline.research.collect import _ev\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "orchestrator.py:1: G-6" in cp.stderr, cp.stderr
+
+
+def test_m3_g7_submodule_relative_backedge_to_engine(tmp_path):
+    """G-7：子模块 `from . import engine` 回握顶层 ⇒ 红（相对导入形态）。"""
+    root = _tree(tmp_path / "bad_g7", {
+        "app/core/pipeline/research/spots.py":
+            "from . import engine\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "spots.py:1: G-7" in cp.stderr, cp.stderr
+
+
+def test_m3_g7_submodule_absolute_backedge_to_engine(tmp_path):
+    """G-7：子模块绝对路径 `from ...research.engine import X` 同样违例。"""
+    root = _tree(tmp_path / "bad_g7b", {
+        "app/core/pipeline/research/analyze.py":
+            "from app.core.pipeline.research.engine import _sid\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "analyze.py:1: G-7" in cp.stderr, cp.stderr
 
 
 # ── 把 γ 从「一个脚本」变成「本仓的纪律」的那一步 ──────────────────────
