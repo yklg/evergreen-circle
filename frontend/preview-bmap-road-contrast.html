@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>取证 · 底图道路可读性（grand-shoal-moth · v4 定稿）</title>
+<style>
+  :root {
+    --bg:#f6f8f7; --card:#fff; --ink:#1d211f; --ink2:#5b6560; --ink3:#98a29d;
+    --line:#e3e8e5; --warn:#8a6420;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { background:var(--bg); font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif; color:var(--ink); line-height:1.6 }
+  .topbar { position:sticky; top:0; z-index:50; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.8; margin-top:2px }
+  .wrap { max-width:1240px; margin:0 auto; padding:16px 20px 60px }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:13px }
+  .box b { color:var(--warn) }
+  #status { color:var(--ink3); font-size:12px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px }
+  .card h2 { font-size:14px; margin-bottom:8px }
+  /* BMapGL 的 canvas 按父容器像素尺寸撑开 —— 高度必须是确定值 */
+  .map { height:420px; border:1px solid var(--line); border-radius:8px; overflow:hidden }
+  .note { font-size:12px; color:var(--ink2); margin-top:8px }
+  .muted { color:var(--ink3); margin-top:4px }
+  table.cmp { border-collapse:collapse; margin-top:6px; font-size:12px }
+  table.cmp th, table.cmp td { border:1px solid var(--line); padding:3px 8px; text-align:left }
+  table.cmp th { background:#fafcfb; font-weight:600 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>底图道路可读性 · 真机取证（v4 定稿）</h1>
+    <div class="sub">
+      四类问题：S/T 面层键探针 · P0/P4 百度默认锚点 · U 组候选对照（<b style="color:#ffd9a0">⭐U2＝U6＝终版</b>）· V 组面色复核。
+      模式：<code>?mode=singles-c</code>（默认对照，推荐） / <code>singles</code> / <code>singles-b</code> / <code>tones</code> / <code>default</code>
+      · 比例尺：<code>&amp;zoom=13</code> / <code>15</code> / <code>17</code>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="box" id="criteria">
+      <b>判定口径（写死在此，避免事后凭记忆解释）</b><br>
+      ① 街道网格可见（不是一片地色）；<br>
+      ② 主干道 / 一般道路 / 高速 <b>三级互可区分</b>（遮挡测试：只看中心 400×400 区域）；<br>
+      ③ 套上 0.30 等时圈后圈内道路仍可见；<br>
+      ④ 路名 / 区划名仍在，<b>无第三方设施名与图钉</b>（注记纪律未破）。
+      <div class="muted">⚠️ <code>map_style_id</code> 非空 ⇒ 控制台样式整体压过 styleJson，本次取证无效（下方 precheck 会标红）。</div>
+    </div>
+    <div class="box" id="precheck">读取 map-config…</div>
+    <div class="box" id="status"></div>
+    <div id="table"></div>
+  </div>
+  <!-- 由 Vite dev server 直接编译：样式取自 lib/bmapStyle、算子取自 dev/contrast，
+       与线上和单测同一份真源，不存在第二套色值。 -->
+  <script type="module" src="/src/dev/roadContrastProbe.ts"></script>
+</body>
+</html>
