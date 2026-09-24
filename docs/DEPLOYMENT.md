@@ -18,26 +18,26 @@ cd backend
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env          # 填入 ZHIPU_API_KEY 等密钥
-.venv/bin/python -m uvicorn app.main:app --reload --port 8010
+.venv/bin/python -m uvicorn app.main:app --reload --port 8020
 ```
 
-健康检查：`curl http://localhost:8010/health`
-LLM 自检：`curl http://localhost:8010/api/llm/ping`
+健康检查：`curl http://localhost:8020/health`
+LLM 自检：`curl http://localhost:8020/api/llm/ping`
 
 ### 前端
 
 ```bash
 cd frontend
 npm install
-npm run dev                    # http://localhost:3400
+npm run dev                    # http://localhost:3500
 ```
 
-前端开发服务器通过 Vite 代理把 `/api` 转发到后端（见 [vite.config.ts](../frontend/vite.config.ts)），默认代理目标 `http://127.0.0.1:8010`。
+前端开发服务器通过 Vite 代理把 `/api` 转发到后端（见 [vite.config.ts](../frontend/vite.config.ts)），默认代理目标 `http://127.0.0.1:8020`。
 
 ### 一键启停脚本（macOS / Linux）
 
 ```bash
-./restart.sh   # 清理旧进程 → 启动后端(:8010) → 等待就绪 → 启动前端(:3400)
+./restart.sh   # 清理旧进程 → 启动后端(:8020) → 等待就绪 → 启动前端(:3500)
 ./stop.sh      # 按端口精确关闭本项目前后端
 ```
 
@@ -95,8 +95,8 @@ npm run dev                    # http://localhost:3400
 
 | 服务 | 端口 | 配置位置 |
 |---|---|---|
-| 前端 Vite | 3400 | [vite.config.ts](../frontend/vite.config.ts) · restart.sh / stop.sh |
-| 后端 FastAPI（本地脚本） | 8010 | restart.sh · vite 代理目标 |
-| 后端 FastAPI（默认值） | 8000 | `.env.example` 的 `APP_PORT` |
+| 前端 Vite | 3500 | [vite.config.ts](../frontend/vite.config.ts) · restart.sh / stop.sh |
+| 后端 FastAPI（本地脚本） | 8020 | restart.sh · vite 代理目标 |
+| 后端 FastAPI（代码默认值） | 8000 | `config.py` 的 `app_port` · `.env` 的 `APP_PORT` |
 
 修改端口时请保持以上各处一致（尤其是 Vite 代理目标与后端实际端口、CORS 白名单 `FRONTEND_ORIGIN`）。

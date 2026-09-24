@@ -103,8 +103,8 @@ docker compose up -d
 
 ## 5. 路径③ 本地（已完成，仅文档）
 
-- 后端 `:8010` / 前端 `:3400` 本地已跑新代码，长任务修复生效，**无需任何 Worker / C 工作**。
-- 前端 `VITE_API_BASE` 留空 → 走 `vite.config.ts` 代理 `/api` → `127.0.0.1:8010`。
+- 后端 `:8020` / 前端 `:3500` 本地已跑新代码，长任务修复生效，**无需任何 Worker / C 工作**。
+- 前端 `VITE_API_BASE` 留空 → 走 `vite.config.ts` 代理 `/api` → `127.0.0.1:8020`。
 - 本地 SQLite 默认 `backend/app/data/verda.db`（已 WAL）。
 
 ### 线上前端（Vercel 构建）

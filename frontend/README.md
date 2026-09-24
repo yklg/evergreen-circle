@@ -8,16 +8,16 @@ React 19 + TypeScript + Vite 单页应用，是青野 Verda AI 竞品情报工�
 
 ```bash
 npm install
-npm run dev      # http://localhost:3400
+npm run dev      # http://localhost:3500
 ```
 
-开发服务器通过 Vite 代理把 `/api` 转发到后端（见 [vite.config.ts](./vite.config.ts)，默认 `http://127.0.0.1:8010`）。
+开发服务器通过 Vite 代理把 `/api` 转发到后端（见 [vite.config.ts](./vite.config.ts)，默认 `http://127.0.0.1:8020`）。
 
 ## 常用脚本
 
 | 命令 | 说明 |
 |---|---|
-| `npm run dev` | 启动开发服务器（端口 3400） |
+| `npm run dev` | 启动开发服务器（端口 3500） |
 | `npm run build` | 类型检查 + 生产构建（输出 `dist/`） |
 | `npm run preview` | 预览生产构建 |
 | `npm run lint` | ESLint 检查 |

@@ -10,6 +10,9 @@ export default {
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // M1 三跳合并：改造侧旅游前端组件/页面为 ours 旧版，gaizao 的 18 个旅游测试
+    // 依赖 flip 后的新契约（13 结构化块/类型卡/C1 版式等），P2/M3 随组件移回。
+    exclude: ['**/node_modules/**', '**/dist/**', 'src/**/_travel_pending/**'],
     globals: false,
     // jsdom 环境 localStorage 补水（Node 26 实验性全局 Web Storage 与
     // vitest 2.x / jsdom 30 组合的兼容适配，见 vitest.setup.ts）
