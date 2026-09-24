@@ -9,7 +9,6 @@ import {
   TASK_DOMAINS,
   resolveType,
   resolveTypeOr,
-  domainOf,
   familyOf,
   familyOfKind,
   kindOfType,

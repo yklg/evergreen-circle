@@ -3,7 +3,7 @@
  * 方案 A（Clarify 异步化）前端回归测试：守护 3 个 P0 不退化。
  *
  * 运行依赖（当前项目未安装，需 `npm i -D @testing-library/react @testing-library/jest-dom jsdom`）：
- *   - T-HP1  HomePage 永远进 clarify（修 P0#2：原 else 误跳 workspace）
+ *   - T-HP1  HomePage 三能力入口：真实态旅游提交先进 clarify（分步弹窗向导已退役）
  *   - T-CP3  空问卷 → 跳 workspace
  *   - T-CP5  loading 不误跳（修 P0#3：原 questions.length===0 硬跳）
  *   - T-CP1  loading → render（SSE 驱动）
@@ -61,63 +61,53 @@ function renderClarify(taskId: string) {
   )
 }
 
-// ── P0#2（M3 演进）：HomePage 入口改道「目的地调研」→ 分步问答 → research 流水线 ──
-async function walkWizardAndLaunch(typeLabel: string) {
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(typeLabel) })) // Q1 报告类型
-  fireEvent.click(screen.getByRole('button', { name: '下一步' })) // → Q2（深度默认 deep）
-  fireEvent.click(screen.getByRole('button', { name: '下一步' })) // → Q3 确认
-  fireEvent.click(screen.getByRole('button', { name: '发起调研' })) // launch（精确文本）
-}
-
-describe('T-HP1 HomePage 真实态发起目的地调研（经分步问答）', () => {
-  it('纯地名提交 → 向导选「调研评估」→ createTask(purpose=assess) → /workspace/:taskId', async () => {
-    mockedCreateTask.mockResolvedValue({ taskId: 't_xyz', kind: 'travel_assess' })
+// ── P0#2（M3 收口）：HomePage 三能力入口 —— 真实态旅游提交统一先进 ClarifyPage ──
+// （分步弹窗向导 ResearchWizard 已退役；演示态直进 /workspace 由 homeDomainEntry 钉。）
+describe('T-HP1 HomePage 真实态发起目的地调研（域卡 → /clarify/:taskId）', () => {
+  it('攻略：createTask(type=guide) → /clarify/:taskId（不再直跳 workspace）', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't_xyz', kind: 'travel_guide', purpose: 'guide' })
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     )
-    const ta = screen.getByPlaceholderText(/输入目的地名/)
-    fireEvent.change(ta, { target: { value: '黄山' } })
-    fireEvent.keyDown(ta, { key: 'Enter', metaKey: true })
+    await screen.findByText('游玩攻略')
+    const ta = screen.getByPlaceholderText(/想去哪里/)
+    fireEvent.change(ta, { target: { value: '大理 5 天亲子游' } })
+    fireEvent.click(screen.getByRole('button', { name: '开始调研' }))
 
-    // Enter 先弹向导，未发任务
-    await waitFor(() => expect(screen.getByText(/分步问答/)).toBeTruthy())
-    expect(mockedCreateTask).not.toHaveBeenCalled()
-
-    await walkWizardAndLaunch('调研评估')
-    await waitFor(() => expect(mockedCreateTask).toHaveBeenCalled())
+    await waitFor(() => expect(mockedCreateTask).toHaveBeenCalledTimes(1))
     expect(mockedCreateTask).toHaveBeenCalledWith(
-      '以15分钟便民生活圈视角调研「黄山」，产出评估报告',
+      '大理 5 天亲子游',
       'deep',
       undefined,
-      'assess',
+      'guide',
     )
     await waitFor(() => expect(navigateFn).toHaveBeenCalled())
     expect(navigateFn).toHaveBeenCalledWith(
-      '/workspace/t_xyz',
-      expect.objectContaining({ state: { query: expect.stringContaining('黄山'), kind: 'travel_assess', purpose: 'assess' } }),
+      '/clarify/t_xyz',
+      expect.objectContaining({ state: expect.objectContaining({ query: '大理 5 天亲子游', type: 'guide' }) }),
     )
   })
 
-  it('样例卡「凯里老街」→ 向导默认「游玩攻略」→ createTask(purpose=guide)', async () => {
-    mockedCreateTask.mockResolvedValue({ taskId: 't_sample', kind: 'travel_guide' })
+  it('评估：切「调研评估」卡 → createTask(type=assessment) → /clarify/:taskId', async () => {
+    mockedCreateTask.mockResolvedValue({ taskId: 't_ass', kind: 'travel_assess', purpose: 'assess' })
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole('button', { name: /凯里老街/ }))
-    await waitFor(() => expect(screen.getByText(/分步问答/)).toBeTruthy())
-    expect(screen.getByText(/目标：凯里老街/)).toBeTruthy()
+    await screen.findByText('游玩攻略')
+    fireEvent.click(screen.getByText('调研评估'))
+    fireEvent.change(screen.getByPlaceholderText(/评估哪几个城市/), { target: { value: '评估成都和杭州' } })
+    fireEvent.click(screen.getByRole('button', { name: '开始调研' }))
 
-    await walkWizardAndLaunch('游玩攻略') // 默认类型即攻略
+    await waitFor(() => expect(mockedCreateTask).toHaveBeenCalledTimes(1))
+    expect(mockedCreateTask.mock.calls[0][3]).toBe('assessment')
     await waitFor(() =>
-      expect(mockedCreateTask).toHaveBeenCalledWith(
-        expect.stringContaining('「凯里老街」'),
-        'deep',
-        undefined,
-        'guide',
+      expect(navigateFn).toHaveBeenCalledWith(
+        '/clarify/t_ass',
+        expect.objectContaining({ state: expect.objectContaining({ query: '评估成都和杭州', type: 'assessment' }) }),
       ),
     )
   })

@@ -72,7 +72,8 @@ describe('FE-16 · 串人设守卫：生活圈加载不得覆盖 travel 槽', ()
     await useExpertStore.getState().load('living_circle')
     const s = useExpertStore.getState()
     expect(s.experts).toEqual(TRAVEL)
-    expect(s.experts[1].name).toBe('旅游专家A', '生活圈人设不得串到旅游槽')
+    // 生活圈人设不得串到旅游槽
+    expect(s.experts[1].name).toBe('旅游专家A')
     // 同 id 在生活圈槽是另一个人
     expect(s.expertsByDomain.living_circle?.[1].name).toBe('生活圈专家B')
   })

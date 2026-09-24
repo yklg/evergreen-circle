@@ -179,3 +179,34 @@ describe('LifeCirclePage（live 态）· 定位发起体检的名称/坐标同�
     expect(nav.to).toBe('')
   })
 })
+
+// ── FE-32：首页生活圈域提交的文字经 router state 透传为中心点初值（不丢字）────
+describe('FE-32 · LifeCirclePage 接收首页透传的 state.query', () => {
+  it('挂载在 /life-circle/custom 且带 state.query → 中心点输入框初值为该文字', async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[{ pathname: '/life-circle/custom', state: { query: '贵阳市观山湖区' } }]}
+      >
+        <Routes>
+          <Route path="/life-circle/:sceneId" element={<LifeCirclePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /定位到我/ })
+    const input = screen.getByPlaceholderText(/输入社区名/) as HTMLInputElement
+    expect(input.value).toBe('贵阳市观山湖区')
+  })
+
+  it('无 state.query → 输入框为空（不影响既有入口）', async () => {
+    render(
+      <MemoryRouter initialEntries={['/life-circle/kaili']}>
+        <Routes>
+          <Route path="/life-circle/:sceneId" element={<LifeCirclePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /定位到我/ })
+    const input = screen.getByPlaceholderText(/输入社区名/) as HTMLInputElement
+    expect(input.value).toBe('')
+  })
+})

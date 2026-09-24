@@ -55,7 +55,8 @@ describe('launchResearch', () => {
     expect(r.kind).toBe('travel_assess')
     const rec = useTaskRegistry.getState().tasks['t2']
     expect(rec?.kind).toBe('travel_assess')
-    expect(rec?.purpose).toBe('assess', '演示回放器按 purpose=assess 取评估话术')
+    // 演示回放器按 purpose=assess 取评估话术
+    expect(rec?.purpose).toBe('assess')
   })
 
   it('默认参数：depth=deep、type=guide', async () => {

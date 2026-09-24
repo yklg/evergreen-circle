@@ -96,7 +96,10 @@ function StatRow({ label, value, highlight }: { label: string; value: string; hi
 export default function LifeCirclePage() {
   const { sceneId = 'kaili' } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const isFixture = useDataModeStore((s) => s.mode === 'fixture')
+  // 首页生活圈域提交时把输入文字带到地图页（state.query）→ 直接作为中心点初始搜索值（不丢字）。
+  const incomingQuery = (location.state as { query?: string } | null)?.query ?? ''
   const [customCenter, setCustomCenter] = useState<LngLat | null>(null)
   /* ═══ C8：图-面板联动状态（低频：LcMap 仅在 mouseover/mouseout 上报，审查 R6 纪律）═══ */
   const [isoHoverMinutes, setIsoHoverMinutes] = useState<number | null>(null)
@@ -123,11 +126,10 @@ export default function LifeCirclePage() {
   const [realReport, setRealReport] = useState<LivingCircleReport | null>(null)
   const [realLatestId, setRealLatestId] = useState('')
   const [realLoading, setRealLoading] = useState(!isFixture)
-  const [ctaText, setCtaText] = useState('')
+  const [ctaText, setCtaText] = useState(incomingQuery)
   const [ctaBusy, setCtaBusy] = useState(false)
   const [ctaErr, setCtaErr] = useState('')
   const [regionOpen, setRegionOpen] = useState(false)
-  const location = useLocation()
   /* D·回落 SSE 运行态（真实模式）：进度值单一事实源 = taskRegistry。
      本页只保留「当前正在跟随的任务 id」做订阅锚点，runStage/runPercent/runActive
      均由注册表派生（lifeCircleFlow 写入），不再维护并行的局部进度。 */
