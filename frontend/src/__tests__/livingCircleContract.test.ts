@@ -725,8 +725,11 @@ describe('T5 · 降级画布 (LC_CANVAS) 与报告半径同源', () => {
     expect(offlineReport().scene.study_radius_m).toBe(LC_CANVAS.R)
   })
 
-  it('等时圈配色表覆盖全部圈层（不足会渲染出 undefined 色）', () => {
+  it('等时圈配色表恰 4 档，且覆盖全部圈层（不足会渲染出 undefined 色）', () => {
+    // 精确锁 4 档：原 `>=` 无法发现档数漂移 ⇒ `zi % length` 错档静默（档数与消费方必须同步改）
+    expect(LC_ISO_COLORS.length, '色表档数变了 —— 检查 LcMap/报告快照的 `zi % length` 取色').toBe(4)
     for (const r of reports) {
+      expect(r.isochrones.length).toBeGreaterThan(0)
       expect(LC_ISO_COLORS.length).toBeGreaterThanOrEqual(r.isochrones.length)
     }
   })

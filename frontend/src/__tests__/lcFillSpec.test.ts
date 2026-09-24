@@ -11,8 +11,8 @@ describe('lcFillSpec（rgba 契约色 → BMapGL 实色 + fillOpacity）', () =>
     expect(lcFillSpec('rgba(120,120,120,0.16)')).toEqual({ color: '#787878', opacity: 0.16 })
   })
 
-  it('等时圈四级色阶解析为 0.55 / 0.34 / 0.20 / 0.10（内深外浅）', () => {
-    expect(LC_ISO_COLORS.map((c) => lcFillSpec(c.fill).opacity)).toEqual([0.55, 0.34, 0.2, 0.1])
+  it('等时圈四级色阶解析为 0.30 / 0.20 / 0.12 / 0.06（内深外浅；最内圈 ≤0.30 不压底图道路）', () => {
+    expect(LC_ISO_COLORS.map((c) => lcFillSpec(c.fill).opacity)).toEqual([0.3, 0.2, 0.12, 0.06])
   })
 
   it('无 alpha 的 rgb() 走 fallbackOpacity（不误判为 0 透明）', () => {

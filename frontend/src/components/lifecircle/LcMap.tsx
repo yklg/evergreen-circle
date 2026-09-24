@@ -227,6 +227,10 @@ function BoundaryToggle({
  * 没有这行字，这个改动会被读成「地图坏了」；有了它，「图上只剩应用数据」变成**可解释的设计**，
  * 也就把 §1 的原始困惑（图上点位与图例不一致）在源头截断。
  *
+ * 同一推理对**面层**成立（grand-shoal-moth 步骤 4 补齐）：本项目**不写任何道路规则**
+ * （实测写了会把整层打掉，见 `bmapStyle.ts` ⑪），故道路黄/橙是百度原始分级、不是配色事故；
+ * 角标补「道路/水系为百度原生渲染」，防评审把它读成「项目配错色」或「地图被简化了」。
+ *
  * 数字**与渲染层同源**（阶段 2.1 修正）：
  *  - 设施数取 `poiRenderSet().shown`（**实际画上去的标记数**）。旧实现取
  *    `min(points.length, POI_MARKER_CAP)` —— 一旦渲染层不再按常量截断，那个 `min` 就
@@ -264,7 +268,7 @@ function MapNoteBadge({
       role="note"
       aria-label="底图注记状态：已关闭"
     >
-      底图注记已关闭 · 图上仅应用数据（设施 {poiShown} · 采样 {heatShown}）
+      底图注记已关闭 · 道路/水系为百度原生渲染 · 图上仅应用数据（设施 {poiShown} · 采样 {heatShown}）
       {thinNote && <div className="mt-0.5 text-ink-3">{thinNote}</div>}
     </div>
   )

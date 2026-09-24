@@ -26,20 +26,25 @@ export const LC_CAT_COLOR: Record<string, string> = {
 import { LC_CAT_LABEL } from './lcCatLabel'
 export { LC_CAT_LABEL }
 
-/** 等时圈分级配色（5→20 分钟由深到浅）；报告/地图共用 */
+/**
+ * 等时圈分级配色（5→20 分钟由深到浅）；报告/地图共用。
+ * ⚠️ 两条硬约束：① 必须保持 rgba 字符串 —— BMapGL 的 Polygon 忽略 fillColor 的 alpha、
+ * 只认 fillOpacity，由 `lcFillSpec` 拆成 color+opacity（2026-09-19 现场事故），不能改写 hex；
+ * ② 最内圈 alpha ≤ 0.30 —— 圈覆盖底图道路，更深会把道路分级整片压住。
+ */
 export const LC_ISO_COLORS = [
-  { fill: 'rgba(124,152,133,0.55)', stroke: '#5F7B69' },
-  { fill: 'rgba(124,152,133,0.34)', stroke: '#5F7B69' },
+  { fill: 'rgba(124,152,133,0.30)', stroke: '#5F7B69' },
   { fill: 'rgba(124,152,133,0.20)', stroke: '#5F7B69' },
-  { fill: 'rgba(124,152,133,0.10)', stroke: '#5F7B69' },
+  { fill: 'rgba(124,152,133,0.12)', stroke: '#5F7B69' },
+  { fill: 'rgba(124,152,133,0.06)', stroke: '#5F7B69' },
 ]
 
-/** 对比页 B 社区等时圈配色（品牌蓝系，与 A 绿色系区分） */
+/** 对比页 B 社区等时圈配色（品牌蓝系，与 A 绿色系区分；同受上面两条约束，且与 A 同档差值不失衡） */
 export const LC_ISO_COLORS_B = [
-  { fill: 'rgba(22,119,255,0.45)', stroke: '#1677ff' },
   { fill: 'rgba(22,119,255,0.28)', stroke: '#1677ff' },
-  { fill: 'rgba(22,119,255,0.16)', stroke: '#1677ff' },
-  { fill: 'rgba(22,119,255,0.08)', stroke: '#1677ff' },
+  { fill: 'rgba(22,119,255,0.18)', stroke: '#1677ff' },
+  { fill: 'rgba(22,119,255,0.10)', stroke: '#1677ff' },
+  { fill: 'rgba(22,119,255,0.05)', stroke: '#1677ff' },
 ]
 
 /** 盲区严重度语义色带（C2：重度红 / 中度橙 / 轻度黄；老数据缺 severity → 灰） */

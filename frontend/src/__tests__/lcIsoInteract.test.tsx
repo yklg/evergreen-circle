@@ -44,6 +44,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
 import type { LivingCircleReport } from '../types'
+import { assertBasemapStylesSound, resetStyleCalls } from './helpers/bmapGLFake'
 
 /* ── 测试盲区注入：kaili 无盲区（实测 blindspots:0），C5/C6 用手工构造的最小盲区 ── */
 const TEST_BLIND = {
@@ -69,14 +70,22 @@ const REPORT = {
 /* ── fake BMapGL：vi.hoisted 工厂（mock 工厂只能引用 hoisted 值与 import）── */
 const fb = vi.hoisted(() => {
   type Ev = { pixel?: { x: number; y: number }; latLng?: { lng: number; lat: number }; domEvent?: { stopPropagation?: () => void } }
-  function makeNamespace(h: {
-    maps: unknown[]
-    polys: unknown[]
-    polylines: unknown[]
-    circles: unknown[]
-    markers: unknown[]
-    removed: unknown[]
-  }) {
+  /**
+   * `recordStyle` 由 mock 工厂注入 `helpers/bmapGLFake` 的 `recordStyleCall`。
+   * 本文件的 Map 带富行为（事件回放、样式覆写、setMap 桥接），不便 extends 基类，
+   * 但 `setMapStyleV2` **不得**写成空桩 —— 那会让本文件对底图样式回归永久免疫。
+   */
+  function makeNamespace(
+    h: {
+      maps: unknown[]
+      polys: unknown[]
+      polylines: unknown[]
+      circles: unknown[]
+      markers: unknown[]
+      removed: unknown[]
+    },
+    recordStyle: (style: unknown) => void,
+  ) {
     /* ⚠️ tsconfig 开了 erasableSyntaxOnly：类字段必须显式声明+赋值，禁 parameter properties */
     class Point {
       lng: number
@@ -183,7 +192,9 @@ const fb = vi.hoisted(() => {
         h.maps.push(this)
       }
       enableScrollWheelZoom() {}
-      setMapStyleV2() {}
+      setMapStyleV2(style: unknown) {
+        recordStyle(style)
+      }
       /* BMapGL 契约：addOverlay → overlay.setMap(map)（lcHeatField:79——桩缺这步 canvas 永不创建） */
       addOverlay(o: { setMap?: (m: unknown) => void }) {
         o.setMap?.(this)
@@ -232,12 +243,10 @@ const fb = vi.hoisted(() => {
   }
 })
 
-vi.mock('../lib/bmap', () => {
-  const NS = fb.makeNamespace(fb.h as never)
-  return {
-    getMapConfig: async () => ({ browserAk: 'test-ak', mapStyleId: '' }),
-    loadBMapGL: async () => NS,
-  }
+vi.mock('../lib/bmap', async () => {
+  const H = await import('./helpers/bmapGLFake')
+  const NS = fb.makeNamespace(fb.h as never, H.recordStyleCall)
+  return H.fakeBMapModule(NS)
 })
 
 const { default: LcMap } = await import('../components/lifecircle/LcMap')
@@ -285,6 +294,7 @@ const fireMap = (t: string) =>
 
 beforeEach(() => {
   for (const key of Object.keys(fb.h)) fb.h[key].length = 0
+  resetStyleCalls()
 })
 afterEach(() => {
   cleanup()
@@ -320,13 +330,13 @@ describe('LcMap 交互系列（C1–C8 契约）', () => {
     const self = ring(1) // 15min（绘制序：reverse(5,10,15,20) → 20/15/10/5）
     const other = ring(0) // 20min
     /* 基线取自**构建参数**（Polygon opts，夹具字面量）而非被测函数输出：
-       LC_ISO_COLORS 的 alpha 由深到浅 [0.55, 0.34, 0.20, 0.10]，
-       15min = ramp 升序 index 2 → 0.20；20min = index 3 → 0.10。
+       LC_ISO_COLORS 的 alpha 由深到浅 [0.30, 0.20, 0.12, 0.06]，
+       15min = ramp 升序 index 2 → 0.12；20min = index 3 → 0.06。
        （先前把 15min 当 0.34 与 10min 档串了，才误算成 0.49。） */
     const baseSelf = Number(self.opts.fillOpacity)
     const baseOther = Number(other.opts.fillOpacity)
-    expect(baseSelf).toBeCloseTo(0.2, 5)
-    expect(baseOther).toBeCloseTo(0.1, 5)
+    expect(baseSelf).toBeCloseTo(0.12, 5)
+    expect(baseOther).toBeCloseTo(0.06, 5)
     fireOverlay(hit(1), 'mouseover')
     fireOverlay(hit(1), 'mousemove', { pixel: { x: 12, y: 34 } })
     expect(tip.style.display).toBe('block')
@@ -337,11 +347,11 @@ describe('LcMap 交互系列（C1–C8 契约）', () => {
     // 高亮（预览 setHighlight 同口径）：本圈加粗 3.5 + 填充 +0.15；其余圈淡化 ×0.3 / 描边 0.35
     expect(self.styles.strokeWeight).toBe(3.5)
     expect(self.styles.strokeOpacity).toBe(1)
-    expect(self.styles.fillOpacity).toBeCloseTo(Math.min(0.65, baseSelf + 0.15), 5) // 0.35
+    expect(self.styles.fillOpacity).toBeCloseTo(Math.min(0.65, baseSelf + 0.15), 5) // 0.27
     expect(self.styles.fillOpacity).toBeGreaterThan(baseSelf) // 关系断言：确实增亮
     expect(other.styles.strokeWeight).toBe(1.5)
     expect(other.styles.strokeOpacity).toBe(0.35)
-    expect(other.styles.fillOpacity).toBeCloseTo(baseOther * 0.3, 5) // 0.03
+    expect(other.styles.fillOpacity).toBeCloseTo(baseOther * 0.3, 5) // 0.018
     expect(other.styles.fillOpacity).toBeLessThan(baseOther) // 关系断言：确实淡化
     // R6 负向哨兵：mousemove ×5 不增加 setState 回调
     for (let i = 0; i < 5; i++) fireOverlay(hit(1), 'mousemove', { pixel: { x: 12 + i, y: 34 } })
@@ -460,5 +470,13 @@ describe('LcMap 交互系列（C1–C8 契约）', () => {
     // unmount：window keydown 监听被移除（R5 守卫①）
     view.unmount()
     expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function))
+  })
+
+  /* TC-R12：本文件的 `setMapStyleV2` 曾是空桩 ⇒ 底图样式怎么改这里都全绿。
+     这条钉的是**眼睛本身**：样式必须真的被下发过且结构自洽。
+     色值对不对不归本文件管（那是 roadContrast.test.ts 带锚点阈值的职责）。 */
+  it('底图样式确实被下发且结构自洽（夹具眼睛哨兵，非空桩）', async () => {
+    await mountMap()
+    assertBasemapStylesSound()
   })
 })
