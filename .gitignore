@@ -55,6 +55,7 @@ id_ed25519
 *.db-wal
 *.sqlite
 *.sqlite3
+*.pre-migration.bak
 *.sqlite-shm
 *.sqlite-wal
 api/app/data/verda.db
