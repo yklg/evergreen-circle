@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
+// @ts-expect-error tailwind.config.js 是无类型声明的 CJS/ESM 混合配置，仅本测试读取其 token
 import config from '../../tailwind.config.js'
 
 const SRC = join(process.cwd(), 'src')

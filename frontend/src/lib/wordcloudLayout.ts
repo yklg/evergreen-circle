@@ -76,8 +76,6 @@ export function layoutWords(
 
     let theta = i * GOLDEN_ANGLE
     let r = 6 + 2.4 * theta
-    let bestX = cx
-    let bestY = cy
     let found = false
 
     for (let step = 0; step < maxSteps; step++) {

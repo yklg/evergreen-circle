@@ -1,16 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChartSpec, WordcloudWord } from '../types'
+import type { ChartSpec } from '../types'
 import { layoutWords } from '../lib/wordcloudLayout'
 
 // 与后端 charts.SERIES 同序的莫兰迪色环（词云逐词轮换）。
 const PALETTE = ['#7C9885', '#E0B775', '#8FA8C0', '#CE9A92', '#A8C0A8', '#C2B59B']
+
+/** 词云词条：共享 types 尚未登记该形状前，组件自带本地契约（与后端 wordcloud 归一一致）。 */
+interface WordcloudWord {
+  word: string
+  weight: number
+}
+
+/** 词云图规格：ChartSpec + 新报告可选携带的 words 数组（旧报告只有 echarts option）。 */
+type WordcloudSpec = ChartSpec & { words?: WordcloudWord[] }
 
 /**
  * 双形状归一（E1 兼容契约）：
  * 新报告携带 spec.words（后端 wordcloud_words 归一）；
  * 存量旧报告只有 echarts option 形状 → 从 series[0].data 的 name/value 映射回来。
  */
-function normalizeWords(spec: ChartSpec): WordcloudWord[] {
+function normalizeWords(spec: WordcloudSpec): WordcloudWord[] {
   if (spec.words && spec.words.length > 0) return spec.words
   const series = (spec.option as { series?: { data?: unknown }[] } | undefined)?.series
   const data = Array.isArray(series) ? series[0]?.data : undefined
