@@ -157,6 +157,9 @@ from app.core.pipeline.research.spots import (  # noqa: E402,F401
     _assemble_itinerary,
     _collect_spot_comments,
 )
+from app.core.pipeline.research.perspective import (  # noqa: E402,F401
+    _fill_persp_blocks,
+)
 
 
 # ── 调研模式三档（对应需求 3）─────────────────────────────
@@ -1655,107 +1658,6 @@ _STRUCTURED_LABEL: Dict[str, str] = {
     "route_plan": "逐日路线", "stay_options": "住宿选项", "cost_breakdown": "花费拆解",
     "access_matrix": "可达性矩阵", "amenity_checklist": "配套清单", "risk_profile": "风险画像",
 }
-
-
-def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, Any]],
-                       probes: Dict[str, List[str]], evidences: List[Any],
-                       clar: Dict[str, Any], model: str) -> Dict[str, Any]:
-    """视角专属块装配（同步，to_thread 调用；rough-cliff-vole P3）。
-
-    行集**由冻结榜 seed**（每个 spot_id 恰一行，LLM 只填格不造行——多报/漏报的
-    行一律不采纳，缺失格走「待核验」占位）；不造数守卫：格/规则声称 verified 但
-    引用不出真实证据 id → 强制降为待核验。LLM 整体失败不炸管线：照常产出全占位表
-    （占位可见即正确终态，同 spot_routes 降级哲学）。
-    返回 {checklist_key: [...], rules_key: [...], packing_key: [...]}（组级 destination 分组）。
-    """
-    p = RT.perspective_spec(persp_sid)
-    ck = p.get("checklist_key")
-    if not ck or not spot_entities:
-        return {}
-    cols = tuple(p.get("checklist_columns") or ())
-    ev_ids = {getattr(e, "evidence_id", "") for e in evidences}
-    ev_by_id = {getattr(e, "evidence_id", ""): e for e in evidences}
-    hard_q = tuple(p.get("hard_constraints") or ())
-    constraints = "；".join(f"{q}={clar.get(q)}" for q in hard_q if str(clar.get(q) or "").strip())
-    ev_lines = []
-    for it in spot_entities:
-        eids = [x for x in (probes.get(str(it.get("spot_id"))) or []) if x in ev_ids]
-        digest = "；".join(f"[{x}] {str(getattr(ev_by_id[x], 'excerpt', ''))[:110]}"
-                           for x in eids[:4])
-        ev_lines.append(f"{it.get('spot_id')}|{it.get('name', '')}|{digest or '（二查未采到证据）'}")
-    payload: Dict[str, Any] = {}
-    try:
-        payload = llm.chat_json(
-            [
-                {"role": "system", "content": (
-                    f"你是旅游调研「{RT.SECTION_PLAN.get(persp_sid, persp_sid)}」专项核查填格员。"
-                    f"逐景点填以下列：{'、'.join(cols)}。铁律："
-                    "①每格只能引用该景点行内给出的 [e_xxxx] 证据，text 里保留关键数字/规则原文；"
-                    "②该景点没有对应证据时**省略该格**（系统会填「待核验」），严禁凭常识造参数；"
-                    "③rules 是给该行程的可执行铁律（≤5 条），每条必须引用 ≥1 个真实证据 id，"
-                    "并在 refs 里写出它所依据的问卷约束字段名（可选值：" +
-                    ("、".join(hard_q) or "无") + "）；"
-                    "④packing 只收与目的地事实挂钩的行前清单项（气候/票证/设施类），"
-                    "通用到任何城市都成立的项不收。"
-                    '输出 JSON：{"rows":[{"spot_id":"…","cells":{"列名":{"text":"…",'
-                    '"evidence_ids":["e_…"],"verified":true}}}],'
-                    '"rules":[{"text":"…","refs":["字段"],"evidence_ids":["e_…"]}],'
-                    '"packing":[{"item":"…","reason":"…","evidence_ids":["e_…"]}]}。只输出 JSON。'
-                )},
-                {"role": "user", "content": (
-                    f"目的地：{dest}\n本次问卷硬约束：{constraints or '（无）'}\n"
-                    "景点证据行（spot_id|名称|证据摘要）：\n" + "\n".join(ev_lines)[:6000]
-                )},
-            ],
-            max_tokens=3600, temperature=0.3, model=model,
-            purpose="视角专属核查表与铁律填格",
-        ) or {}
-    except Exception:
-        payload = {}
-    rows_in = {str(r.get("spot_id")): r for r in (payload.get("rows") or [])
-               if isinstance(r, dict)}
-    items: List[Dict[str, Any]] = []
-    for it in spot_entities:  # 行守恒：冻结榜每行恰一行
-        cells_in = (rows_in.get(str(it.get("spot_id"))) or {}).get("cells") or {}
-        cells = []
-        for col in cols:
-            raw = cells_in.get(col) if isinstance(cells_in.get(col), dict) else {}
-            eids = [x for x in (raw.get("evidence_ids") or []) if x in ev_ids]
-            text = str(raw.get("text") or "").strip()
-            if raw.get("verified") and eids and text:
-                cells.append({"column": col, "text": text,
-                              "evidence_ids": eids, "verified": True})
-            else:
-                cells.append({"column": col, "text": "待核验（本次未采到）",
-                              "evidence_ids": [], "verified": False})
-        items.append({"spot_id": it.get("spot_id"), "spot_name": it.get("name", ""),
-                      "cells": cells})
-    out: Dict[str, Any] = {ck: [{"destination": dest, "items": items}]}
-    rules_key = p.get("rules_key")
-    if rules_key:
-        rules = []
-        for r in (payload.get("rules") or [])[:5]:
-            if not isinstance(r, dict):
-                continue
-            eids = [x for x in (r.get("evidence_ids") or []) if x in ev_ids]
-            refs = [q for q in (r.get("refs") or []) if str(q) in hard_q]
-            text = str(r.get("text") or "").strip()
-            if text and eids and refs:
-                rules.append({"text": text, "refs": refs, "evidence_ids": eids})
-        out[rules_key] = [{"destination": dest, "items": rules}]
-    packing_key = p.get("packing_key")
-    if packing_key:
-        pack = []
-        for r in (payload.get("packing") or [])[:8]:
-            if not isinstance(r, dict):
-                continue
-            eids = [x for x in (r.get("evidence_ids") or []) if x in ev_ids]
-            item = str(r.get("item") or "").strip()
-            if item and eids:
-                pack.append({"item": item, "reason": str(r.get("reason") or "").strip(),
-                             "evidence_ids": eids})
-        out[packing_key] = [{"destination": dest, "items": pack}]
-    return out
 
 
 # ── 撰写：LLM 逐章产出正文（行研/咨询级深度）─────────────
