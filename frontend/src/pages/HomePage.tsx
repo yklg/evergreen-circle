@@ -415,9 +415,9 @@ export default function HomePage() {
               <span
                 key={e.id}
                 title={`${e.name} · ${e.nickname ?? e.role_title ?? ''}`}
-                className="-ml-2 grid h-[34px] w-[34px] place-items-center rounded-full border-2 border-card bg-primary-soft text-[10px] font-semibold text-white first:ml-0"
+                className="-ml-2 grid h-[34px] w-[34px] place-items-center rounded-full border-2 border-card bg-primary-soft text-[11px] font-semibold text-white first:ml-0"
               >
-                {e.id}
+                {e.level ?? e.id.match(/^L\d/)?.[0] ?? e.id.slice(0, 2)}
               </span>
             ))}
           </div>

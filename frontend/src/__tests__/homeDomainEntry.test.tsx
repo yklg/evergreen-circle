@@ -210,14 +210,14 @@ describe('FE-27/28 · 边界与示例卡交互', () => {
 })
 
 describe('FE-29 · 专家墙按域', () => {
-  it('切到生活圈 → 渲染生活圈专家 id；「查看 48 位」跳 /experts', async () => {
+  it('切到生活圈 → 加载生活圈名册（头像按 title 区分人设）；「查看 48 位」跳 /experts', async () => {
     await renderHome('live')
     await ready()
-    await waitFor(() => expect(screen.getByText('T1')).toBeTruthy())
-    expect(screen.queryByText('L1')).toBeNull()
+    await waitFor(() => expect(screen.getByTitle('旅游专家1 · T1')).toBeTruthy())
+    expect(screen.queryByTitle('生活圈专家1 · L1')).toBeNull()
 
     fireEvent.click(screen.getByText('15 分钟生活圈体检'))
-    await waitFor(() => expect(screen.getByText('L1')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTitle('生活圈专家1 · L1')).toBeTruthy())
     fireEvent.click(screen.getByText(/查看 48 位/))
     await waitFor(() => expect(lastPath()?.getAttribute('data-path')).toBe('/experts'))
   })
