@@ -1,0 +1,17 @@
+{
+  "_generated_by": "scripts/gen-research-types-fixture.mjs",
+  "_source": "GET /api/research-types（真相源 backend/app/core/research_types.py；勿手改）",
+  "_generated_at": "2026-09-24T12:40:24.718Z",
+  "types": [
+    {
+      "key": "guide",
+      "label": "游玩攻略",
+      "subtitle": "景点榜 · 美食 · 舆情 · 路线 · 商铺 · 预算 · 住宿"
+    },
+    {
+      "key": "assessment",
+      "label": "调研评估",
+      "subtitle": "可达性 · 配套 · 安全 · 性价比"
+    }
+  ]
+}
