@@ -20,7 +20,7 @@
 """
 import pytest
 
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
 
 _EIDS = ("ev_acc", "ev_ame", "ev_saf", "ev_liv", "ev_ovr", "ev_rsk")

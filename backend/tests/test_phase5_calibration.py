@@ -105,7 +105,7 @@ class TestExpertDirectiveCalibration:
 
     def test_l3_003_directive_contains_real_values(self):
         """L3-003 的 directive 应包含真实的口径数值而非占位符。"""
-        directive = expert_directive("L3-003")
+        directive = expert_directive("L3-003", "living_circle")
         assert directive, "L3-003 directive 不应为空"
 
         # 应包含具体的数值或标识符，而非泛泛而谈
@@ -117,10 +117,10 @@ class TestExpertDirectiveCalibration:
 
     def test_directive_appends_fabrication_constraint(self):
         """所有专家的 directive 末尾都应附加防编造约束。"""
-        experts = load_experts()
+        experts = load_experts("living_circle")
         for expert in experts[:3]:  # 抽样检查前 3 位
             eid = expert["id"]
-            directive = expert_directive(eid)
+            directive = expert_directive(eid, "living_circle")
             assert "不得编造" in directive or "fabricate" in directive.lower(), (
                 f"[{eid}] directive 缺少防编造约束"
             )
@@ -137,7 +137,7 @@ class TestRosterPayloadCompleteness:
     def test_payload_contains_all_experts(self):
         """payload 应包含所有 48 位专家的信息。"""
         payload = roster_payload()
-        experts = load_experts()
+        experts = load_experts("living_circle")
 
         for expert in experts:
             eid = expert["id"]
@@ -145,7 +145,7 @@ class TestRosterPayloadCompleteness:
 
     def test_payload_omits_display_only_fields(self):
         """roster_brief 应省略纯展示字段（avatar/badge_color/gender/stats）。"""
-        experts = load_experts()
+        experts = load_experts("living_circle")
         for expert in experts[:5]:  # 抽样检查
             brief = roster_brief(expert)
             assert "avatar" not in brief

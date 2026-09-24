@@ -18,7 +18,7 @@ import asyncio
 import pytest
 
 from app.core import db, orchestrator, runner
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 
 
 def _new_task(kind=None):
@@ -46,7 +46,7 @@ def test_error_event_terminalizes_and_no_rerun(monkeypatch):
         yield {"type": "error",
                "data": {"message": "本次未能采集到任何可用证据：博查账户余额不足（请检查搜索服务配额/密钥）"}}
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _err_pipeline, raising=False)
+    monkeypatch.setattr(O, "research_pipeline", _err_pipeline, raising=False)
     tid = _new_task()
 
     async def _scenario():
@@ -72,7 +72,7 @@ def test_raise_broadcasts_error_frame_to_subscriber(monkeypatch):
         raise RuntimeError("博查账户余额不足，请充值")
         yield  # noqa: 保持 async generator
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _boom, raising=False)
+    monkeypatch.setattr(O, "research_pipeline", _boom, raising=False)
     tid = _new_task()
 
     async def _scenario():
@@ -94,7 +94,7 @@ def test_exhausted_without_terminal_synthesizes_error(monkeypatch):
         yield {"type": "progress", "data": {"percent": 30, "stage": "collect", "evidence_count": 0}}
         return  # 协议违例：既不 done 也不 error
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _drift, raising=False)
+    monkeypatch.setattr(O, "research_pipeline", _drift, raising=False)
     tid = _new_task()
 
     async def _scenario():
@@ -119,7 +119,7 @@ def test_brief_self_write_double_terminal_idempotent(monkeypatch):
         db.set_task_failed(task_id, real_msg)   # 管线自写（冗余兼容）
         yield {"type": "error", "data": {"message": real_msg}}
 
-    monkeypatch.setattr(orchestrator, "brief_report_pipeline", _brief, raising=False)
+    monkeypatch.setattr(O, "brief_report_pipeline", _brief, raising=False)
     tid = _new_task(kind="brief")
 
     async def _scenario():
@@ -146,7 +146,7 @@ def test_orphan_running_marks_failed_without_restart(monkeypatch):
         calls.append(task_id)
         yield {"type": "done", "data": {"reportId": "r_x"}}
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _never, raising=False)
+    monkeypatch.setattr(O, "research_pipeline", _never, raising=False)
     tid = _new_task()
     db.set_task_running(tid)   # 人为制造「DB running + 内存无活句柄」孤儿
 
@@ -174,7 +174,7 @@ def test_two_subscribers_no_overlap_no_loss(monkeypatch):
                                                 "evidence_count": i}}
         yield {"type": "done", "data": {"reportId": "r_r6"}}
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _slow, raising=False)
+    monkeypatch.setattr(O, "research_pipeline", _slow, raising=False)
     tid = _new_task()
 
     async def _scenario():
@@ -217,7 +217,7 @@ def test_dropped_subscriber_cleaned_up(monkeypatch):
                                                 "evidence_count": i}}
         yield {"type": "done", "data": {"reportId": "r_r7"}}
 
-    monkeypatch.setattr(orchestrator, "run_pipeline", _slow, raising=False)
+    monkeypatch.setattr(O, "research_pipeline", _slow, raising=False)
     tid = _new_task()
 
     async def _scenario():

@@ -1,7 +1,7 @@
 """信源组归一化工具：把内容级同质（转载文）归并为「一个信源组」。
 
 架构约束（见 accuracy-objectivity-hardening.md）：
-- 本模块只被采集层（orchestrator._collect_brand）调用，用于生产证据时一次归一化，
+- 本模块只被采集层（orchestrator._collect_destination）调用，用于生产证据时一次归一化，
   产出 Evidence.source_group / republished_from；
 - 下游（claim 置信 / audit 指标 / 报告披露）一律只读 Evidence 上的组字段，
   不得再 import 本模块重算相似度——避免同一概念多份实现。
@@ -107,7 +107,7 @@ def group_new_text(
     - 否则返回 (None, [])，表示应开新组。
 
     groups 形如 [{"id": "g_xxx", "tokens": [...], "urls": [url...]}]，
-    由采集边界（_collect_brand）维护。
+    由采集边界（_collect_destination）维护。
     """
     if not new_text or len(new_text) < min_chars:
         return (None, [])

@@ -46,11 +46,16 @@ def test_unknown_purpose_returns_empty(purpose):
     assert report_voice(purpose) == {}, f"未知 purpose 应返回空 dict，不抛不污染（{purpose!r}）"
 
 
-# ── B5：别名同源 ───────────────────────────────────────
-def test_aliases_point_to_same_source_research_profile_is_truth():
+# ── B5：flip 后 voice 真源边界（M3 注册表收敛前的过渡契约）────────
+def test_voice_single_source_is_research_profile_module():
+    """M2-flip 后 orchestrator 是纯 re-export 外壳，不再持有 report_voice 副本；
+    voice 表唯一真源为 research_profile 模块（M3 将随决策 8 并入 research_types）。"""
     from app.core import orchestrator
-    assert orchestrator.report_voice is research_profile.report_voice
-    assert orchestrator.TRAVEL_PROFILES is REPORT_PROFILES
+    assert not hasattr(orchestrator, "report_voice"), (
+        "orchestrator 不得再持有 report_voice（旅游引擎已改用 research_types）"
+    )
+    assert callable(research_profile.report_voice)
+    assert research_profile.REPORT_PROFILES is REPORT_PROFILES
 
 
 if __name__ == "__main__":

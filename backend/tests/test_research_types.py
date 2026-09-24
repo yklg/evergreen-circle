@@ -84,7 +84,7 @@ def test_claim_fields_cover_section_fields():
 # 这里改钉为更强的跨表一致性：漏配容错器/提示片段/中文标签都会被抓住。
 @pytest.mark.parametrize("rtype", _TYPES)
 def test_structured_keys_shape(rtype):
-    from app.core import orchestrator as O
+    from app.core.pipeline.research import engine as O
     from app.core import schemas
 
     keys = rt.RESEARCH_TYPES[rtype]["structured_keys"]
@@ -134,7 +134,7 @@ def test_analysis_keys_have_prompt_fragments(rtype):
     缺片段的键 LLM 永远不被要求产出 → 静默无数据（批次① 三新键即靠本断言钉住
     「登记即产出」；与 :86 的结构化键同型防线）。
     """
-    from app.core import orchestrator as O
+    from app.core.pipeline.research import engine as O
 
     keys = set(rt.RESEARCH_TYPES[rtype]["analysis_keys"])
     missing = keys - set(O._ANALYSIS_KEY_SCHEMA)

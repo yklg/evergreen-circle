@@ -27,9 +27,9 @@ _FALLBACK_TEAM = [
 
 
 def _roster_index() -> Dict[str, dict]:
-    """构建 id → expert 索引（从 load_experts 名册）。"""
+    """构建 id → expert 索引（从生活圈域名册 load_experts('living_circle')）。"""
     from app.data import load_experts
-    return {e["id"]: e for e in load_experts()}
+    return {e["id"]: e for e in load_experts("living_circle")}
 
 
 def select_living_circle_team(

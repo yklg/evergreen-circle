@@ -57,7 +57,7 @@ CONFIG_SCHEMA: Dict[str, Dict[str, str]] = {
     "bocha_api_key":      {"type": "str",  "group": "search"},
     "bocha_base_url":     {"type": "str",  "group": "search"},
     "search_timeout":     {"type": "float", "group": "search"},
-    # 澄清问卷：竞品发现超时（秒）与发现缓存 TTL（天）
+    # 澄清问卷：候选目的地发现超时（秒）与发现缓存 TTL（天）
     "clarify_discover_timeout_s": {"type": "float", "group": "params"},
     "discovery_cache_ttl_d":      {"type": "int",   "group": "params"},
     # 平台采集 Cookie

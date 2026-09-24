@@ -26,10 +26,12 @@ def _conn():
 
 
 def _insert_task(task_id, kind, purpose=None, status="created"):
+    # M2-flip：tasks 表无 purpose 列（业务类型存 clarifications._type / meta）；
+    # 路由只依赖 kind，purpose 参数保留签名兼容但不写库。
     _conn().execute(
-        "INSERT INTO tasks(task_id,query,clarifications,status,created_at,kind,purpose)"
-        " VALUES(?,?,?,?,?,?,?)",
-        (task_id, f"q_{task_id}", "{}", status, db._now(), kind, purpose),
+        "INSERT INTO tasks(task_id,query,clarifications,status,created_at,kind)"
+        " VALUES(?,?,?,?,?,?)",
+        (task_id, f"q_{task_id}", "{}", status, db._now(), kind),
     )
     _conn().commit()
 

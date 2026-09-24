@@ -14,10 +14,10 @@ from app.living_circle import caliber_index
 
 
 def load_current_roster() -> list[dict]:
-    """加载当前生成的名册（从 backend/app/data/experts.json）。"""
-    import json
+    """加载生活圈域名册（caliber_refs 只存在于 experts_living_circle.json）。"""
     from pathlib import Path
-    roster_file = Path(__file__).parent.parent / "app" / "data" / "experts.json"
+    roster_file = Path(__file__).parent.parent / "app" / "data" / "experts_living_circle.json"
+    import json
     with open(roster_file, encoding="utf-8") as f:
         return json.load(f)
 

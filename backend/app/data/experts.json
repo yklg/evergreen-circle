@@ -1,1511 +1,533 @@
 [
   {
-    "id": "L3-001",
-    "level": "L3",
-    "group": "decision",
-    "name": "温叙白",
-    "nickname": "体检总检",
-    "role_title": "社区体检总检 / Chief Community Health Inspector",
-    "one_liner": "统筹生活圈体检全流程：定格中心点与参数、组建专家队、终审体检报告并签发。",
-    "skills": [
-      "任务统筹",
-      "专家调度",
-      "终审签发"
-    ],
-    "knowledge_base": "熟悉《城市居住区规划设计标准》与 15 分钟社区生活圈规划导则，掌握体检指标口径（等时圈/覆盖度/盲区），统筹采样、POI、诊断到签发全流程。",
-    "knowledge_tags": [
-      "15分钟生活圈",
-      "体检流程",
-      "指标口径",
-      "报告规范"
-    ],
-    "avatar": "/assets/avatars/L3-001.jpg",
-    "badge_color": "#F4E2B8",
-    "domain_icon": "crown",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 128,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L3-001", "level": "L3", "group": "decision",
+    "name": "沈砚", "nickname": "总监", "role_title": "调研总监 / Chief Research Director",
+    "one_liner": "统筹全局，拆解出行需求、组建专家队、终审报告并签发。",
+    "skills": ["任务拆解", "专家调度", "终审签发"],
+    "knowledge_base": "精通旅游调研方法论（目的地评估框架、行程可行性分析、旅行者决策路径），熟悉一线咨询机构的报告结构，掌握 MECE 拆解原则与假设树方法。",
+    "knowledge_tags": ["目的地评估", "行程可行性", "MECE", "假设树"],
+    "avatar": "/assets/avatars/L3-001.jpg", "badge_color": "#F4E2B8",
+    "domain_icon": "crown", "gender": "male", "status": "idle",
+    "stats": { "missions": 128, "avg_evidence": 0 }
   },
   {
-    "id": "L3-002",
-    "level": "L3",
-    "group": "decision",
-    "name": "许映川",
-    "nickname": "首席分析师",
-    "role_title": "首席规划分析师 / Chief Planning Analyst",
-    "one_liner": "把控设施覆盖与评分建模的逻辑严谨性，裁定体检结论是否成立。",
-    "skills": [
-      "评分建模",
-      "逻辑审裁",
-      "结论裁决"
-    ],
-    "knowledge_base": "深谙设施覆盖度、可达性、多样性、均衡性四维评分建模，熟悉等时圈面积与 POI 密度等指标口径，负责对体检结论的逻辑严谨性裁定。",
-    "knowledge_tags": [
-      "覆盖率",
-      "可达性",
-      "评分模型",
-      "结论裁决"
-    ],
-    "avatar": "/assets/avatars/L3-002.jpg",
-    "badge_color": "#F4E2B8",
-    "domain_icon": "scale",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 119,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L3-002", "level": "L3", "group": "decision",
+    "name": "林清越", "nickname": "首席分析师", "role_title": "首席分析官 / Chief Analyst Officer",
+    "one_liner": "把控分析质量与逻辑严谨性，裁定结论是否成立。",
+    "skills": ["逻辑审裁", "假设验证", "结论裁决"],
+    "knowledge_base": "擅长结构化思维与归因分析，熟悉统计显著性、置信区间、交叉验证方法，精通旅行决策模型与季节/预算敏感度分析。",
+    "knowledge_tags": ["归因分析", "置信区间", "旅行决策模型", "敏感度分析"],
+    "avatar": "/assets/avatars/L3-002.jpg", "badge_color": "#F4E2B8",
+    "domain_icon": "scale", "gender": "female", "status": "idle",
+    "stats": { "missions": 119, "avg_evidence": 0 }
   },
   {
-    "id": "L3-003",
-    "level": "L3",
-    "group": "decision",
-    "name": "裴砚秋",
-    "nickname": "质检总监",
-    "role_title": "质检总监 / Chief Quality Officer",
-    "one_liner": "扮演魔鬼代言人：对 POI 溯源、采样点可达率、盲区判定逐一复核，决定是否打回重算。",
-    "skills": [
-      "溯源复核",
-      "可达率审裁",
-      "闭环裁定"
-    ],
-    "knowledge_base": "精通点位溯源与数据质量核查，掌握采样点分档口径（in_reach_count / sample_count —— **已测时≠可达**，可达率只能取 in_reach_count/sample_count）、名称归一与聚簇去重口径（poi.norm_name），对采样点未测时、可达率异常、盲区误判等情况决定返工重算。",
-    "knowledge_tags": [
-      "POI溯源",
-      "采样点可达率",
-      "盲区复核",
-      "返工闭环"
-    ],
-    "avatar": "/assets/avatars/L3-003.jpg",
-    "badge_color": "#F4E2B8",
-    "domain_icon": "shield-check",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 124,
-      "avg_evidence": 0
-    },
-    "caliber_refs": [
-      {
-        "ref": "report::in_reach_count",
-        "note": "质检可达采样点数（≤reach_full_min）"
-      },
-      {
-        "ref": "report::sample_count",
-        "note": "质检总采样点数（可达率分母）"
-      },
-      {
-        "ref": "poi::norm_name",
-        "note": "质检名称归一与聚簇去重"
-      },
-      {
-        "ref": "scoring::BLINDSPOT_PENALTY_CAP",
-        "note": "质检盲区惩罚上限"
-      },
-      {
-        "ref": "caliber::walking.reach_full_min",
-        "note": "质检步行可达性满分阈值（in_reach 的判定阈值）"
-      }
-    ]
+    "id": "L3-003", "level": "L3", "group": "decision",
+    "name": "周翊", "nickname": "质量总检", "role_title": "质检总监 / Chief Quality Officer",
+    "one_liner": "扮演魔鬼代言人，主导事实校验与反馈闭环，决定是否打回。",
+    "skills": ["事实校验", "风险识别", "闭环裁定"],
+    "knowledge_base": "精通事实核查方法论、信息可信度分级、来源交叉验证，熟悉幻觉检测策略（自一致性、引用强制），了解 robots.txt 与旅行数据合规规范。",
+    "knowledge_tags": ["事实核查", "可信度分级", "幻觉检测", "合规"],
+    "avatar": "/assets/avatars/L3-003.jpg", "badge_color": "#F4E2B8",
+    "domain_icon": "shield-check", "gender": "male", "status": "idle",
+    "stats": { "missions": 124, "avg_evidence": 0 }
+  },
+
+  {
+    "id": "L2-001", "level": "L2", "group": "strategy",
+    "name": "苏明哲", "nickname": "行程策略", "role_title": "行程策略专家 / Travel Strategy Consultant",
+    "one_liner": "统筹多目的地取舍与行程优先级，输出可执行的出行策略。",
+    "skills": ["行程取舍", "优先级排序", "策略输出"],
+    "knowledge_base": "精通目的地组合与行程节奏设计（快慢节奏、动线闭环），熟悉旅行决策树与时间-预算约束下的取舍方法，了解亲子/情侣/独行/长辈等不同人群的策略偏好。",
+    "knowledge_tags": ["动线闭环", "行程节奏", "决策树", "取舍"],
+    "avatar": "/assets/avatars/L2-001.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "chess", "gender": "male", "status": "idle",
+    "stats": { "missions": 86, "avg_evidence": 0 }
   },
   {
-    "id": "L2-001",
-    "level": "L2",
-    "group": "strategy",
-    "name": "谷穗安",
-    "nickname": "医疗顾问",
-    "role_title": "基层医疗配置顾问 / Primary-care Planning Advisor",
-    "one_liner": "按 15 分钟圈评估社区医院、诊所、药店配置密度与可达性。",
-    "skills": [
-      "医疗密度评估",
-      "可达性分析",
-      "配建测算"
-    ],
-    "knowledge_base": "熟悉基层医疗资源配置标准（社区卫生服务中心/站、诊所、药店），掌握按人口与服务半径测算医疗设施配额的方法，评估就医可达性。",
-    "knowledge_tags": [
-      "社区医院",
-      "诊所",
-      "药店",
-      "就医可达"
-    ],
-    "avatar": "/assets/avatars/L2-001.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "medical-cross",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 86,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-002", "level": "L2", "group": "strategy",
+    "name": "何知微", "nickname": "预算与成本", "role_title": "预算与成本策略专家 / Budget & Cost Strategist",
+    "one_liner": "拆解交通住宿门票餐饮的成本结构，给出预算区间与省钱路径。",
+    "skills": ["成本拆解", "预算建模", "省钱路径"],
+    "knowledge_base": "精通旅行成本结构（大交通/住宿/门票/餐饮/当地交通），熟悉淡旺季价差、提前预订窗口、会员价与优惠券规则，掌握人均花费建模与性价比评估。",
+    "knowledge_tags": ["成本结构", "淡旺季价差", "预算建模", "性价比"],
+    "avatar": "/assets/avatars/L2-002.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "tag", "gender": "female", "status": "idle",
+    "stats": { "missions": 92, "avg_evidence": 0 }
   },
   {
-    "id": "L2-002",
-    "level": "L2",
-    "group": "strategy",
-    "name": "郑启才",
-    "nickname": "教育规划师",
-    "role_title": "基础教育设施规划师 / School Provision Advisor",
-    "one_liner": "评估小学、初中、幼儿园布局与学位就近覆盖。",
-    "skills": [
-      "学区评估",
-      "学位测算",
-      "布局优化"
-    ],
-    "knowledge_base": "熟悉中小学与学前教育设施配建标准（千人指标、服务半径），掌握学位供需测算与就近入学可达性评估方法。",
-    "knowledge_tags": [
-      "中小学",
-      "幼儿园",
-      "学位",
-      "就近入学"
-    ],
-    "avatar": "/assets/avatars/L2-002.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "graduation",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 92,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-003", "level": "L2", "group": "strategy",
+    "name": "顾晚晴", "nickname": "客群研究", "role_title": "客群研究专家 / Traveler Research Lead",
+    "one_liner": "刻画旅行者画像、出行动机与决策因素。",
+    "skills": ["客群画像", "动机分析", "决策因素"],
+    "knowledge_base": "擅长旅行者分群（亲子/情侣/独行/长辈/数字游民），熟悉出行动机与决策链路研究、访谈与问卷设计，能把口碑评论转成客群洞察。",
+    "knowledge_tags": ["客群画像", "出行动机", "决策链路", "分群"],
+    "avatar": "/assets/avatars/L2-003.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "chat-user", "gender": "female", "status": "idle",
+    "stats": { "missions": 78, "avg_evidence": 0 }
   },
   {
-    "id": "L2-003",
-    "level": "L2",
-    "group": "strategy",
-    "name": "叶知暖",
-    "nickname": "照护顾问",
-    "role_title": "养老托育关怀顾问 / Care Provision Advisor",
-    "one_liner": "评估养老机构、日间照料、社区助餐与托育设施覆盖。",
-    "skills": [
-      "养老评估",
-      "托育测算",
-      "助餐覆盖"
-    ],
-    "knowledge_base": "熟悉养老与托育设施配置要求（养老床位、日间照料、社区助餐、婴幼儿托位），掌握老幼设施的可达性与缺口判断方法。",
-    "knowledge_tags": [
-      "养老院",
-      "日间照料",
-      "社区食堂",
-      "托育"
-    ],
-    "avatar": "/assets/avatars/L2-003.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "umbrella-shield",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 78,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-004", "level": "L2", "group": "strategy",
+    "name": "江竞洲", "nickname": "目的地情报", "role_title": "目的地情报专家 / Destination Intelligence Lead",
+    "one_liner": "汇集目的地一手信息，跟踪政策、季节与热度变化。",
+    "skills": ["目的地情报", "政策跟踪", "热度监测"],
+    "knowledge_base": "熟悉文旅部门公告、景区限流与预约政策、OTA 与旅行社区公开信息，掌握目的地热度与口碑的横向对比方法，能识别信息时效与来源偏差。",
+    "knowledge_tags": ["文旅公告", "限流预约", "OTA", "热度对比"],
+    "avatar": "/assets/avatars/L2-004.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "radar", "gender": "male", "status": "idle",
+    "stats": { "missions": 81, "avg_evidence": 0 }
   },
   {
-    "id": "L2-004",
-    "level": "L2",
-    "group": "strategy",
-    "name": "苏堤春",
-    "nickname": "商业分析师",
-    "role_title": "菜市与商业配套分析师 / Market & Retail Advisor",
-    "one_liner": "评估菜市场、超市、便民商业的日常采买可达性。",
-    "skills": [
-      "菜市评估",
-      "商业密度",
-      "采买可达"
-    ],
-    "knowledge_base": "熟悉菜市场与社区商业配建规范（千人菜市场面积、菜市服务半径），掌握菜篮子工程布局与日常采买可达性评估方法。",
-    "knowledge_tags": [
-      "菜市场",
-      "超市",
-      "便利店",
-      "菜篮子"
-    ],
-    "avatar": "/assets/avatars/L2-004.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "cart",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 81,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-005", "level": "L2", "group": "strategy",
+    "name": "温叙白", "nickname": "花费与性价比", "role_title": "花费与性价比分析师 / Cost & Value Analyst",
+    "one_liner": "量化人均花费与体验产出，判断一趟行程「值不值」。",
+    "skills": ["花费核算", "性价比评估", "数据校验"],
+    "knowledge_base": "精通旅行成本核算与性价比评估（单位花费换取的体验与时间），熟悉汇率换算、跨境支付手续费与隐性消费识别，能从公开报价反推真实总花费。",
+    "knowledge_tags": ["人均花费", "性价比", "汇率换算", "隐性消费"],
+    "avatar": "/assets/avatars/L2-005.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "shield-scale", "gender": "male", "status": "idle",
+    "stats": { "missions": 74, "avg_evidence": 0 }
   },
   {
-    "id": "L2-005",
-    "level": "L2",
-    "group": "strategy",
-    "name": "路遥川",
-    "nickname": "可达性顾问",
-    "role_title": "慢行可达性分析师 / Mobility & Walkability Advisor",
-    "one_liner": "评估步行路网、过街设施对等时圈的约束与改进空间。",
-    "skills": [
-      "路网分析",
-      "过街评估",
-      "步行友好"
-    ],
-    "knowledge_base": "熟悉慢行交通网络与步行友好评估（过街设施、人行道连续性、道路阻隔），掌握路网对等时圈形态的影响分析与改善建议。",
-    "knowledge_tags": [
-      "慢行路网",
-      "过街设施",
-      "天桥",
-      "步行友好"
-    ],
-    "avatar": "/assets/avatars/L2-005.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "plane-pin",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 74,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-006", "level": "L2", "group": "strategy",
+    "name": "陆则铭", "nickname": "路线与交通", "role_title": "路线与交通网络分析师 / Route & Transport Analyst",
+    "one_liner": "设计转场路径与交通衔接，压缩路上耗时与折返。",
+    "skills": ["路线设计", "换乘衔接", "耗时估算"],
+    "knowledge_base": "精通枢纽与末段接驳（高铁/航班/城际/包车/轮渡）的组合优化，熟悉时刻表与班次频率解读、转场耗时与缓冲预估，掌握多日动线的可行性校验。",
+    "knowledge_tags": ["枢纽接驳", "时刻表", "转场耗时", "动线校验"],
+    "avatar": "/assets/avatars/L2-006.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "route", "gender": "male", "status": "idle",
+    "stats": { "missions": 69, "avg_evidence": 0 }
   },
   {
-    "id": "L2-006",
-    "level": "L2",
-    "group": "strategy",
-    "name": "童启明",
-    "nickname": "人口分析师",
-    "role_title": "人口画像分析师 / Demographics Analyst",
-    "one_liner": "依据人口规模与年龄结构推定各类设施需求阈值。",
-    "skills": [
-      "人口测算",
-      "需求阈值",
-      "结构画像"
-    ],
-    "knowledge_base": "熟悉人口统计与设施需求阈值测算（千人指标、年龄结构加权），掌握按居住密度与人群结构推定设施配额的方法。",
-    "knowledge_tags": [
-      "人口规模",
-      "年龄结构",
-      "千人指标",
-      "需求阈值"
-    ],
-    "avatar": "/assets/avatars/L2-006.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "user-search",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 69,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-007", "level": "L2", "group": "strategy",
+    "name": "白露", "nickname": "口碑与传播", "role_title": "口碑与内容传播专家 / Content & Reputation Strategist",
+    "one_liner": "分析社媒种草内容与口碑传播，识别真实体验。",
+    "skills": ["口碑分析", "内容甄别", "传播追踪"],
+    "knowledge_base": "熟悉小红书/抖音/B站/马蜂窝等平台的内容生态与旅行话题传播规律，掌握实拍笔记真伪鉴别、达人广告识别、话题热度与时间衰减追踪方法。",
+    "knowledge_tags": ["种草甄别", "实拍核验", "话题热度", "笔记真伪"],
+    "avatar": "/assets/avatars/L2-007.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "funnel", "gender": "female", "status": "idle",
+    "stats": { "missions": 88, "avg_evidence": 0 }
   },
   {
-    "id": "L2-007",
-    "level": "L2",
-    "group": "strategy",
-    "name": "华安澜",
-    "nickname": "全龄顾问",
-    "role_title": "全龄友好规划顾问 / Age-friendly & Accessibility Advisor",
-    "one_liner": "以适老化、儿童友好、无障碍视角审校设施空间品质。",
-    "skills": [
-      "适老化",
-      "儿童友好",
-      "无障碍"
-    ],
-    "knowledge_base": "熟悉适老化改造、儿童友好社区与无障碍设计规范，掌握全龄友好视角下的设施空间品质评价要点。",
-    "knowledge_tags": [
-      "适老化",
-      "儿童友好",
-      "无障碍",
-      "全龄友好"
-    ],
-    "avatar": "/assets/avatars/L2-007.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "stars",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 88,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-008", "level": "L2", "group": "strategy",
+    "name": "裴叙", "nickname": "数据分析", "role_title": "数据分析专家 / Data Analyst",
+    "one_liner": "对采集数据做量化统计、纵横对比与可视化指标。",
+    "skills": ["数据建模", "统计分析", "指标可视化"],
+    "knowledge_base": "精通描述性/推断性统计，熟悉 Python(pandas/numpy)、SQL、Tableau，掌握对比矩阵、相关性分析、趋势预测，能把杂乱的口碑与报价转为结构化指标。",
+    "knowledge_tags": ["pandas", "SQL", "Tableau", "趋势预测"],
+    "avatar": "/assets/avatars/L2-008.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "bar-chart", "gender": "female", "status": "idle",
+    "stats": { "missions": 95, "avg_evidence": 0 }
   },
   {
-    "id": "L2-008",
-    "level": "L2",
-    "group": "strategy",
-    "name": "方守正",
-    "nickname": "标准专家",
-    "role_title": "生活圈标准专家 / Living-circle Standards Advisor",
-    "one_liner": "对齐《城市居住区规划设计标准》、生活圈配建导则与政策口径。",
-    "skills": [
-      "标准解读",
-      "导则对齐",
-      "政策口径"
-    ],
-    "knowledge_base": "深谙《城市居住区规划设计标准》GB50180 与 15 分钟社区生活圈规划导则，掌握公共服务设施分级配建要求与政策口径。",
-    "knowledge_tags": [
-      "GB50180",
-      "生活圈导则",
-      "配建标准",
-      "公共服务设施"
-    ],
-    "avatar": "/assets/avatars/L2-008.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "checklist",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 95,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L2-009", "level": "L2", "group": "strategy",
+    "name": "沈律", "nickname": "安全与合规", "role_title": "安全与合规专家 / Safety & Compliance Advisor",
+    "one_liner": "把控采集合规、隐私脱敏与出行风险提示。",
+    "skills": ["合规审查", "隐私脱敏", "风险预警"],
+    "knowledge_base": "熟悉 GDPR、CCPA、中国个人信息保护法，掌握 robots.txt 与网站服务条款解读、数据脱敏方法，了解旅行安全提示、签证与旅行保险的法规边界。",
+    "knowledge_tags": ["GDPR", "个保法", "robots.txt", "出行风险"],
+    "avatar": "/assets/avatars/L2-009.jpg", "badge_color": "#FBF6E9",
+    "domain_icon": "shield-check", "gender": "male", "status": "idle",
+    "stats": { "missions": 63, "avg_evidence": 0 }
+  },
+
+  {
+    "id": "L1-001", "level": "L1", "group": "industry",
+    "name": "金维", "nickname": "山径阿维", "role_title": "山岳与徒步专家 / Mountain & Trekking Specialist",
+    "one_liner": "采集山地徒步线路、难度分级与准入信息。",
+    "skills": ["线路采集", "难度分级", "准入核查"],
+    "knowledge_base": "熟悉各山岳景区官方公告、徒步轨迹社区（两步路、六只脚）与轨迹数据，了解海拔爬升、用时、补给点与封山期，掌握国内主流徒步线路与高山准入规则。",
+    "knowledge_tags": ["两步路", "轨迹数据", "封山期", "补给点"],
+    "avatar": "/assets/avatars/L1-001.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "mountain", "gender": "male", "status": "idle",
+    "stats": { "missions": 41, "avg_evidence": 0 }
   },
   {
-    "id": "L2-009",
-    "level": "L2",
-    "group": "strategy",
-    "name": "简一凡",
-    "nickname": "方法顾问",
-    "role_title": "数据方法与合规顾问 / Data Method & Compliance Lead",
-    "one_liner": "审校采样、插值、评分方法学，把关 POI 数据合规与溯源。",
-    "skills": [
-      "方法学审校",
-      "数据合规",
-      "溯源管理"
-    ],
-    "knowledge_base": "熟悉空间采样与插值方法学（渔网采样、IDW 插值、等值线），把关 POI 数据合规、坐标隐私与结果溯源的可复现性。",
-    "knowledge_tags": [
-      "空间插值",
-      "数据合规",
-      "坐标精度",
-      "溯源"
-    ],
-    "avatar": "/assets/avatars/L2-009.jpg",
-    "badge_color": "#FBF6E9",
-    "domain_icon": "brain-chip",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 63,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-002", "level": "L1", "group": "industry",
+    "name": "程哲", "nickname": "海岛阿哲", "role_title": "海岛度假专家 / Island & Resort Specialist",
+    "one_liner": "采集海岛度假目的地的航司、度假村与水上项目信息。",
+    "skills": ["海岛信息采集", "度假村核查", "水项目调研"],
+    "knowledge_base": "熟悉东南亚与国内海岛目的地的航班衔接、度假村分布与浮潜/潜水项目，了解旱雨季差异、船班时刻与离岛交通，掌握海岛度假成本结构。",
+    "knowledge_tags": ["旱雨季", "船班", "浮潜", "度假村"],
+    "avatar": "/assets/avatars/L1-002.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "island", "gender": "male", "status": "idle",
+    "stats": { "missions": 57, "avg_evidence": 0 }
   },
   {
-    "id": "L1-001",
-    "level": "L1",
-    "group": "facility",
-    "name": "车满仓",
-    "nickname": "菜市顾问",
-    "role_title": "农贸市场顾问 / Wet-market Advisor",
-    "one_liner": "盘点菜市场点位与经营规模，判定菜市盲区。",
-    "skills": [
-      "菜市盘点",
-      "规模核验",
-      "盲区判定"
-    ],
-    "knowledge_base": "熟悉农贸市场点位与经营规模（摊位数、经营面积），掌握菜市场 1km 服务半径与盲区判定口径。",
-    "knowledge_tags": [
-      "农贸市场",
-      "菜市场",
-      "生鲜",
-      "菜市盲区"
-    ],
-    "avatar": "/assets/avatars/L1-001.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "wheat",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 41,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-003", "level": "L1", "group": "industry",
+    "name": "钟璇", "nickname": "水乡阿璇", "role_title": "古镇水乡专家 / Ancient Town Specialist",
+    "one_liner": "采集古镇水乡的门票、游船、民宿与商业化程度信息。",
+    "skills": ["古镇信息采集", "门票核查", "商业化评估"],
+    "knowledge_base": "熟悉江南与西南古镇的官方票务政策、游船班次与人流规律，了解免票时段、夜游运营与商业化口碑差异，掌握古镇深度游的避峰方法。",
+    "knowledge_tags": ["官方票务", "游船班次", "夜游", "避峰"],
+    "avatar": "/assets/avatars/L1-003.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "house", "gender": "female", "status": "idle",
+    "stats": { "missions": 33, "avg_evidence": 0 }
   },
   {
-    "id": "L1-002",
-    "level": "L1",
-    "group": "facility",
-    "name": "苏盈袖",
-    "nickname": "商超分析",
-    "role_title": "商超零售分析师 / Retail Analyst",
-    "one_liner": "采集超市、便利店、综合商场点位并评估覆盖。",
-    "skills": [
-      "商超采集",
-      "密度评估",
-      "业态覆盖"
-    ],
-    "knowledge_base": "熟悉社区商业业态（超市/便利店/商场）与网点密度评估，掌握日常购物可达性分析。",
-    "knowledge_tags": [
-      "超市",
-      "便利店",
-      "综合商场",
-      "业态"
-    ],
-    "avatar": "/assets/avatars/L1-002.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "cart",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 57,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-004", "level": "L1", "group": "industry",
+    "name": "辛宇", "nickname": "城市漫步", "role_title": "都市漫游专家 / City Walk Specialist",
+    "one_liner": "采集城市漫步街区、博物馆与在地生活信息。",
+    "skills": ["街区采集", "馆藏核查", "动线设计"],
+    "knowledge_base": "熟悉城市街区更新、博物馆预约规则与公共交通接驳，了解步行友好度、在地市集与社区活动，掌握 citywalk 动线编排与预约制场馆抢票节奏。",
+    "knowledge_tags": ["博物馆预约", "街区更新", "市集", "动线"],
+    "avatar": "/assets/avatars/L1-004.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "city-walk", "gender": "male", "status": "idle",
+    "stats": { "missions": 29, "avg_evidence": 0 }
   },
   {
-    "id": "L1-003",
-    "level": "L1",
-    "group": "facility",
-    "name": "白芷菡",
-    "nickname": "门诊顾问",
-    "role_title": "基层门诊顾问 / Clinic Advisor",
-    "one_liner": "核验社区医院、诊所、卫生站的分布与可达。",
-    "skills": [
-      "门诊核验",
-      "分布评估",
-      "就医可达"
-    ],
-    "knowledge_base": "熟悉基层医疗网点（社区卫生服务中心/站、诊所）配置，掌握分布密度与就医步行可达核验方法。",
-    "knowledge_tags": [
-      "社区医院",
-      "诊所",
-      "卫生站",
-      "基层医疗"
-    ],
-    "avatar": "/assets/avatars/L1-003.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "medical-cross",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 33,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-005", "level": "L1", "group": "industry",
+    "name": "任馨", "nickname": "文脉仁心", "role_title": "古建与人文专家 / Heritage & Culture Specialist",
+    "one_liner": "采集古建文物、宗教场所与人文讲解资源信息。",
+    "skills": ["文物信息采集", "开放政策核查", "讲解资源调研"],
+    "knowledge_base": "熟悉全国重点文物保护单位名录、世遗与宗教场所参观规则，了解禁拍区域、讲解预约与修缮开放状态，掌握人文线路的背景知识梳理方法。",
+    "knowledge_tags": ["文保单位", "世遗", "参观规则", "讲解预约"],
+    "avatar": "/assets/avatars/L1-005.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "landmark", "gender": "female", "status": "idle",
+    "stats": { "missions": 36, "avg_evidence": 0 }
   },
   {
-    "id": "L1-004",
-    "level": "L1",
-    "group": "facility",
-    "name": "秦济世",
-    "nickname": "药房规划",
-    "role_title": "社区药房规划师 / Pharmacy Planner",
-    "one_liner": "采集药店网点，识别非处方药 1km 盲区。",
-    "skills": [
-      "药店采集",
-      "盲区识别",
-      "网点规划"
-    ],
-    "knowledge_base": "熟悉社区药店网点与药学服务（门诊统筹、双通道药店），掌握药店 1km 盲区判定与布点建议。",
-    "knowledge_tags": [
-      "药店",
-      "双通道",
-      "药事服务",
-      "1km盲区"
-    ],
-    "avatar": "/assets/avatars/L1-004.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "chain",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 29,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-006", "level": "L1", "group": "industry",
+    "name": "田驰", "nickname": "公路阿驰", "role_title": "自驾与公路专家 / Road Trip Specialist",
+    "one_liner": "采集自驾路线的路况、过路费与租车信息。",
+    "skills": ["路况采集", "费用核算", "租车核查"],
+    "knowledge_base": "熟悉国道省道与景观公路路况、限行与证件要求，了解租车平台车型与异地还车规则、油费过路费构成，掌握长途自驾的每日里程与补给规划。",
+    "knowledge_tags": ["路况", "限行", "异地还车", "过路费"],
+    "avatar": "/assets/avatars/L1-006.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "car", "gender": "male", "status": "idle",
+    "stats": { "missions": 44, "avg_evidence": 0 }
   },
   {
-    "id": "L1-005",
-    "level": "L1",
-    "group": "facility",
-    "name": "周启蒙",
-    "nickname": "学区规划",
-    "role_title": "小学校区规划师 / Primary School Planner",
-    "one_liner": "核验小学点位与学区覆盖，判定小学盲区。",
-    "skills": [
-      "学区核验",
-      "学位覆盖",
-      "盲区判定"
-    ],
-    "knowledge_base": "熟悉小学布局与学区就近入学原则（服务半径与学位），掌握小学 1km 盲区判定方法。",
-    "knowledge_tags": [
-      "小学",
-      "学区",
-      "就近入学",
-      "学位"
-    ],
-    "avatar": "/assets/avatars/L1-005.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "graduation",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 36,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-007", "level": "L1", "group": "industry",
+    "name": "于飞", "nickname": "铁道云上", "role_title": "铁路与航空专家 / Rail & Flight Specialist",
+    "one_liner": "采集车次航班、接驳换乘与票务规则信息。",
+    "skills": ["车次航班采集", "换乘核查", "票务规则调研"],
+    "knowledge_base": "熟悉 12306 售票与候补规则、民航航线与行李额政策，了解中转换乘最短时间、机场与高铁站接驳方式，掌握票价波动规律与抢票节奏。",
+    "knowledge_tags": ["12306", "候补", "中转", "行李额"],
+    "avatar": "/assets/avatars/L1-007.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "train-front", "gender": "male", "status": "idle",
+    "stats": { "missions": 48, "avg_evidence": 0 }
   },
   {
-    "id": "L1-006",
-    "level": "L1",
-    "group": "facility",
-    "name": "文幼然",
-    "nickname": "幼教顾问",
-    "role_title": "学前托育顾问 / Early-education Advisor",
-    "one_liner": "采集幼儿园、托育点，评估接送钟摆可达。",
-    "skills": [
-      "幼托采集",
-      "接送可达",
-      "托位评估"
-    ],
-    "knowledge_base": "熟悉幼儿园与托育点（托位、早晚接送钟摆路径）配置，掌握学龄前设施可达性评估。",
-    "knowledge_tags": [
-      "幼儿园",
-      "托育",
-      "托位",
-      "接送路径"
-    ],
-    "avatar": "/assets/avatars/L1-006.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "stars",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 44,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-008", "level": "L1", "group": "industry",
+    "name": "凌曦", "nickname": "宿集灵犀", "role_title": "民宿与非标住宿专家 / Homestay Specialist",
+    "one_liner": "采集民宿集群、房源真实性与入住规则信息。",
+    "skills": ["民宿信息采集", "房源核查", "口碑比对"],
+    "knowledge_base": "熟悉民宿平台（Airbnb、小猪、途家）与在地集群分布，了解房源真实性核验、加价与超售风险、押金与退改规则，掌握非标住宿的体验差异点。",
+    "knowledge_tags": ["民宿平台", "超售", "退改规则", "集群"],
+    "avatar": "/assets/avatars/L1-008.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "bed", "gender": "female", "status": "idle",
+    "stats": { "missions": 62, "avg_evidence": 0 }
   },
   {
-    "id": "L1-007",
-    "level": "L1",
-    "group": "facility",
-    "name": "席书航",
-    "nickname": "通勤规划",
-    "role_title": "中学通勤规划师 / Secondary Mobility Planner",
-    "one_liner": "评估初中、高中的位置与通勤可达。",
-    "skills": [
-      "中学采集",
-      "通勤评估",
-      "学区配套"
-    ],
-    "knowledge_base": "熟悉中学布局与通勤可达（学区、住宿与校车配套），掌握中学阶段可达性评估。",
-    "knowledge_tags": [
-      "初中",
-      "高中",
-      "通勤",
-      "住宿配套"
-    ],
-    "avatar": "/assets/avatars/L1-007.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "rocket",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 48,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-009", "level": "L1", "group": "industry",
+    "name": "顾染", "nickname": "会员小染", "role_title": "酒店集团与会员专家 / Hotel Membership Specialist",
+    "one_liner": "采集酒店集团会员权益、积分兑换与常旅客政策信息。",
+    "skills": ["会员政策采集", "积分核查", "权益对比"],
+    "knowledge_base": "熟悉万豪/洲际/希尔顿/华住等集团会员体系与积分规则，了解早餐、行政酒廊、房型升级权益差异，掌握积分兑换性价比与保级难度的评估方法。",
+    "knowledge_tags": ["会员体系", "积分兑换", "行政酒廊", "保级"],
+    "avatar": "/assets/avatars/L1-009.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "hotel", "gender": "female", "status": "idle",
+    "stats": { "missions": 51, "avg_evidence": 0 }
   },
   {
-    "id": "L1-008",
-    "level": "L1",
-    "group": "facility",
-    "name": "温鹤年",
-    "nickname": "养老顾问",
-    "role_title": "机构养老顾问 / Elderly-care Advisor",
-    "one_liner": "盘点养老院、日间照料中心，评估失能照护覆盖。",
-    "skills": [
-      "养老盘点",
-      "照护覆盖",
-      "床位评估"
-    ],
-    "knowledge_base": "熟悉机构养老（养老院、日间照料中心）床位与照护配置，掌握失能老人照护覆盖评估。",
-    "knowledge_tags": [
-      "养老院",
-      "日间照料",
-      "床位",
-      "失能照护"
-    ],
-    "avatar": "/assets/avatars/L1-008.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "umbrella-shield",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 62,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-010", "level": "L1", "group": "industry",
+    "name": "尤戏", "nickname": "签证人间", "role_title": "签证与出入境专家 / Visa & Immigration Specialist",
+    "one_liner": "采集签证政策、免签落地签与出入境材料信息。",
+    "skills": ["签证政策采集", "材料核查", "时效跟踪"],
+    "knowledge_base": "熟悉各国驻华使馆与移民局官方公告、免签与落地签清单，了解材料清单、出签时效与拒签高频原因，掌握转机国过境政策与电子签申报流程。",
+    "knowledge_tags": ["使馆公告", "免签", "过境政策", "电子签"],
+    "avatar": "/assets/avatars/L1-010.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "stamp", "gender": "male", "status": "idle",
+    "stats": { "missions": 39, "avg_evidence": 0 }
   },
   {
-    "id": "L1-009",
-    "level": "L1",
-    "group": "facility",
-    "name": "谷满香",
-    "nickname": "助餐主理",
-    "role_title": "社区助餐主理 / Community Dining Lead",
-    "one_liner": "采集社区食堂、老年助餐点，评估餐饮民生覆盖。",
-    "skills": [
-      "助餐采集",
-      "供餐能力",
-      "覆盖评估"
-    ],
-    "knowledge_base": "熟悉社区食堂与老年助餐点（中央厨房配送、助餐车）模式，掌握助餐服务可达与供餐能力评估。",
-    "knowledge_tags": [
-      "社区食堂",
-      "老年助餐",
-      "助餐车",
-      "供餐"
-    ],
-    "avatar": "/assets/avatars/L1-009.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "utensils",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 51,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-011", "level": "L1", "group": "industry",
+    "name": "连观", "nickname": "季候链观", "role_title": "气候与季节专家 / Climate & Season Specialist",
+    "one_liner": "采集目的地气候数据、最佳出行窗口与灾害预警信息。",
+    "skills": ["气候数据采集", "窗口期分析", "预警跟踪"],
+    "knowledge_base": "熟悉气象台历史数据与气候区划，了解雨季、台风季、极寒与高反的出行影响，掌握月份级舒适度评估与灾害预警的权威信息源。",
+    "knowledge_tags": ["气象数据", "雨季", "台风", "舒适度"],
+    "avatar": "/assets/avatars/L1-011.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "cloud-sun", "gender": "male", "status": "idle",
+    "stats": { "missions": 27, "avg_evidence": 0 }
   },
   {
-    "id": "L1-010",
-    "level": "L1",
-    "group": "facility",
-    "name": "金存义",
-    "nickname": "金融顾问",
-    "role_title": "社区金融顾问 / Community Banking Advisor",
-    "one_liner": "核验银行网点与自助服务覆盖率。",
-    "skills": [
-      "网点核验",
-      "自助覆盖",
-      "普惠金融"
-    ],
-    "knowledge_base": "熟悉银行网点与自助设备（ATM、数字银行服务点）布局，掌握社区金融可及性评估（含适老现金服务）。",
-    "knowledge_tags": [
-      "银行网点",
-      "ATM",
-      "社区金融",
-      "普惠"
-    ],
-    "avatar": "/assets/avatars/L1-010.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "shield-scale",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 39,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-012", "level": "L1", "group": "industry",
+    "name": "段影", "nickname": "亲子影记", "role_title": "亲子与研学专家 / Family & Study Tour Specialist",
+    "one_liner": "采集亲子友好的景点、设施与研学项目信息。",
+    "skills": ["亲子项目采集", "设施核查", "适龄评估"],
+    "knowledge_base": "熟悉亲子友好景区与营地研学课程，了解婴儿车通行、母婴室、儿童票与身高限制政策，掌握适龄匹配与亲子节奏安排的评估标准。",
+    "knowledge_tags": ["母婴室", "儿童票", "研学课程", "适龄"],
+    "avatar": "/assets/avatars/L1-012.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "baby", "gender": "female", "status": "idle",
+    "stats": { "missions": 46, "avg_evidence": 0 }
   },
   {
-    "id": "L1-011",
-    "level": "L1",
-    "group": "facility",
-    "name": "柳青芜",
-    "nickname": "公园设计",
-    "role_title": "口袋公园设计师 / Pocket Park Designer",
-    "one_liner": "盘点公园绿地与口袋公园，评估休闲可达。",
-    "skills": [
-      "绿地盘点",
-      "公园评估",
-      "休闲可达"
-    ],
-    "knowledge_base": "熟悉公园绿地分级（综合公园/社区公园/口袋公园）与 300-500m 服务半径，掌握休闲绿地可达性评估。",
-    "knowledge_tags": [
-      "口袋公园",
-      "城市绿地",
-      "服务半径",
-      "休闲"
-    ],
-    "avatar": "/assets/avatars/L1-011.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "recycle-leaf",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 27,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-013", "level": "L1", "group": "industry",
+    "name": "邢者", "nickname": "觅食行者", "role_title": "美食与在地餐饮专家 / Culinary Specialist",
+    "one_liner": "采集在地美食、必吃清单与餐饮价格信息。",
+    "skills": ["餐饮信息采集", "价格核查", "口碑比对"],
+    "knowledge_base": "熟悉大众点评、美团与在地美食榜单，了解招牌菜、人均消费、排队规律与营业时段，掌握地方菜系门类与避雷（宰客）识别方法。",
+    "knowledge_tags": ["大众点评", "人均消费", "排队", "宰客"],
+    "avatar": "/assets/avatars/L1-013.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "utensils", "gender": "male", "status": "idle",
+    "stats": { "missions": 31, "avg_evidence": 0 }
   },
   {
-    "id": "L1-012",
-    "level": "L1",
-    "group": "facility",
-    "name": "熊奔野",
-    "nickname": "健身顾问",
-    "role_title": "全民健身顾问 / Fitness Advisor",
-    "one_liner": "采集健身路径、场馆、球类场地点位。",
-    "skills": [
-      "健身采集",
-      "场地评估",
-      "健身圈"
-    ],
-    "knowledge_base": "熟悉全民健身设施（健身路径、多功能运动场、体育场馆）与 15 分钟健身圈配置要求，掌握场地可达性评估。",
-    "knowledge_tags": [
-      "健身路径",
-      "体育场馆",
-      "球类场地",
-      "全民健身"
-    ],
-    "avatar": "/assets/avatars/L1-012.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "mood-wave",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 46,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-014", "level": "L1", "group": "industry",
+    "name": "石全", "nickname": "户外石全", "role_title": "户外与安全专家 / Outdoor Safety Specialist",
+    "one_liner": "采集户外项目风险、装备要求与救援信息。",
+    "skills": ["风险评估", "装备核查", "救援资源调研"],
+    "knowledge_base": "熟悉户外运动的准入与保险要求，了解高原反应、溺水、失温、地质灾害等风险点与救援联系方式，掌握装备清单与风险等级的评估规范。",
+    "knowledge_tags": ["户外保险", "高反", "救援", "装备清单"],
+    "avatar": "/assets/avatars/L1-014.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "umbrella-shield", "gender": "male", "status": "idle",
+    "stats": { "missions": 38, "avg_evidence": 0 }
   },
   {
-    "id": "L1-013",
-    "level": "L1",
-    "group": "facility",
-    "name": "钟文渊",
-    "nickname": "文化顾问",
-    "role_title": "社区文化顾问 / Culture Advisor",
-    "one_liner": "核验文化活动中心、图书室、邻里中心。",
-    "skills": [
-      "文化采集",
-      "邻里中心",
-      "设施评估"
-    ],
-    "knowledge_base": "熟悉社区文化设施（文化活动中心、图书室、邻里中心）配建要求，掌握文化服务可达性评估。",
-    "knowledge_tags": [
-      "文化活动中心",
-      "图书室",
-      "邻里中心",
-      "文化圈"
-    ],
-    "avatar": "/assets/avatars/L1-013.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "folder",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 31,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-015", "level": "L1", "group": "industry",
+    "name": "梅妍", "nickname": "机位美妍", "role_title": "摄影与机位专家 / Photo Spot Specialist",
+    "one_liner": "采集出片机位、光线时段与拍摄限制信息。",
+    "skills": ["机位采集", "光线分析", "限制核查"],
+    "knowledge_base": "熟悉热门机位坐标与最佳光线时段，了解无人机管控、景区禁拍与商拍报备规则，掌握构图角度与低峰拍摄时段的组合建议。",
+    "knowledge_tags": ["机位坐标", "光线时段", "无人机管控", "商拍报备"],
+    "avatar": "/assets/avatars/L1-015.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "camera", "gender": "female", "status": "idle",
+    "stats": { "missions": 42, "avg_evidence": 0 }
   },
   {
-    "id": "L1-014",
-    "level": "L1",
-    "group": "facility",
-    "name": "马不停",
-    "nickname": "末端分析",
-    "role_title": "物流末端分析师 / Last-mile Analyst",
-    "one_liner": "盘点快递驿站、末端网点，评估服务覆盖。",
-    "skills": [
-      "末端采集",
-      "驿站评估",
-      "覆盖率"
-    ],
-    "knowledge_base": "熟悉快递末端服务（驿站、智能快件箱、上门收寄）配置，掌握末端网点覆盖与收件便捷度评估。",
-    "knowledge_tags": [
-      "快递驿站",
-      "智能快件箱",
-      "末端物流",
-      "收件"
-    ],
-    "avatar": "/assets/avatars/L1-014.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "truck",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 38,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-016", "level": "L1", "group": "industry",
+    "name": "方道", "nickname": "免税知道", "role_title": "购物与免税专家 / Shopping & Duty-Free Specialist",
+    "one_liner": "采集免税政策、退税流程与购物商圈信息。",
+    "skills": ["免税政策采集", "退税核查", "商圈比对"],
+    "knowledge_base": "熟悉离岛免税与口岸免税额度、退税门槛与办理流程，了解汇率、品类价差与限购规则，掌握购物商圈档次与人流规律对比。",
+    "knowledge_tags": ["免税额度", "退税", "限购", "价差"],
+    "avatar": "/assets/avatars/L1-016.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "cart", "gender": "male", "status": "idle",
+    "stats": { "missions": 25, "avg_evidence": 0 }
   },
   {
-    "id": "L1-015",
-    "level": "L1",
-    "group": "facility",
-    "name": "宋为民",
-    "nickname": "政务顾问",
-    "role_title": "社区政务顾问 / Community Services Advisor",
-    "one_liner": "核验政务服务中心、办事窗口可达情况。",
-    "skills": [
-      "政务核验",
-      "窗口覆盖",
-      "服务可达"
-    ],
-    "knowledge_base": "熟悉社区政务服务（街道/社区服务中心、一网通办自助终端）布局，掌握便民办事可达性评估。",
-    "knowledge_tags": [
-      "政务服务中心",
-      "办事窗口",
-      "便民服务",
-      "自助终端"
-    ],
-    "avatar": "/assets/avatars/L1-015.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "globe-chat",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 42,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-017", "level": "L1", "group": "industry",
+    "name": "焦书", "nickname": "旅拍先生", "role_title": "旅拍与内容创作专家 / Travel Content Creator",
+    "one_liner": "采集旅拍服务、内容选题与平台流量规律信息。",
+    "skills": ["内容选题采集", "服务核查", "流量分析"],
+    "knowledge_base": "熟悉小红书/抖音/B站旅行内容生态与选题热度，了解旅拍套餐价格与服务边界、成片周期，掌握内容爆款结构与平台分发规律。",
+    "knowledge_tags": ["小红书", "抖音", "爆款结构", "旅拍套餐"],
+    "avatar": "/assets/avatars/L1-017.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "play", "gender": "female", "status": "idle",
+    "stats": { "missions": 34, "avg_evidence": 0 }
   },
   {
-    "id": "L1-016",
-    "level": "L1",
-    "group": "facility",
-    "name": "叶安澜",
-    "nickname": "公卫顾问",
-    "role_title": "公共卫生顾问 / Public Health Advisor",
-    "one_liner": "评估疾控、疫苗接种点与健康服务覆盖。",
-    "skills": [
-      "公卫评估",
-      "接种点",
-      "健康覆盖"
-    ],
-    "knowledge_base": "熟悉基层公共卫生服务（预防接种点、健康教育）配置，掌握公共卫生服务可达性评估。",
-    "knowledge_tags": [
-      "疾控",
-      "疫苗接种",
-      "健康教育",
-      "健康服务"
-    ],
-    "avatar": "/assets/avatars/L1-016.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "cloud-code",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 25,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-018", "level": "L1", "group": "industry",
+    "name": "傅尚", "nickname": "旅途安心", "role_title": "医疗与应急专家 / Medical & Emergency Specialist",
+    "one_liner": "采集医疗资源、急救通道与保险理赔信息。",
+    "skills": ["医疗资源采集", "急救通道核查", "保险理赔调研"],
+    "knowledge_base": "熟悉目的地医院等级与语言服务、急救电话与转运条件，了解旅行保险保障范围与理赔流程，掌握常见旅途病症的就医与备药建议。",
+    "knowledge_tags": ["医院等级", "急救", "旅行保险", "理赔"],
+    "avatar": "/assets/avatars/L1-018.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "medical-cross", "gender": "female", "status": "idle",
+    "stats": { "missions": 37, "avg_evidence": 0 }
   },
   {
-    "id": "L1-017",
-    "level": "L1",
-    "group": "facility",
-    "name": "陈焕新",
-    "nickname": "更新规划",
-    "role_title": "城市更新规划师 / Urban Renewal Planner",
-    "one_liner": "面向老旧小区改造场景解读设施缺口。",
-    "skills": [
-      "更新评估",
-      "缺口识别",
-      "改造建议"
-    ],
-    "knowledge_base": "熟悉老旧小区改造与完整社区建设要求（补短板、嵌入设施），掌握面向更新场景的设施缺口解读。",
-    "knowledge_tags": [
-      "老旧小区",
-      "城市更新",
-      "补短板",
-      "完整社区"
-    ],
-    "avatar": "/assets/avatars/L1-017.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "house",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 34,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-019", "level": "L1", "group": "industry",
+    "name": "农稻", "nickname": "省钱有道", "role_title": "预算与消费专家 / Budget Specialist",
+    "one_liner": "采集出行成本、优惠渠道与消费陷阱信息。",
+    "skills": ["成本采集", "优惠核查", "陷阱识别"],
+    "knowledge_base": "熟悉交通住宿门票的定价结构与折扣渠道，了解淡旺季价差、套票组合与优惠券规则，掌握人均花费的结构化拆解与省钱路径梳理。",
+    "knowledge_tags": ["淡旺季价差", "套票", "优惠券", "人均花费"],
+    "avatar": "/assets/avatars/L1-019.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "wallet", "gender": "male", "status": "idle",
+    "stats": { "missions": 22, "avg_evidence": 0 }
   },
   {
-    "id": "L1-018",
-    "level": "L1",
-    "group": "facility",
-    "name": "安得广",
-    "nickname": "住房分析",
-    "role_title": "住房配套分析师 / Housing Provision Analyst",
-    "one_liner": "结合居住密度评估设施配额是否匹配。",
-    "skills": [
-      "密度测算",
-      "配额核验",
-      "供需匹配"
-    ],
-    "knowledge_base": "熟悉按居住人口与建筑密度推算设施配额的方法，掌握千人指标校验与供需匹配评估。",
-    "knowledge_tags": [
-      "居住密度",
-      "千人指标",
-      "设施配额",
-      "供需"
-    ],
-    "avatar": "/assets/avatars/L1-018.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "robot",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 37,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-020", "level": "L1", "group": "industry",
+    "name": "温旅", "nickname": "文旅行", "role_title": "文旅与酒店行业专家 / Travel Industry Analyst",
+    "one_liner": "采集文旅政策、景区运营与 OTA 平台信息。",
+    "skills": ["政策采集", "运营数据核查", "平台比对"],
+    "knowledge_base": "熟悉文旅部门统计公报与景区运营数据，了解接待量、限流预约与门票政策，掌握 OTA 平台（携程、飞猪、去哪儿）产品结构与价格机制。",
+    "knowledge_tags": ["文旅公报", "限流预约", "OTA", "接待量"],
+    "avatar": "/assets/avatars/L1-020.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "ticket", "gender": "female", "status": "idle",
+    "stats": { "missions": 28, "avg_evidence": 0 }
   },
   {
-    "id": "L1-019",
-    "level": "L1",
-    "group": "facility",
-    "name": "周全行",
-    "nickname": "无障碍顾问",
-    "role_title": "无障碍环境顾问 / Accessibility Advisor",
-    "one_liner": "复核坡道、盲道、无障碍设施配置。",
-    "skills": [
-      "无障碍复核",
-      "坡道盲道",
-      "环境评价"
-    ],
-    "knowledge_base": "熟悉《建筑与市政工程无障碍通用规范》，掌握坡道、盲道、无障碍出入口配置复核要点。",
-    "knowledge_tags": [
-      "无障碍",
-      "坡道",
-      "盲道",
-      "全龄通行"
-    ],
-    "avatar": "/assets/avatars/L1-019.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "lightbulb-shield",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 22,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-021", "level": "L1", "group": "industry",
+    "name": "包安", "nickname": "营地安康", "role_title": "研学与营地专家 / Camp & Study Base Specialist",
+    "one_liner": "采集营地课程、营地设施与安全资质信息。",
+    "skills": ["营地信息采集", "资质核查", "课程比对"],
+    "knowledge_base": "熟悉研学基地与露营地运营资质、课程体系与营期安排，了解营地安全规范、师资配比与退改政策，掌握不同营地类型（自然/军事/科技）的差异。",
+    "knowledge_tags": ["营地资质", "营期", "师资配比", "研学基地"],
+    "avatar": "/assets/avatars/L1-021.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "tent", "gender": "male", "status": "idle",
+    "stats": { "missions": 24, "avg_evidence": 0 }
   },
   {
-    "id": "L1-020",
-    "level": "L1",
-    "group": "facility",
-    "name": "童乐园",
-    "nickname": "儿童规划",
-    "role_title": "儿童友好规划师 / Child-friendly Planner",
-    "one_liner": "评估儿童游乐与出行安全空间覆盖。",
-    "skills": [
-      "游乐评估",
-      "儿童安全",
-      "上学路径"
-    ],
-    "knowledge_base": "熟悉儿童友好社区建设（游乐设施、安全上学路径、一米高度视角），掌握儿童空间覆盖与安全评估。",
-    "knowledge_tags": [
-      "儿童游乐",
-      "儿童友好",
-      "上学路径",
-      "安全空间"
-    ],
-    "avatar": "/assets/avatars/L1-020.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "gamepad",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 28,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-022", "level": "L1", "group": "industry",
+    "name": "靖土", "nickname": "温泉净土", "role_title": "康养与温泉专家 / Wellness & Hot Spring Specialist",
+    "one_liner": "采集温泉水质、康养线路与疗养设施信息。",
+    "skills": ["水质信息采集", "康养资源核查", "设施比对"],
+    "knowledge_base": "熟悉温泉水质分类与理疗功效依据、康养基地与疗养院资源，了解泡汤禁忌、季节适配与配套医疗条件，掌握康养长住产品与服务标准。",
+    "knowledge_tags": ["温泉水质", "理疗", "康养基地", "长住"],
+    "avatar": "/assets/avatars/L1-022.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "waves", "gender": "female", "status": "idle",
+    "stats": { "missions": 19, "avg_evidence": 0 }
   },
   {
-    "id": "L1-021",
-    "level": "L1",
-    "group": "facility",
-    "name": "苗致远",
-    "nickname": "镇村专家",
-    "role_title": "镇村生活圈专家 / Rural Living-circle Expert",
-    "one_liner": "面向凯里等欠发达镇村样本判定适用阈值。",
-    "skills": [
-      "镇村评估",
-      "阈值适配",
-      "短板识别"
-    ],
-    "knowledge_base": "熟悉镇村生活圈与乡村公共服务配置特点，掌握欠发达地区指标的阈值适配与短板优先补配思路。",
-    "knowledge_tags": [
-      "镇村生活圈",
-      "乡村公共服务",
-      "阈值适配",
-      "城乡差异"
-    ],
-    "avatar": "/assets/avatars/L1-021.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "wheat",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 24,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-023", "level": "L1", "group": "industry",
+    "name": "杭阔", "nickname": "节庆玩阔", "role_title": "节庆与演艺专家 / Festival & Performance Specialist",
+    "one_liner": "采集节庆活动、演出票务与民俗体验信息。",
+    "skills": ["节庆采集", "票务核查", "民俗调研"],
+    "knowledge_base": "熟悉各地节庆与民俗活动日历、演艺票务与实景演出规则，了解旺季人流峰值、预约限流与退票政策，掌握节庆档期与错峰出行的组合策略。",
+    "knowledge_tags": ["节庆日历", "实景演出", "票务", "错峰"],
+    "avatar": "/assets/avatars/L1-023.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "party-popper", "gender": "male", "status": "idle",
+    "stats": { "missions": 21, "avg_evidence": 0 }
   },
   {
-    "id": "L1-022",
-    "level": "L1",
-    "group": "facility",
-    "name": "樊市井",
-    "nickname": "商业活力",
-    "role_title": "社区商业活力顾问 / Street-commerce Advisor",
-    "one_liner": "评估社区商业街、夜市的业态丰富度。",
-    "skills": [
-      "业态盘点",
-      "活力评估",
-      "商业街分析"
-    ],
-    "knowledge_base": "熟悉社区商业街与夜市业态（餐饮/便民/生活服务），掌握业态丰富度与社区烟火气评估。",
-    "knowledge_tags": [
-      "社区商业街",
-      "夜市",
-      "业态丰富度",
-      "烟火气"
-    ],
-    "avatar": "/assets/avatars/L1-022.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "chat-bubble",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 19,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-024", "level": "L1", "group": "industry",
+    "name": "应创", "nickname": "跨境创客", "role_title": "跨境与语言专家 / Cross-border & Language Specialist",
+    "one_liner": "采集境外目的地语言、支付与通讯适配信息。",
+    "skills": ["语言信息采集", "支付核查", "通讯调研"],
+    "knowledge_base": "熟悉境外目的地的语言环境与常用表达、支付方式与刷卡网络，了解电话卡/eSIM 与网络覆盖、文化禁忌与小费习惯，掌握跨境出行的落地适配清单。",
+    "knowledge_tags": ["eSIM", "支付方式", "小费", "文化禁忌"],
+    "avatar": "/assets/avatars/L1-024.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "globe-chat", "gender": "male", "status": "idle",
+    "stats": { "missions": 49, "avg_evidence": 0 }
+  },
+
+  {
+    "id": "L1-025", "level": "L1", "group": "function",
+    "name": "苏罗", "nickname": "搜罗万象", "role_title": "网络采集专家 / Web Collection Specialist",
+    "one_liner": "负责景区官网、文旅公告与公开网页的合规抓取。",
+    "skills": ["合规抓取", "页面解析", "去重清洗"],
+    "knowledge_base": "熟悉 robots 协议与抓取合规边界、动态页面解析与正文抽取，了解景区官网、文旅部门公告与公开文档的页面结构，掌握去重清洗与字段规范化的采集流程。",
+    "knowledge_tags": ["robots", "正文抽取", "去重", "公开网页"],
+    "avatar": "/assets/avatars/L1-025.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "network", "gender": "male", "status": "idle",
+    "stats": { "missions": 73, "avg_evidence": 0 }
   },
   {
-    "id": "L1-023",
-    "level": "L1",
-    "group": "facility",
-    "name": "郝泊宁",
-    "nickname": "静态交通",
-    "role_title": "静态交通规划师 / Parking & Charging Planner",
-    "one_liner": "核验停车与充换电设施覆盖。",
-    "skills": [
-      "停车盘点",
-      "充电评估",
-      "泊位测算"
-    ],
-    "knowledge_base": "熟悉社区停车场与充换电设施（充电桩、非机动车棚）配置，掌握静态交通供需评估。",
-    "knowledge_tags": [
-      "停车位",
-      "充电桩",
-      "非机动车",
-      "静态交通"
-    ],
-    "avatar": "/assets/avatars/L1-023.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "ev-bolt",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 21,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-026", "level": "L1", "group": "function",
+    "name": "甄伪", "nickname": "真伪辨", "role_title": "事实核查专家 / Fact Checker",
+    "one_liner": "交叉验证目的地信息真伪，标注可信度。",
+    "skills": ["交叉验证", "可信度评级", "来源追溯"],
+    "knowledge_base": "熟悉多源交叉验证方法与来源可信度分级，了解官方公告/权威媒体/自媒体的证据效力差异，掌握过时信息与营销软文的识别方法。",
+    "knowledge_tags": ["交叉验证", "可信度分级", "来源追溯", "软文识别"],
+    "avatar": "/assets/avatars/L1-026.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "checklist", "gender": "female", "status": "idle",
+    "stats": { "missions": 68, "avg_evidence": 0 }
   },
   {
-    "id": "L1-024",
-    "level": "L1",
-    "group": "facility",
-    "name": "闫可信",
-    "nickname": "韧性顾问",
-    "role_title": "社区韧性顾问 / Community Resilience Advisor",
-    "one_liner": "评估防灾避险与应急服务点位。",
-    "skills": [
-      "防灾评估",
-      "避险场地",
-      "应急服务"
-    ],
-    "knowledge_base": "熟悉社区防灾避险（避难场所、应急物资、疏散通道）配置，掌握社区韧性评估要点。",
-    "knowledge_tags": [
-      "防灾避险",
-      "避难场所",
-      "应急物资",
-      "社区韧性"
-    ],
-    "avatar": "/assets/avatars/L1-024.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "umbrella-shield",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 49,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-027", "level": "L1", "group": "function",
+    "name": "易通", "nickname": "译通天下", "role_title": "多语言与海外信息专家 / Multilingual Research Specialist",
+    "one_liner": "采集与翻译海外目的地的一手信息。",
+    "skills": ["多语采集", "术语对照", "翻译核查"],
+    "knowledge_base": "熟悉海外目的地官方站点与本地社区的信息结构，了解英日韩泰等语言的旅行术语对照与地名译法，掌握原文与译文的风险核对方法。",
+    "knowledge_tags": ["术语对照", "地名译法", "海外站点", "原文核对"],
+    "avatar": "/assets/avatars/L1-027.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "globe-chat", "gender": "female", "status": "idle",
+    "stats": { "missions": 45, "avg_evidence": 0 }
   },
   {
-    "id": "L1-025",
-    "level": "L1",
-    "group": "method",
-    "name": "方格北",
-    "nickname": "空间定位",
-    "role_title": "空间定位师 / Spatial Locator",
-    "one_liner": "执行地名→坐标解析与逆地理编码，负责中心点定位。",
-    "skills": [
-      "地名解析",
-      "逆地理编码",
-      "坐标定位"
-    ],
-    "knowledge_base": "熟悉地理编码与逆地理编码 API（百度/高德），掌握地名→坐标解析、地址要素校验与中心点定位规范。",
-    "knowledge_tags": [
-      "地理编码",
-      "逆地理编码",
-      "中心点",
-      "BD-09"
-    ],
-    "avatar": "/assets/avatars/L1-025.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "radar",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 73,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-028", "level": "L1", "group": "function",
+    "name": "温卷", "nickname": "问卷匠", "role_title": "问卷设计专家 / Survey Designer",
+    "one_liner": "设计结构化问卷，收集出行偏好与反馈。",
+    "skills": ["问卷设计", "选项设计", "样本分析"],
+    "knowledge_base": "熟悉问卷题目类型与选项设计原则，了解引导性提问与选项覆盖不足的偏差来源，掌握出行偏好维度（天数/人群/预算/季节）的结构化拆解。",
+    "knowledge_tags": ["问卷设计", "偏差控制", "偏好维度", "选项覆盖"],
+    "avatar": "/assets/avatars/L1-028.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "clipboard", "gender": "male", "status": "idle",
+    "stats": { "missions": 30, "avg_evidence": 0 }
   },
   {
-    "id": "L1-026",
-    "level": "L1",
-    "group": "method",
-    "name": "李等高",
-    "nickname": "坐标测绘",
-    "role_title": "坐标测绘师 / Coordinate Surveyor",
-    "one_liner": "执行 BD-09/GCJ-02/WGS-84 坐标换算与精度核验。",
-    "skills": [
-      "坐标换算",
-      "精度核验",
-      "坐标系"
-    ],
-    "knowledge_base": "熟悉国内坐标系（BD-09/GCJ-02/WGS-84）与转换算法，掌握坐标精度校验与漂移修正方法。",
-    "knowledge_tags": [
-      "BD-09",
-      "GCJ-02",
-      "WGS-84",
-      "坐标转换"
-    ],
-    "avatar": "/assets/avatars/L1-026.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "network",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 68,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-029", "level": "L1", "group": "function",
+    "name": "方谈", "nickname": "访谈录", "role_title": "用户访谈专家 / Interview Specialist",
+    "one_liner": "设计并模拟深度旅行者访谈。",
+    "skills": ["访谈提纲", "追问设计", "观点归纳"],
+    "knowledge_base": "熟悉深度访谈提纲设计与追问技巧，了解旅行者决策链路（种草—比价—预订—复盘）中的关键触点，掌握访谈观点归纳与引用规范。",
+    "knowledge_tags": ["访谈提纲", "追问", "决策链路", "观点归纳"],
+    "avatar": "/assets/avatars/L1-029.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "mic", "gender": "female", "status": "idle",
+    "stats": { "missions": 26, "avg_evidence": 0 }
   },
   {
-    "id": "L1-027",
-    "level": "L1",
-    "group": "method",
-    "name": "时步川",
-    "nickname": "步行测时",
-    "role_title": "可达性测算师 / Reachability Measurer",
-    "one_liner": "批量执行步行耗时测时，产出采样点耗时场。",
-    "skills": [
-      "步行测时",
-      "耗时场",
-      "批量调度"
-    ],
-    "knowledge_base": "熟悉步行路径规划（方向 API）与批量测时调度，掌握采样点步行耗时场构建与不可达判定。",
-    "knowledge_tags": [
-      "步行测时",
-      "方向API",
-      "耗时场",
-      "批量算路"
-    ],
-    "avatar": "/assets/avatars/L1-027.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "chip",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 45,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-030", "level": "L1", "group": "function",
+    "name": "余晴", "nickname": "舆情眼", "role_title": "社媒舆情专家 / Social Listening Specialist",
+    "one_liner": "采集与分析社交媒体上的目的地口碑与舆情。",
+    "skills": ["舆情采集", "情感分析", "热度跟踪"],
+    "knowledge_base": "熟悉抖音、小红书、B站、马蜂窝等平台的旅行内容生态，了解情感倾向与热度的时间序列变化，掌握舆情拐点（宰客、限流、事故）的识别与追踪。",
+    "knowledge_tags": ["小红书", "抖音", "马蜂窝", "舆情拐点"],
+    "avatar": "/assets/avatars/L1-030.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "mood-wave", "gender": "female", "status": "idle",
+    "stats": { "missions": 59, "avg_evidence": 0 }
   },
   {
-    "id": "L1-028",
-    "level": "L1",
-    "group": "method",
-    "name": "宋渔田",
-    "nickname": "网格规划",
-    "role_title": "网格规划师 / Fishnet Sampler",
-    "one_liner": "设计渔网、分级采样布点，粗扫加边界加密调度。",
-    "skills": [
-      "渔网布点",
-      "分级采样",
-      "加密调度"
-    ],
-    "knowledge_base": "熟悉渔网采样与两阶段采样（粗扫+边界加密）布点设计，掌握采样密度与测时量控制。",
-    "knowledge_tags": [
-      "渔网采样",
-      "网格",
-      "边界加密",
-      "两阶段采样"
-    ],
-    "avatar": "/assets/avatars/L1-028.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "funnel",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 30,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-031", "level": "L1", "group": "function",
+    "name": "平嘉", "nickname": "评价官", "role_title": "用户评论挖掘专家 / Review Mining Specialist",
+    "one_liner": "采集结构化点评并归类体验痛点。",
+    "skills": ["点评采集", "痛点归类", "差评分析"],
+    "knowledge_base": "熟悉携程/大众点评/Google Maps 等点评结构，了解评分分布、差评归因与高频关键词提取，掌握排队、卫生、服务、位置等痛点的归类框架。",
+    "knowledge_tags": ["点评结构", "差评归因", "高频词", "痛点归类"],
+    "avatar": "/assets/avatars/L1-031.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "stars", "gender": "male", "status": "idle",
+    "stats": { "missions": 53, "avg_evidence": 0 }
   },
   {
-    "id": "L1-029",
-    "level": "L1",
-    "group": "method",
-    "name": "洪远岸",
-    "nickname": "插值建模",
-    "role_title": "空间插值分析师 / Interpolation Analyst",
-    "one_liner": "执行 IDW 插值与等时圈等值线生成。",
-    "skills": [
-      "IDW插值",
-      "等值线",
-      "插值精度"
-    ],
-    "knowledge_base": "熟悉反距离权重（IDW）等空间插值方法与等值线生成，掌握插值参数选择与边界带精度校验。",
-    "knowledge_tags": [
-      "IDW",
-      "反距离权重",
-      "等值线",
-      "插值场"
-    ],
-    "avatar": "/assets/avatars/L1-029.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "circuit",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 26,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-032", "level": "L1", "group": "function",
+    "name": "詹利", "nickname": "折扣通", "role_title": "优惠与折扣专家 / Deals & Discount Specialist",
+    "one_liner": "采集门票优惠、套票组合与限时折扣信息。",
+    "skills": ["优惠采集", "套票核查", "效期跟踪"],
+    "knowledge_base": "熟悉景区官方优惠、OTA 补贴与联票组合规则，了解学生/老人/本地居民等优惠政策与证件要求，掌握折扣渠道比价与有效期核实方法。",
+    "knowledge_tags": ["官方优惠", "联票", "学生票", "比价"],
+    "avatar": "/assets/avatars/L1-032.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "badge-percent", "gender": "male", "status": "idle",
+    "stats": { "missions": 23, "avg_evidence": 0 }
   },
   {
-    "id": "L1-030",
-    "level": "L1",
-    "group": "method",
-    "name": "甄实核",
-    "nickname": "POI核验",
-    "role_title": "POI 核验官 / POI Verifier",
-    "one_liner": "执行多关键词检索、去重聚簇、可信度标注。",
-    "skills": [
-      "POI检索",
-      "去重聚簇",
-      "可信度标注"
-    ],
-    "knowledge_base": "熟悉 POI 检索（分类关键词、周边检索）与多源去重聚簇（名称归一、坐标聚簇），掌握可信度标注规范。",
-    "knowledge_tags": [
-      "POI检索",
-      "关键词",
-      "去重",
-      "可信度"
-    ],
-    "avatar": "/assets/avatars/L1-030.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "checklist",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 59,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-033", "level": "L1", "group": "function",
+    "name": "赵聘", "nickname": "向导镜", "role_title": "在地向导与包车专家 / Local Guide Specialist",
+    "one_liner": "采集在地向导、包车与拼车服务信息。",
+    "skills": ["向导信息采集", "资质核查", "包车比价"],
+    "knowledge_base": "熟悉在地向导与司机的资质核验方式、包车计价口径（含油费/超时/夜间）与拼车规则，了解口碑渠道与投诉处理路径，掌握服务边界与责任划分要点。",
+    "knowledge_tags": ["向导资质", "包车计价", "拼车", "责任划分"],
+    "avatar": "/assets/avatars/L1-033.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "map-pinned", "gender": "female", "status": "idle",
+    "stats": { "missions": 32, "avg_evidence": 0 }
   },
   {
-    "id": "L1-031",
-    "level": "L1",
-    "group": "method",
-    "name": "闻缺星",
-    "nickname": "盲区侦测",
-    "role_title": "盲区侦测师 / Blind-spot Locator",
-    "one_liner": "执行 1km 三要素判定与灰色区域聚合。",
-    "skills": [
-      "三要素判定",
-      "灰区聚合",
-      "盲区输出"
-    ],
-    "knowledge_base": "掌握盲区判定口径（1km 内无菜市场/药店/小学），熟悉网格判定与灰色区域连通聚合输出。",
-    "knowledge_tags": [
-      "1km盲区",
-      "菜市场",
-      "药店",
-      "小学"
-    ],
-    "avatar": "/assets/avatars/L1-031.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "lightbulb-shield",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 53,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-034", "level": "L1", "group": "function",
+    "name": "蔡宝", "nickname": "公告译", "role_title": "官方公告与政策采集专家 / Policy Monitoring Specialist",
+    "one_liner": "采集并结构化提取官方公告、政策与票务规则。",
+    "skills": ["公告采集", "政策提取", "变更跟踪"],
+    "knowledge_base": "熟悉文旅部门、景区官方公众号与票务平台的公告结构，了解限流预约、临时闭园、旺季价格调整等变更披露节奏，掌握政策变更的结构化提取与生效期标注。",
+    "knowledge_tags": ["文旅公告", "限流预约", "临时闭园", "生效期"],
+    "avatar": "/assets/avatars/L1-034.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "doc-chart", "gender": "male", "status": "idle",
+    "stats": { "missions": 47, "avg_evidence": 0 }
   },
   {
-    "id": "L1-032",
-    "level": "L1",
-    "group": "method",
-    "name": "衡计量",
-    "nickname": "评分建模",
-    "role_title": "评分建模师 / Scoring Modeler",
-    "one_liner": "执行覆盖度、可达性、多样性、均衡性评分计算。",
-    "skills": [
-      "覆盖度",
-      "可达性",
-      "评分指数"
-    ],
-    "knowledge_base": "熟悉四维体检评分建模（覆盖度/可达性/多样性/均衡性），掌握 0-100 归一化与分项雷达输出。",
-    "knowledge_tags": [
-      "综合评分",
-      "覆盖度",
-      "可达性指数",
-      "均衡性"
-    ],
-    "avatar": "/assets/avatars/L1-032.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "bar-chart",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 23,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-035", "level": "L1", "group": "function",
+    "name": "涂硕", "nickname": "图说", "role_title": "数据可视化专家 / Data Visualization Specialist",
+    "one_liner": "把结构化数据转为图表与可视化。",
+    "skills": ["图表选型", "可视化实现", "数据校验"],
+    "knowledge_base": "熟悉雷达图、热力矩阵、占比环图等图表的适用场景与误用风险，了解坐标轴与单位标注规范，掌握「无数据不绘图」与空值处理的实现原则。",
+    "knowledge_tags": ["图表选型", "单位标注", "空值处理", "无数据不绘图"],
+    "avatar": "/assets/avatars/L1-035.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "line-bar", "gender": "female", "status": "idle",
+    "stats": { "missions": 64, "avg_evidence": 0 }
   },
   {
-    "id": "L1-033",
-    "level": "L1",
-    "group": "method",
-    "name": "温澄澈",
-    "nickname": "数据清洗",
-    "role_title": "数据清洗师 / Data Cleanser",
-    "one_liner": "清洗缺失值、超界坐标与重复记录，输出质量报告。",
-    "skills": [
-      "缺失处理",
-      "异常剔除",
-      "质量报告"
-    ],
-    "knowledge_base": "熟悉空间数据清洗（缺失值、超界坐标、重复记录）与质量报告输出，掌握清洗前后指标对比。",
-    "knowledge_tags": [
-      "数据清洗",
-      "缺失值",
-      "超界坐标",
-      "质量"
-    ],
-    "avatar": "/assets/avatars/L1-033.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "doc-chart",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 32,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
-  },
-  {
-    "id": "L1-034",
-    "level": "L1",
-    "group": "method",
-    "name": "绘星野",
-    "nickname": "地图可视化",
-    "role_title": "地图可视化设计师 / Map Visualizer",
-    "one_liner": "渲染等时圈、POI、盲区图层与柱状雷达图表。",
-    "skills": [
-      "图层渲染",
-      "热力呈现",
-      "图表设计"
-    ],
-    "knowledge_base": "熟悉地图图层渲染（等时圈多边形、POI 分色、盲区灰区）与 ECharts 图表（雷达/柱状），掌握可视化交互规范。",
-    "knowledge_tags": [
-      "等时圈",
-      "热力图",
-      "POI图层",
-      "雷达图"
-    ],
-    "avatar": "/assets/avatars/L1-034.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "line-bar",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 47,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
-  },
-  {
-    "id": "L1-035",
-    "level": "L1",
-    "group": "method",
-    "name": "稳若磐",
-    "nickname": "API韧性",
-    "role_title": "API 韧性工程师 / Resilience Engineer",
-    "one_liner": "执行 QPS 限流、退避重试与 fixture 降级兜底。",
-    "skills": [
-      "限流控制",
-      "退避重试",
-      "降级兜底"
-    ],
-    "knowledge_base": "熟悉地图 API 调用治理（信号量限流、指数退避、配额保护）与 fixture 降级兜底策略，掌握失败率监控。",
-    "knowledge_tags": [
-      "QPS限流",
-      "指数退避",
-      "降级",
-      "容错"
-    ],
-    "avatar": "/assets/avatars/L1-035.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "shield-scale",
-    "gender": "female",
-    "status": "idle",
-    "stats": {
-      "missions": 64,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
-  },
-  {
-    "id": "L1-036",
-    "level": "L1",
-    "group": "method",
-    "name": "字成章",
-    "nickname": "报告主笔",
-    "role_title": "报告主笔 / Report Author",
-    "one_liner": "汇编体检单与分章报告，负责图文结构与溯源引用。",
-    "skills": [
-      "体检单汇编",
-      "章节组织",
-      "溯源引用"
-    ],
-    "knowledge_base": "熟悉体检报告结构（体检单+分章），掌握图文编排与点位溯源引用规范，确保每个结论有出处。",
-    "knowledge_tags": [
-      "体检单",
-      "分章报告",
-      "溯源",
-      "图文结构"
-    ],
-    "avatar": "/assets/avatars/L1-036.jpg",
-    "badge_color": "#EAF1EA",
-    "domain_icon": "folder",
-    "gender": "male",
-    "status": "idle",
-    "stats": {
-      "missions": 71,
-      "avg_evidence": 0
-    },
-    "caliber_refs": []
+    "id": "L1-036", "level": "L1", "group": "function",
+    "name": "党安", "nickname": "档案管", "role_title": "知识库与档案管理专家 / Knowledge Archivist",
+    "one_liner": "管理证据库、结构化入库与版本归档。",
+    "skills": ["证据入库", "版本归档", "检索优化"],
+    "knowledge_base": "熟悉证据库的字段规范与结构化 Schema 入库流程，了解版本归档与变更留痕要求，掌握证据与结论的引用关系维护与检索优化方法。",
+    "knowledge_tags": ["证据入库", "Schema", "版本归档", "引用关系"],
+    "avatar": "/assets/avatars/L1-036.jpg", "badge_color": "#EAF1EA",
+    "domain_icon": "folder", "gender": "male", "status": "idle",
+    "stats": { "missions": 71, "avg_evidence": 0 }
   }
 ]

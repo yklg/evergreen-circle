@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.services import baidu as baidu_mod
 from app.core.schemas import (coerce_food_ranking, coerce_shop_list,
                               coerce_spot_ranking, coerce_spot_routes)

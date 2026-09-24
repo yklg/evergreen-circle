@@ -26,19 +26,19 @@ def _clean_business_tables():
     yield
 
 
-def _ev(eid, source_type="douyin", brand="品牌A", credibility=80.0):
+def _ev(eid, source_type="douyin", destination="目的地A", credibility=80.0):
     return {
         "evidence_id": eid, "source_url": "https://example.com/" + eid,
         "source_type": source_type, "domain": "example.com", "title": "证据 " + eid,
         "excerpt": "内容", "credibility": credibility, "collected_by": "tester",
-        "brand": brand, "captured_at": db._now(),
+        "destination": destination, "captured_at": db._now(),
     }
 
 
 def _make_report(rid, *, evidence=None, metrics=None, claims=None):
     report = {
         "id": rid, "title": "报告 " + rid, "subtitle": "", "query": "测试查询",
-        "brands": ["品牌A"], "experts": [], "cover_image": "", "created_at": db._now(),
+        "destinations": ["目的地A"], "experts": [], "cover_image": "", "created_at": db._now(),
         "evidence": evidence or [], "claims": claims or [],
         "metrics": metrics or {
             "efficiency": {"manual_estimate_minutes": 60, "elapsed_minutes": 10,

@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.core.db as db
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
 from app.core import trace
 from app.main import app

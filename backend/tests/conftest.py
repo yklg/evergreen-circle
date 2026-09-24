@@ -17,10 +17,6 @@ os.environ["VERDA_DB_PATH"] = str(_TMP / "test.db")
 
 import pytest  # noqa: E402
 
-# M1 三跳合并：改造侧旅游引擎/外壳/db 迁移处于休眠态，其 30 个测试暂不收集，
-# 待 M2-flip 移回本目录并改 import 路径。见 travel_pending/README.md。
-collect_ignore = ["travel_pending"]
-
 import app.core.db as db  # noqa: E402
 import app.core.runtime_config as rc  # noqa: E402
 import app.living_circle.request_guard as request_guard  # noqa: E402

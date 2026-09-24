@@ -19,7 +19,7 @@ import re
 import pytest
 
 from app.core import db, runner
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
 from app.core import scoring as SC
 from app.core import sentiment
@@ -320,7 +320,7 @@ def _run_pipeline(rtype, query: str = None, clar: dict = None, mode: str = MODE)
 
     async def _scenario():
         evs = []
-        async for ev in O.run_pipeline(task_id):
+        async for ev in O.research_pipeline(task_id):
             evs.append(ev)
             if ev["type"] in ("done", "error"):
                 break

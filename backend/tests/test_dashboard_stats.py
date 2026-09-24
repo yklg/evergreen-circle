@@ -11,7 +11,7 @@
 - 计数正确：reports / evidence_total / claim_total / high_conf_total 与库中行统计一致。
 - 比例口径：avg_ev = ev_total/reports；fact_rate = high/claim*100（round）。
 - intel_overview 容错：坏 data JSON、缺 metrics/efficiency 字段 → 不抛、卡片仍含该报告。
-- evidence_facets：by_type 含空串平台？——按值分组全部收录；by_brand 排除空品牌、Top12 降序。
+- evidence_facets：by_type 含空串平台？——按值分组全部收录；by_destination 排除空目的地、Top12 降序。
 运行：backend/ 下 `pytest tests/test_dashboard_stats.py -q`
 """
 import json
@@ -40,7 +40,7 @@ def _make_report(rid, *, claims=None, evidence=None, metrics=None, created_at=No
     evidence = evidence or []
     report = {
         "id": rid, "title": f"{title} {rid}", "subtitle": "", "query": "测试查询",
-        "brands": ["品牌A"], "experts": [], "cover_image": "",
+        "destinations": ["目的地A"], "experts": [], "cover_image": "",
         "created_at": created_at or db._now(),
         "evidence": evidence, "claims": claims, "metrics": metrics or {},
     }
@@ -48,12 +48,12 @@ def _make_report(rid, *, claims=None, evidence=None, metrics=None, created_at=No
     return report
 
 
-def _ev(eid, source_type="douyin", brand="品牌A", credibility=80.0):
+def _ev(eid, source_type="douyin", destination="目的地A", credibility=80.0):
     return {
         "evidence_id": eid, "source_url": "https://example.com/" + eid,
         "source_type": source_type, "domain": "example.com", "title": "证据 " + eid,
         "excerpt": "内容", "credibility": credibility, "collected_by": "tester",
-        "brand": brand, "captured_at": db._now(),
+        "destination": destination, "captured_at": db._now(),
     }
 
 
@@ -75,7 +75,7 @@ def test_dashboard_stats_empty_db():
     assert s["avg_evidence_per_report"] == 0
     assert s["fact_accuracy"] == 0
     assert s["platform_distribution"] == {}
-    assert s["brand_distribution"] == {}
+    assert s["destination_distribution"] == {}
     assert s["minutes_saved"] == 0
     assert s["avg_efficiency"] == 0
     assert s["avg_coverage"] == 0
@@ -87,11 +87,11 @@ def test_dashboard_stats_with_data():
     _make_report("r_ds_1",
                  claims=[{"id": "c1", "confidence": "high"}, {"id": "c2", "confidence": "medium"},
                          {"id": "c3", "confidence": "medium"}],
-                 evidence=[_ev("e1", "douyin", "品牌A"), _ev("e2", "weibo", "品牌A")],
+                 evidence=[_ev("e1", "douyin", "目的地A"), _ev("e2", "weibo", "目的地A")],
                  metrics=_metrics(manual=60, elapsed=10, mult=6, tokens=5000, cov=3))
     _make_report("r_ds_2",
                  claims=[{"id": "c4", "confidence": "high"}, {"id": "c5", "confidence": "high"}],
-                 evidence=[_ev("e3", "douyin", "品牌B", 90)],
+                 evidence=[_ev("e3", "douyin", "目的地B", 90)],
                  metrics=_metrics(manual=30, elapsed=20, mult=1.5, tokens=1000, cov=2))
 
     s = db.dashboard_stats()
@@ -102,7 +102,7 @@ def test_dashboard_stats_with_data():
     assert s["avg_evidence_per_report"] == 1.5          # round(3/2, 1)
     assert s["fact_accuracy"] == 60                     # round(3/5*100)
     assert s["platform_distribution"] == {"douyin": 2, "weibo": 1}
-    assert s["brand_distribution"] == {"品牌A": 2, "品牌B": 1}
+    assert s["destination_distribution"] == {"目的地A": 2, "目的地B": 1}
     # intel_overview 聚合：manual-elapsed 求和 50+10=60；avg = mean([6,1.5])=3.75→3.8；tokens=6000
     assert s["minutes_saved"] == 60
     assert s["avg_efficiency"] == 3.8
@@ -153,14 +153,42 @@ def test_intel_overview_missing_metrics_fields():
 
 def test_evidence_facets_grouping():
     _make_report("r_ds_f", evidence=[
-        _ev("e_f1", "douyin", "品牌A", 70),
-        _ev("e_f2", "douyin", "品牌A", 60),
-        _ev("e_f3", "weibo", "", 90),    # 空品牌应被 by_brand 排除
+        _ev("e_f1", "douyin", "目的地A", 70),
+        _ev("e_f2", "douyin", "目的地A", 60),
+        _ev("e_f3", "weibo", "", 90),    # 空目的地应被 by_destination 排除
     ])
     f = db.evidence_facets()
     assert f["total"] == 3
     assert f["by_type"] == {"douyin": 2, "weibo": 1}
-    assert f["by_brand"] == {"品牌A": 2}                  # 空串不收录
+    assert f["by_destination"] == {"目的地A": 2}          # 空串不收录
+
+
+# ── destination 语义契约（R4 键名 / R5 边界截断）─────────────
+def test_facets_top12_truncation_boundary():
+    """by_destination Top12：13 个目的地取 12，且按证据数降序（第 13 名被截断）。"""
+    evs = []
+    for i in range(13):
+        # 第 i 个目的地证据数 = 13 - i（目的地0 最多），保证名次可判定
+        for j in range(13 - i):
+            evs.append(_ev(f"e_top_{i}_{j}", "douyin", f"目的地{i:02d}"))
+    _make_report("r_ds_top", evidence=evs)
+    by_dest = db.evidence_facets()["by_destination"]
+    assert len(by_dest) == 12, "Top12 必须截断（前端标签云只渲染前 12）"
+    counts = list(by_dest.values())
+    assert counts == sorted(counts, reverse=True), "必须按证据数降序"
+    assert "目的地12" not in by_dest, "第 13 名（证据数最少）应被截断"
+    assert by_dest["目的地00"] == 13
+
+
+def test_destination_distribution_keys_and_empty_excluded():
+    """dashboard_stats 的目的地分布键名 = destination_distribution，空目的地不参与。"""
+    _make_report("r_ds_d1", evidence=[_ev("e_d1", "douyin", "大理", 80),
+                                      _ev("e_d2", "weibo", "", 70)])
+    s = db.dashboard_stats()
+    assert "destination_distribution" in s and "brand_distribution" not in s
+    assert s["destination_distribution"] == {"大理": 1}
+    cards = db.dashboard_stats()["research_cards"]
+    assert "destinations" in cards[0] and "brands" not in cards[0]
 
 
 # ── B-05 API 契约 ───────────────────────────────────────
@@ -174,7 +202,7 @@ def test_api_dashboard_empty():
 
 def test_api_dashboard_with_data():
     _make_report("r_ds_api", claims=[{"id": "a1", "confidence": "high"}],
-                 evidence=[_ev("e_api1", "douyin", "品牌A")],
+                 evidence=[_ev("e_api1", "douyin", "目的地A")],
                  metrics=_metrics(manual=30, elapsed=10, mult=3, tokens=2000))
     j = TestClient(app).get("/api/dashboard").json()
     assert j["reports"] == 1
@@ -186,9 +214,9 @@ def test_api_dashboard_with_data():
 
 def test_api_evidences_filters():
     _make_report("r_ds_ef", evidence=[
-        _ev("e_f10", "douyin", "品牌A", 90),
-        _ev("e_f20", "douyin", "品牌B", 50),
-        _ev("e_f30", "weibo", "品牌A", 80),
+        _ev("e_f10", "douyin", "目的地A", 90),
+        _ev("e_f20", "douyin", "目的地B", 50),
+        _ev("e_f30", "weibo", "目的地A", 80),
     ])
     cli = TestClient(app)
     # 全量
@@ -201,8 +229,8 @@ def test_api_evidences_filters():
     # min_cred 边界：70 只留 90/80（59 与 70 的边界语义同 test_refine_pipeline_min_cred_boundary）
     cred = cli.get("/api/evidences", params={"min_cred": 70}).json()["items"]
     assert {i["evidence_id"] for i in cred} == {"e_f10", "e_f30"}
-    # brand + source_type 组合
-    combo = cli.get("/api/evidences", params={"brand": "品牌A", "source_type": "weibo"}).json()["items"]
+    # destination + source_type 组合
+    combo = cli.get("/api/evidences", params={"destination": "目的地A", "source_type": "weibo"}).json()["items"]
     assert [i["evidence_id"] for i in combo] == ["e_f30"]
     # limit
     assert len(cli.get("/api/evidences", params={"limit": 2}).json()["items"]) == 2
@@ -225,7 +253,7 @@ def test_dashboard_aggregation_under_loose_latency():
     for i in range(3):
         _make_report(f"r_perf_{i}",
                      claims=[{"id": f"p{i}c{j}", "confidence": "high"} for j in range(20)],
-                     evidence=[_ev(f"p{i}e{j}", "douyin" if j % 2 else "weibo", f"品牌{j % 3}") for j in range(40)],
+                     evidence=[_ev(f"p{i}e{j}", "douyin" if j % 2 else "weibo", f"目的地{j % 3}") for j in range(40)],
                      metrics=_metrics(manual=30, elapsed=10, mult=3, tokens=2000))
     t0 = time.perf_counter()
     s = db.dashboard_stats()

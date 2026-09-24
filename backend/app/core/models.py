@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 class Evidence:
     evidence_id: str
     source_url: str
-    source_type: str  # official|news|douyin|xiaohongshu|bilibili|weibo|zhihu|review|financial_report
+    source_type: str  # official|news|douyin|xiaohongshu|bilibili|weibo|zhihu|ctrip|review|financial_report
     title: str
     excerpt: str
     captured_at: str
@@ -22,7 +22,7 @@ class Evidence:
     screenshot_path: str = ""
     image_urls: List[str] = field(default_factory=list)
     lang: str = "zh"
-    brand: str = ""
+    destination: str = ""
     domain: str = ""
     freshness_days: Optional[int] = None  # 距今天数，None=无法解析
     # ── 客观性加固（信源组 / 舆论过热）────────────────────────
@@ -40,7 +40,11 @@ class Evidence:
 class Claim:
     claim_id: str
     text: str
-    field: str  # feature_tree|pricing_model|user_persona|swot|sentiment|overview
+    # 见 research_types.FIELD_KEYWORDS：共用 overview|trend|risk|sentiment；
+    # 攻略 transport|stay|route|food|budget|season|tips；
+    # 评估 accessibility|amenities|safety|value|livelihood|verdict；
+    # 结构化 route_plan|stay_options|cost_breakdown|access_matrix|amenity_checklist|risk_profile
+    field: str
     evidence_ids: List[str]
     confidence: str  # high|medium|low|unverified
     cross_validated: bool

@@ -6,8 +6,8 @@
 - 两套平台口径统一在此建模：
   1) Cookie 直采平台（douyin / xiaohongshu / bilibili）：cookie_setting_key 非空，靠存储的
      cookie 串鉴权。
-  2) 证据/舆情展示平台（含 weibo / zhihu 等）：cookie_setting_key 为空字符串，仅用于展示，
-     暂不支持直采。
+  2) 证据/舆情展示平台（含 weibo / zhihu / 携程等 OTA 与旅行社区）：cookie_setting_key
+     为空字符串，仅用于分类与展示，暂不支持直采。
 - 本模块是叶子模块，仅依赖标准库；orchestrator/credibility/sentiment 单向导入它，
   不存在循环依赖。
 """
@@ -35,6 +35,12 @@ PLATFORMS: Dict[str, PlatformDef] = {
     # 展示口径平台一并登记，使分类/展示/打分统一；cookie_setting_key="" 表示暂不支持采集
     "weibo":       PlatformDef("weibo",       "微博",   ("weibo",),            "weibo.com",       ""),
     "zhihu":       PlatformDef("zhihu",       "知乎",   ("zhihu",),            "zhihu.com",       ""),
+    # OTA / 旅行社区：证据分类与展示口径（舆情平台集按调研类型收敛，见 research_types）
+    "ctrip":       PlatformDef("ctrip",       "携程",   ("ctrip",),            "ctrip.com",       ""),
+    "qunar":       PlatformDef("qunar",       "去哪儿", ("qunar",),            "qunar.com",       ""),
+    "mafengwo":    PlatformDef("mafengwo",    "马蜂窝", ("mafengwo",),         "mafengwo.cn",     ""),
+    "fliggy":      PlatformDef("fliggy",      "飞猪",   ("fliggy",),           "fliggy.com",      ""),
+    "dianping":    PlatformDef("dianping",    "大众点评", ("dianping",),       "dianping.com",    ""),
 }
 
 

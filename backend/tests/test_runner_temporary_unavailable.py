@@ -9,7 +9,7 @@ legacy orchestrator.run_pipeline），因此这里 patch 的是真正的分发�
 import asyncio
 
 from app.core import orchestrator
-from app.core.pipeline import research
+from app.core.pipeline.research import engine as research
 from app.core.runner import _Run, _drive
 
 

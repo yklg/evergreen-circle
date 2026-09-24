@@ -76,44 +76,30 @@ class Settings(BaseSettings):
     xhs_cookie: str = ""
     bilibili_cookie: str = ""
 
+    # 百度地图**服务端 AK**（与浏览器端 AK 是不同申请类型）：
+    # 供 services/baidu.py 的地点检索 / 地理编码 / 路线规划调用。
+    # 缺失不炸任务——spots 实体阶段整体走降级链，地图/路线出占位（《目的地实体政策》）。
+    baidu_server_ak: str = ""
+    # 单次百度调用超时（秒）：批量 fan-out 时配合阶段级 deadline，慢接口不拖垮管线
+    baidu_timeout: float = 8.0
+    # 浏览器 AK 仅前端 JS API 使用；生活圈域配额治理（CallGuard 共享闸/日预算）
+    baidu_browser_ak: str = ""
+    baidu_map_style_id: str = ""
+    baidu_allow_console_style: bool = False
+    # 个人免费档保守默认（并发 2≈2QPS）；日预算 0=禁用，显式正整数启用全局熔断
+    baidu_max_qps: float = 3.0
+    baidu_max_concurrency: int = 2
+    baidu_daily_quota: int = 0
+
     # 服务
     # 安全默认值：仅监听本机回环。
     # 本项目接口无鉴权（localhost 单用户假设），若绑定 0.0.0.0 会让同局域网
     # 任意主机读取配置、覆盖密钥。确需远程访问时请显式设 APP_HOST 并自行加防火墙/口令门禁。
     app_host: str = "127.0.0.1"
     app_port: int = 8000
-    frontend_origin: str = "http://localhost:5173"
+    frontend_origin: str = "http://localhost:3400"
 
-    # 百度地图（常青圈·生活圈体检，M2）：从 backend/.env 读取 BAIDU_SERVER_AK / BAIDU_BROWSER_AK。
-    # 服务端 AK 用于 geocoding/place/测时等请求；浏览器 AK 仅前端 JS API 使用（Referer 白名单）。
-    baidu_server_ak: str = ""
-    baidu_browser_ak: str = ""
-    # 个性化地图 styleId（百度控制台「个性化地图」发布后获得，C7 底图风格调适）：
-    # 空则前端回退内置 S2 低饱和浅色 styleJson 模板（frontend/src/lib/bmapStyle.ts）。
-    #
-    # ⚠️ 阶段 0.2（决策 D4）：**本值默认被忽略** —— 只有同时置 `BAIDU_ALLOW_CONSOLE_STYLE=1`
-    #    才会下发给前端。原因见 `life_circle_map_config()`：控制台样式里的「底图 POI 注记」
-    #    是否关闭**代码无法验证**，而它与我们的应用 Marker 同款呈现，会让第三方设施名
-    #    被读成自家数据（本计划 §1 症状成因之一）。纪律必须活在版本控制里，不能挂配置。
-    baidu_map_style_id: str = ""
-    # 显式风险开关：确知该 styleId 已关闭 POI 注记时才置 1（默认关）。
-    baidu_allow_console_style: bool = False
-
-    # ── 百度 AK 配额档位（根治「单次体检打爆个人免费额度 → 调研失败」的限流参数）──
-    # 个人免费档并发≈3、QPS≈3。`CallGuard` 默认并发 4 / 间隔 0.25s（≈4QPS）**已经高于免费档**，
-    # 是 100/3 超限短信与「调研失败」的推手之一。此处纳入配置：默认保守到免费档
-    # （并发 2 ≈ 2QPS，留足余量），升级付费/商用额度后可在 .env 放大换取更高采样精度。
-    baidu_max_qps: float = 3.0
-    baidu_max_concurrency: int = 2
-    # R7e：进程级「当日百度调用总量」硬上限（根治「每日总量超额」短信）。
-    # - 0（默认）= 禁用日预算约束（向后兼容、零行为变化，等用户按 .env 显式开启）；
-    # - 设为正整数 = 当日该 AK 累计调用达到此数即全局熔断 → 流水线诚实降级离线，
-    #   不再硬算、不再触发百度「每日总量超额」短信。
-    # 经验起点：单份 15 分钟生活圈体检约 80~120 次真实调用（含失败重试均计费），
-    # 免费档日配额若约 2000~6000，可设 1500 留缓冲；付费档按需上调。
-    baidu_daily_quota: int = 0
-
-    # 澄清问卷：竞品发现超时（秒）与发现结果缓存 TTL（天）。
+    # 澄清问卷：候选目的地发现超时（秒）与发现结果缓存 TTL（天）。
     # 发现走 LLM（_discover_scope），设短超时 + 正则兜底，确保基础题不被阻塞（P0-①/②）。
     clarify_discover_timeout_s: float = 4.0
     discovery_cache_ttl_d: int = 7

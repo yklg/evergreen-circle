@@ -1,6 +1,6 @@
 """SQLite 持久化层（真实落盘，切页面/刷新/重启都在）。
 
-存储：调研任务 / 报告 / 证据溯源 / 竞品监控订阅 / 专家工作量
+存储：调研任务 / 报告 / 证据溯源 / 目的地监控订阅 / 专家工作量
       + 系统级运行时配置覆盖（settings 表）/ 用户级偏好（prefs 表）。
 所有读写都走这里，绝不再用内存 dict 当真相源。
 
@@ -22,6 +22,8 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from app.core.research_types import DEFAULT_RESEARCH_TYPE
 
 
 def _resolve_db_path() -> Path:
@@ -88,6 +90,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
+    # 迁移必须先于 CREATE：否则 `CREATE TABLE IF NOT EXISTS destination_discovery_cache`
+    # 会先把新表建出来，使「目标表已存在 → 跳过」的幂等判定误判为已迁移，旧表数据成为孤儿。
+    _migrate_brand_to_destination(conn)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS tasks (
@@ -105,7 +110,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             title TEXT,
             subtitle TEXT,
             query TEXT,
-            brands TEXT,
+            destinations TEXT,
+            research_type TEXT,
             experts TEXT,
             cover_image TEXT,
             data TEXT,
@@ -124,13 +130,14 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             excerpt TEXT,
             credibility REAL,
             collected_by TEXT,
-            brand TEXT,
+            destination TEXT,
             captured_at TEXT
         );
         CREATE TABLE IF NOT EXISTS subscriptions (
             sub_id TEXT PRIMARY KEY,
             query TEXT,
-            brands TEXT,
+            destinations TEXT,
+            type TEXT,
             created_at TEXT,
             last_run_at TEXT,
             last_report_id TEXT,
@@ -162,6 +169,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             evidence_ids TEXT,
             ts TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS living_circle_reports (
+            report_id TEXT PRIMARY KEY,
+            scene_key TEXT,
+            scene_name TEXT,
+            data TEXT,
+            data_origin TEXT,
+            total_score REAL,
+            blindspot_count INTEGER,
+            created_at TEXT
+        );
         CREATE TABLE IF NOT EXISTS report_feedback (
             report_id TEXT PRIMARY KEY,
             edited_blocks INTEGER,
@@ -174,7 +192,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             value TEXT,
             updated_at TEXT
         );
-        CREATE TABLE IF NOT EXISTS competitor_discovery_cache (
+        CREATE TABLE IF NOT EXISTS destination_discovery_cache (
             qhash TEXT PRIMARY KEY,
             payload TEXT,
             expires_at TEXT,
@@ -184,16 +202,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             key TEXT PRIMARY KEY,
             value TEXT,
             updated_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS living_circle_reports (
-            report_id TEXT PRIMARY KEY,
-            scene_key TEXT,
-            scene_name TEXT,
-            data TEXT,
-            data_origin TEXT,
-            total_score REAL,
-            blindspot_count INTEGER,
-            created_at TEXT
         );
         """
     )
@@ -217,7 +225,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             ("updated_at", "TEXT"),
             ("error", "TEXT"),
             ("kind", "TEXT"),
-            ("purpose", "TEXT"),
         ):
             if col not in cols:
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {coltype}")
@@ -244,6 +251,103 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         backfill_evidences_from_reports()
     except sqlite3.Error:
         pass
+
+
+# ── 迁移：竞品语义（brand）→ 目的地语义（destination）──────────
+# 存量库改列名/表名；新库由 _init_schema 的 CREATE 段直接建新形态，本函数为空转。
+_RENAME_COLUMNS = (
+    ("reports", "brands", "destinations"),
+    ("evidences", "brand", "destination"),
+    ("subscriptions", "brands", "destinations"),
+)
+_ADD_COLUMNS = (
+    ("reports", "research_type", "TEXT", "'guide'"),
+    ("subscriptions", "type", "TEXT", "'guide'"),
+)
+# 旧表名（存量库迁移时按此名查找，勿改为新名）
+_OLD_CACHE_TABLE = "competitor_discovery_cache"
+_NEW_CACHE_TABLE = "destination_discovery_cache"
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> List[str]:
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
+
+def _conn_db_path(conn: sqlite3.Connection) -> Path:
+    """连接实际指向的库文件（不依赖全局 _DB_PATH，容忍直接传入临时连接）。"""
+    for r in conn.execute("PRAGMA database_list").fetchall():
+        if r[1] == "main" and r[2]:
+            return Path(r[2])
+    return _DB_PATH
+
+
+def _backup_db(conn: sqlite3.Connection, bak: "Path") -> None:
+    """用 SQLite 在线备份 API 落一份原始库快照（WAL 安全，不受未检查点影响）。"""
+    dst = sqlite3.connect(str(bak))
+    try:
+        conn.backup(dst)
+    finally:
+        dst.close()
+
+
+def _migrate_brand_to_destination(conn: sqlite3.Connection) -> None:
+    """把竞品语义的列/表改名为目的地语义（幂等；失败中止启动，绝不半迁移静默运行）。
+
+    幂等靠**前置存在性判定**（目标列/表已在 → 跳过），不靠 `except: pass` 吞异常：
+    - 无可改名项（全新库或已迁移库）→ 直接返回，不产生备份。
+    - 本轮将实际发生改名 → 先把原始库备份为 `<db>.pre-migration.bak`（已存在则不覆盖）。
+    - 任一步 sqlite3.Error → 打印明确日志并 raise，中止启动（半迁移态绝不放行）。
+    """
+    rename_table = (
+        _table_exists(conn, _OLD_CACHE_TABLE)
+        and not _table_exists(conn, _NEW_CACHE_TABLE)
+    )
+    rename_cols: List[tuple] = []
+    for table, old, new in _RENAME_COLUMNS:
+        if not _table_exists(conn, table):
+            continue
+        cols = _table_columns(conn, table)
+        if old in cols and new not in cols:
+            rename_cols.append((table, old, new))
+    add_cols = [(t, c, ty, dflt) for t, c, ty, dflt in _ADD_COLUMNS
+                if _table_exists(conn, t) and c not in _table_columns(conn, t)]
+
+    if not (rename_table or rename_cols or add_cols):
+        return
+
+    bak = Path(str(_conn_db_path(conn)) + ".pre-migration.bak")
+    if rename_table or rename_cols:
+        try:
+            if not bak.exists():
+                _backup_db(conn, bak)
+        except sqlite3.Error as exc:
+            import sys
+            print(f"[verda] 迁移前备份失败：{exc}", file=sys.stderr)
+            raise RuntimeError("schema 迁移前备份失败，已中止启动") from exc
+
+    try:
+        with _LOCK:
+            for table, old, new in rename_cols:
+                conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+            if rename_table:
+                conn.execute(
+                    f"ALTER TABLE {_OLD_CACHE_TABLE} RENAME TO {_NEW_CACHE_TABLE}"
+                )
+            for table, col, coltype, dflt in add_cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype} DEFAULT {dflt}")
+            conn.commit()
+    except sqlite3.Error as exc:
+        import sys
+        print(f"[verda] schema 迁移失败（brand → destination）：{exc}\n"
+              f"[verda] 原始库已备份至 {bak}，请修复后重启（不会以半迁移态运行）。",
+              file=sys.stderr)
+        raise RuntimeError("schema 迁移失败，原始库已备份") from exc
 
 
 # ── 运行时配置（DB 覆盖层）──────────────────────────────
@@ -369,13 +473,13 @@ def clear_prefs() -> None:
 
 
 # ── 任务 ────────────────────────────────────────────────
-def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research", purpose: str = "") -> None:
+def save_task(task_id: str, query: str, clarifications: Dict[str, Any], kind: str = "research") -> None:
     with _LOCK:
         c = _connect()
         c.execute(
-            "INSERT OR REPLACE INTO tasks(task_id,query,clarifications,status,created_at,report_id,kind,purpose)"
-            " VALUES(?,?,?,?,?,COALESCE((SELECT report_id FROM tasks WHERE task_id=?),NULL),?,?)",
-            (task_id, query, json.dumps(clarifications, ensure_ascii=False), "created", _now(), task_id, kind, purpose),
+            "INSERT OR REPLACE INTO tasks(task_id,query,clarifications,status,created_at,report_id,kind)"
+            " VALUES(?,?,?,?,?,COALESCE((SELECT report_id FROM tasks WHERE task_id=?),NULL),?)",
+            (task_id, query, json.dumps(clarifications, ensure_ascii=False), "created", _now(), task_id, kind),
         )
         c.commit()
 
@@ -479,7 +583,7 @@ def reconcile_orphan_runs() -> int:
         return n
 
 
-# ── 竞品发现缓存（按 query 哈希，TTL 过期；仅缓存成功发现，兜底结果不缓存）──
+# ── 目的地发现缓存（按 query 哈希，TTL 过期；仅缓存成功发现，兜底结果不缓存）──
 def _query_hash(query: str) -> str:
     """归一化（去空白、转小写）后 sha256，作为发现缓存键。"""
     import hashlib
@@ -488,10 +592,10 @@ def _query_hash(query: str) -> str:
 
 
 def get_discovery_cache(qhash: str) -> Optional[Dict[str, Any]]:
-    """读取未过期的竞品发现缓存；过期/缺失返回 None。"""
+    """读取未过期的目的地发现缓存；过期/缺失返回 None。"""
     c = _connect()
     row = c.execute(
-        "SELECT payload, expires_at FROM competitor_discovery_cache WHERE qhash=?",
+        "SELECT payload, expires_at FROM destination_discovery_cache WHERE qhash=?",
         (qhash,),
     ).fetchone()
     if not row:
@@ -505,7 +609,7 @@ def get_discovery_cache(qhash: str) -> Optional[Dict[str, Any]]:
 
 
 def save_discovery_cache(qhash: str, scope: Dict[str, Any], ttl_days: int = 7) -> None:
-    """写入竞品发现缓存（带过期时间）。幂等（INSERT OR REPLACE）。"""
+    """写入目的地发现缓存（带过期时间）。幂等（INSERT OR REPLACE）。"""
     from datetime import timedelta
 
     exp = (_dt.datetime.now() + timedelta(days=ttl_days)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -513,7 +617,7 @@ def save_discovery_cache(qhash: str, scope: Dict[str, Any], ttl_days: int = 7) -
     with _LOCK:
         c = _connect()
         c.execute(
-            "INSERT OR REPLACE INTO competitor_discovery_cache(qhash,payload,expires_at,created_at)"
+            "INSERT OR REPLACE INTO destination_discovery_cache(qhash,payload,expires_at,created_at)"
             " VALUES(?,?,?,?)",
             (qhash, payload, exp, _now()),
         )
@@ -521,10 +625,10 @@ def save_discovery_cache(qhash: str, scope: Dict[str, Any], ttl_days: int = 7) -
 
 
 def clear_discovery_cache() -> None:
-    """清空竞品发现缓存（测试隔离 / 手动刷新用）。"""
+    """清空目的地发现缓存（测试隔离 / 手动刷新用）。"""
     with _LOCK:
         c = _connect()
-        c.execute("DELETE FROM competitor_discovery_cache")
+        c.execute("DELETE FROM destination_discovery_cache")
         c.commit()
 
 
@@ -534,7 +638,7 @@ def save_clarify_questions(
 ) -> None:
     """落库懒生成的澄清问卷；payload 统一为 {"questions": [...], "complete": bool}。
 
-    complete 仅当整份问卷（含竞品发现）已就绪时为 True；partial（仅基础题）绝不落库，
+    complete 仅当整份问卷（含目的地发现）已就绪时为 True；partial（仅基础题）绝不落库，
     避免重连时只推回半份问卷（P0-③ 重连完整性）。
     """
     payload = json.dumps(
@@ -590,12 +694,14 @@ def save_report(report: Dict[str, Any], task_id: str = "") -> None:
     with _LOCK:
         c = _connect()
         c.execute(
-            "INSERT OR REPLACE INTO reports(report_id,task_id,title,subtitle,query,brands,experts,"
-            "cover_image,data,evidence_count,claim_count,high_conf_count,created_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO reports(report_id,task_id,title,subtitle,query,destinations,"
+            "research_type,experts,cover_image,data,evidence_count,claim_count,high_conf_count,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 report["id"], task_id, report.get("title", ""), report.get("subtitle", ""),
-                report.get("query", ""), json.dumps(report.get("brands", []), ensure_ascii=False),
+                report.get("query", ""),
+                json.dumps(report.get("destinations", []), ensure_ascii=False),
+                report.get("research_type", DEFAULT_RESEARCH_TYPE),
                 json.dumps(report.get("experts", []), ensure_ascii=False),
                 report.get("cover_image", ""), json.dumps(report, ensure_ascii=False),
                 len(evidence), len(claims), high, report.get("created_at", _now()),
@@ -605,13 +711,14 @@ def save_report(report: Dict[str, Any], task_id: str = "") -> None:
         for ev in evidence:
             c.execute(
                 "INSERT OR REPLACE INTO evidences(evidence_id,report_id,source_url,source_type,"
-                "domain,title,excerpt,credibility,collected_by,brand,captured_at)"
+                "domain,title,excerpt,credibility,collected_by,destination,captured_at)"
                 " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ev.get("evidence_id"), report["id"], ev.get("source_url", ""),
                     ev.get("source_type", ""), ev.get("domain", ""), ev.get("title", ""),
                     ev.get("excerpt", "")[:500], ev.get("credibility", 0.0),
-                    ev.get("collected_by", ""), ev.get("brand", ""), ev.get("captured_at", _now()),
+                    ev.get("collected_by", ""), ev.get("destination", ""),
+                    ev.get("captured_at", _now()),
                 ),
             )
         c.commit()
@@ -651,12 +758,13 @@ def backfill_evidences_from_reports() -> None:
                 c.execute(
                     "INSERT OR REPLACE INTO evidences("
                     "evidence_id,report_id,source_url,source_type,domain,title,excerpt,"
-                    "credibility,collected_by,brand,captured_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "credibility,collected_by,destination,captured_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         eid, rid, ev.get("source_url", ""), ev.get("source_type", ""),
                         ev.get("domain", ""), ev.get("title", ""),
                         (ev.get("excerpt", "") or "")[:500], ev.get("credibility", 0.0),
-                        ev.get("collected_by", ""), ev.get("brand", ""),
+                        ev.get("collected_by", ""),
+                        ev.get("destination") or ev.get("brand", ""),
                         ev.get("captured_at", _now()),
                     ),
                 )
@@ -665,22 +773,16 @@ def backfill_evidences_from_reports() -> None:
 
 
 def get_report(report_id: str) -> Optional[Dict[str, Any]]:
-    """统一报告读取入口（Phase 8：双引擎合并到单源）。
+    """统一报告读取入口（旅游 reports 表 + 生活圈 living_circle_reports 表）。
 
-    行为：
-      - 先查 reports 表（竞品调研报告）；
-      - 若未找到且 report_id 以 "lc-" 开头，查 living_circle_reports 表（生活圈体检报告）；
-      - 实时派生 evidence 数组（单一真相源）；
-      - 生活圈报告自动补齐盲区表征（annotate_blindspots）。
-      
-    此函数是唯一的报告读取入口，所有 API 路由应调用它而非分别调用 get_report/get_living_circle_report。
+    - 先查 reports 表，走 brands→destinations 读时归一；
+    - 未命中且 report_id 以 "lc-" 开头时查生活圈表，并幂等补齐旧盲区表征。
     """
     c = _connect()
-    
-    # 1. 先查通用报告表
     row = c.execute("SELECT data FROM reports WHERE report_id=?", (report_id,)).fetchone()
     if row:
-        data = json.loads(row["data"])
+        data = _normalize_report_keys(json.loads(row["data"]))
+        # evidence 实时查 evidences 表覆盖快照（Option B 单一真相）；异常兜底不丢证据
         try:
             evs = list(query_evidences(report_id=report_id))
         except Exception:
@@ -688,18 +790,17 @@ def get_report(report_id: str) -> Optional[Dict[str, Any]]:
         if evs:
             data["evidence"] = evs
         return data
-    
-    # 2. 若未找到，尝试生活圈体检报告表
-    row = c.execute("SELECT data FROM living_circle_reports WHERE report_id=?", (report_id,)).fetchone()
+
+    # 生活圈体检报告（独立表，不经过 destination 归一）
+    row = c.execute(
+        "SELECT data FROM living_circle_reports WHERE report_id=?", (report_id,)
+    ).fetchone()
     if not row:
         return None
-    
     try:
         data = json.loads(row["data"])
     except (json.JSONDecodeError, TypeError):
         return None
-    
-    # 生活圈报告：补齐盲区表征（幂等，仅对旧 schema 生效）
     try:
         from app.living_circle.assemble import annotate_blindspots
         lc = data.get("living_circle") or {}
@@ -712,23 +813,43 @@ def get_report(report_id: str) -> Optional[Dict[str, Any]]:
                 data["living_circle"] = lc
     except Exception:
         pass  # 补齐失败不影响报告主体返回
-    
     return data
 
 
-def get_report_legacy(report_id: str) -> Optional[Dict[str, Any]]:
-    """[已废弃] 旧版 get_report，仅查 reports 表。保留用于向后兼容。"""
-    c = _connect()
-    row = c.execute("SELECT data FROM reports WHERE report_id=?", (report_id,)).fetchone()
-    if not row:
-        return None
-    data = json.loads(row["data"])
-    try:
-        evs = list(query_evidences(report_id=report_id))
-    except Exception:
-        evs = []
-    if evs:
-        data["evidence"] = evs
+# 旧契约键 → 新契约键（存量 reports.data 快照里的竞品语义；M2-flip brands→destinations）
+_LEGACY_REPORT_KEYS = (("brands", "destinations"), ("brand", "destination"))
+_LEGACY_QUALITY_KEYS = (
+    ("coverage_by_brand", "coverage_by_destination"),
+    ("brand_coverage_rate", "destination_coverage_rate"),
+)
+
+
+def _normalize_report_keys(data: Dict[str, Any]) -> Dict[str, Any]:
+    """读时归一：存量报告快照里的旧键名就地换成新契约键（幂等，新报告零改动）。
+
+    RENAME COLUMN 只改列名，不改 reports.data 里的 JSON 键；旧报告仍带
+    brands / brand 键。这里在读路径统一归一，使上层（前端/精炼/简报）只见新键。
+    旧 `structured.type`（feature_tree 等）保留不动——前端分支删除后自动不渲染。
+    """
+    if not isinstance(data, dict):
+        return data
+    for old, new in _LEGACY_REPORT_KEYS:
+        if old in data and new not in data:
+            data[new] = data.pop(old)
+        else:
+            data.pop(old, None)
+    data.setdefault("research_type", DEFAULT_RESEARCH_TYPE)
+    evs = data.get("evidence")
+    if isinstance(evs, list):
+        for ev in evs:
+            if isinstance(ev, dict) and "brand" in ev and "destination" not in ev:
+                ev["destination"] = ev.pop("brand")
+    for qk in ("quality_before", "quality_after"):
+        q = data.get(qk)
+        if isinstance(q, dict):
+            for old, new in _LEGACY_QUALITY_KEYS:
+                if old in q and new not in q:
+                    q[new] = q.pop(old)
     return data
 
 
@@ -736,14 +857,15 @@ def list_reports() -> List[Dict[str, Any]]:
     """报告卡片列表（不含全文 data，省带宽）。"""
     c = _connect()
     rows = c.execute(
-        "SELECT report_id,title,subtitle,query,brands,experts,cover_image,"
+        "SELECT report_id,title,subtitle,query,destinations,research_type,experts,cover_image,"
         "evidence_count,claim_count,high_conf_count,created_at FROM reports ORDER BY created_at DESC"
     ).fetchall()
     out = []
     for r in rows:
         d = dict(r)
         d["id"] = d["report_id"]
-        d["brands"] = json.loads(d.get("brands") or "[]")
+        d["destinations"] = json.loads(d.get("destinations") or "[]")
+        d["research_type"] = d.get("research_type") or DEFAULT_RESEARCH_TYPE
         d["experts"] = json.loads(d.get("experts") or "[]")
         out.append(d)
     return out
@@ -817,7 +939,7 @@ def invalidate_report_brief(report_id: str) -> None:
 
 # ── 全局证据溯源库 ──────────────────────────────────────
 def query_evidences(
-    brand: Optional[str] = None,
+    destination: Optional[str] = None,
     source_type: Optional[str] = None,
     min_cred: float = 0.0,
     limit: int = 200,
@@ -835,9 +957,9 @@ def query_evidences(
     if report_id is not None:
         sql += " AND report_id=?"
         args.append(report_id)
-    if brand:
-        sql += " AND brand=?"
-        args.append(brand)
+    if destination:
+        sql += " AND destination=?"
+        args.append(destination)
     if source_type:
         sql += " AND source_type=?"
         args.append(source_type)
@@ -847,7 +969,7 @@ def query_evidences(
 
 
 def evidence_facets() -> Dict[str, Any]:
-    """证据库聚合：平台分布 / 品牌分布 / 总量。"""
+    """证据库聚合：平台分布 / 目的地分布 / 总量。"""
     c = _connect()
     total = c.execute("SELECT COUNT(*) n FROM evidences").fetchone()["n"]
     by_type = {
@@ -856,14 +978,14 @@ def evidence_facets() -> Dict[str, Any]:
             "SELECT source_type, COUNT(*) n FROM evidences GROUP BY source_type"
         ).fetchall()
     }
-    by_brand = {
-        r["brand"]: r["n"]
+    by_destination = {
+        r["destination"]: r["n"]
         for r in c.execute(
-            "SELECT brand, COUNT(*) n FROM evidences"
-            " WHERE brand!='' GROUP BY brand ORDER BY n DESC LIMIT 12"
+            "SELECT destination, COUNT(*) n FROM evidences"
+            " WHERE destination!='' GROUP BY destination ORDER BY n DESC LIMIT 12"
         ).fetchall()
     }
-    return {"total": total, "by_type": by_type, "by_brand": by_brand}
+    return {"total": total, "by_type": by_type, "by_destination": by_destination}
 
 
 # ── 调研统计（真实仪表盘）─────────────────────────────────
@@ -901,7 +1023,7 @@ def _agg_compute() -> Dict[str, Any]:
 
     # intel_overview：跨报告聚合真实业务指标 + 每次调研的概览卡（供情报中心）
     rows = c.execute(
-        "SELECT report_id,title,query,brands,evidence_count,claim_count,"
+        "SELECT report_id,title,query,destinations,research_type,evidence_count,claim_count,"
         "high_conf_count,created_at,data FROM reports ORDER BY created_at DESC LIMIT 60"
     ).fetchall()
     cards: List[Dict[str, Any]] = []
@@ -930,7 +1052,8 @@ def _agg_compute() -> Dict[str, Any]:
             "id": r["report_id"],
             "title": r["title"],
             "query": r["query"],
-            "brands": json.loads(r["brands"] or "[]"),
+            "destinations": json.loads(r["destinations"] or "[]"),
+            "research_type": r["research_type"] or DEFAULT_RESEARCH_TYPE,
             "evidence_count": r["evidence_count"],
             "claim_count": r["claim_count"],
             "high_conf_count": r["high_conf_count"],
@@ -957,7 +1080,7 @@ def _agg_compute() -> Dict[str, Any]:
             "avg_evidence_per_report": avg_ev,
             "fact_accuracy": fact_rate,
             "platform_distribution": facets["by_type"],
-            "brand_distribution": facets["by_brand"],
+            "destination_distribution": facets["by_destination"],
             "minutes_saved": intel["minutes_saved"],
             "avg_efficiency": intel["avg_efficiency"],
             "avg_coverage": intel["avg_coverage"],
@@ -986,28 +1109,32 @@ def intel_overview() -> Dict[str, Any]:
 
 
 
-# ── 竞品监控订阅 ────────────────────────────────────────
-def create_subscription(sub_id: str, query: str, brands: List[str]) -> Dict[str, Any]:
+# ── 目的地持续追踪订阅 ──────────────────────────────────
+def create_subscription(sub_id: str, query: str, destinations: List[str],
+                        research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
     with _LOCK:
         c = _connect()
         c.execute(
-            "INSERT OR REPLACE INTO subscriptions(sub_id,query,brands,created_at,last_run_at,last_report_id,run_count)"
-            " VALUES(?,?,?,?,?,?,?)",
-            (sub_id, query, json.dumps(brands, ensure_ascii=False), _now(), "", "", 0),
+            "INSERT OR REPLACE INTO subscriptions(sub_id,query,destinations,type,created_at,"
+            "last_run_at,last_report_id,run_count) VALUES(?,?,?,?,?,?,?,?)",
+            (sub_id, query, json.dumps(destinations, ensure_ascii=False),
+             research_type or DEFAULT_RESEARCH_TYPE, _now(), "", "", 0),
         )
         c.commit()
     return get_subscription(sub_id) or {}
 
 
+def _row_to_subscription(row: sqlite3.Row) -> Dict[str, Any]:
+    d = dict(row)
+    d["destinations"] = json.loads(d.get("destinations") or "[]")
+    d["type"] = d.get("type") or DEFAULT_RESEARCH_TYPE
+    return d
+
+
 def list_subscriptions() -> List[Dict[str, Any]]:
     c = _connect()
     rows = c.execute("SELECT * FROM subscriptions ORDER BY created_at DESC").fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["brands"] = json.loads(d.get("brands") or "[]")
-        out.append(d)
-    return out
+    return [_row_to_subscription(r) for r in rows]
 
 
 def get_subscription(sub_id: str) -> Optional[Dict[str, Any]]:
@@ -1015,9 +1142,7 @@ def get_subscription(sub_id: str) -> Optional[Dict[str, Any]]:
     row = c.execute("SELECT * FROM subscriptions WHERE sub_id=?", (sub_id,)).fetchone()
     if not row:
         return None
-    d = dict(row)
-    d["brands"] = json.loads(d.get("brands") or "[]")
-    return d
+    return _row_to_subscription(row)
 
 
 def delete_subscription(sub_id: str) -> None:
@@ -1147,9 +1272,27 @@ def get_report_feedback(report_id: str) -> Optional[Dict[str, Any]]:
     return d
 
 
-# ── 生活圈体检报告（A1 独立文档，report_type 弱关联回 Report）───────────
-# 与 reports 表刻意分离：体检报告 body 整体序列化进本表 data 列；
-# 前端 ReportPage 用渲染适配器（report_type）分发，不出现在旧 reports 列表。
+# ────────────────────────────────────────────────────────────── #
+# 生活圈体检报告（living_circle 域独立表；M2-flip 自 skip 摘取合并）
+# ────────────────────────────────────────────────────────────── #
+
+def get_report_legacy(report_id: str) -> Optional[Dict[str, Any]]:
+    """[已废弃] 旧版 get_report，仅查 reports 表。保留用于向后兼容。"""
+    c = _connect()
+    row = c.execute("SELECT data FROM reports WHERE report_id=?", (report_id,)).fetchone()
+    if not row:
+        return None
+    data = json.loads(row["data"])
+    try:
+        evs = list(query_evidences(report_id=report_id))
+    except Exception:
+        evs = []
+    if evs:
+        data["evidence"] = evs
+    return data
+
+
+
 def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> None:
     """落库一份生活圈体检报告（幂等：按 report_id INSERT OR REPLACE）。
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
+import threading
+import time
 from typing import List, Optional
 
 import httpx
@@ -25,6 +27,54 @@ _BOCHA_ERR = {
     500: "博查搜索服务内部异常",
 }
 
+# 服务商级终态码：鉴权/欠费——重试与换查询词都无意义。
+# 429 不在此列：它是账号级 QPS 节流（博查文案自述「请稍后重试」），属瞬态，
+# 真机 r_b14e555d 实证——逐景点二查首发 429 即被当终态中止整阶段，核查表满屏占位。
+_PROVIDER_TERMINAL_CODES = (401, 403)
+_THROTTLE_CODES = (429,)
+_PROVIDER_TERMINAL_HINTS = ("余额", "配额", "鉴权", "quota", "unauthorized")
+
+
+class SearchProviderError(RuntimeError):
+    """服务商级终态错误（Key 无效 / 欠费 / 限流退避用尽）。
+
+    multi_search 对它**不做逐条容错、直接冒泡**（一条即止，不再烧剩余查询），
+    保证真因如实送达上层，而不是被吞成「0 结果」。
+    """
+
+
+class _Throttled(RuntimeError):
+    """账号级 QPS 节流（429）：同一查询按退避阶梯重发，不即判终态。"""
+
+
+# 退避阶梯（对齐 llm.py _RATE_LIMIT_BACKOFFS 先例）：首发不等待，其后逐档退避；
+# 阶梯用尽仍被限流才升格为服务商终态。
+_THROTTLE_BACKOFFS = (2.0, 5.0, 10.0)
+# 出站最小间隔：限流按账号 QPS 计，多线程 fan-out 会把请求叠成突发打满配额，
+# 故在唯一出站收口处排队（持锁只睡「距下次可发的差额」，请求本身不占锁）。
+_MIN_INTERVAL_S = 0.6
+_sleep = time.sleep          # 测试注入点：节流/退避不真等
+_pace_lock = threading.Lock()
+_next_send_at = 0.0
+
+
+def _pace() -> None:
+    """账号级出站节流：保证任意两次真实请求之间至少间隔 _MIN_INTERVAL_S。"""
+    global _next_send_at
+    with _pace_lock:
+        wait = _next_send_at - time.monotonic()
+        if wait > 0:
+            _sleep(wait)
+        _next_send_at = time.monotonic() + _MIN_INTERVAL_S
+
+
+def _provider_error(code: int, msg: str) -> RuntimeError:
+    if code in _THROTTLE_CODES:
+        return _Throttled(msg)
+    if code in _PROVIDER_TERMINAL_CODES or any(h in msg.lower() for h in _PROVIDER_TERMINAL_HINTS):
+        return SearchProviderError(msg)
+    return RuntimeError(msg)
+
 
 def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -33,21 +83,21 @@ def _now() -> str:
 def _is_relevant(query: str, title: str, snippet: str) -> bool:
     """简易相关性过滤：检查搜索 query 的核心词是否出现在标题或摘要中。
 
-    避免搜 "Notion 功能对比" 返回汽水音乐之类完全不相关的结果。
-    提取 query 中的英文品牌词/中文关键词做匹配。
+    避免搜 "京都 交通攻略" 返回汽水音乐之类完全不相关的结果。
+    提取 query 中的英文目的地词/中文关键词做匹配。
     """
     if not query:
         return True
     text = f"{title} {snippet}".lower()
     q = query.lower()
 
-    # 提取英文单词（品牌名等），3 个字符以上的都要在结果中出现至少一个
+    # 提取英文单词（目的地名等），3 个字符以上的都要在结果中出现至少一个
     english_words = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", q)
     # 提取中文关键词（2 个字以上的中文字符串）
     chinese_words = re.findall(r"[\u4e00-\u9fa5]{2,}", q)
 
     must_match = []
-    # 英文品牌词（第一个英文词通常是品牌名，必须匹配）
+    # 英文目的地词（第一个英文词通常是目的地名，必须匹配）
     if english_words:
         must_match.append(english_words[0])
     # 中文第一个名词短语也尽量匹配
@@ -84,7 +134,7 @@ def search_bocha(
     """
     settings = get_effective_settings()
     if not settings.get("bocha_api_key"):
-        raise RuntimeError("未配置 BOCHA_API_KEY，请在「模型配置」页面填写后重试")
+        raise SearchProviderError("未配置 BOCHA_API_KEY，请在「模型配置」页面填写后重试")
 
     # count 取值范围 1-50
     count = max(1, min(int(num), 50))
@@ -109,18 +159,19 @@ def search_bocha(
     timeout = httpx.Timeout(
         connect=8, read=float(settings.get("search_timeout") or 30), write=5, pool=5
     )
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        r = client.post(endpoint, headers=headers, json=payload)
-        if r.status_code != 200:
-            msg = _BOCHA_ERR.get(r.status_code, f"博查接口返回 HTTP {r.status_code}")
-            raise RuntimeError(msg)
-        body = r.json()
-
-    # 博查在 HTTP 200 时仍可能在 body 内返回错误码
-    code = body.get("code")
-    if code is not None and int(code) != 200:
-        msg = _BOCHA_ERR.get(int(code), body.get("msg") or f"博查返回业务码 {code}")
-        raise RuntimeError(msg)
+    body: dict = {}
+    throttled: Optional[_Throttled] = None
+    for delay in (0.0,) + _THROTTLE_BACKOFFS:
+        if delay:
+            _sleep(delay)
+        _pace()
+        try:
+            body = _bocha_once(endpoint, headers, payload, timeout)
+            break
+        except _Throttled as t:
+            throttled = t      # QPS 打满：退避后重发同一条查询，不即判终态
+    else:
+        raise SearchProviderError(str(throttled))
 
     data = body.get("data") or {}
     web_pages = (data.get("webPages") or {}).get("value") or []
@@ -153,6 +204,24 @@ def search_bocha(
     return results
 
 
+def _bocha_once(endpoint: str, headers: dict, payload: dict,
+                timeout: "httpx.Timeout") -> dict:
+    """单次博查请求：返回响应 body；429 → _Throttled，鉴权/欠费 → 服务商终态。"""
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        r = client.post(endpoint, headers=headers, json=payload)
+        if r.status_code != 200:
+            msg = _BOCHA_ERR.get(r.status_code, f"博查接口返回 HTTP {r.status_code}")
+            raise _provider_error(r.status_code, msg)
+        body = r.json()
+
+    # 博查在 HTTP 200 时仍可能在 body 内返回错误码
+    code = body.get("code")
+    if code is not None and int(code) != 200:
+        msg = _BOCHA_ERR.get(int(code), body.get("msg") or f"博查返回业务码 {code}")
+        raise _provider_error(int(code), msg)
+    return body
+
+
 def search(query: str, *, num: int = 10, site: Optional[str] = None,
            freshness: str = "noLimit") -> list[dict]:
     """对外入口：博查搜索。失败抛给上层处理。"""
@@ -166,7 +235,8 @@ def multi_search(
     site: Optional[str] = None,
     freshness: str = "noLimit",
 ) -> list[dict]:
-    """跑多条查询，按 URL 去重聚合。单条失败跳过（尽力而为）。"""
+    """跑多条查询，按 URL 去重聚合。单条瞬时失败跳过（尽力而为）；
+    服务商级终态错误（SearchProviderError）直接冒泡，一条即止。"""
     seen: set[str] = set()
     out: list[dict] = []
     for q in queries:
@@ -179,6 +249,8 @@ def multi_search(
                 seen.add(key)
                 r["query"] = q
                 out.append(r)
+        except SearchProviderError:
+            raise
         except Exception:
             continue
     return out

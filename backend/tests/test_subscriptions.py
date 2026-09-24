@@ -1,10 +1,10 @@
-"""竞品监控订阅 CRUD 契约测试（执行计划 G1 前置基线；方案 B-11 单元 + B-12 API）。
+"""目的地监控订阅 CRUD 契约测试（执行计划 G1 前置基线；方案 B-11 单元 + B-12 API）。
 
 种子模式：test_bulk_assign / test_collect_endpoint 的端点契约（200 + 响应 JSON）与
 db._make_report 矿种辅助；此处直接对 subscriptions 表断言 DB 终态 + HTTP 契约。
 
 守护的不变量（db.py:838-906）：
-- create：INSERT OR REPLACE，幂等（同 sub_id 再建覆盖，行数不增）且 brands 数组 round-trip。
+- create：INSERT OR REPLACE，幂等（同 sub_id 再建覆盖，行数不增）且 destinations 数组 round-trip。
 - list：按 created_at 倒序。
 - get：不存在 → None。
 - delete：无权限语义，重复删除不抛；接口恒 {"ok": true}。
@@ -29,13 +29,13 @@ def _clean_subscriptions():
 
 # ── B-11 单元 ────────────────────────────────────────────
 def test_create_roundtrip_and_get():
-    sub = db.create_subscription("sub_x", "新势力车企", ["品牌A", "品牌B"])
+    sub = db.create_subscription("sub_x", "云南深度游", ["大理", "丽江"])
     assert sub["sub_id"] == "sub_x"
-    assert sub["query"] == "新势力车企"
-    assert sub["brands"] == ["品牌A", "品牌B"]
+    assert sub["query"] == "云南深度游"
+    assert sub["destinations"] == ["大理", "丽江"]
     assert sub["run_count"] == 0
     got = db.get_subscription("sub_x")
-    assert got and got["query"] == "新势力车企"
+    assert got and got["query"] == "云南深度游"
     assert db.get_subscription("nope") is None
 
 
@@ -45,7 +45,7 @@ def test_create_idempotent_replace():
     rows = db.list_subscriptions()
     assert len(rows) == 1
     assert rows[0]["query"] == "q2"
-    assert rows[0]["brands"] == ["B", "C"]
+    assert rows[0]["destinations"] == ["B", "C"]
 
 
 def test_list_ordering_desc():
@@ -85,14 +85,28 @@ def test_create_null_query_ok():
     assert sub["query"] == ""
 
 
+def test_create_default_type_is_guide():
+    """缺省 research_type → 落库 'guide'（旧行/新行同一默认，天然兼容）。"""
+    sub = db.create_subscription("sub_type", "q", [])
+    assert sub["type"] == "guide"
+
+
+def test_create_assessment_type_roundtrip():
+    sub = db.create_subscription("sub_a", "评估成都和杭州", ["成都", "杭州"], "assessment")
+    assert sub["type"] == "assessment"
+    assert db.get_subscription("sub_a")["type"] == "assessment"
+
+
 # ── B-12 API 契约 ────────────────────────────────────────
 def test_api_create_list_delete_flow():
     cli = TestClient(app)
-    r = cli.post("/api/subscriptions", json={"query": "定价行为", "brands": ["A公司"]})
+    r = cli.post("/api/subscriptions", json={"query": "宜居评估", "destinations": ["成都"],
+                                            "type": "assessment"})
     assert r.status_code == 200
     sub = r.json()
     assert sub["sub_id"].startswith("sub_")
-    assert sub["brands"] == ["A公司"]
+    assert sub["destinations"] == ["成都"]
+    assert sub["type"] == "assessment"
 
     listing = cli.get("/api/subscriptions").json()
     assert len(listing) == 1
@@ -111,11 +125,12 @@ def test_api_delete_missing_ok():
     assert r.json() == {"ok": True}
 
 
-def test_api_create_default_brands_empty():
-    """brands 缺省 → 服务端默认 []（SubscriptionBody 默认值契约），200。"""
+def test_api_create_default_destinations_empty():
+    """destinations 缺省 → 服务端默认 []（SubscriptionBody 默认值契约），200。"""
     r = TestClient(app).post("/api/subscriptions", json={"query": "q"})
     assert r.status_code == 200
-    assert r.json()["brands"] == []
+    assert r.json()["destinations"] == []
+    assert r.json()["type"] == "guide"
 
 
 if __name__ == "__main__":

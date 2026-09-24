@@ -1,7 +1,7 @@
 """证据可信度真实计算（对应需求 8：替换写死的 0.85/0.5/0.7）。
 
 设计为轻量、确定性、可解释的打分模型，输出 0-100 的整数，精确到个位、有真实差异：
-- 来源分级基分（官网/财报/新闻/知乎/B站/微博/小红书/抖音/评测）
+- 来源分级基分（官方文旅/财报/新闻/知乎/OTA 与旅行社区/B站/微博/小红书/抖音/评测）
 - 域名权威性加减（gov/edu/官网/财经媒体 加分；聚合站/营销号 减分）
 - 发布时间与时效性（有发布时间加分；越新越加分，过旧减分）
 - 抓取质量（正文抽取成功加分；仅 snippet 降级减分；正文够长加分）
@@ -24,6 +24,13 @@ _BASE_BY_TYPE = {
     "financial_report": 75,
     "news": 60,
     "zhihu": 50,
+    # OTA / 旅行社区：结构化信息（票价/班次/开放时间）与真实入住游玩点评，
+    # 可信度介于资讯媒体与泛社媒之间；平台 key 由 platforms 注册表统一派生
+    "ctrip": 52,
+    "mafengwo": 50,
+    "qunar": 48,
+    "dianping": 48,
+    "fliggy": 46,
     "bilibili": 45,
     "weibo": 40,
     "xiaohongshu": 38,
@@ -40,6 +47,8 @@ _AUTHORITY_HINTS = (
     "36kr.com", "sina.com.cn", "finance.sina", "caixin.com", "yicai.com",
     "people.com.cn", "xinhuanet.com", "cls.cn", "stcn.com", "eastmoney.com",
     "tmtpost.com", "huxiu.com", "ifeng.com", "cnbeta",
+    # 文旅主管/研究机构与官方旅游数据源
+    "mct.gov.cn", "ctaweb.org.cn", "wentiju",
 )
 
 # 低质聚合/营销号特征（命中减分）

@@ -39,7 +39,7 @@ import pytest
 import app.core.db as db
 import app.core.llm as llm
 import app.core.trace as trace
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core.llm import LLMModelUnavailable
 from app.data import load_experts
 

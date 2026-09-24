@@ -16,7 +16,7 @@ I5 结构补齐只对「有正文、无结构」的章节发起（调用数 = �
 （均为模块级 from-import 绑定）→ monkeypatch 假实现，不调真实 LLM。
 运行：backend/ 下 `pytest tests/test_section_structure_contract.py -q`
 """
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 
 # 服务商（api.deepseek.com）单次输出上限；预算超过它会被拒
 PROVIDER_OUTPUT_CEILING = 8192

@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.core.db as db
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core import research_types as rt
 from app.main import app
 
@@ -91,7 +91,7 @@ def test_research_type_flows_to_run_pipeline(tmp_path):
     seen = {}
 
     async def impl():
-        gen = O.run_pipeline(tid)
+        gen = O.research_pipeline(tid)
         async for ev in gen:
             if ev["type"] == "message" and ev["data"].get("kind") == "mode":
                 seen["research_type"] = ev["data"].get("research_type")

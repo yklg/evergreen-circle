@@ -7,17 +7,18 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.core.fetcher import domain_of
+from app.core.research_types import DEFAULT_RESEARCH_TYPE
 
 # ── 可配置基线（披露为「行业经验值」，演示时透明说明）──────────
-# 人工对每个信息源做竞品分析的平均耗时（分钟）
+# 人工对每个信息源做旅游调研分析的平均耗时（分钟）
 MANUAL_MIN_PER_SOURCE = 8
-# 人工竞品分析通常覆盖的独立信息源数（基线）
+# 人工调研通常覆盖的独立信息源数（基线）
 BASELINE_MANUAL_SOURCES = 6
 
 
 def compute_report_metrics(
     *,
-    brands: List[str],
+    destinations: List[str],
     focus: List[str],
     claims: List[Dict[str, Any]],
     evidences: List[Any],
@@ -27,6 +28,8 @@ def compute_report_metrics(
     rework_rounds: int = 0,
     issues_resolved: int = 0,
     objective_stats: Optional[Dict[str, Any]] = None,
+    research_type: str = DEFAULT_RESEARCH_TYPE,
+    perspective_section_id: str = "",
 ) -> Dict[str, Any]:
     indep_domains = len({domain_of(getattr(e, "source_url", "")) for e in evidences
                          if getattr(e, "source_url", "")} - {""})
@@ -37,7 +40,7 @@ def compute_report_metrics(
     claims_with_evidence = sum(1 for c in claims if c.get("evidence_ids"))
 
     elapsed_min = max(0.1, elapsed_seconds / 60.0)
-    manual_min = max(1, len(brands) * max(1, len(focus)) * MANUAL_MIN_PER_SOURCE)
+    manual_min = max(1, len(destinations) * max(1, len(focus)) * MANUAL_MIN_PER_SOURCE)
 
     # v2.1 客观性指标（只读组字段；与 audit.evaluate_quality 口径一致）
     ev_by_id = {getattr(e, "evidence_id", ""): e for e in evidences}
@@ -62,7 +65,7 @@ def compute_report_metrics(
 
     # 一致性（结构化程度）= 0.5×挂证据claim比 + 0.5×schema填充率
     from app.core.schemas import schema_completeness
-    sc = schema_completeness(structured)
+    sc = schema_completeness(structured, research_type, perspective_section_id)
     consistency = round(0.5 * (claims_with_evidence / total_claims) + 0.5 * sc, 3)
 
     # 准确率 = 高置信占比
@@ -77,7 +80,7 @@ def compute_report_metrics(
             "manual_estimate_minutes": manual_min,
             "efficiency_multiple": efficiency_multiple,
             "tokens_used": tokens_used,
-            "formula": "人工估时(品牌数×维度数×8分钟/源) ÷ 实际耗时",
+            "formula": "人工估时(目的地数×维度数×8分钟/源) ÷ 实际耗时",
             "baseline_note": f"基线：人工每信息源约 {MANUAL_MIN_PER_SOURCE} 分钟（行业经验值，可配置）",
         },
         # 覆盖度
@@ -101,7 +104,7 @@ def compute_report_metrics(
             "accuracy": accuracy,                       # 准确率=高置信占比
             "cross_validated_ratio": cross_ratio,        # 交叉验证占比
             "dimension_coverage": None,                  # 由 quality 注入
-            "brand_coverage": None,                      # 由 quality 注入
+            "destination_coverage": None,                # 由 quality 注入
             "correction_rate": None,                     # 由人工反馈注入
             "rework_rounds": rework_rounds,
             "issues_resolved": issues_resolved,
@@ -121,7 +124,7 @@ def merge_quality_into_metrics(metrics: Dict[str, Any], quality: Dict[str, Any])
         return metrics
     biz = metrics.setdefault("business", {})
     biz["dimension_coverage"] = quality.get("dimension_coverage_rate")
-    biz["brand_coverage"] = quality.get("brand_coverage_rate")
+    biz["destination_coverage"] = quality.get("destination_coverage_rate")
     return metrics
 
 

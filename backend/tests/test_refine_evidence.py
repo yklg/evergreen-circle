@@ -18,7 +18,8 @@ import tempfile
 _TMP = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ["VERDA_DB_PATH"] = _TMP.name
 
-from app.core import db, orchestrator  # noqa: E402
+from app.core import db  # noqa: E402
+from app.core.pipeline.research import engine as orchestrator  # noqa: E402
 
 
 def _conn():

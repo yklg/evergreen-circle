@@ -76,7 +76,7 @@ def test_collect_spot_comments_filters_dedupes_and_orders(monkeypatch):
     按（榜单名次 × 平台序）确定性展平，评论挂 spot_id/spot_name。"""
     import asyncio
 
-    from app.core import orchestrator as O
+    from app.core.pipeline.research import engine as O
 
     def fake_multi_search(queries, *, num=10, site=None, freshness="noLimit"):
         q = queries[0]

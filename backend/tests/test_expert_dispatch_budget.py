@@ -24,7 +24,7 @@ Stage A 已把 (2) 提到 3600 并给 (3) 加上 20 字上界；本文件随之�
 import json
 import re
 
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.data import load_experts
 
 # 实测基线（2026-09-22，experts.json 48 条、字段 id/name/level/role/skills[:3]）

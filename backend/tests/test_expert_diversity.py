@@ -17,7 +17,7 @@ Stage A（降级可见）+ B1（槽位解析）+ B2（多采集者）落地后�
 """
 import pytest
 
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.data import load_experts
 
 STAGES = "quiet-shore-pike Stage A+B1+B2 未实施（现状恒落回兜底 6 人）"

@@ -20,7 +20,7 @@ import inspect
 
 import pytest
 
-from app.core import orchestrator
+from app.core.pipeline.research import engine as orchestrator
 from app.core import research_types as RT
 
 _TYPES = list(RT.RESEARCH_TYPES)

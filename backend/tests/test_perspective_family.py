@@ -10,7 +10,7 @@
 """
 import pytest
 
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core import research_types as rt
 from app.core.schemas import schema_completeness
 

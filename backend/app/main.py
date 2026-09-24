@@ -1,8 +1,7 @@
-
 """青野 Verda 后端入口（FastAPI）。
 
 挂载：48 专家 API + 任务创建/澄清 + SSE 思维流 + 报告/历史 + 仪表盘统计
-+ 全局证据溯源库 + 竞品监控订阅 + 专家工作量看板 + 健康/验证接口。
++ 全局证据溯源库 + 目的地持续追踪订阅 + 专家工作量看板 + 健康/验证接口。
 真实 LLM（智谱 GLM）+ 真实搜索（博查 Bocha）+ 真实抓取 + SQLite 持久化，绝不 demo。
 """
 from __future__ import annotations
@@ -19,13 +18,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
-from app.living_circle.geo_utils import parse_bd_lnglat
-
 from app.core import db
+from app.core import research_types as rt
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
+from app.core.research_types import DEFAULT_RESEARCH_TYPE
 import logging
-from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task
+from app.core.orchestrator import create_task, run_pipeline, submit_clarify, refine_section, generate_clarify, create_refine_task, create_brief_task, GuideSingleDestinationError, ClarifyAnswerRequiredError
 from app.core import runner
+from app.living_circle.geo_utils import parse_bd_lnglat
 from app.core.runtime_config import (
     GROUP_FIELDS,
     SECRET_KEYS,
@@ -50,7 +50,7 @@ _logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """启动编排：配置键迁移（键名泛化 zhipu_* -> llm_*）显式执行，fail-fast。
+    """启动编排：配置键迁移（键名泛化 zhipu_* → llm_*）显式执行，fail-fast。
 
     并回收孤儿 running：进程重启后内存里的实时任务已丢，DB 仍标记 running 会
     让前端悬浮条永久转圈，这里统一标 failed。
@@ -282,6 +282,17 @@ def experts_workload():
     return out
 
 
+@app.get("/api/experts/integrity")
+def experts_integrity():
+    """名册结构性自检（双域）：返回问题清单，不影响专家端点可用性。"""
+    from app.data.schema import validate_roster
+    problems = []
+    for domain in ("travel", "living_circle"):
+        for prob in validate_roster(load_experts(domain)):
+            problems.append({"domain": domain, **(prob if isinstance(prob, dict) else {"msg": prob})})
+    return {"ok": len(problems) == 0, "problems": problems}
+
+
 @app.get("/api/experts/{eid}")
 def get_expert(eid: str):
     e = expert_by_id(eid)
@@ -291,54 +302,62 @@ def get_expert(eid: str):
     return {**e, "stats": stat or {"missions": 0, "claims_authored": 0, "evidence_collected": 0, "last_active": ""}}
 
 
-@app.get("/api/experts/integrity")
-def experts_integrity():
-    """名册结构性自检端点 —— 返回问题清单，不影响其他专家端点可用性。"""
-    from app.data.schema import validate_roster
-    problems = validate_roster(load_experts())
-    return {"ok": len(problems) == 0, "problems": problems}
-
-
 # ── 任务 / 澄清 ─────────────────────────────────────────
 class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"  # quick | deep | expert
-    model: Optional[str] = None  # 用户选择的分析模型；空/'Auto'/None 表示按 settings 编排
-    purpose: str = ""  # 目的地产出体裁：''(通用 research) | guide(攻略) | assess(评估) | 其余任意
-    # 生活圈体检入参（type=living_circle，A1 独立流水线）
-    type: str = "research"
-    center: Optional[List[float]] = None  # [lng, lat] BD-09
-    city: str = ""
-    address: str = ""
-    data_mode: str = ""  # ''=auto（live 无 AK 自动降级 fixture） | 'live' | 'fixture'
-    travel_mode: str = "walking"  # walking / riding / driving（阶段 3 多方式）
-    coord_sys: str = "bd09"  # 入参 center 的坐标系：'bd09' | 'wgs84'（后者由服务端 geoconv 转换）
+    type: str = DEFAULT_RESEARCH_TYPE  # guide | assessment | living_circle
+    model: Optional[str] = None
+    # ── 生活圈体检（type=living_circle）专用可选字段 ──
+    purpose: Optional[str] = None
+    city: Optional[str] = None
+    address: Optional[str] = None
+    center: Optional[List[float]] = None
+    coord_sys: str = "bd09"  # bd09 | wgs84（后者经 geoconv 归一，缺 AK 拒绝）
+    travel_mode: Optional[str] = None
+    data_mode: Optional[str] = None
 
     @field_validator("center", mode="before")
     @classmethod
     def _validate_center(cls, v):
-        """BD-09 经纬度**值域**校验 —— 跨层坐标契约的唯一关口。
-
-        `LngLat` 是裸元组 ``Tuple[float, float]``：BD-09 经纬度、百度墨卡托米、局部平面米
-        三者在类型系统里**完全同形**，typing 与 TypeScript 都拦不住（喂错坐标系是「类型正确」的）。
-        历史事故：BMapGL ``dragend`` 的 ``e.point`` 是墨卡托平面米
-        ``(11440230.81, 2860409.52)``，被当作经纬度穿过 API → 落库 → 报告 ``scene.center``
-        → 前端再渲染坏地图；**一次写库，之后每次打开都必现**（自我强化闭环）。
-
-        故契约只能落在值域上，且必须卡在**唯一写入口**（此处）。``mode="before"`` 是有意的：
-        在 pydantic 把 ``["107.9", "26.5"]`` 悄悄转成 float 之前就校验原始值——字符串坐标
-        本身就是「上游没走契约」的信号，不该被容错掩盖。
-        """
+        """BD-09 经纬度值域校验（唯一写入口；拦墨卡托米/短列表/字符串坐标）。"""
         if v is None:
             return None
         parsed = parse_bd_lnglat(v)
         if parsed is None:
             raise ValueError(
                 "center 必须是 BD-09 经纬度 [lng, lat]（|lng|<=180 且 |lat|<=90）；"
-                f"收到 {v!r}。若来自地图拖拽，注意 BMapGL 的 e.point 是墨卡托平面米，"
-                "应取 e.latLng 或 marker.getPosition()"
+                f"收到 {v!r}。BMapGL 的 e.point 是墨卡托平面米，应取 e.latLng。"
             )
         return [parsed[0], parsed[1]]
+
+
+@app.get("/api/research-types")
+def research_types():
+    """调研类型选择器数据源（首页卡片），与后端注册表单一真相源。"""
+    return rt.research_type_options()
+
+
+@app.post("/api/tasks")
+async def post_task(body: CreateTaskBody):
+    # 生活圈体检：独立流水线 + 坐标系归一（WGS-84→BD-09，缺 AK 422 拒绝）
+    if body.type == "living_circle":
+        from app.core.pipeline.living_circle import create_living_circle_task
+        from app.living_circle.caliber import get_caliber
+
+        travel_mode = body.travel_mode if body.travel_mode in ("walking", "riding", "driving") else "walking"
+        caliber = get_caliber(travel_mode)
+        center = await _to_bd09(body.center, body.coord_sys) if body.center else None
+        task_id = create_living_circle_task({
+            "scene_name": body.query, "city": body.city, "address": body.address,
+            "center": center, "study_radius_m": float(caliber.study_radius_m),
+            "sample_profile": body.mode if body.mode in ("quick", "standard", "precise") else "standard",
+            "travel_mode": travel_mode, "data_mode": body.data_mode,
+        })
+        return {"taskId": task_id}
+
+    # 旅游调研：攻略/评估（返回 pydantic resp，序列化为 task_id/research_type，前端双驼兼容）
+    return create_task(body.query, mode=body.mode, model=body.model, research_type=body.type)
 
 
 async def _to_bd09(center: List[float], coord_sys: str) -> List[float]:
@@ -374,41 +393,24 @@ async def _to_bd09(center: List[float], coord_sys: str) -> List[float]:
         raise HTTPException(status_code=502, detail="坐标转换（geoconv）返回异常结果，请稍后重试")
     return [parsed[0], parsed[1]]
 
-
-@app.post("/api/tasks")
-async def post_task(body: CreateTaskBody):
-    if body.type == "living_circle":
-        from app.core.pipeline.living_circle import create_living_circle_task
-        from app.living_circle.caliber import get_caliber
-
-        # B1 修复：按 travel_mode 取 caliber.study_radius_m，不再硬编码 2500
-        travel_mode = body.travel_mode if body.travel_mode in ("walking", "riding", "driving") else "walking"
-        caliber = get_caliber(travel_mode)
-        # 坐标系归一：WGS-84 → BD-09（缺 AK 时 422 拒绝，不静默照抄）
-        center = await _to_bd09(body.center, body.coord_sys) if body.center else None
-
-        task_id = create_living_circle_task({
-            "scene_name": body.query,
-            "city": body.city,
-            "address": body.address,
-            "center": center,
-            "study_radius_m": float(caliber.study_radius_m),
-            "sample_profile": body.mode if body.mode in ("quick", "standard", "precise") else "standard",
-            "travel_mode": travel_mode,
-            "data_mode": body.data_mode,
-        })
-        return {"taskId": task_id}
-    kind = "travel_guide" if body.purpose == "guide" else "travel_assess" if body.purpose == "assess" else "research"
-    return create_task(body.query, mode=body.mode, model=body.model, purpose=body.purpose, kind=kind)
-
-
 class ClarifyBody(BaseModel):
     answers: dict = {}
 
 
 @app.post("/api/tasks/{task_id}/clarify")
 def post_clarify(task_id: str, body: ClarifyBody):
-    return submit_clarify(task_id, body.answers)
+    try:
+        return submit_clarify(task_id, body.answers)
+    except GuideSingleDestinationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "guide_single_destination", "message": str(e)},
+        )
+    except ClarifyAnswerRequiredError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "clarify_answer_required", "message": str(e)},
+        )
 
 
 # ── SSE 思维流（纯订阅者；执行由 runner 后台常驻，断连只撤订阅不杀任务）─
@@ -500,11 +502,7 @@ def list_reports():
 
 
 @app.get("/api/reports/{report_id}")
-def get_report_endpoint(report_id: str):
-    """统一报告读取入口（Phase 8：双引擎合并）。
-    
-    自动识别报告类型（竞品调研 / 生活圈体检），返回完整报告数据。
-    """
+def get_report(report_id: str):
     rep = db.get_report(report_id)
     if not rep:
         return {"ok": False, "message": "report not ready"}
@@ -515,6 +513,142 @@ def get_report_endpoint(report_id: str):
 def delete_report(report_id: str):
     """删除调研报告（级联清理证据/链路/反馈/任务）。"""
     db.delete_report(report_id)
+    return {"ok": True}
+
+
+# ── 可观测性 Trace（决策链路 / 决策回放）──────────────────
+@app.get("/api/tasks/{task_id}/trace")
+def get_task_trace(task_id: str):
+    from app.core import trace as _trace
+    spans = _trace.get_trace(task_id) or db.get_traces_by_task(task_id)
+    return {"taskId": task_id, "spans": spans}
+
+
+@app.get("/api/reports/{report_id}/trace")
+def get_report_trace(report_id: str):
+    spans = db.get_traces_by_report(report_id)
+    if not spans:
+        rep = db.get_report(report_id)
+        spans = (rep or {}).get("trace", [])
+    return {"reportId": report_id, "spans": spans}
+
+
+# ── 报告反馈（人工修正率 → 业务闭环指标）──────────────────
+class FeedbackBody(BaseModel):
+    edited_blocks: int = 0
+    total_blocks: int = 0
+    data: dict = {}
+
+
+@app.post("/api/reports/{report_id}/feedback")
+def post_feedback(report_id: str, body: FeedbackBody):
+    db.save_report_feedback(report_id, body.edited_blocks, body.total_blocks, body.data)
+    # 同步更新报告内 metrics 的人工修正率
+    rep = db.get_report(report_id)
+    if rep and rep.get("metrics"):
+        from app.core.metrics import apply_feedback
+        rep["metrics"] = apply_feedback(rep["metrics"], body.edited_blocks, body.total_blocks)
+        db.save_report(rep, task_id="")
+    # 派生数据失效钩子：metrics 已变化，简报/一页纸精炼作废（失效即淘汰，防陈旧结论）
+    db.invalidate_report_brief(report_id)
+    return {"ok": True}
+
+
+# ── 简报一页纸精炼（派生数据，kind='brief' 后台任务 + SSE 订阅）──
+@app.post("/api/reports/{report_id}/brief")
+def post_brief(report_id: str):
+    """创建「生成一页纸精炼」的后台任务（G7，已从同步端点迁移）。
+
+    不再同步阻塞 HTTP：返回 {taskId}，前端订阅 GET /api/tasks/{taskId}/stream
+    消费 progress→done（幂等：已有 brief 走 done 快路径）/ error 事件。
+    报告不存在 → 404；LLM 未配置由 brief_report_pipeline 转为 error 事件。
+    """
+    if not db.get_report(report_id):
+        raise HTTPException(status_code=404, detail="报告不存在或未就绪")
+    return create_brief_task(report_id)
+
+
+# ── 按批注深化章节（人工介入二次调研）────────────────────
+class RefineBody(BaseModel):
+    section_id: str
+    annotations: List[str] = []
+
+
+@app.post("/api/reports/{report_id}/refine")
+def post_refine(report_id: str, body: RefineBody):
+    res = refine_section(report_id, body.section_id, body.annotations)
+    # 派生数据失效钩子：章节正文已改写，简报/一页纸精炼作废
+    db.invalidate_report_brief(report_id)
+    return res
+
+
+# ── 基于新证据异步精修报告（kind=refine 后台任务）──────────
+class RefineEvidenceBody(BaseModel):
+    evidence_ids: List[str] = []
+    min_cred: float = 70.0
+
+
+@app.post("/api/reports/{report_id}/refine-evidence")
+def refine_evidence(report_id: str, body: RefineEvidenceBody):
+    """基于新补充的高可信度证据精修报告正文。
+
+    仅创建一个 kind='refine' 的后台任务并返回 {taskId}（同步快路径，无阻塞 LLM 调用）。
+    前端拿 taskId 订阅既有 GET /api/tasks/{taskId}/stream 获取进度/取消/重连。
+    """
+    if not db.get_report(report_id):
+        raise HTTPException(status_code=404, detail="报告不存在")
+    return create_refine_task(
+        report_id,
+        body.evidence_ids or None,
+        body.min_cred,
+    )
+
+
+# ── 仪表盘（真实统计）───────────────────────────────────
+@app.get("/api/dashboard")
+def dashboard():
+    return db.dashboard_stats()
+
+
+# ── 全局证据溯源库 ──────────────────────────────────────
+@app.get("/api/evidences")
+def evidences(
+    destination: Optional[str] = None,
+    source_type: Optional[str] = None,
+    min_cred: float = 0.0,
+    limit: int = 200,
+    report_id: Optional[str] = None,
+):
+    # report_id 过滤：不传 → 全部证据；'<rid>' → 仅该报告证据。
+    items = db.query_evidences(
+        destination=destination, source_type=source_type, min_cred=min_cred,
+        limit=limit, report_id=report_id,
+    )
+    return {"items": items, "facets": db.evidence_facets()}
+
+
+# ── 目的地持续追踪订阅 ──────────────────────────────────
+class SubscriptionBody(BaseModel):
+    query: str
+    destinations: List[str] = []
+    type: str = DEFAULT_RESEARCH_TYPE
+
+
+@app.get("/api/subscriptions")
+def list_subscriptions():
+    return db.list_subscriptions()
+
+
+@app.post("/api/subscriptions")
+def create_subscription(body: SubscriptionBody):
+    import uuid
+    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
+    return db.create_subscription(sub_id, body.query, body.destinations, body.type)
+
+
+@app.delete("/api/subscriptions/{sub_id}")
+def delete_subscription(sub_id: str):
+    db.delete_subscription(sub_id)
     return {"ok": True}
 
 
@@ -717,137 +851,3 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
         rows.append({"metric": metric, "a_value": va, "b_value": vb, "desc": desc})
     return rows
 
-
-# ── 可观测性 Trace（决策链路 / 决策回放）──────────────────
-@app.get("/api/tasks/{task_id}/trace")
-def get_task_trace(task_id: str):
-    from app.core import trace as _trace
-    spans = _trace.get_trace(task_id) or db.get_traces_by_task(task_id)
-    return {"taskId": task_id, "spans": spans}
-
-
-@app.get("/api/reports/{report_id}/trace")
-def get_report_trace(report_id: str):
-    spans = db.get_traces_by_report(report_id)
-    if not spans:
-        rep = db.get_report(report_id)
-        spans = (rep or {}).get("trace", [])
-    return {"reportId": report_id, "spans": spans}
-
-
-# ── 报告反馈（人工修正率 → 业务闭环指标）──────────────────
-class FeedbackBody(BaseModel):
-    edited_blocks: int = 0
-    total_blocks: int = 0
-    data: dict = {}
-
-
-@app.post("/api/reports/{report_id}/feedback")
-def post_feedback(report_id: str, body: FeedbackBody):
-    db.save_report_feedback(report_id, body.edited_blocks, body.total_blocks, body.data)
-    # 同步更新报告内 metrics 的人工修正率
-    rep = db.get_report(report_id)
-    if rep and rep.get("metrics"):
-        from app.core.metrics import apply_feedback
-        rep["metrics"] = apply_feedback(rep["metrics"], body.edited_blocks, body.total_blocks)
-        db.save_report(rep, task_id="")
-    # 派生数据失效钩子：metrics 已变化，简报/一页纸精炼作废（失效即淘汰，防陈旧结论）
-    db.invalidate_report_brief(report_id)
-    return {"ok": True}
-
-
-# ── 简报一页纸精炼（派生数据，kind='brief' 后台任务 + SSE 订阅）──
-@app.post("/api/reports/{report_id}/brief")
-def post_brief(report_id: str):
-    """创建「生成一页纸精炼」的后台任务（G7，已从同步端点迁移）。
-
-    不再同步阻塞 HTTP：返回 {taskId}，前端订阅 GET /api/tasks/{taskId}/stream
-    消费 progress→done（幂等：已有 brief 走 done 快路径）/ error 事件。
-    报告不存在 → 404；LLM 未配置由 brief_report_pipeline 转为 error 事件。
-    """
-    if not db.get_report(report_id):
-        raise HTTPException(status_code=404, detail="报告不存在或未就绪")
-    return create_brief_task(report_id)
-
-
-# ── 按批注深化章节（人工介入二次调研）────────────────────
-class RefineBody(BaseModel):
-    section_id: str
-    annotations: List[str] = []
-
-
-@app.post("/api/reports/{report_id}/refine")
-def post_refine(report_id: str, body: RefineBody):
-    res = refine_section(report_id, body.section_id, body.annotations)
-    # 派生数据失效钩子：章节正文已改写，简报/一页纸精炼作废
-    db.invalidate_report_brief(report_id)
-    return res
-
-
-# ── 基于新证据异步精修报告（kind=refine 后台任务）──────────
-class RefineEvidenceBody(BaseModel):
-    evidence_ids: List[str] = []
-    min_cred: float = 70.0
-
-
-@app.post("/api/reports/{report_id}/refine-evidence")
-def refine_evidence(report_id: str, body: RefineEvidenceBody):
-    """基于新补充的高可信度证据精修报告正文。
-
-    仅创建一个 kind='refine' 的后台任务并返回 {taskId}（同步快路径，无阻塞 LLM 调用）。
-    前端拿 taskId 订阅既有 GET /api/tasks/{taskId}/stream 获取进度/取消/重连。
-    """
-    if not db.get_report(report_id):
-        raise HTTPException(status_code=404, detail="报告不存在")
-    return create_refine_task(
-        report_id,
-        body.evidence_ids or None,
-        body.min_cred,
-    )
-
-
-# ── 仪表盘（真实统计）───────────────────────────────────
-@app.get("/api/dashboard")
-def dashboard():
-    return db.dashboard_stats()
-
-
-# ── 全局证据溯源库 ──────────────────────────────────────
-@app.get("/api/evidences")
-def evidences(
-    brand: Optional[str] = None,
-    source_type: Optional[str] = None,
-    min_cred: float = 0.0,
-    limit: int = 200,
-    report_id: Optional[str] = None,
-):
-    # report_id 过滤：不传 → 全部证据；'<rid>' → 仅该报告证据。
-    items = db.query_evidences(
-        brand=brand, source_type=source_type, min_cred=min_cred,
-        limit=limit, report_id=report_id,
-    )
-    return {"items": items, "facets": db.evidence_facets()}
-
-
-# ── 竞品监控订阅 ────────────────────────────────────────
-class SubscriptionBody(BaseModel):
-    query: str
-    brands: List[str] = []
-
-
-@app.get("/api/subscriptions")
-def list_subscriptions():
-    return db.list_subscriptions()
-
-
-@app.post("/api/subscriptions")
-def create_subscription(body: SubscriptionBody):
-    import uuid
-    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-    return db.create_subscription(sub_id, body.query, body.brands)
-
-
-@app.delete("/api/subscriptions/{sub_id}")
-def delete_subscription(sub_id: str):
-    db.delete_subscription(sub_id)
-    return {"ok": True}

@@ -12,7 +12,7 @@
 import pytest
 
 from app.core import db
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 from app.core import research_types as RT
 from app.core import trace
 from app.core.llm import LLMModelUnavailable

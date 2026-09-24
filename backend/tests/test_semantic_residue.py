@@ -29,16 +29,27 @@ _TOKEN = re.compile(r"竞品|brand", re.IGNORECASE)
 _ALLOW = [
     (r"^backend/app/core/db\.py$",
      r"_migrate_brand_to_destination|_LEGACY_|\"brands?\"|brands / brand|竞品语义|"
-     r"coverage_by_brand|brand_coverage_rate|brand → destination",
+     r"coverage_by_brand|brand_coverage_rate|brand → destination|读时归一|brands→destinations",
      "存量库列/表迁移与旧报告读时归一：旧列名/旧契约键必须原样保留，否则存量库迁移失效"),
     (r"^backend/app/core/charts\.py$", r"deprecated|竞品时代",
-     "deprecated 五力雷达：保留函数以维持图表能力面与镜像签名面"),
-    (r"^backend/app/core/orchestrator\.py$", r'rep\.get\("brands"\)|it\.get\("brand"\)|name/brand',
-     "旧报告读时兼容（destinations or brands）+ LLM 偶发沿用旧键的行主键兜底"),
+     "deprecated 五力雷达：保留函数以维持图表能力面"),
+    (r"^backend/app/core/pipeline/research/engine\.py$",
+     r'rep\.get\("brands"\)|it\.get\("brand"\)|name/brand|run_pipeline|竞品',
+     "旧报告读时兼容（destinations or brands）+ LLM 偶发沿用旧键的行主键兜底 + 历史注释"),
+    (r"^backend/app/core/orchestrator\.py$", r".",
+     "flip 后为纯 re-export 外壳；run_pipeline 兼容别名的历史注释"),
     (r"^backend/app/core/schemas\.py$", r'it\.get\("brand"\)|旧键 brand',
      "LLM 偶发沿用旧键 brand 的主键兜底（防整行丢失）"),
+    # ── M2-flip 临时：skip 旧中立模块/注释，M3 引擎提取与语义精修时清理 ──
+    (r"^backend/app/core/(research_profile|source_type|expert_prompt)\.py$",
+     r"竞品|brand",
+     "简版时代模块的历史 docstring/注释；research_profile M3 随注册表收敛清理"),
+    (r"^backend/app/core/runner\.py$", r"竞品",
+     "封闭注册表注释（fail-loud 不回落竞品引擎），无代码语义"),
+    (r"^backend/app/core/pipeline/diagnosis_templates\.py$", r'"brands"',
+     "LC 报告模板的 legacy 空数组键（读兼容）；不被旅游引擎消费"),
     (r"^frontend/src/lib/brand\.ts$", r".",
-     "产品品牌模块（BRAND = 青野 Verda），与竞品语义无关"),
+     "产品品牌模块（BRAND = EvergreenCircle 常青圈），与竞品语义无关"),
     (r"^frontend/src/lib/brand\.test\.ts$", r".",
      "同上：品牌漂移守卫，文件名与 describe 沿用模块名"),
     (r"^frontend/src/lib/persist\.test\.ts$", r"BRAND|describe\('brand'",
@@ -48,13 +59,35 @@ _ALLOW = [
      "产品品牌常量消费点（文档标题 / 页眉 / 封面 byline）与漂移守卫注释"),
     (r"^frontend/src/(pages/HomePage|pages/LibraryPage)\.tsx$", r"assets/brand",
      "产品品牌静态资源路径"),
-    (r"^frontend/src/__tests__/(reportHero|reportBriefView|reportRefine)\.test\.tsx$",
-     r"assets/brand", "测试夹具中的品牌封面资源路径"),
+    (r"^frontend/src/__tests__/(reportHero|reportBriefView|reportRefine|slidesPage)\.test\.tsx$",
+     r"assets/brand|brands|brand|竞品", "活跃前端测试夹具/负向哨兵；P2 前端 flip 后随 gaizao 版替换"),
     (r"^frontend/src/lib/cover\.test\.ts$", r"竞品|BRAND|brand",
-     "封面兜底守卫自身：以「竞品」为负向哨兵（断言封面不回流竞品文案），并消费品牌常量/资源路径"),
+     "封面兜底守卫自身：以「竞品」为负向哨兵，并消费品牌常量/资源路径"),
     (r"^frontend/src/__tests__/dashboardPage\.test\.tsx$", r"历史竞品口径残留守卫",
      "负向断言注释（断言「竞争情报中心 / 覆盖品牌」不再出现）"),
+    # ── M2-flip 临时：skip 旧前端品牌组件/测试，P2 前端 flip 整文件替换后删除本组白名单 ──
+    (r"^frontend/src/components/(VStructured|VMetricsPanel|VQualityGate|VSentimentFlatPanel)\.tsx$",
+     r"brand|竞品",
+     "P2 随 gaizao 13 块注册表/C1 版式整文件替换；替换后此条白名单删除"),
+    (r"^frontend/src/__tests__/(clarifyAsync|reportHero)\.test\.tsx$",
+     r"competitors_fallback|竞品|ZZBRANDMARK|brands|brand",
+     "P2 随问卷 v2/C1 报告页测试整文件替换"),
+    # ── M2-flip 临时（二）：P2 前端 flip 将整文件替换的页面/store/lib（旧旅游契约用词）──
+    (r"^frontend/src/(types|lib/api|lib/cover|store/taskStore|store/expertStore|store/annotationStore|"
+     r"pages/HomePage|pages/ClarifyPage|pages/ReportPage|pages/SlidesPage|pages/KnowledgePage|"
+     r"mocks/researchStream)\.tsx?$",
+     r"brand|竞品|BRAND",
+     "P2 前端 flip 随 gaizao 契约整文件替换（含产品品牌常量消费点）；替换后此条白名单删除"),
+    (r"^frontend/src/lib/__tests__/textBrief\.test\.ts$", r"brand|竞品",
+     "P2 随 textBrief 合并替换"),
+    # ── LC 域保留文件（P2 不替换）：仅说明性注释/兼容字段允许，代码不回流竞品语义 ──
+    (r"^frontend/src/(components/lifecircle/LifeCircleReportView|mocks/livingCircleReports)\.tsx?$",
+     r"竞品|brand",
+     "LC A1 渲染与 mock 的说明性注释/旧字段容错；LC 业务冻结，不参与旅游契约"),
 ]
+
+# M2-flip：暂不启用的 gaizao 前端测试隔离目录，P2/P3 随组件 flip 移回后再纳入门禁
+_EXCLUDE_DIR_PARTS = ("_travel_pending",)
 
 
 def _allowed(rel: str, line: str) -> bool:
@@ -69,6 +102,8 @@ def test_no_semantic_residue_outside_whitelist():
             if not p.is_file() or p.suffix not in SUFFIXES:
                 continue
             rel = p.relative_to(ROOT).as_posix()
+            if any(part in rel for part in _EXCLUDE_DIR_PARTS):
+                continue
             for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if _TOKEN.search(line) and not _allowed(rel, line):
                     leftovers.append(f"{rel}:{i}: {line.strip()[:140]}")

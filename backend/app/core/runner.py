@@ -58,8 +58,10 @@ _running: Dict[str, _Run] = {}
 # 契约约定：kind=路由键（task 类型），purpose=内容腔调（report_voice 档位），勿跨用途。
 # --------------------------------------------------------------------------- #
 def _load_research(task_id: str):
-    from app.core.pipeline.research import research_pipeline  # noqa: PLC0415
-    return research_pipeline(task_id)
+    # 经模块属性查找（而非 from-import 绑定），使测试 monkeypatch engine.research_pipeline
+    # 这类接缝可生效；生产行为不变。
+    from app.core.pipeline.research import engine  # noqa: PLC0415
+    return engine.research_pipeline(task_id)
 
 
 def _load_living(task_id: str):
@@ -68,11 +70,13 @@ def _load_living(task_id: str):
 
 
 def _load_refine(task_id: str):
-    return orchestrator.refine_report_pipeline(task_id)
+    from app.core.pipeline.research import engine  # noqa: PLC0415
+    return engine.refine_report_pipeline(task_id)
 
 
 def _load_brief(task_id: str):
-    return orchestrator.brief_report_pipeline(task_id)
+    from app.core.pipeline.research import engine  # noqa: PLC0415
+    return engine.brief_report_pipeline(task_id)
 
 
 KIND_PIPELINES: Dict[str, Any] = {
@@ -126,6 +130,23 @@ def ensure_running(task_id: str) -> _Run:
         r.updated_at = full.get("updated_at") or r.updated_at
         _running[task_id] = r
         return r
+    if full and full.get("status") == "running":
+        # 孤儿运行（进程重启/崩溃遗留：DB running 但内存无活句柄）：
+        # 读端点就地收为 failed 并发终态帧，绝不静默重跑（gaizao 终态契约）。
+        msg = "任务已中断（服务重启或异常退出），请重新发起调研"
+        db.set_task_failed(task_id, msg)
+        r = _Run(terminal=True)
+        r.status = "failed"
+        r.error = msg
+        r.percent = full.get("percent") or 0
+        r.stage = full.get("stage") or ""
+        r.evidence_count = full.get("evidence_count") or 0
+        r.query = full.get("query", "")
+        r.buffer.append({"type": "error", "data": {"message": msg}})
+        r.started_at = full.get("started_at") or r.started_at
+        r.updated_at = _now()
+        _running[task_id] = r
+        return r
 
     # 全新运行
     r = _Run()
@@ -137,6 +158,8 @@ def ensure_running(task_id: str) -> _Run:
 
 
 async def _drive(task_id: str, r: _Run) -> None:
+    # 终态契约：管线必须以恰一条 done/error 结束或抛异常；runner 是唯一终态权威。
+    terminal_seen = False
     try:
         # 按 tasks.kind 从封闭注册表分发（无 else 兜底：未登记即 fail-loud）
         full = db.get_task_full(task_id) or {}
@@ -148,8 +171,8 @@ async def _drive(task_id: str, r: _Run) -> None:
             return
         gen = pipe(task_id)
         async for ev in gen:
-            r.buffer.append(ev)          # 历史缓冲（重连补帧）
-            for q in list(r.subs):       # 广播给各订阅者专属队列
+            r.buffer.append(ev)
+            for q in list(r.subs):
                 q.put_nowait(ev)
             if ev["type"] == "progress":
                 d = ev["data"]
@@ -161,33 +184,44 @@ async def _drive(task_id: str, r: _Run) -> None:
             elif ev["type"] == "report_ready":
                 r.report_id = ev["data"].get("reportId")
             elif ev["type"] == "error":
-                # 全仓约定：error 事件即**终态**（各流水线 yield 后立即 return，并已自行
-                # db.set_task_failed）。此处只把内存态对齐库态 —— 否则 /api/tasks 列表
-                # 会一直显示 running（僵尸态），而库里其实早已 failed。
+                # 终态收口：error 帧后 runner 统一对齐内存态与库态（幂等覆盖管线自写值）
+                terminal_seen = True
+                msg = (ev.get("data") or {}).get("message") or "任务失败"
                 r.status = "failed"
-                r.error = (ev.get("data") or {}).get("message") or "任务失败"
+                r.error = msg
+                db.set_task_failed(task_id, msg)
             elif ev["type"] == "done":
+                terminal_seen = True
                 d = ev["data"] or {}
                 r.report_id = d.get("reportId") or r.report_id
                 if d.get("status") == "failed":
-                    # ⚠️ `done` 只表示「事件流结束」，不表示成功。执行引擎判定失败时
-                    # （如 live 却几何为空）会带 status='failed' 收尾；若这里无条件
-                    # mark_task_done，就会把引擎写的 failed **覆盖成 done** ——
-                    # 守卫被自己的收尾动作抹掉，缺陷重新静默。
+                    # done 只表示事件流结束，不表示成功：引擎失败收尾不得被覆盖成 done
                     r.status = "failed"
                     r.error = d.get("error") or "任务失败"
                     db.set_task_failed(task_id, r.error)
                 else:
                     r.status = "done"
                     db.mark_task_done(task_id, r.report_id or "")
+        if not terminal_seen:
+            # 协议违例守卫：生成器耗尽却无终态 → 合成 error 帧 + failed（防僵尸 running）
+            msg = "任务异常结束（未落终态）"
+            r.status = "failed"
+            r.error = msg
+            db.set_task_failed(task_id, msg)
+            ev = {"type": "error", "data": {"message": msg}}
+            r.buffer.append(ev)
+            for q in list(r.subs):
+                q.put_nowait(ev)
     except asyncio.CancelledError:
-        # 被 cancel() 取消：交给定终态逻辑，不写失败原因遮蔽用户意图
         r.status = "failed"
         r.error = "用户取消"
         db.set_task_failed(task_id, "用户取消")
+        ev = {"type": "error", "data": {"message": "用户取消"}}
+        r.buffer.append(ev)
+        for q in list(r.subs):
+            q.put_nowait(ev)
         raise
     except LLMModelUnavailable as e:
-        # 模型被厂商下架/重命名：给出含建议模型的友好提示，引导去「模型配置」页迁移
         r.status = "failed"
         msg = (
             f"当前模型不可用（{e.suggested_model or '厂商已下架'}）：{e}。"
@@ -195,22 +229,29 @@ async def _drive(task_id: str, r: _Run) -> None:
         )
         r.error = msg
         db.set_task_failed(task_id, msg)
+        _broadcast_terminal(r, msg)
     except Exception as e:  # noqa: BLE001
-        # 终态收尾，绝不静默吞掉；标记失败以便前端与 DB 状态一致
         if is_temporary_unavailable(e):
-            # 评审 P1-b：Google 临时高负载（503），给友好文案而非原始英文栈
             msg = "当前模型服务负载较高（503），请稍后 30 秒左右重试再发起调研。"
         else:
             msg = str(e)
         r.status = "failed"
         r.error = msg
         db.set_task_failed(task_id, msg)
+        _broadcast_terminal(r, msg)
     finally:
         r.alive = False
         for q in list(r.subs):
             q.put_nowait({"type": "stream_end", "data": {}})
-        # 延迟释放，保留窗口供末次重连补帧
         asyncio.create_task(_release_later(task_id, RELEASE_DELAY))
+
+
+def _broadcast_terminal(r: "_Run", msg: str) -> None:
+    """异常路径补发终态 error 帧（保证线上有对应终态帧，前端不悬停）。"""
+    ev = {"type": "error", "data": {"message": msg}}
+    r.buffer.append(ev)
+    for q in list(r.subs):
+        q.put_nowait(ev)
 
 
 async def _release_later(task_id: str, delay: float) -> None:
@@ -236,13 +277,14 @@ async def subscribe(task_id: str):
             yield {"type": "error", "data": {"message": r.error or "任务已失败"}}
         return
 
-    snapshot = list(r.buffer)            # 本订阅者加入前的历史
+    # 回放帧打 data.replay 标记：前端派遣节流队列据此对历史帧直刷，
+    # 只对实时新增帧逐条出场（服务端是回放/实时的唯一知情人）。
+    for ev in list(r.buffer):
+        yield {**ev, "data": {**(ev.get("data") or {}), "replay": True}}
     q: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue()
     r.subs.append(q)
     r.subscribers += 1
     try:
-        for ev in snapshot:
-            yield ev
         while True:
             ev = await q.get()
             if ev["type"] == "stream_end":

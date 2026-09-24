@@ -20,7 +20,7 @@ from app.data import load_experts
 
 def test_roster_brief_omits_pure_display_fields():
     """组队画像刻意省略 avatar/badge_color/gender/status/stats —— 纯展示字段不进 Prompt。"""
-    experts = load_experts()
+    experts = load_experts("living_circle")
     b = roster_brief(experts[0])
     for key in ("avatar", "badge_color", "gender", "status", "stats"):
         assert key not in b
@@ -36,8 +36,8 @@ def test_roster_brief_tolerates_missing_fields():
 
 
 def test_roster_payload_contains_all_experts():
-    payload = roster_payload()
-    experts = load_experts()
+    payload = roster_payload(domain="living_circle")
+    experts = load_experts("living_circle")
     for e in experts:
         assert e["id"] in payload
 
@@ -47,7 +47,7 @@ def test_expert_directive_unknown_id_returns_empty():
 
 
 def test_expert_directive_known_id_nonempty():
-    directive = expert_directive("L3-001")
+    directive = expert_directive("L3-001", "living_circle")
     assert "温叙白" in directive
     assert "约束" in directive
     assert "不得编造指标名称" in directive
@@ -58,7 +58,7 @@ def test_registration_assertion_l2_001_has_walking_speed():
 
     这是 Phase 3.3 要求的结构性防线 —— 与 §9 验证 4a 互为呼应。
     """
-    directive = expert_directive("L2-001")
+    directive = expert_directive("L2-001", "living_circle")
     # L2-001 谷穗安负责医疗，应绑定 walking speed 等口径
     # 若 caliber_index 已注册且 L2-001 有 caliber_refs，directive 应含数值
     # Phase 4 完成前此测试可能因无 caliber_refs 而跳过数值检查
@@ -77,10 +77,10 @@ def test_cross_domain_isolation():
     旅行/竞品域拿不到生活圈口径 value。
     注：Phase 4 完成前 caliber_refs 全空，此测试只验证「有 refs 时 payload 含 ref 串」。
     """
-    experts = load_experts()
+    experts = load_experts("living_circle")
     has_refs = any(e.get("caliber_refs") for e in experts)
     if not has_refs:
         pytest.skip("Phase 4 尚未填充 caliber_refs，跳过 payload 内容断言")
-    payload = roster_payload()
+    payload = roster_payload(domain="living_circle")
     # 若注册生效且有 refs，payload 中应含 caliber/scoring/poi ref 串
     assert "caliber::" in payload or "scoring::" in payload or "poi::" in payload

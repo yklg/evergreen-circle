@@ -45,12 +45,12 @@ def roster_brief(e: dict) -> dict:
     }
 
 
-def roster_payload(experts: Sequence[dict] | None = None) -> str:
-    """生成组队用的 roster 文本块。"""
+def roster_payload(experts: Sequence[dict] | None = None, domain: str = "travel") -> str:
+    """生成组队用的 roster 文本块。domain 选择域名册（travel/living_circle）。"""
     from app.data import load_experts
 
     if experts is None:
-        experts = load_experts()
+        experts = load_experts(domain)
     lines = ["=== 专家名册 ==="]
     for e in experts:
         b = roster_brief(e)
@@ -98,15 +98,15 @@ def render_for_prompt(refs: list[str]) -> str:
     return "；".join(parts)
 
 
-def expert_directive(eid: str) -> str:
+def expert_directive(eid: str, domain: str = "travel") -> str:
     """单人深度画像：身份 + 职责 + knowledge_base + 技能 + 口径实际值。
 
-    未知 id ⇒ 返回 ""（绝不用假口径污染 Prompt）。
+    未知 id ⇒ 返回 ""（绝不用假口径污染 Prompt）；domain 选域名册。
     末尾固定附加约束句，防止模型编造指标名称。
     """
     from app.data import expert_by_id
 
-    e = expert_by_id(eid)
+    e = expert_by_id(eid, domain)
     if not e:
         return ""
 

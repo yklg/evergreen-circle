@@ -17,7 +17,7 @@ import json
 import pytest
 
 import app.core.db as db
-from app.core import orchestrator as O
+from app.core.pipeline.research import engine as O
 
 _LEGACY_DATA = {
     "id": "r_legacy",
