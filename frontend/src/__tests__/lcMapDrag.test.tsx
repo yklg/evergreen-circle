@@ -33,6 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
 import type { LivingCircleReport, LngLat } from '../types'
+import { assertBasemapStylesSound, instances, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
 
 /* ── BMapGL 假命名空间：只记录「谁被建出来了」，好让测试拿到中心标记 ── */
 
@@ -44,46 +45,18 @@ interface FakeMarker {
 }
 
 const h = vi.hoisted(() => ({
-  markers: [] as unknown[],
   /** 供断言「确实提示了用户/开发者，而不是静默吞掉」 */
   warnings: [] as string[],
 }))
 
-vi.mock('../lib/bmap', () => {
-  class Point {
-    lng: number
-    lat: number
-    constructor(lng: number, lat: number) {
-      this.lng = lng
-      this.lat = lat
-    }
-  }
-  class Size {
-    w: number
-    h: number
-    constructor(w: number, h: number) {
-      this.w = w
-      this.h = h
-    }
-  }
-  class Icon {
-    constructor(..._a: unknown[]) {}
-  }
-  class InfoWindow {
-    constructor(..._a: unknown[]) {}
-  }
-  class Polygon {
-    constructor(..._a: unknown[]) {}
-  }
-  class Marker implements FakeMarker {
-    point: { lng: number; lat: number }
-    opts: Record<string, unknown>
+/**
+ * 替身取自 `helpers/bmapGLFake`（全套件唯一一份 `setMapStyleV2`，见该文件头）。
+ * 本文件只保留自己的分歧：Marker 的拖拽契约、Map 的 ×100 投影与容器复用。
+ */
+vi.mock('../lib/bmap', async () => {
+  const H = await import('./helpers/bmapGLFake')
+  class Marker extends H.BMapMarker implements FakeMarker {
     listeners: Record<string, (e: unknown) => void> = {}
-    constructor(point: { lng: number; lat: number }, opts: Record<string, unknown> = {}) {
-      this.point = point
-      this.opts = opts
-      h.markers.push(this)
-    }
     setPosition(p: { lng: number; lat: number }) {
       this.point = p
     }
@@ -92,39 +65,28 @@ vi.mock('../lib/bmap', () => {
     enableDragging() {}
     openInfoWindow() {}
     /** 权威回退来源：始终等于标记当前真实位置（BD-09） */
-    getPosition = () => ({ lng: this.point.lng, lat: this.point.lat })
+    override getPosition = (): { lng: number; lat: number } => ({
+      lng: this.point.lng,
+      lat: this.point.lat,
+    })
     addEventListener(type: string, fn: (e: unknown) => void) {
       this.listeners[type] = fn
     }
   }
-  class Map {
-    constructor(..._a: unknown[]) {}
-    enableScrollWheelZoom() {}
-    setMapStyleV2() {}
-    addOverlay() {}
-    removeOverlay() {}
-    openInfoWindow() {}
-    setViewport() {}
-    centerAndZoom() {}
-    // HeatFieldOverlay（延迟优化 C）契约：getContainer 挂 canvas、pointToPixel 投影、
-    // 地图级事件订阅。jsdom 容器尺寸为 0 → draw() 防御性早退，无碍本文件拖拽契约。
+  // HeatFieldOverlay（延迟优化 C）契约：getContainer 挂 canvas、pointToPixel 投影、
+  // 地图级事件订阅。jsdom 容器尺寸为 0 → draw() 防御性早退，无碍本文件拖拽契约。
+  class Map extends H.BMapMapBase {
     private _c: HTMLElement | null = null
-    getContainer() {
+    override getContainer(): HTMLElement {
       this._c ??= document.createElement('div')
       return this._c
     }
-    pointToPixel(p: { lng: number; lat: number }) {
+    override pointToPixel(p: { lng: number; lat: number }) {
       return { x: p.lng * 100, y: p.lat * 100 }
     }
-    addEventListener() {}
-    removeEventListener() {}
   }
-  return {
-    // AK 非空 → 走 live 分支（本文件只测真实态地图；降级态由 geo.ts / LcMap 降级画布用例覆盖）
-    getMapConfig: async () => ({ browserAk: 'test-ak', mapStyleId: '' }),
-    loadBMapGL: async () => ({ Map, Point, Size, Icon, InfoWindow, Polygon, Marker }),
-    geolocateMe: async () => null,
-  }
+  // AK 非空 → 走 live 分支（本文件只测真实态地图；降级态由 geo.ts / LcMap 降级画布用例覆盖）
+  return H.fakeBMapModule({ Marker, Map })
 })
 
 const { default: LcMap } = await import('../components/lifecircle/LcMap')
@@ -133,7 +95,7 @@ const REPORT = kaili as unknown as LivingCircleReport
 
 /** 取中心标记：唯一带 `dragend` 监听的那个（POI/盲区标记都不注册拖拽） */
 function centerMarker(): FakeMarker {
-  const hit = (h.markers as FakeMarker[]).find((m) => m.listeners.dragend)
+  const hit = (instances.markers as FakeMarker[]).find((m) => m.listeners.dragend)
   if (!hit) throw new Error('未找到注册了 dragend 的中心标记')
   return hit
 }
@@ -141,11 +103,12 @@ function centerMarker(): FakeMarker {
 async function mountMap(onCenterChange: (c: LngLat) => void) {
   render(<LcMap report={REPORT} draggableCenter onCenterChange={onCenterChange} />)
   // 初始化是异步的（getMapConfig → loadBMapGL → setMode('live') → 覆盖层 effect）
-  await waitFor(() => expect((h.markers as FakeMarker[]).some((m) => m.listeners.dragend)).toBe(true))
+  await waitFor(() => expect((instances.markers as FakeMarker[]).some((m) => m.listeners.dragend)).toBe(true))
 }
 
 beforeEach(() => {
-  h.markers.length = 0
+  resetInstances()
+  resetStyleCalls()
   h.warnings.length = 0
   vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
     h.warnings.push(args.map(String).join(' '))
@@ -237,5 +200,13 @@ describe('LcMap 中心标记 dragend · BD-09 坐标契约', () => {
 
     expect(onCenterChange).toHaveBeenCalledTimes(3)
     expect(h.warnings).toEqual([])
+  })
+
+  /* TC-R12：本文件曾是「样式盲区」三兄弟之一 —— `setMapStyleV2` 写成空桩，
+     底图样式怎么改这里都全绿。这条用例钉的是**眼睛本身**：样式必须真的被下发过。
+     色值对不对不归本文件管（那是 roadContrast.test.ts 带锚点阈值的职责）。 */
+  it('底图样式确实被下发且结构自洽（夹具眼睛哨兵，非空桩）', async () => {
+    await mountMap(vi.fn())
+    assertBasemapStylesSound()
   })
 })

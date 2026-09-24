@@ -25,87 +25,51 @@ interface FakeMap {
   listeners: Record<string, (() => void)[]>
 }
 
-const h = vi.hoisted(() => ({
-  markers: [] as FakeMarker[],
-  maps: [] as FakeMap[],
-}))
+import {
+  assertBasemapStylesSound,
+  instances,
+  resetInstances,
+  resetStyleCalls,
+} from './helpers/bmapGLFake'
 
-vi.mock('../lib/bmap', () => {
-  class Point {
-    lng: number
-    lat: number
-    constructor(lng: number, lat: number) {
-      this.lng = lng
-      this.lat = lat
-    }
-  }
-  class Size {
-    w: number
-    h: number
-    constructor(w: number, h: number) {
-      this.w = w
-      this.h = h
-    }
-  }
-  class Icon {
-    constructor(..._a: unknown[]) {}
-  }
-  class InfoWindow {
-    constructor(..._a: unknown[]) {}
-  }
-  class Polygon {
-    constructor(..._a: unknown[]) {}
-  }
-  class Label {
-    constructor(..._a: unknown[]) {}
-  }
-  class Marker implements FakeMarker {
-    point: { lng: number; lat: number }
-    opts: Record<string, unknown>
-    constructor(point: { lng: number; lat: number }, opts: Record<string, unknown> = {}) {
-      this.point = point
-      this.opts = opts
-      h.markers.push(this)
-    }
-    addEventListener() {}
-  }
-  class Map implements FakeMap {
+/** `instances` 是无类型注册表；本文件把视图收窄成自己关心的形状。 */
+const allMarkers = () => instances.markers as FakeMarker[]
+const firstMap = () => instances.maps[0] as FakeMap
+
+/**
+ * 替身取自 `helpers/bmapGLFake`（全套件唯一一份 `setMapStyleV2`）。
+ * 本文件保留的分歧：`addOverlay` 必须桥接 `overlay.setMap(map)`、×1000 线性投影、
+ * 地图级事件回放表 —— 这三样是热力覆盖层契约的一部分，不能收进通用基类。
+ */
+vi.mock('../lib/bmap', async () => {
+  const H = await import('./helpers/bmapGLFake')
+  class Map extends H.BMapMapBase {
     listeners: Record<string, (() => void)[]> = {}
-    constructor(..._a: unknown[]) {
-      h.maps.push(this)
-    }
-    enableScrollWheelZoom() {}
-    setMapStyleV2() {}
     // BMapGL 契约：addOverlay → overlay.setMap(map)；HeatFieldOverlay 靠它触发
     // initialize/draw（假桩缺了这一步，canvas 永不创建、fill 恒 0 —— 与真 SDK 行为不一致）
-    addOverlay(o: { setMap?: (m: unknown) => void }) {
+    override addOverlay(o: { setMap?: (m: unknown) => void }) {
       o.setMap?.(this)
     }
-    removeOverlay(o: { setMap?: (m: unknown) => void }) {
+    override removeOverlay(o: { setMap?: (m: unknown) => void }) {
+      instances.removed.push(o)
       o.setMap?.(null)
     }
-    openInfoWindow() {}
-    setViewport() {}
-    centerAndZoom() {}
-    getContainer() {
+    override getContainer(): HTMLElement {
       // HeatFieldOverlay 把 canvas 挂到 map 容器 —— 返回 LcMap 真实渲染的容器 div
       return (document.querySelector('[data-lc-map="true"]') as HTMLElement | null) ?? document.createElement('div')
     }
-    pointToPixel(p: { lng: number; lat: number }) {
+    override pointToPixel(p: { lng: number; lat: number }) {
       // 测试用线性投影：像素 = 经纬度 × 1000（命中测试与 draw 共用同一投影）
       return { x: p.lng * 1000, y: p.lat * 1000 }
     }
-    addEventListener(type: string, fn: () => void) {
+    override addEventListener(type: string, fn: () => void) {
       ;(this.listeners[type] ??= []).push(fn)
     }
-    removeEventListener(type: string, fn: () => void) {
+    override removeEventListener(type: string, fn: () => void) {
       this.listeners[type] = (this.listeners[type] ?? []).filter((f) => f !== fn)
     }
   }
-  return {
-    getMapConfig: async () => ({ browserAk: 'test-ak', mapStyleId: '' }),
-    loadBMapGL: async () => ({ Map, Point, Size, Icon, InfoWindow, Polygon, Marker, Label }),
-  }
+  return H.fakeBMapModule({ Map })
 })
 
 const { default: LcMap } = await import('../components/lifecircle/LcMap')
@@ -133,15 +97,15 @@ async function mountMap(report: LivingCircleReport = REPORT) {
     y: 0,
     toJSON: () => ({}),
   })
-  await waitFor(() => expect(h.maps.length).toBeGreaterThan(0))
+  await waitFor(() => expect(instances.maps.length).toBeGreaterThan(0))
   return { mapEl, view }
 }
 
 let calls: CanvasCallCounts
 
 beforeEach(() => {
-  h.markers.length = 0
-  h.maps.length = 0
+  resetInstances()
+  resetStyleCalls()
   calls = mockCanvasContext()
 })
 
@@ -154,7 +118,7 @@ describe('LcMap 热力采样点 Canvas 覆盖层（延迟优化 C）', () => {
   it('渲染原语：1049 点 → 零逐点 Marker，单 Canvas，draw 逐点 fill', async () => {
     const { view } = await mountMap()
     await waitFor(() => expect(calls.fill ?? 0).toBeGreaterThanOrEqual(1049))
-    const heatMarkers = h.markers.filter((m) => String(m.opts.title ?? '').includes('号采样点'))
+    const heatMarkers = allMarkers().filter((m) => String(m.opts.title ?? '').includes('号采样点'))
     expect(heatMarkers).toHaveLength(0) // 旧的逐点 DOM Marker 一个都不许再出现
     expect(view.container.querySelectorAll('canvas').length).toBe(1) // 单 Canvas 覆盖层
   })
@@ -163,7 +127,7 @@ describe('LcMap 热力采样点 Canvas 覆盖层（延迟优化 C）', () => {
     await mountMap()
     await waitFor(() => expect(calls.fill ?? 0).toBeGreaterThanOrEqual(1049))
     const before = calls.fill ?? 0
-    for (const fn of h.maps[0].listeners.moveend ?? []) fn()
+    for (const fn of firstMap().listeners.moveend ?? []) fn()
     expect(calls.fill ?? 0).toBeGreaterThan(before)
   })
 
@@ -183,8 +147,15 @@ describe('LcMap 热力采样点 Canvas 覆盖层（延迟优化 C）', () => {
     const tip = view.container.querySelector('[role="status"]') as HTMLElement
     fireEvent.mouseMove(mapEl, { clientX: 107950.69, clientY: 26573.4 })
     expect(tip.style.display).toBe('block')
-    for (const fn of h.maps[0].listeners.movestart ?? []) fn()
+    for (const fn of firstMap().listeners.movestart ?? []) fn()
     expect(tip.style.display).toBe('none')
+  })
+
+  /* TC-R12：本文件曾是「样式盲区」三兄弟之一（`setMapStyleV2` 空桩）。
+     这条钉的是眼睛本身：样式必须真的被下发过，色值对错不归本文件管。 */
+  it('底图样式确实被下发且结构自洽（夹具眼睛哨兵，非空桩）', async () => {
+    await mountMap()
+    assertBasemapStylesSound()
   })
 })
 
