@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # 青野 Verda 一键启动 / 重启脚本
 # 用法：在项目根目录执行  ./restart.sh
+# 端口（后端 8010 / 前端 3400）单一真值源在 ./.dev-ports.env，与 start.sh/stop.sh 共用。
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT=8020
-FRONTEND_PORT=3500
+# shellcheck source=.dev-ports.env
+. "$ROOT/.dev-ports.env"
 LOG_DIR="$ROOT/.run-logs"
 mkdir -p "$LOG_DIR"
 

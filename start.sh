@@ -21,14 +21,15 @@
 set -u
 
 # ---------------------------------------------------------------------------
-# 常量：目录 / 端口 / 路径（基于脚本真实位置，可被任意路径调用）
+# 常量：目录 / 路径（基于脚本真实位置，可被任意路径调用）；端口见 .dev-ports.env
 # ---------------------------------------------------------------------------
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="$(basename "$0")"
 BACKEND_DIR="$ROOT/backend"
 FRONTEND_DIR="$ROOT/frontend"
-BACKEND_PORT=8010
-FRONTEND_PORT=3400
+# 端口单一真值源（与 restart.sh/stop.sh 共用；支持环境变量覆盖）
+# shellcheck source=.dev-ports.env
+. "$ROOT/.dev-ports.env"
 LOG_DIR="$ROOT/.run-logs"
 REQ_FILE="$BACKEND_DIR/requirements.txt"
 REQ_DEV="$BACKEND_DIR/requirements-dev.txt"

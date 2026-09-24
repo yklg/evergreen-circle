@@ -18,7 +18,9 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUT = resolve(__dirname, '../src/mocks/researchTypes.json')
-const ENDPOINT = process.env.RESEARCH_TYPES_URL ?? 'http://127.0.0.1:8010/api/research-types'
+// 端口默认与仓库根 .dev-ports.env 的 BACKEND_PORT 一致；也可用 RESEARCH_TYPES_URL 整体覆盖
+const BACKEND_PORT = process.env.BACKEND_PORT ?? '8010'
+const ENDPOINT = process.env.RESEARCH_TYPES_URL ?? `http://127.0.0.1:${BACKEND_PORT}/api/research-types`
 
 async function main() {
   let items

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# 关闭青野 Verda 的后端(:8020)与前端(:3500)
+# 关闭青野 Verda 的后端与前端（端口见 ./.dev-ports.env，默认后端 :8010 / 前端 :3400）
 # 优先按 PID 文件以进程组方式精确关闭（覆盖 npm→vite 子进程），再按端口兜底。
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.dev-ports.env
+. "$ROOT/.dev-ports.env"
 LOG_DIR="$ROOT/.run-logs"
 
 echo "停止本项目后端/前端进程..."
@@ -22,7 +24,7 @@ for name in backend frontend; do
 done
 
 # 兜底：按端口清理残留（兼容非本脚本启动的进程 / pidfile 已失效的孤儿）
-for port in 8020 3500; do
+for port in "$BACKEND_PORT" "$FRONTEND_PORT"; do
   pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null)"
   if [ -n "$pids" ]; then
     echo "  释放端口 $port: $pids"
