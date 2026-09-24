@@ -105,3 +105,23 @@ def test_unknown_domain_falls_back_to_travel():
     _write_roster([{"id": "L3-001", "name": "T", "level": "L3"}])
     experts = load_experts("not_a_domain")
     assert experts and experts[0]["id"] == "L3-001"
+
+
+# ── T-06 HTTP 层：GET /api/experts?domain= 透传（loader 层 parity 上面对齐，这里钉端点）──
+def test_dual_roster_api_experts_domain_query():
+    """BE-3：domain 白名单值透传到 loader，返回对应域名册（id 集与 loader 同源）。"""
+    travel = client.get("/api/experts").json()
+    living = client.get("/api/experts?domain=living_circle").json()
+    assert [e["id"] for e in travel] == [e["id"] for e in load_experts("travel")]
+    assert [e["id"] for e in living] == [e["id"] for e in load_experts("living_circle")]
+    # 双域人设必须不同（同 id 不同 group），证明透传而非恒返一份
+    by_group_t = {e["id"]: e.get("group") for e in travel}
+    assert any(by_group_t[e["id"]] != e.get("group") for e in living)
+
+
+def test_dual_roster_api_experts_default_and_unknown_domain():
+    """BE-4：缺省与非法 domain 均回落 travel，200（fail-loud 到默认，不报错/不回错名册）。"""
+    default_ids = [e["id"] for e in client.get("/api/experts").json()]
+    weird = client.get("/api/experts?domain=not_a_domain")
+    assert weird.status_code == 200
+    assert [e["id"] for e in weird.json()] == default_ids

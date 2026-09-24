@@ -101,6 +101,39 @@ def test_research_type_flows_to_run_pipeline(tmp_path):
     assert seen.get("research_type") == "assessment"
 
 
+# ── ④b 旧客户端 purpose 别名归一（部署窗口兼容：旧 bundle 只发 purpose）────
+def test_api_create_task_legacy_purpose_aliases_roundtrip():
+    """BE-1：不发 type、只发旧 purpose 方言 → 归一到权威 research_type。
+
+    assess（旧前端 ResearchWizard 方言）必须落 assessment——这是「真实态选评估
+    静默建成攻略」线上 bug 的后端回归钉；travel_assess/travel_guide 同源归一。
+    """
+    cli = TestClient(app)
+    cases = {"assess": "assessment", "travel_assess": "assessment",
+             "guide": "guide", "travel_guide": "guide"}
+    for purpose, expected in cases.items():
+        j = cli.post("/api/tasks", json={"query": f"q-{purpose}", "purpose": purpose}).json()
+        assert j["researchType"] == expected, f"purpose={purpose!r} 应归一为 {expected}"
+        assert (db.get_task(j["taskId"])["clarifications"] or {}).get("_type") == expected
+
+
+def test_api_create_task_explicit_type_wins_over_purpose():
+    """BE-2：type 与 purpose 冲突时显式 type 权威优先。"""
+    cli = TestClient(app)
+    j = cli.post("/api/tasks", json={"query": "q", "type": "assessment",
+                                     "purpose": "guide"}).json()
+    assert j["researchType"] == "assessment"
+
+
+def test_api_create_task_no_type_no_purpose_defaults_guide():
+    """边界：type/purpose 皆缺省（或皆非法）→ guide，200 不报错。"""
+    cli = TestClient(app)
+    j = cli.post("/api/tasks", json={"query": "q"}).json()
+    assert j["researchType"] == rt.DEFAULT_RESEARCH_TYPE
+    j2 = cli.post("/api/tasks", json={"query": "q", "purpose": "什么都不是"}).json()
+    assert j2["researchType"] == rt.DEFAULT_RESEARCH_TYPE
+
+
 # ── ⑤ 澄清 SSE 载荷键名（新键在、旧键不得回潮）─────────────
 def test_clarify_fallback_payload_key_is_destinations():
     async def impl():

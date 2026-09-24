@@ -256,8 +256,9 @@ def search_endpoint(q: str, num: int = 10, site: Optional[str] = None):
 
 # ── 专家 ────────────────────────────────────────────────
 @app.get("/api/experts")
-def list_experts():
-    return load_experts()
+def list_experts(domain: str = "travel"):
+    """专家名册按域取：travel（默认）/ living_circle；非法域由 loader 回落 travel（fail-loud 到默认）。"""
+    return load_experts(domain)
 
 
 @app.get("/api/experts/workload")
@@ -306,7 +307,9 @@ def get_expert(eid: str):
 class CreateTaskBody(BaseModel):
     query: str
     mode: str = "deep"  # quick | deep | expert
-    type: str = DEFAULT_RESEARCH_TYPE  # guide | assessment | living_circle
+    # None=客户端未显式指定（旧 bundle 只发 purpose）；归一逻辑在 post_task：
+    # 显式合法 type 优先 → purpose 别名 → DEFAULT_RESEARCH_TYPE。
+    type: Optional[str] = None  # guide | assessment | living_circle
     model: Optional[str] = None
     # ── 生活圈体检（type=living_circle）专用可选字段 ──
     purpose: Optional[str] = None
@@ -340,7 +343,8 @@ def research_types():
 
 @app.post("/api/tasks")
 async def post_task(body: CreateTaskBody):
-    # 生活圈体检：独立流水线 + 坐标系归一（WGS-84→BD-09，缺 AK 422 拒绝）
+    # 生活圈体检：独立流水线 + 坐标系归一（WGS-84→BD-09，缺 AK 422 拒绝）。
+    # 只认显式 type=living_circle（purpose 是旅游体裁别名，不许在此分流）。
     if body.type == "living_circle":
         from app.core.pipeline.living_circle import create_living_circle_task
         from app.living_circle.caliber import get_caliber
@@ -356,8 +360,18 @@ async def post_task(body: CreateTaskBody):
         })
         return {"taskId": task_id}
 
-    # 旅游调研：攻略/评估（返回 pydantic resp，序列化为 task_id/research_type，前端双驼兼容）
-    return create_task(body.query, mode=body.mode, model=body.model, research_type=body.type)
+    # 旅游调研：攻略/评估。归一优先级——显式合法 type > 旧客户端 purpose 别名 > 默认 guide。
+    # （type 默认 None 才能区分「未发 type」与「显式发 guide」，否则 purpose 永远不可达。）
+    # purpose 兼容旧前端方言：assess→assessment（权威 key），travel_* kind 同源归一。
+    purpose_aliases = {"assess": "assessment", "travel_assess": "assessment",
+                       "guide": "guide", "travel_guide": "guide"}
+    if body.type in rt.RESEARCH_TYPES:
+        rtype = body.type
+    elif (body.purpose or "").strip().lower() in purpose_aliases:
+        rtype = purpose_aliases[body.purpose.strip().lower()]
+    else:
+        rtype = DEFAULT_RESEARCH_TYPE
+    return create_task(body.query, mode=body.mode, model=body.model, research_type=rtype)
 
 
 async def _to_bd09(center: List[float], coord_sys: str) -> List[float]:
