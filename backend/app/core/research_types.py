@@ -46,17 +46,8 @@ SECTION_PLAN: Dict[str, str] = {
     "value": "性价比与成本",
     "livelihood": "生活成本与落地体验",
     "verdict": "综合研判",
-    # 视角专属板块（按类型各一套，按问卷答案择一插入）
-    "persp_family": "亲子视角 · 带娃出行专版",
-    "persp_couple": "情侣视角 · 双人出行专版",
-    "persp_solo": "独行视角 · 单人出行专版",
-    "persp_photo": "摄影视角 · 出片机位专版",
-    "persp_senior": "长辈视角 · 舒适慢游专版",
-    "persp_live": "自住长居视角 · 落地生活专版",
-    "persp_invest": "置业投资视角 · 价值研判专版",
-    "persp_study": "求学陪读视角 · 教育配套专版",
-    "persp_retire": "养老避寒视角 · 长期宜居专版",
-    "persp_remote": "数字游民视角 · 远程办公专版",
+    # 视角专属板块的标题**不在这里**：由 PERSPECTIVE_SPECS 每行的 title 派生重绑（见下）。
+    # 曾经这里是 10 条手抄、与注册表构成双定义——填一个新视角要同时改两张表且漏哪张都不报错。
 }
 
 SECTION_PROMPTS: Dict[str, str] = {
@@ -93,17 +84,7 @@ SECTION_PROMPTS: Dict[str, str] = {
     "value": "性价比与成本：把居住/生活成本与可获得的配套、环境、机会做对照，判断「值不值」，给出成本结构与省钱空间。",
     "livelihood": "生活成本与落地体验：房租/物价/通勤/日常消费的真实水平，结合真实居住者反馈，描述落地后的日常体验与适应难点。",
     "verdict": "综合研判：给出明确结论与排序，说明「更适合谁、不适合谁」，敢于下判断并交代依据。",
-    # 视角专属板块
-    "persp_family": "以亲子视角输出：带娃出行的节奏安排、亲子友好景点与住宿、母婴设施与应急医疗、饮食与安全注意事项，给出可执行的亲子专属建议。",
-    "persp_couple": "以情侣/夫妻视角输出：双人出行的浪漫体验点、私密性与舒适度、拍照出片场景、预算分配与行程节奏建议。",
-    "persp_solo": "以独行视角输出：单人出行的安全注意、性价比住宿与拼车/公共交通方案、社交与结伴机会、独行友好的体验清单。",
-    "persp_photo": "以摄影视角输出：最佳机位与光线时段、季节与天气窗口、器材与取景建议、避开人流的拍摄策略。",
-    "persp_senior": "以长辈视角输出：慢节奏行程、体力与休息安排、无障碍与适老设施、医疗可达性与饮食适配建议。",
-    "persp_live": "以自住长居视角输出：租房/购房的真实难度、社区氛围、日常采买与通勤、社交与融入成本，给出「落地长住」的可执行建议。",
-    "persp_invest": "以置业投资视角输出：区域价格与租售比、政策与限购、供需与流动性、持有成本与退出难度，给出价值研判与风险提示。",
-    "persp_study": "以求学陪读视角输出：学校分布与入学门槛、课业与升学路径、陪读生活成本与安全，给出陪读家庭的可执行建议。",
-    "persp_retire": "以养老避寒视角输出：气候与医疗资源、慢病就医便利度、生活成本与适老配套、居住安全，给出长期宜居建议。",
-    "persp_remote": "以数字游民视角输出：网络与共享办公、签证/居留与税务、生活成本与社群、时区与通勤，给出远程办公落地的可执行建议。",
+    # 视角专属板块的写作提示**不在这里**：由 PERSPECTIVE_SPECS 每行的 prompt 派生重绑。
 }
 
 # 章节 → (claim 字段, 图表类型)。合并原 _write_single_section.field_map、
@@ -135,17 +116,7 @@ SECTION_FIELDS: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "value": (("value", "budget"), ("cost_bar",)),
     "livelihood": (("livelihood",), ("cost_bar",)),
     "verdict": (("verdict",), ("radar",)),
-    # 视角
-    "persp_family": (("overview", "stay", "tips"), ()),
-    "persp_couple": (("overview", "stay", "route"), ()),
-    "persp_solo": (("overview", "stay", "transport"), ()),
-    "persp_photo": (("overview", "route", "season"), ()),
-    "persp_senior": (("overview", "transport", "stay"), ()),
-    "persp_live": (("livelihood", "overview", "verdict"), ()),
-    "persp_invest": (("verdict", "trend", "overview"), ()),
-    "persp_study": (("amenities", "overview", "safety"), ()),
-    "persp_retire": (("livelihood", "safety", "overview"), ()),
-    "persp_remote": (("livelihood", "value", "overview"), ()),
+    # 视角专属板块的 claim/图表归属**不在这里**：由 PERSPECTIVE_SPECS 每行的 fields 派生重绑。
 }
 
 # claim 字段 → focus 维度关键词（audit 判定「某维度是否被覆盖」用）。
@@ -272,7 +243,17 @@ DEST_KEYED_ROWS: Tuple[Tuple[str, str], ...] = (
 # 必须先给 show_if 加 contains 语义——show_if_triggered 用 str(答案)==equals，
 # 列表答案恒不相等，直接改 multi 会让**所有**条件题一起消失（且不会报错）。
 PERSPECTIVE_SPECS: Dict[str, Dict[str, Any]] = {
+    # owner=(归属类型, 视角键)；keywords 命中视角键、视角键定章节 —— 三者是一张表而非三张。
+    # title/prompt/fields 曾是 SECTION_PLAN / SECTION_PROMPTS / SECTION_FIELDS 里各抄一份的
+    # 三个平行条目：填一个新群体要同时改四处且**漏哪处都不报错**（v4.3 ③ 点名的形状）。
+    # 行序即视角键优先级（见上方「单视角不变量 ①」）：guide 保持 亲子→情侣→独行→长辈→摄影。
     "persp_family": {
+        "owner": ("guide", "family"),
+        "keywords": ("亲子", "带娃", "孩子", "儿童", "家庭", "婴儿"),
+        "title": "亲子视角 · 带娃出行专版",
+        "prompt": ("以亲子视角输出：带娃出行的节奏安排、亲子友好景点与住宿、母婴设施与应急"
+                   "医疗、饮食与安全注意事项，给出可执行的亲子专属建议。"),
+        "fields": (("overview", "stay", "tips"), ()),
         "angle_tpls": ("亲子 儿童票 免票 身高 年龄 规则", "亲子 母婴室 婴儿车 遛娃 设施"),
         # 二查措辞按真机校准：设施名词堆叠（母婴室+亲子设施）命中 58 同城母婴店/月嫂广告，
         # 换成 UGC 问句用词（带娃/推车/婴儿车/台阶）才采到「路面适不适合推车」这类可行事实。
@@ -287,33 +268,92 @@ PERSPECTIVE_SPECS: Dict[str, Dict[str, Any]] = {
         "packing_key": "persp_packing",
         "hard_constraints": ("days", "budget_level", "origin", "child_age"),
     },
-    "persp_couple": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                     "checklist_columns": (), "rules_key": None, "packing_key": None,
-                     "hard_constraints": ("days", "budget_level", "origin")},
-    "persp_solo": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                   "checklist_columns": (), "rules_key": None, "packing_key": None,
-                   "hard_constraints": ("days", "budget_level", "origin")},
-    "persp_photo": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                    "checklist_columns": (), "rules_key": None, "packing_key": None,
-                    "hard_constraints": ("days", "travel_season")},
-    "persp_senior": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                     "checklist_columns": (), "rules_key": None, "packing_key": None,
-                     "hard_constraints": ("days", "budget_level", "origin")},
-    "persp_live": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                   "checklist_columns": (), "rules_key": None, "packing_key": None,
-                   "hard_constraints": ("horizon", "budget_level")},
-    "persp_invest": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                     "checklist_columns": (), "rules_key": None, "packing_key": None,
-                     "hard_constraints": ("horizon", "budget_level")},
-    "persp_study": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                    "checklist_columns": (), "rules_key": None, "packing_key": None,
-                    "hard_constraints": ("horizon", "budget_level")},
-    "persp_retire": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                     "checklist_columns": (), "rules_key": None, "packing_key": None,
-                     "hard_constraints": ("horizon", "budget_level")},
-    "persp_remote": {"angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
-                     "checklist_columns": (), "rules_key": None, "packing_key": None,
-                     "hard_constraints": ("horizon", "budget_level")},
+    "persp_couple": {
+        "owner": ("guide", "couple"),
+        "keywords": ("情侣", "夫妻", "双人", "二人", "蜜月"),
+        "title": "情侣视角 · 双人出行专版",
+        "prompt": ("以情侣/夫妻视角输出：双人出行的浪漫体验点、私密性与舒适度、拍照出片场景、"
+                   "预算分配与行程节奏建议。"),
+        "fields": (("overview", "stay", "route"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("days", "budget_level", "origin")},
+    "persp_solo": {
+        "owner": ("guide", "solo"),
+        "keywords": ("独自", "一个人", "单人", "独行", "solo"),
+        "title": "独行视角 · 单人出行专版",
+        "prompt": ("以独行视角输出：单人出行的安全注意、性价比住宿与拼车/公共交通方案、"
+                   "社交与结伴机会、独行友好的体验清单。"),
+        "fields": (("overview", "stay", "transport"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("days", "budget_level", "origin")},
+    "persp_senior": {
+        "owner": ("guide", "senior"),
+        "keywords": ("长辈", "父母", "老人", "老年", "爸妈", "银发"),
+        "title": "长辈视角 · 舒适慢游专版",
+        "prompt": ("以长辈视角输出：慢节奏行程、体力与休息安排、无障碍与适老设施、"
+                   "医疗可达性与饮食适配建议。"),
+        "fields": (("overview", "transport", "stay"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("days", "budget_level", "origin")},
+    "persp_photo": {
+        "owner": ("guide", "photo"),
+        "keywords": ("摄影", "拍照", "出片", "机位", "旅拍"),
+        "title": "摄影视角 · 出片机位专版",
+        "prompt": ("以摄影视角输出：最佳机位与光线时段、季节与天气窗口、器材与取景建议、"
+                   "避开人流的拍摄策略。"),
+        "fields": (("overview", "route", "season"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("days", "travel_season")},
+    "persp_live": {
+        "owner": ("assessment", "live"),
+        "keywords": ("自住", "长居", "定居", "搬过去", "生活"),
+        "title": "自住长居视角 · 落地生活专版",
+        "prompt": ("以自住长居视角输出：租房/购房的真实难度、社区氛围、日常采买与通勤、"
+                   "社交与融入成本，给出「落地长住」的可执行建议。"),
+        "fields": (("livelihood", "overview", "verdict"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("horizon", "budget_level")},
+    "persp_invest": {
+        "owner": ("assessment", "invest"),
+        "keywords": ("投资", "置业", "买房", "购房", "房产"),
+        "title": "置业投资视角 · 价值研判专版",
+        "prompt": "以置业投资视角输出：区域价格与租售比、政策与限购、供需与流动性、持有成本与退出难度，给出价值研判与风险提示。",
+        "fields": (("verdict", "trend", "overview"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("horizon", "budget_level")},
+    "persp_study": {
+        "owner": ("assessment", "study"),
+        "keywords": ("求学", "留学", "陪读", "上学", "教育"),
+        "title": "求学陪读视角 · 教育配套专版",
+        "prompt": "以求学陪读视角输出：学校分布与入学门槛、课业与升学路径、陪读生活成本与安全，给出陪读家庭的可执行建议。",
+        "fields": (("amenities", "overview", "safety"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("horizon", "budget_level")},
+    "persp_retire": {
+        "owner": ("assessment", "retire"),
+        "keywords": ("养老", "避寒", "退休", "康养"),
+        "title": "养老避寒视角 · 长期宜居专版",
+        "prompt": "以养老避寒视角输出：气候与医疗资源、慢病就医便利度、生活成本与适老配套、居住安全，给出长期宜居建议。",
+        "fields": (("livelihood", "safety", "overview"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("horizon", "budget_level")},
+    "persp_remote": {
+        "owner": ("assessment", "remote"),
+        "keywords": ("数字游民", "远程", "自由职业", "remote", "办公"),
+        "title": "数字游民视角 · 远程办公专版",
+        "prompt": "以数字游民视角输出：网络与共享办公、签证/居留与税务、生活成本与社群、时区与通勤，给出远程办公落地的可执行建议。",
+        "fields": (("livelihood", "value", "overview"), ()),
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ("horizon", "budget_level")},
 }
 
 # 视角专属结构化键的**有序去重**并集（按注册表行序，保证派生结果跨运行确定）。
@@ -331,6 +371,32 @@ PERSP_STRUCTURED_KEYS = frozenset(_PERSP_STRUCTURED_ORDER)
 # 行级景点名**不登记**——景点名不是目的地，误登记会把整表滤光（评审 P0-1）。
 DEST_KEYED_ROWS = DEST_KEYED_ROWS + tuple(
     (f"structured.{k}", "destination") for k in _PERSP_STRUCTURED_ORDER)
+
+
+# ── 视角行的派生重绑（唯一真相源 = PERSPECTIVE_SPECS 那一行）──────────
+# 一张视角行的 7 个声明位里有 4 个曾是**平行手抄的表**（标题 / 写作提示 / claim 归属 /
+# 关键词归属）。手抄的失效形状很固定：填了新行、忘抄某一张 ⇒ 该视角进得去报告却没有标题
+# /没有写作提示/永远不被任何类型认领，且**没有一处会报错**。派生重绑把它变成
+# 「漏填即少一行键」，由 tests/test_registry_single_source.py 的穷尽门当场判红。
+# 顺序约束（挪动前必读）：本块必须在 PERSPECTIVE_SPECS 之后、RESEARCH_TYPES 之前 ——
+# 前者是数据依赖，后者由 _perspectives_of() 认领视角。
+SECTION_PLAN = {**SECTION_PLAN,
+                **{sid: p["title"] for sid, p in PERSPECTIVE_SPECS.items()}}
+SECTION_PROMPTS = {**SECTION_PROMPTS,
+                   **{sid: p["prompt"] for sid, p in PERSPECTIVE_SPECS.items()}}
+SECTION_FIELDS = {**SECTION_FIELDS,
+                  **{sid: p["fields"] for sid, p in PERSPECTIVE_SPECS.items()}}
+
+
+def _perspectives_of(rtype: str) -> Dict[str, Dict[str, Any]]:
+    """某调研类型的视角表：视角键 → {章节, 关键词}，由视角行的 owner/keywords 派生。
+
+    ⚠️ **行序即优先级**：`perspective_key()` 取首个关键词命中，故本函数的构造顺序（=
+    PERSPECTIVE_SPECS 的声明序）决定了「亲子+长辈」这类复合答案归谁。类型归属相同的行
+    必须相邻（现由 guide 5 行 / assessment 5 行的字面顺序保证）。
+    """
+    return {p["owner"][1]: {"section": sid, "keywords": p["keywords"]}
+            for sid, p in PERSPECTIVE_SPECS.items() if p["owner"][0] == rtype}
 
 
 def perspective_spec(section_id: str) -> Dict[str, Any]:
@@ -636,18 +702,7 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
         ),
         "clarify": _clarify_guide(),
         "perspective_source": ("party", "perspective"),
-        "perspectives": {
-            "family": {"section": "persp_family",
-                       "keywords": ("亲子", "带娃", "孩子", "儿童", "家庭", "婴儿")},
-            "couple": {"section": "persp_couple",
-                       "keywords": ("情侣", "夫妻", "双人", "二人", "蜜月")},
-            "solo": {"section": "persp_solo",
-                     "keywords": ("独自", "一个人", "单人", "独行", "solo")},
-            "senior": {"section": "persp_senior",
-                       "keywords": ("长辈", "父母", "老人", "老年", "爸妈", "银发")},
-            "photo": {"section": "persp_photo",
-                      "keywords": ("摄影", "拍照", "出片", "机位", "旅拍")},
-        },
+        "perspectives": _perspectives_of("guide"),
         "title_suffix": "旅游攻略报告",
         "cover_byline": "旅游调研 · 攻略",
         "glossary": (
@@ -713,18 +768,7 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
         ),
         "clarify": _clarify_assessment(),
         "perspective_source": ("intent", "perspective"),
-        "perspectives": {
-            "live": {"section": "persp_live",
-                     "keywords": ("自住", "长居", "定居", "搬过去", "生活")},
-            "invest": {"section": "persp_invest",
-                       "keywords": ("投资", "置业", "买房", "购房", "房产")},
-            "study": {"section": "persp_study",
-                      "keywords": ("求学", "留学", "陪读", "上学", "教育")},
-            "retire": {"section": "persp_retire",
-                       "keywords": ("养老", "避寒", "退休", "康养")},
-            "remote": {"section": "persp_remote",
-                       "keywords": ("数字游民", "远程", "自由职业", "remote", "办公")},
-        },
+        "perspectives": _perspectives_of("assessment"),
         "title_suffix": "宜居评估报告",
         "cover_byline": "旅游调研 · 评估",
         "glossary": (

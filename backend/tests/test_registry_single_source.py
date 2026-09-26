@@ -166,3 +166,36 @@ def test_guard_fires_on_a_half_filled_perspective_row(monkeypatch):
     assert "persp_synthetic" in (set(RT.PERSPECTIVE_SPECS) - {
         p["section"] for s in RT.RESEARCH_TYPES.values()
         for p in (s.get("perspectives") or {}).values()})
+
+
+def test_perspective_keyword_priority_order_is_pinned():
+    """视角键的**声明序**就是关键词优先级，此处钉死（派生化让它从字面序变成派生序）。
+
+    `perspective_key()` 取首个命中 ⇒ 顺序是有语义的产品行为（「带长辈去拍照」归摄影还是
+    长辈取决于谁先被扫到）。收敛前顺序写在 RESEARCH_TYPES 字面量里、肉眼可见；收敛后它
+    来自 PERSPECTIVE_SPECS 的行序，挪一行就等于改优先级 —— 所以必须显式钉住，
+    让「调换两个视角」成为一次看得见意图的改动，而不是 diff 里的一行搬家。
+    """
+    assert list(RT.RESEARCH_TYPES["guide"]["perspectives"]) == \
+        ["family", "couple", "solo", "senior", "photo"]
+    assert list(RT.RESEARCH_TYPES["assessment"]["perspectives"]) == \
+        ["live", "invest", "study", "retire", "remote"]
+    # 认领同序 ⇒ 派生没有悄悄重排（等值断言判不出顺序，这里单独钉）
+    for rtype, order in (("guide", ["family", "couple", "solo", "senior", "photo"]),
+                         ("assessment", ["live", "invest", "study", "retire", "remote"])):
+        rows = [p["owner"][1] for p in RT.PERSPECTIVE_SPECS.values()
+                if p["owner"][0] == rtype]
+        assert rows == order, f"{rtype} 的视角行序与认领序不一致：{rows}"
+
+
+def test_converged_perspective_fields_stay_the_single_definition():
+    """派生重绑后，SECTION_* 三张表里的视角条目**只能来自**那一行（防有人把字面量抄回去）。
+
+    双定义本身是本轮要消除的根因；改回去不会让任何行为测试变红（值一样），所以只能靠
+    「从 PERSPECTIVE_SPECS 反构造一份，与现表比」来钉。
+    """
+    for sid, p in RT.PERSPECTIVE_SPECS.items():
+        assert RT.SECTION_PLAN[sid] == p["title"]
+        assert RT.SECTION_PROMPTS[sid] == p["prompt"]
+        assert RT.SECTION_FIELDS[sid] == p["fields"]
+    assert set(RT.SECTION_PLAN) - set(RT.PERSPECTIVE_SPECS) < set(RT.SECTION_PLAN)
