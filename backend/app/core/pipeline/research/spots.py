@@ -238,12 +238,13 @@ _PROBE_STAGE_BUDGET_S = 90.0
 _PROBE_CONCURRENCY = 4
 
 
-def _probe_spot_family_one(dest: str, spot_name: str, tpls: Tuple[str, ...],
-                           freshness: str, existing_urls: set,
-                           collector: str) -> List["Evidence"]:
+def _probe_spot_perspective_one(dest: str, spot_name: str, tpls: Tuple[str, ...],
+                                freshness: str, existing_urls: set,
+                                collector: str) -> List["Evidence"]:
     """单景点定向二查（同步）：检索 → URL 去重 → 摘要构造 Evidence。
 
-    不抓全文——二查供核查表填格，搜索摘要本身就是票规/设施的参数化事实源；
+    不抓全文——二查供核查表填格，搜索摘要本身就是专项参数化事实源
+    （票规/设施/机位/无障碍…随视角的 spot_probe_tpls 而变）；
     配额/密钥类终态（SearchProviderError）原样冒泡给阶段层做整体降级，不吞。
     """
     queries = [f"{dest} {t.format(spot=spot_name)}" for t in tpls]
@@ -272,10 +273,10 @@ def _probe_spot_family_one(dest: str, spot_name: str, tpls: Tuple[str, ...],
     return out
 
 
-async def _probe_spot_family(dest: str, items: List[Dict[str, Any]],
-                             tpls: Tuple[str, ...], freshness: str,
-                             existing_urls: set, collector: str,
-                             probe_topn: int) -> Dict[str, Any]:
+async def _probe_spot_perspective(dest: str, items: List[Dict[str, Any]],
+                                  tpls: Tuple[str, ...], freshness: str,
+                                  existing_urls: set, collector: str,
+                                  probe_topn: int) -> Dict[str, Any]:
     """冻结榜前 N 景点逐点二查（并发 ≤4 + 阶段预算，同百度 fan-out 两型）。
 
     返回 {by_spot: {spot_id: [evidence_ids]}, evidences, failed, quota_error}。
@@ -299,7 +300,7 @@ async def _probe_spot_family(dest: str, items: List[Dict[str, Any]],
             if quota_error:
                 return
             try:
-                evs = await asyncio.to_thread(_probe_spot_family_one, dest,
+                evs = await asyncio.to_thread(_probe_spot_perspective_one, dest,
                                               str(it.get("name") or ""), tpls,
                                               freshness, existing_urls, collector)
             except SearchProviderError as e:

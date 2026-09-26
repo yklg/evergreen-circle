@@ -154,8 +154,8 @@ from app.core.pipeline.research.spots import (  # noqa: E402,F401
     _fmt_duration_sec,
     _spot_routes_one,
     _build_spot_routes,
-    _probe_spot_family_one,
-    _probe_spot_family,
+    _probe_spot_perspective_one,
+    _probe_spot_perspective,
     _shop_poi_one,
     _enrich_shops_with_poi,
     _shop_route_one,
@@ -1096,7 +1096,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     frozen_entities: Dict[str, Any] = {}
     spot_entities: List[Dict[str, Any]] = []
     # 视角二查证据映射（只活在编排期，不进报告 payload——评审 P1-2 不改 evidences schema）
-    family_probes: Dict[str, List[str]] = {}
+    persp_probes: Dict[str, List[str]] = {}
     if "spot_ranking" in spec["structured_keys"]:
         yield _ev("node_update", {"node": "spots", "status": "working", "expert": analyst})
         yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": analyst,
@@ -1176,11 +1176,11 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                                               "核查表照常全行产出、参数列以「待核验」占位。",
                                       "ts": _now()})
             else:
-                probe = await _probe_spot_family(
+                probe = await _probe_spot_perspective(
                     primary_destination, spot_entities, persp_probe_tpls,
                     cfg["freshness"], seen_urls, analyst, probe_topn)
                 evidences.extend(probe["evidences"])
-                family_probes.update(probe["by_spot"])
+                persp_probes.update(probe["by_spot"])
                 if probe["quota_error"]:
                     provider_err = provider_err or probe["quota_error"]
                     yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": analyst,
@@ -1246,7 +1246,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     if persp_sid and RT.perspective_spec(persp_sid).get("checklist_key") and spot_entities:
         structured.update(await asyncio.to_thread(
             _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
-            family_probes, evidences, clar, runtime._model("aux")))
+            persp_probes, evidences, clar, runtime._model("aux")))
     analysis["structured"] = structured
 
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
@@ -1360,7 +1360,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                     if persp_sid and RT.perspective_spec(persp_sid).get("checklist_key") and spot_entities:
                         structured.update(await asyncio.to_thread(
                             _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
-                            family_probes, evidences, clar, runtime._model("aux")))
+                            persp_probes, evidences, clar, runtime._model("aux")))
                     analysis["structured"] = structured
                     yield _ev("node_update", {"node": "analyze", "status": "done"})
             rework_rounds_done += 1

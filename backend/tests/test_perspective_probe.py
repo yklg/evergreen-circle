@@ -42,7 +42,7 @@ def test_probe_queries_carry_spot_name_and_template(monkeypatch):
         return _mk_results(queries)
 
     monkeypatch.setattr(search, "multi_search", fake_multi)
-    out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS[:2], _TPLS, "oneYear",
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:2], _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert len(seen) == 4  # 2 景点 × 2 模板
     assert any("洱海" in q and "儿童票" in q for q in seen)
@@ -62,7 +62,7 @@ def test_probe_partial_failure_isolates_rows(monkeypatch):
         return _mk_results(queries)
 
     monkeypatch.setattr(search, "multi_search", fake_multi)
-    out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS, _TPLS, "oneYear",
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert len(out["by_spot"]) == 5
     assert set(out["failed"]) == {"大理_spot_6", "大理_spot_7"}
@@ -75,9 +75,9 @@ def test_probe_dedupes_urls_across_spots(monkeypatch):
              "captured_at": ""}]
     monkeypatch.setattr(search, "multi_search", lambda qs, **kw: list(same))
     urls: set = set()
-    out1 = asyncio.run(O._probe_spot_family(_DEST, _SPOTS[:1], _TPLS, "oneYear",
+    out1 = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:1], _TPLS, "oneYear",
                                             urls, "L1-012", 7))
-    out2 = asyncio.run(O._probe_spot_family(_DEST, _SPOTS[1:2], _TPLS, "oneYear",
+    out2 = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[1:2], _TPLS, "oneYear",
                                             urls, "L1-012", 7))
     assert out1["evidences"] and not out2["evidences"]
 
@@ -94,7 +94,7 @@ def test_probe_quota_error_aborts_remaining(monkeypatch):
         return _mk_results(queries)
 
     monkeypatch.setattr(search, "multi_search", fake_multi)
-    out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS, _TPLS, "oneYear",
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert out["quota_error"] and "quota" in out["quota_error"]
     # 中止后不再烧剩余配额（洱海占 1~2 次调用；显著小于 14）
@@ -108,7 +108,7 @@ def test_probe_topn_zero_calls_nothing(monkeypatch):
         raise AssertionError("probe_topn=0 不得发起任何搜索")
 
     monkeypatch.setattr(search, "multi_search", boom)
-    out = asyncio.run(O._probe_spot_family(_DEST, _SPOTS, _TPLS, "oneYear",
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 0))
     assert out == {"by_spot": {}, "evidences": [], "failed": [], "quota_error": None}
 
