@@ -236,7 +236,7 @@ describe('T-Wizard 分步向导 + 核对屏', () => {
 
   it('TC-W5 competitors 自定义输入在核对屏仍可添加', async () => {
     mockReady([
-      { id: 'competitors', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
+      { id: 'destinations', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
     ])
     renderClarify('t_w5')
     await screen.findByText('重点调研哪些对象？')
@@ -344,7 +344,7 @@ describe('T-AutoAdvance 自动前进（单选 + 多选）', () => {
 
   it('TC-AA7 competitors（multi+自定义）选中后同样停顿自动前进', async () => {
     mockReady([
-      { id: 'competitors', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
+      { id: 'destinations', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
       { id: 'q2', question: '目标市场是？', type: 'single' as const, options: ['国内', '海外'] },
     ])
     renderClarify('t_aa7')
@@ -356,7 +356,7 @@ describe('T-AutoAdvance 自动前进（单选 + 多选）', () => {
 
   it('TC-AA8 competitors 单步自定义补充后同样停顿自动前进（走 maybeAdvance 统一路径）', async () => {
     mockReady([
-      { id: 'competitors', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
+      { id: 'destinations', question: '重点调研哪些对象？', type: 'multi' as const, options: ['对象A'] },
       { id: 'q2', question: '目标市场是？', type: 'single' as const, options: ['国内', '海外'] },
     ])
     renderClarify('t_aa8')
@@ -430,12 +430,12 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
     expect(closeSpy).toHaveBeenCalled()
   })
 
-  it('TC-A4 clarify_update(competitors_fallback) → 核对屏温和提示（C6，替代旧 degraded 大警告）', async () => {
+  it('TC-A4 clarify_update(destinations_fallback) → 核对屏温和提示（C6，替代旧 degraded 大警告）', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let handlers: any = null
     mockedOpenClarifyStream.mockImplementation((_tid, h) => { handlers = h; return () => {} })
     renderClarify('t_c6')
-    // 基础题即时（partial）+ 竞品发现兜底到达（clarify_update, competitors_fallback）
+    // 基础题即时（partial）+ 竞品发现兜底到达（clarify_update, destinations_fallback）
     act(() => {
       handlers?.onEvent('clarify_ready', {
         questions: [{ id: 'focus', question: '最看重哪些维度？', type: 'multi', options: ['功能'] }],
@@ -444,9 +444,9 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
       handlers?.onEvent('clarify_update', {
         questions: [
           { id: 'focus', question: '最看重哪些维度？', type: 'multi', options: ['功能'] },
-          { id: 'competitors', question: '重点调研哪些对象？', type: 'multi', options: ['对象A'] },
+          { id: 'destinations', question: '重点调研哪些对象？', type: 'multi', options: ['对象A'] },
         ],
-        competitors_fallback: true,
+        destinations_fallback: true,
         complete: true,
       })
     })
@@ -454,7 +454,7 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
     fireEvent.click(screen.getByText('下一步'))
     fireEvent.click(screen.getByText('下一步'))
     expect(await screen.findByText('请核对，可直接修改')).toBeTruthy()
-    expect(screen.getByText(/以下调研对象为自动识别候选，建议核对或手动补充/)).toBeTruthy()
+    expect(screen.getByText(/以下目的地为自动识别候选，建议核对或手动补充/)).toBeTruthy()
     // 旧的大警告文案必须消失（C6：不再弹「AI 不可用」）
     expect(screen.queryByText(/已使用默认问卷/)).toBeNull()
   })
@@ -484,9 +484,9 @@ describe('T-Ax ClarifyPage SSE onError 通道（S1+S2 回归）', () => {
           { id: 'focus', question: '最看重哪些维度？', type: 'multi', options: ['功能'] },
           { id: 'perspective', question: '视角？', type: 'single', options: ['PM'] },
           { id: 'scope', question: '请确认我们理解的调研对象是否准确？', type: 'single', options: ['准确，继续', '不准确'] },
-          { id: 'competitors', question: '自动发现了以下候选对象，请勾选', type: 'multi', options: ['对象A'] },
+          { id: 'destinations', question: '自动发现了以下候选对象，请勾选', type: 'multi', options: ['对象A'] },
         ],
-        competitors_fallback: false,
+        destinations_fallback: false,
         complete: true,
       })
     })

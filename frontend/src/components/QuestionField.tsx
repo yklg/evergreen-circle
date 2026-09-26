@@ -103,7 +103,7 @@ export default function QuestionField({
                 onCustomAdd()
               }
             }}
-            placeholder="补充其他想调研的对象，回车添加（可用逗号分隔多个）"
+            placeholder="补充其他想调研的目的地/城市，回车添加（可用逗号分隔多个）"
             className="h-9 flex-1 rounded-btn border border-line bg-bg px-3 text-aux text-ink outline-none transition-colors focus:border-primary"
           />
           <button

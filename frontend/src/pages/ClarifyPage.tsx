@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Sprout, ArrowRight, SkipForward, Loader2, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Sprout, ArrowRight, SkipForward, Loader2, AlertTriangle, RefreshCw, Clock } from 'lucide-react'
 import type { ClarifyQuestion } from '../types'
 import { submitClarify, openClarifyStream } from '../lib/api'
 import { VSunGlow } from '../components/ui'
 import { fadeUp } from '../lib/motion'
+import { DEST_FALLBACK_HINT_CANDIDATES, DEST_FALLBACK_HINT_NONE } from '../lib/destinationFallbackCopy'
 import QuestionField from '../components/QuestionField'
 
 interface NavState {
@@ -25,12 +26,13 @@ export default function ClarifyPage() {
   const [error, setError] = useState<string | null>(null)
   const [runId, setRunId] = useState(0) // 重试时自增，重新拉起 SSE
   const [step, setStep] = useState(0) // 向导步：0..N-1 单题；===N 为核对屏
-  // 流式加载反馈（C1/C2）：基础题已就绪但竞品发现仍在后台时展示进度条 + 标识
+  // 流式加载反馈（C1/C2）：基础题已就绪但候选目的地发现仍在后台时展示进度条 + 标识
   const [discoveryOngoing, setDiscoveryOngoing] = useState(false)
   const [progress, setProgress] = useState(0)
   const [progressLabel, setProgressLabel] = useState('正在准备问卷…')
-  // 竞品识别兜底（C6）：超时/异常时竞品为自动识别候选，需温和提示而非大警告
-  const [competitorsFallback, setCompetitorsFallback] = useState(false)
+  // 澄清流兜底标志（C6）：发现超时/异常时候选为自动识别结果，温和提示而非大警告。
+  // 与运行流的 planFallback（taskStore）分属两条流、两个页面，故各自独立、只共用文案常量。
+  const [destinationsFallback, setDestinationsFallback] = useState(false)
 
   // 自动前进延时：单选为快速视觉锁定（一击即定）；多选需留时间勾多项，故更长且每次勾选都重置
   const SINGLE_ADVANCE_MS = 350
@@ -38,8 +40,17 @@ export default function ClarifyPage() {
 
   const [answers, setAnswers] = useState<Record<string, unknown>>({})
   const [submitting, setSubmitting] = useState(false)
-  // 用户自定义补充的竞品（按题 id 存，目前主要用于 competitors 题）
+  // 提交被后端结构性拒绝（如游玩攻略多目的地）时的就地提示
+  const [submitErr, setSubmitErr] = useState<string | null>(null)
+  // 用户自定义补充的目的地（按题 id 存，目前主要用于 destinations 题）
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({})
+
+  // 条件题（show_if，rough-cliff-vole）：可见题集 = 无 show_if 的题 + 被当前答案触发的题。
+  // 判据与后端 missing_conditional_answers 同语义（悬空条件由后端元测试钉死）。
+  const visible = useMemo(
+    () => questions.filter((item) => !item.show_if ||
+      String(answers[item.show_if.qid] ?? '') === item.show_if.equals),
+    [questions, answers])
 
   // 每步切换 / 进入问卷时把焦点移到当前题容器，保证键盘 / 读屏可达
   const titleRef = useRef<HTMLDivElement>(null)
@@ -60,8 +71,8 @@ export default function ClarifyPage() {
 
   // 跟踪是否已进入核对屏（供 clarify_update 到达时保持核对屏，C5）
   useEffect(() => {
-    reviewReachedRef.current = ready && questions.length > 0 && step === questions.length
-  }, [ready, questions, step])
+    reviewReachedRef.current = ready && questions.length > 0 && step === visible.length
+  }, [ready, questions, visible.length, step])
 
   // 挂载后通过 SSE 懒生成问卷；loading 阶段绝不跳转（修 P0#3：原 questions.length===0 误跳）
   useEffect(() => {
@@ -71,16 +82,14 @@ export default function ClarifyPage() {
     // 注意：不能用 React state `ready` 做此判断——onError 闭包捕获的是
     // effect 创建时的 `ready` 快照，setReady(true) 不会更新该闭包，会导致守卫失效。
     let done = false
-    // 切换任务即重置问卷状态（任务维度的有意模式）
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReady(false)
     setError(null)
     setQuestions([])
     setStep(0)
-    // closeRef 持有 openClarifyStream 返回的关闭函数。真实 SSE 事件在连接建立后
-    // （即本调用返回、closeRef.current 已赋值）才异步到达；若测试同步派发事件，
-    // 尚未赋值，?.() 安全 no-op，避免 TDZ（Cannot access 'close' before initialization）。
-    const closeRef: { current?: () => void } = {}
+    // closeFn 持有 openClarifyStream 返回的关闭函数。真实 SSE 事件在连接建立后
+    // （即本调用返回、closeFn 已赋值）才异步到达；若测试同步派发事件，closeFn 尚
+    // 未赋值，?.() 安全 no-op，避免 TDZ（Cannot access 'close' before initialization）。
+    let closeFn: (() => void) | undefined
     let partialDone = false // 已收到 partial 基础题但尚未 complete（用于 onError 守卫）
     const close = openClarifyStream(taskId, {
       onEvent: (type, data) => {
@@ -93,7 +102,7 @@ export default function ClarifyPage() {
             if (d?.message) setStage(d.message)
           } else if (d?.stage === 'discovering') {
             setProgress(70)
-            setProgressLabel('正在发现调研对象…')
+            setProgressLabel('正在发现候选目的地…')
           } else if (d?.message) {
             setStage(d.message)
           }
@@ -101,41 +110,41 @@ export default function ClarifyPage() {
           const d = data as {
             questions?: ClarifyQuestion[]
             partial?: boolean
-            competitors_fallback?: boolean
+            destinations_fallback?: boolean
           }
           if (d?.partial) {
-            // 仅基础题：立即可答，竞品发现仍在后台（C3）——不关闭流、不置 done
+            // 仅基础题：立即可答，候选目的地发现仍在后台（C3）——不关闭流、不置 done
             setQuestions(d?.questions ?? [])
             setReady(true)
             partialDone = true
             setDiscoveryOngoing(true)
             setProgress(50)
-            setProgressLabel('基础问卷已就绪，正在发现调研对象…')
+            setProgressLabel('基础问卷已就绪，正在发现候选目的地…')
           } else {
             // 完整问卷（重连 / 在途复用）：原行为，收齐即关闭流
             setQuestions(d?.questions ?? [])
             setReady(true)
-            if (d?.competitors_fallback) setCompetitorsFallback(true)
+            if (d?.destinations_fallback) setDestinationsFallback(true)
             done = true
-            closeRef.current?.() // 问卷已完整送达，主动关闭有限流，避免流关闭触发 onerror 误报
+            closeFn?.() // 问卷已完整送达，主动关闭有限流，避免流关闭触发 onerror 误报
           }
         } else if (type === 'clarify_update') {
-          // 竞品发现完成：增量替换整组题目（答案按 id 保留），保持当前步（C4/C5）
+          // 候选目的地发现完成：增量替换整组题目（答案按 id 保留），保持当前步（C4/C5）
           const d = data as {
             questions?: ClarifyQuestion[]
-            competitors_fallback?: boolean
+            destinations_fallback?: boolean
             complete?: boolean
           }
           const newQs = d?.questions ?? []
           const wasAtReview = reviewReachedRef.current
           setQuestions(newQs)
-          if (d?.competitors_fallback) setCompetitorsFallback(true)
+          if (d?.destinations_fallback) setDestinationsFallback(true)
           if (wasAtReview) setStep(newQs.length) // 已在核对屏 → 保持核对屏并补入新题
           setReady(true)
           setDiscoveryOngoing(false)
           setProgress(100)
           done = true
-          closeRef.current?.()
+          closeFn?.()
         } else if (type === 'error') {
           const d = data as { message?: string }
           setError(d?.message ?? '问卷生成失败')
@@ -152,7 +161,7 @@ export default function ClarifyPage() {
         setReady(true)
       },
     })
-    closeRef.current = close
+    closeFn = close
     return () => {
       closed = true
       close()
@@ -173,6 +182,25 @@ export default function ClarifyPage() {
   function setAns(qid: string, val: unknown) {
     setAnswers((a) => ({ ...a, [qid]: val }))
   }
+
+  // 答案残留回退：改答使条件题隐藏时清掉它的旧答案——残留即脏数据，
+  // 后端硬约束（如 child_age）绝不能读到「情侣同行却带娃龄」的过期值。
+  useEffect(() => {
+    setAnswers((a) => {
+      const hidden = questions.filter(
+        (it) => it.show_if && a[it.id] != null &&
+          String(a[it.show_if.qid] ?? '') !== it.show_if.equals)
+      if (!hidden.length) return a
+      const next = { ...a }
+      for (const it of hidden) delete next[it.id]
+      return next
+    })
+  }, [answers, questions])
+
+  // 可见题集收缩后钳制步号（核对屏 = visible.length，防越界取到 undefined 题）
+  useEffect(() => {
+    setStep((s) => Math.min(s, Math.max(0, questions.length ? visible.length : s)))
+  }, [visible.length, questions.length])
 
   // 自动前进：单选选中后快速跳（350ms），多选选中 ≥1 项后停顿跳（1200ms，每次勾选重置）。
   // 文本/滑块不自动跳（需显式确认）。delay 默认单选档，multi 传 MULTI_ADVANCE_MS。
@@ -202,7 +230,7 @@ export default function ClarifyPage() {
     }
   }
 
-  // 添加自定义选项（如用户想补充的调研对象），加入已选集合并成为可见 chip。
+  // 添加自定义选项（如用户自己想调研的目的地），加入已选集合并成为可见 chip。
   // 返回合并后的数组（无输入返回 null）。是否自动前进由调用方经 maybeAdvance 决策，
   // 故此处不再持有 schedule 形参——「核对屏不自动前进」规则统一收敛到上层 wiring（review 不调 maybeAdvance）。
   function addCustom(qid: string): string[] | null {
@@ -227,10 +255,14 @@ export default function ClarifyPage() {
     if (submitting || !taskId) return
     cancelAdvance() // 防止单步「跳过」时挂起的自动前进计时器在异步提交期间插队跳步
     setSubmitting(true)
+    setSubmitErr(null)
     try {
       await submitClarify(taskId, answers)
-    } finally {
       navigate(`/workspace/${taskId}`, { state: { query } })
+    } catch (e) {
+      // 结构性拒绝（如攻略多目的地）：留在本页就地提示，改完可重交
+      setSubmitErr(e instanceof Error ? e.message : '提交失败，请重试')
+      setSubmitting(false)
     }
   }
 
@@ -270,13 +302,13 @@ export default function ClarifyPage() {
     )
   }
 
-  const isReview = step === questions.length
+  const isReview = step === visible.length
   // 空问卷守卫：既有 effect 会跳 workspace，但 React 渲染先于 navigate 一帧，
-  // 直接 questions[step] 会取到 undefined 而崩溃，故前置返回。
-  if (!isReview && questions.length === 0) return null
-  const q = !isReview ? questions[step] : null
-  const pct = questions.length ? Math.round(((step + 1) / questions.length) * 100) : 0
-  const competitorsPresent = questions.some((item) => item.id === 'competitors')
+  // 直接 visible[step] 会取到 undefined 而崩溃，故前置返回。
+  if (!isReview && visible.length === 0) return null
+  const q = !isReview ? visible[step] : null
+  const pct = visible.length ? Math.round(((step + 1) / visible.length) * 100) : 0
+  const destinationsPresent = questions.some((item) => item.id === 'destinations')
 
   // 派生：当前题是否为单选/多选（自动前进适用），及已选数量。
   // selectedCount>0 与「自动前进计时器挂起」等价（选中即排程、归零即撤销、前进即切步），
@@ -302,7 +334,7 @@ export default function ClarifyPage() {
           <div className="flex items-center justify-center gap-2 bg-bg/90 py-1.5 text-tag text-ink-3 backdrop-blur">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" />
             {progressLabel}
-            <span className="rounded-full border border-primary/40 px-2 py-0.5 text-primary-deep">调研对象识别中…</span>
+            <span className="rounded-full border border-primary/40 px-2 py-0.5 text-primary-deep">目的地识别中…</span>
           </div>
         </div>
       )}
@@ -319,11 +351,9 @@ export default function ClarifyPage() {
               </div>
             </motion.div>
 
-            {competitorsFallback && q?.id === 'competitors' && (
+            {destinationsFallback && q?.id === 'destinations' && (
               <div className="mt-4 rounded-card border border-line/60 bg-card px-4 py-2.5 text-tag text-ink-3">
-                {competitorsPresent
-                  ? '以下调研对象为自动识别候选，建议核对或手动补充。'
-                  : '未能自动识别调研对象，可在「补充」题说明你关注的对手。'}
+                {destinationsPresent ? DEST_FALLBACK_HINT_CANDIDATES : DEST_FALLBACK_HINT_NONE}
               </div>
             )}
 
@@ -344,7 +374,7 @@ export default function ClarifyPage() {
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line/60">
                 <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
               </div>
-              <span className="whitespace-nowrap text-tag text-ink-3">第 {step + 1} / {questions.length} 题</span>
+              <span className="whitespace-nowrap text-tag text-ink-3">第 {step + 1} / {visible.length} 题</span>
             </div>
 
             <motion.div
@@ -358,6 +388,13 @@ export default function ClarifyPage() {
             >
               <p className="text-body font-medium text-ink">{q.question}</p>
               {q.hint && <p className="mt-1 text-tag text-ink-3">{q.hint}</p>}
+              {/* 工作量提示：数值一律取自后端 payload（缺字段则整条不渲染，不猜阈值） */}
+              {q.workload?.max_angles != null && q.workload?.fetch_per_destination != null && (
+                <p className="mt-2 flex items-center gap-1.5 text-tag text-primary-deep">
+                  <Clock size={12} className="shrink-0" />
+                  {`勾选越多、调研越全：${q.workload.mode_label ?? '本次'}按每个目的地约 ${q.workload.max_angles} 个角度 × ${q.workload.fetch_per_destination} 条证据取证。`}
+                </p>
+              )}
 
               <QuestionField
                 question={q}
@@ -366,12 +403,12 @@ export default function ClarifyPage() {
                   setAns(q.id, v)
                   maybeAdvance(q.type, v)
                 }}
-                customInput={q.id === 'competitors' ? (customInputs[q.id] ?? '') : undefined}
+                customInput={q.id === 'destinations' ? (customInputs[q.id] ?? '') : undefined}
                 onCustomInputChange={
-                  q.id === 'competitors' ? (v) => { setCustomInputs((c) => ({ ...c, [q.id]: v })); cancelAdvance() } : undefined
+                  q.id === 'destinations' ? (v) => { setCustomInputs((c) => ({ ...c, [q.id]: v })); cancelAdvance() } : undefined
                 }
                 onCustomAdd={
-                  q.id === 'competitors'
+                  q.id === 'destinations'
                     ? () => {
                         const next = addCustom(q.id)
                         if (next) maybeAdvance('multi', next)
@@ -431,11 +468,9 @@ export default function ClarifyPage() {
               </div>
             </motion.div>
 
-            {competitorsFallback && (
+            {destinationsFallback && (
               <div className="mt-4 rounded-card border border-line/60 bg-card px-4 py-2.5 text-tag text-ink-3">
-                {competitorsPresent
-                  ? '以下调研对象为自动识别候选，建议核对或手动补充。'
-                  : '未能自动识别调研对象，可在「补充」题说明你关注的对手。'}
+                {destinationsPresent ? DEST_FALLBACK_HINT_CANDIDATES : DEST_FALLBACK_HINT_NONE}
               </div>
             )}
 
@@ -448,7 +483,7 @@ export default function ClarifyPage() {
               animate="animate"
               className="mt-6 flex flex-col gap-5 outline-none"
             >
-              {questions.map((item) => (
+              {visible.map((item) => (
                 <div key={item.id} className="rounded-card border border-line/60 bg-card p-5 shadow-card">
                   <p className="text-body font-medium text-ink">{item.question}</p>
                   {item.hint && <p className="mt-1 text-tag text-ink-3">{item.hint}</p>}
@@ -457,15 +492,24 @@ export default function ClarifyPage() {
                     question={item}
                     value={answers[item.id]}
                     onChange={(v) => setAns(item.id, v)}
-                    customInput={item.id === 'competitors' ? (customInputs[item.id] ?? '') : undefined}
+                    customInput={item.id === 'destinations' ? (customInputs[item.id] ?? '') : undefined}
                     onCustomInputChange={
-                      item.id === 'competitors' ? (v) => setCustomInputs((c) => ({ ...c, [item.id]: v })) : undefined
+                      item.id === 'destinations' ? (v) => setCustomInputs((c) => ({ ...c, [item.id]: v })) : undefined
                     }
-                    onCustomAdd={item.id === 'competitors' ? () => addCustom(item.id) : undefined}
+                    onCustomAdd={item.id === 'destinations' ? () => addCustom(item.id) : undefined}
                   />
                 </div>
               ))}
             </motion.div>
+
+            {submitErr && (
+              <div
+                role="alert"
+                className="mt-4 rounded-card border border-amber-200 bg-amber-50 px-4 py-2.5 text-aux text-ink-2"
+              >
+                {submitErr}
+              </div>
+            )}
 
             <div className="mt-7 flex items-center justify-between">
               <button

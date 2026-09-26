@@ -23,7 +23,6 @@ vi.mock('../lib/api', () => ({
   createTask: vi.fn(),
   openClarifyStream: vi.fn(() => () => {}),
   submitClarify: vi.fn(),
-  fetchResearchTypes: vi.fn(),
 }))
 
 const mockedOpenClarifyStream = api.openClarifyStream as unknown as ReturnType<typeof vi.fn>
@@ -33,11 +32,6 @@ beforeEach(() => {
   navigateFn.mockClear()
   mockedOpenClarifyStream.mockReset().mockImplementation(() => () => {})
   mockedSubmitClarify.mockReset().mockResolvedValue({ ok: true })
-  ;(api.fetchResearchTypes as unknown as ReturnType<typeof vi.fn>).mockReset()
-    .mockResolvedValue([
-      { key: 'guide', label: '游玩攻略', subtitle: 'x' },
-      { key: 'assessment', label: '调研评估', subtitle: 'y' },
-    ])
 })
 afterEach(() => cleanup())
 
