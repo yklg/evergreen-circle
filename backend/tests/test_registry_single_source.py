@@ -89,3 +89,80 @@ def test_no_ordered_chapter_list_outside_registry():
         "发现注册表外的有序章节清单（章节集只能由 sections_for() 派生）：\n  "
         + "\n  ".join(f"{rel}:{ln} -> {ov}" for rel, ln, ov in found)
     )
+
+
+# ──  视角行穷尽覆盖（v4.3 ③：B1 填行的前置门）────────────────────
+# 症状（真机 r_69d064ad）：非亲子视角「没有针对性建议」，根因之一是视角能力散在**多张表**里，
+# 漏填任何一张都不报错。评审要求把「一张表的清单」从手写改成扫描：手写清单本身就是一种
+# 手抄 —— 新增/改名的表不会自动进清单，守卫于是安静地少守一张表。
+
+def _sid_keyed_tables():
+    """扫描（不列名单）research_types 里**以视角 sid 为主键**的模块顶层字典常量。"""
+    sids = set(RT.PERSPECTIVE_SPECS)
+    out = {}
+    for name, val in vars(RT).items():
+        # 只跳 dunder：私有名不是豁免理由，「以 sid 为键」才是判据
+        if name.startswith("__") or not isinstance(val, dict) or not val:
+            continue
+        if not isinstance(next(iter(val.keys())), str):
+            continue
+        if sids & {str(k) for k in val}:
+            out[name] = val
+    return out
+
+
+def test_every_sid_keyed_table_covers_every_perspective():
+    """任何一张以视角 sid 为键的表都必须覆盖全部 sid —— 半填一行即红。
+
+    两条防空过断言不是冗余：`PERSPECTIVE_SPECS` 空 ⇒ 判据退化为恒真；一张表都扫不到 ⇒
+    守卫在没人察觉的情况下变成空转（表被改名/删除就是这个形状）。
+    """
+    sids = set(RT.PERSPECTIVE_SPECS)
+    assert sids, "视角注册表为空 ⇒ 本守卫退化成恒真，先确认是不是改名了"
+    tables = _sid_keyed_tables()
+    assert tables, "一张以 sid 为键的表都没扫到 ⇒ 守卫空转（改名或删表会静默失效）"
+    holes = {name: sorted(sids - {str(k) for k in val}) for name, val in tables.items()}
+    holes = {n: miss for n, miss in holes.items() if miss}
+    assert not holes, (
+        "视角行只填了一部分表（漏填的那张表对该视角静默缺能力）：\n  "
+        + "\n  ".join(f"{n} 缺 {m}" for n, m in sorted(holes.items()))
+    )
+
+
+def test_perspective_ownership_is_exactly_one_type_per_sid():
+    """每个视角 sid 恰好被**一个**调研类型的 perspectives 认领，且认领键有词。
+
+    0 个认领 ⇒ 该视角填了表也永远进不了任何报告（孤儿数据）；2 个 ⇒ 同一次答案在两型里
+    会选到不同章，而 `structured_keys_for` 追加的键集是按 rtype 查的 ⇒ 章与分母不同源。
+    """
+    claimed: dict = {}
+    for rtype, spec in RT.RESEARCH_TYPES.items():
+        for key, p in (spec.get("perspectives") or {}).items():
+            claimed.setdefault(p["section"], []).append((rtype, key, p))
+    assert claimed, "没有任何类型认领任何视角 ⇒ 本守卫空转"
+    orphans = sorted(set(RT.PERSPECTIVE_SPECS) - set(claimed))
+    dupes = {sid: owners for sid, owners in claimed.items() if len(owners) > 1}
+    unknown = sorted(set(claimed) - set(RT.PERSPECTIVE_SPECS))
+    no_kw = sorted(sid for sid, owners in claimed.items()
+                   if not any(o[2].get("keywords") for o in owners))
+    assert not (orphans or dupes or unknown or no_kw), (
+        f"视角归属破了：无主 {orphans} · 多主 {sorted(dupes)} · "
+        f"未注册 {unknown} · 无关键词 {no_kw}")
+
+
+def test_guard_fires_on_a_half_filled_perspective_row(monkeypatch):
+    """真坏样本：新视角只填注册表、没填标题表 ⇒ 守卫必须点名那张表（否则它是恒绿假护栏）。"""
+    monkeypatch.setitem(RT.PERSPECTIVE_SPECS, "persp_synthetic", {
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ()})
+    sids = set(RT.PERSPECTIVE_SPECS)
+    assert "persp_synthetic" in sids
+    tables = _sid_keyed_tables()
+    missing = {n for n, v in tables.items() if "persp_synthetic" not in {str(k) for k in v}}
+    assert "SECTION_PLAN" in missing, (
+        f"坏样本没被判出（漏填的表不在射程内 ⇒ 守卫空转）：{sorted(missing)}")
+    # 归属侧同样要红：新 sid 没有任何类型认领
+    assert "persp_synthetic" in (set(RT.PERSPECTIVE_SPECS) - {
+        p["section"] for s in RT.RESEARCH_TYPES.values()
+        for p in (s.get("perspectives") or {}).values()})
