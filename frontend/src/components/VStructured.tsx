@@ -868,10 +868,11 @@ export const STRUCTURED_BLOCK_TYPES = Object.keys(BLOCKS) as StructuredBlockType
 
 /** 已退役块类型：后端不再产出，但存量报告 data 里仍带着它们（F2-3 契约）。
  *  与「未登记」是两回事——这类块画不出东西是**设计如此**，用户无从修复，报错只是噪声。
- *  真相源是后端 research_types.DEPRECATED_CLAIM_FIELDS，两边须一致（跨端测试钉住）。
- *  空串按同一口径静默跳过。 */
+ *  真相源是后端 research_types.DEPRECATED_CLAIM_FIELDS，两边**逐值相等**（跨端测试双向钉）。
+ *  ⚠️ 这里只登记**块名**：type 缺失/空串不当登记项，它是分发处的归一化判据（见下），
+ *  塞进本表会让「登记了什么」与「代码怎么兜底」两件事混成一份清单，镜像比对也就跟着失真。 */
 const RETIRED_BLOCK_TYPES: ReadonlySet<string> = new Set([
-  'feature_tree', 'pricing_model', 'user_persona', 'swot', '',
+  'feature_tree', 'pricing_model', 'user_persona', 'swot',
 ])
 
 /** 未识别结构化块的可见降级。
@@ -904,8 +905,11 @@ export function VStructuredBlock({ block, ev }: {
         if (Renderer) {
           return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} ev={ev} />
         }
-        if (RETIRED_BLOCK_TYPES.has(String(b.type ?? ''))) return null
-        return <VUnknownBlock key={`${b.type}-${i}`} type={String(b.type)} />
+        // type 缺失/空串 = 载荷本身没有块身份，画「未知块」是噪声（与退役同一静默口径）；
+        // 归一化判据留在分发处，不占 RETIRED_BLOCK_TYPES 的登记位（那张表须与后端逐值相等）
+        const t = String(b.type ?? '')
+        if (!t || RETIRED_BLOCK_TYPES.has(t)) return null
+        return <VUnknownBlock key={`${b.type}-${i}`} type={t} />
       })}
     </>
   )

@@ -162,17 +162,29 @@ if __name__ == "__main__":
 # 若没人钉「快照 ≡ 注册表」，那道门守的就是一份可能过期的冻结文件而非真相源——
 # 加一个块类型只改注册表、忘了重跑生成器，前端门照样全绿。
 
-def _front_fixture_types():
+def _front_fixture_array():
     import json
     from pathlib import Path
     p = (Path(__file__).resolve().parent.parent.parent
          / "frontend" / "src" / "mocks" / "researchTypes.json")
-    return {t["key"]: t for t in json.loads(p.read_text(encoding="utf-8"))["types"]}
+    return json.loads(p.read_text(encoding="utf-8"))["types"]
 
 
 def test_fixture_snapshot_matches_registry_block_types():
-    snap = _front_fixture_types()
-    assert set(snap) == set(rt.RESEARCH_TYPES), "快照类型集与注册表漂移"
+    """快照 ⊇ 注册表 ⊇ 快照，逐类型比块清单 —— 并**先钉快照自身不是塌过的**。
+
+    ⚠️ 不能直接把数组转成 `{t["key"]: t}`：真实快照里出现两个同 `key` 条目时，字典推导
+    **静默取尾者**，于是「快照类型集 == 注册表类型集」照样成立、门照样全绿。同理
+    「空快照」会让循环体一次都不执行 ⇒ 断言自动通过。这两条都是**只存在于提交物里的
+    缺陷**（工作树看不出来），所以这里按原始数组判，不先聚合。
+    """
+    arr = _front_fixture_array()
+    keys = [t.get("key") for t in arr]
+    assert len(arr) >= 2, f"快照只剩 {len(arr)} 个类型 ⇒ 比对退化，逐项断言一次都不会跑"
+    dupes = {k for k in keys if keys.count(k) > 1}
+    assert not dupes, f"快照里有重复 key {sorted(map(str, dupes))} —— 转字典会静默塌成一条，先修快照"
+    assert set(keys) == set(rt.RESEARCH_TYPES), "快照类型集与注册表漂移"
+    snap = {t["key"]: t for t in arr}
     for opt in rt.research_type_options():
         key = opt["key"]
         assert key in snap, f"{key} 不在快照里——重跑 gen-research-types-fixture.mjs"
@@ -182,10 +194,14 @@ def test_fixture_snapshot_matches_registry_block_types():
 
 
 def test_frontend_retired_block_list_matches_backend_deprecated_fields():
-    """前端 VStructured 的退役清单必须覆盖后端 DEPRECATED_CLAIM_FIELDS。
+    """前端 VStructured 的退役清单与后端 DEPRECATED_CLAIM_FIELDS **逐值相等**。
 
     两边各自维护一份「哪些块已死」，漂移的后果是：后端已停产的旧块在前端被当成
     「版本错位的未知块」，在用户会分享的报告里画出「数据暂不可用」——噪声而非信号。
+
+    ⚠️ 用 `==` 而不是 `⊆`：单向只拦「后端加了前端没跟」，前端多出来的条目（实测就长期
+    混进过一个 `''`）永远没人看 —— 那等于往真相源旁边又养一份越用越乱的清单。空 type
+    是分发处的归一化判据，不占登记位。
     """
     import re
     from pathlib import Path
@@ -194,5 +210,6 @@ def test_frontend_retired_block_list_matches_backend_deprecated_fields():
     m = re.search(r"RETIRED_BLOCK_TYPES[^=]*=\s*new Set\(\[(.*?)\]\)", src, re.S)
     assert m, "前端找不到 RETIRED_BLOCK_TYPES 定义（改名或删了？退役块的静默契约随之失效）"
     retired = set(re.findall(r"'([^']*)'", m.group(1)))
-    assert set(rt.DEPRECATED_CLAIM_FIELDS) <= retired, \
-        f"后端已废弃但前端未列入退役清单：{set(rt.DEPRECATED_CLAIM_FIELDS) - retired}"
+    assert retired == set(rt.DEPRECATED_CLAIM_FIELDS), (
+        f"前端多出：{sorted(retired - set(rt.DEPRECATED_CLAIM_FIELDS))} · "
+        f"后端已废弃而前端未登记：{sorted(set(rt.DEPRECATED_CLAIM_FIELDS) - retired)}")
