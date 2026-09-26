@@ -100,7 +100,7 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
     # 旧实现按 c["type"] 无差别广播，同类型多图时每章都会拿到全部张数（串章根因）。
     # 章节标题（类型白名单内的章节加中文序号）
     title_map = {**RT.SECTION_PLAN, **RT.numbered_titles(section_ids, research_type)}
-    data_grid_sections = set(spec["data_grid_sections"])
+    data_grid_sections = set(RT.data_grid_sections_for(research_type, section_ids))
 
     def _section(sid: str):
         fields, chart_types = RT.section_fields(sid)

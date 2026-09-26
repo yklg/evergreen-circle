@@ -176,6 +176,19 @@ STRUCTURED_FIELDS: Tuple[str, ...] = (
     "spot_ranking", "spot_routes", "food_ranking", "shop_list",
 )
 
+# 结构化键 → 中文可读标签。写稿提示用它给 LLM 一个可读名字，**不是装饰**：
+# 此前这张表落在 writer.py 且缺视角条目，writer 走 `.get(key, key)` 回落，
+# 于是亲子章的写作提示里字面印着 `family_checklist结构：…`——LLM 看到的是裸英文键名。
+# 语义标签属注册表而非渲染编排层；视角三键全类型共用一份（一卷只有一个活跃视角）。
+STRUCTURED_LABEL: Dict[str, str] = {
+    "spot_ranking": "景点综合评分榜", "food_ranking": "美食Top榜",
+    "spot_routes": "逐景点路线", "shop_list": "美食商铺清单",
+    "route_plan": "逐日路线", "stay_options": "住宿选项", "cost_breakdown": "花费拆解",
+    "access_matrix": "可达性矩阵", "amenity_checklist": "配套清单", "risk_profile": "风险画像",
+    "persp_checklist": "视角逐景点核查表", "persp_rules": "视角专属铁律",
+    "persp_packing": "行前清单",
+}
+
 # 章节 id → 该章挂载的结构化键（渲染与审计的单一映射，防散落双定义）。
 # 注意：地图不是图表——坐标/区域是 spot_ranking 的行字段，前端地图组件读结构化数据。
 SECTION_STRUCTURED: Dict[str, Tuple[str, ...]] = {
@@ -189,8 +202,9 @@ SECTION_STRUCTURED: Dict[str, Tuple[str, ...]] = {
     "accessibility": ("access_matrix",),
     "amenities": ("amenity_checklist",),
     "safety": ("risk_profile",),
-    # 视角专属块（rough-cliff-vole）：不登记即孤儿数据——渲染/审计按本表挂章。
-    "persp_family": ("family_checklist", "persp_rules", "persp_packing"),
+    # 视角章的挂键**不在此登记**——由 PERSPECTIVE_SPECS 派生重绑（见本表之后）。
+    # 曾在此手抄一份 `persp_family`，与注册表构成双定义：填新视角行却忘了同步本表，
+    # 装配照产数据、挂章静默不挂，正是「换群体就没针对性建议」的隐藏出口之一。
 }
 
 # 图表类型白名单（charts.py 能力面 ∩ 本模块使用面）
@@ -235,11 +249,9 @@ DEST_KEYED_ROWS: Tuple[Tuple[str, str], ...] = (
     ("structured.route_plan", "destination"),
     ("structured.stay_options", "destination"),
     ("structured.cost_breakdown", "destination"),
-    # 视角块按**组级 destination** 分组（同 spot_routes 形状）——登记组级主键安全；
-    # 行级景点名**不登记**（景点名不是目的地，误登记会被整表滤光，评审 P0-1）。
-    ("structured.family_checklist", "destination"),
-    ("structured.persp_rules", "destination"),
-    ("structured.persp_packing", "destination"),
+    # 视角块的分行登记**不在此手抄**——由 PERSPECTIVE_SPECS 派生重绑（见其后）。
+    # 手抄的后果是静默失覆盖：analyze._enforce_dest_rows 反射不到 holder 时只 continue，
+    # 不报错，「大理报告冒出丽江行」正是这样复发的（评审 P0-1）。
 )
 
 # ── 视角专属板块能力注册表（rough-cliff-vole）────────────────────
@@ -257,9 +269,11 @@ PERSPECTIVE_SPECS: Dict[str, Dict[str, Any]] = {
         # 换成 UGC 问句用词（带娃/推车/婴儿车/台阶）才采到「路面适不适合推车」这类可行事实。
         "spot_probe_tpls": ("{spot} 儿童票 免票 身高 年龄 规则",
                             "{spot} 带娃 推车 婴儿车 台阶 母婴室"),
-        "checklist_key": "family_checklist",
+        "checklist_key": "persp_checklist",
         "checklist_columns": ("儿童票规则", "推车可行/体力门槛",
                               "母婴室/家庭卫生间", "带娃节奏建议"),
+        # 数据网格 CSV「指标」列的文案：随视角而变，故进注册表而非渲染层字面量。
+        "checklist_metric": "亲子核查项",
         "rules_key": "persp_rules",
         "packing_key": "persp_packing",
         "hard_constraints": ("days", "budget_level", "origin", "child_age"),
@@ -293,10 +307,21 @@ PERSPECTIVE_SPECS: Dict[str, Dict[str, Any]] = {
                      "hard_constraints": ("horizon", "budget_level")},
 }
 
-# 全部视角专属结构化键的并集（元测试与 structured_keys_for 共用判据）。
-PERSP_STRUCTURED_KEYS = frozenset(
-    k for p in PERSPECTIVE_SPECS.values()
-    for k in (p.get("checklist_key"), p.get("rules_key"), p.get("packing_key")) if k)
+# 视角专属结构化键的**有序去重**并集（按注册表行序，保证派生结果跨运行确定）。
+_PERSP_STRUCTURED_ORDER: Tuple[str, ...] = tuple(
+    dict.fromkeys(k for p in PERSPECTIVE_SPECS.values()
+                  for k in (p.get("checklist_key"), p.get("rules_key"),
+                            p.get("packing_key")) if k))
+
+# 全部视角专属结构化键（元测试与 structured_keys_for 共用判据）。
+PERSP_STRUCTURED_KEYS = frozenset(_PERSP_STRUCTURED_ORDER)
+
+# 视角块的目的地分行登记 = 由注册表派生（同 spot_routes 形状，登记**组级**主键）。
+# 派生而非手抄：填一行视角即自动获得目的地行过滤，不必记得回来补第三处；
+# 漏抄的失败模式是静默失覆盖（_enforce_dest_rows 反射不到 holder 只 continue）。
+# 行级景点名**不登记**——景点名不是目的地，误登记会把整表滤光（评审 P0-1）。
+DEST_KEYED_ROWS = DEST_KEYED_ROWS + tuple(
+    (f"structured.{k}", "destination") for k in _PERSP_STRUCTURED_ORDER)
 
 
 def perspective_spec(section_id: str) -> Dict[str, Any]:
@@ -309,6 +334,17 @@ def perspective_structured_keys(section_id: str) -> Tuple[str, ...]:
     p = perspective_spec(section_id)
     return tuple(k for k in (p.get("checklist_key"), p.get("rules_key"),
                              p.get("packing_key")) if k)
+
+
+# 视角章挂键的唯一真相源 = PERSPECTIVE_SPECS，故在此**派生重绑**而非回落查表：
+# 回落会让 section_structured_keys 变成「按 sid 命名空间隐式二义」的两处定义，
+# 双定义这个根因本身就没被消除。未配置视角派生出空元组，与「本表无此键」在
+# 全部消费点（writer 挂提示 / assemble 挂块 / audit 分母）逐值等价。
+# 必须落在 perspective_structured_keys 与 PERSPECTIVE_SPECS 之后（两者皆前置依赖）。
+SECTION_STRUCTURED = {
+    **SECTION_STRUCTURED,
+    **{sid: perspective_structured_keys(sid) for sid in PERSPECTIVE_SPECS},
+}
 
 _CN_NUM: Tuple[str, ...] = ("一", "二", "三", "四", "五", "六",
                             "七", "八", "九", "十", "十一", "十二", "十三", "十四")
@@ -511,7 +547,9 @@ RESEARCH_TYPES: Dict[str, Dict[str, Any]] = {
         },
         "charts": ("radar", "cost_bar", "cost_compose", "season_heat", "donut",
                    "trend", "sentiment_donut", "platform_bar", "wordcloud"),
-        "data_grid_sections": ("spots", "food", "budget", "shops", "route", "persp_family"),
+        # 视角章**不在此列**：哪一章有核查表由 PERSPECTIVE_SPECS 决定，
+        # 走 data_grid_sections_for()（写死 persp_family = 换群体就静默没有数据网格）。
+        "data_grid_sections": ("spots", "food", "budget", "shops", "route"),
         # 信息密度硬约束（评分/篇幅等规模参数仍归 MODE_CONFIG；这里是编辑规则），
         # 由 orchestrator 在写稿提示中注入，仅 guide 类型声明。
         "density": (
@@ -757,6 +795,19 @@ def structured_keys_for(rtype: Optional[str], perspective_section_id: str = "") 
         if k not in keys:
             keys.append(k)
     return tuple(keys)
+
+
+def data_grid_sections_for(rtype: Optional[str],
+                           present_section_ids: Sequence[str] = ()) -> Tuple[str, ...]:
+    """本卷应产出数据网格的章节 = 类型静态白名单 ∪ **配了核查表的视角章**。
+
+    视角章是 `sections_for()` 按 party 命中动态插入的，静态白名单无法预知是哪一章，
+    故此处按 `perspective_spec(sid)["checklist_key"]` 谓词并入——未配置视角不并入，
+    与全链路「None 即跳过」同构。顺序沿用 present_section_ids，保证跨运行确定性。
+    """
+    static = set(type_spec(rtype)["data_grid_sections"])
+    return tuple(sid for sid in present_section_ids
+                 if sid in static or perspective_spec(sid).get("checklist_key"))
 
 
 def radar_title(rtype: Optional[str], n_destinations: int) -> str:

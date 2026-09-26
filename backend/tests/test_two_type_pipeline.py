@@ -697,18 +697,18 @@ def test_family_perspective_end_to_end_placeholder_table_and_timing(monkeypatch)
     assert report
 
     structured = report["structured"]
-    assert "family_checklist" in structured and "persp_rules" in structured
-    rows = structured["family_checklist"][0]["items"]
+    assert "persp_checklist" in structured and "persp_rules" in structured
+    rows = structured["persp_checklist"][0]["items"]
     spot_rows = structured["spot_ranking"][0]["items"]
     assert [r["spot_id"] for r in rows] == [s["spot_id"] for s in spot_rows], \
         "核查表行集必须逐行等于冻结榜（行守恒 seed，LLM 不可造行/丢行）"
     assert all(len(r["cells"]) == 4 for r in rows)
     # 时序：第一次质量评估时视角键已在（装配先于质检——分母认键、质检看得到表）
-    assert seen_structured_keys_at_quality and "family_checklist" in seen_structured_keys_at_quality[0]
+    assert seen_structured_keys_at_quality and "persp_checklist" in seen_structured_keys_at_quality[0]
     # 块挂章：SECTION_STRUCTURED 通道把核查表挂到亲子视角章
     persp_sec = next(s for s in report["sections"] if s["id"] == "persp_family")
     mounted = {b["type"] for b in (persp_sec.get("structured") or [])}
-    assert {"family_checklist", "persp_rules", "persp_packing"} <= mounted
+    assert {"persp_checklist", "persp_rules", "persp_packing"} <= mounted
 
 
 def test_report_answers_digest_whitelist_and_origin_exclusion(monkeypatch):

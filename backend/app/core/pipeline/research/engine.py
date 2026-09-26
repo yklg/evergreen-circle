@@ -169,7 +169,6 @@ from app.core.pipeline.research.perspective import (  # noqa: E402,F401
     _fill_persp_blocks,
 )
 from app.core.pipeline.research.writer import (  # noqa: E402,F401
-    _STRUCTURED_LABEL,
     _structureless,
     _structure_status,
     _summarize_structure,
@@ -1164,9 +1163,12 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                                           f"（每景点每平台 ≤{cfg['spot_sent_take']} 条，(spot×platform) 聚合数据源）。",
                                   "ts": _now()})
         # 视角专属逐景点二查（rough-cliff-vole）：视角配了核查表且模式有配额才发；
-        # 判据全部查表（PERSPECTIVE_SPECS / MODE_CONFIG），非亲子视角零调用。
+        # 判据全部查表（PERSPECTIVE_SPECS / MODE_CONFIG），未配置视角零调用。
+        # 闸门必须同时看 checklist_key：_fill_persp_blocks 无核查表键时直接返回 {}，
+        # 只判 spot_probe_tpls 会为一表无人消费的证据实花搜索预算。
         persp_probe_tpls = tuple(RT.perspective_spec(persp_sid).get("spot_probe_tpls") or ())
-        if persp_probe_tpls and spot_entities:
+        if (persp_probe_tpls and RT.perspective_spec(persp_sid).get("checklist_key")
+                and spot_entities):
             probe_topn = int(cfg.get("persp_probe_topn") or 0)
             if not probe_topn:
                 yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
@@ -1189,7 +1191,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                     n_targets = min(len([e for e in spot_entities if e.get("spot_id")]), probe_topn)
                     yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": analyst,
                                           "text": f"视角专项二查：{len(probe['by_spot'])}/{n_targets} 个景点"
-                                                  f"采到票规/设施线索（共 {len(probe['evidences'])} 条证据），"
+                                                  f"采到专项核查线索（共 {len(probe['evidences'])} 条证据），"
                                                   "未命中景点在核查表按「待核验」占位。",
                                           "ts": _now()})
         yield _ev("progress", prog(56, "spots", len(evidences)))

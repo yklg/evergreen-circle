@@ -686,14 +686,19 @@ def _build_data_grid(section_id: str, analysis: Dict[str, Any],
                     plan = f"{sp.get('transport', '')} / {sp.get('duration', '')}".strip(" /")
                     rows.append(_row(f"{dest} · D{day} {sp.get('name', '')}", plan or "—",
                                      "行程安排", sp.get("evidence_ids")))
-    elif section_id == "persp_family":   # guide：亲子视角逐景点核查表（一格一行，可溯源）
-        for fc in structured.get("family_checklist", []):
+    elif RT.perspective_spec(section_id).get("checklist_key"):
+        # 视角章逐景点核查表（一格一行，可溯源）。承载键与「指标」列文案都取自注册表：
+        # 原先写死 `section_id == "persp_family"` + `family_checklist` + 「亲子核查项」，
+        # 换群体时即便配了核查表数据也静默不出网格（评审 P0 的三处硬编码之一）。
+        _pspec = RT.perspective_spec(section_id)
+        _metric = _pspec.get("checklist_metric") or "视角核查项"
+        for fc in structured.get(_pspec["checklist_key"], []):
             dest = str(fc.get("destination", ""))
             for it in fc.get("items", []):
                 for c in it.get("cells", []):
                     val = str(c.get("text") or "待核验")
                     rows.append(_row(f"{dest} · {it.get('spot_name', '')} · {c.get('column', '')}",
-                                     val, "亲子核查项" if c.get("verified") else "待核验占位",
+                                     val, _metric if c.get("verified") else "待核验占位",
                                      c.get("evidence_ids")))
     elif section_id == "value":           # assessment：性价比与成本
         for c in (analysis.get("cost") or []):

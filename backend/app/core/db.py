@@ -822,6 +822,35 @@ _LEGACY_QUALITY_KEYS = (
     ("coverage_by_brand", "coverage_by_destination"),
     ("brand_coverage_rate", "destination_coverage_rate"),
 )
+# 视角核查表承载键：亲子行曾叫 family_checklist，注册表收敛单名后统一为 persp_checklist。
+# 存量报告里已实测存在旧键（r_6dadffee，2026-09-26 起持续新增），故只做**读时归一**：
+# 不改写 reports.data、不做迁移——渲染层只认新键，漏归一的失败模式是核查表静默消失。
+_LEGACY_STRUCTURED_KEYS = (("family_checklist", "persp_checklist"),)
+
+
+def _normalize_structured_keys(container: Any) -> None:
+    """就地归一报告快照里的结构化键（顶层 structured 字典 + 各章 structured 块列表）。"""
+    if not isinstance(container, dict):
+        return
+    top = container.get("structured")
+    if isinstance(top, dict):
+        for old, new in _LEGACY_STRUCTURED_KEYS:
+            if old in top:
+                top.setdefault(new, top.pop(old))
+    secs = container.get("sections")
+    if isinstance(secs, list):
+        for sec in secs:
+            blocks = sec.get("structured") if isinstance(sec, dict) else None
+            if isinstance(blocks, dict):          # 旧报告：单块 dict
+                blocks = [blocks]
+            if not isinstance(blocks, list):
+                continue
+            for b in blocks:
+                if not isinstance(b, dict):
+                    continue
+                for old, new in _LEGACY_STRUCTURED_KEYS:
+                    if b.get("type") == old:
+                        b["type"] = new
 
 
 def _normalize_report_keys(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -850,6 +879,7 @@ def _normalize_report_keys(data: Dict[str, Any]) -> Dict[str, Any]:
             for old, new in _LEGACY_QUALITY_KEYS:
                 if old in q and new not in q:
                     q[new] = q.pop(old)
+    _normalize_structured_keys(data)
     return data
 
 

@@ -98,7 +98,12 @@ def test_structured_keys_shape(rtype):
     llm_keys = set(keys) - set(O._ENTITY_STAGE_KEYS)
     missing_frag = llm_keys - set(O._STRUCTURED_SCHEMA)
     assert not missing_frag, f"{rtype} 结构化键缺提示片段：{missing_frag}"
-    assert set(keys) <= set(O._STRUCTURED_LABEL), f"{rtype} 结构化键缺中文标签"
+    assert set(keys) <= set(rt.STRUCTURED_LABEL), f"{rtype} 结构化键缺中文标签"
+    # 视角专属键同样要有中文标签：本断言原先只查静态 structured_keys，
+    # 于是 family_checklist/persp_rules/persp_packing 三个视角键一直没有标签，
+    # writer 的 `.get(key, key)` 把裸英文键名直接印进了写稿提示（漏判根因）。
+    assert set(rt.PERSP_STRUCTURED_KEYS) <= set(rt.STRUCTURED_LABEL), \
+        f"视角结构化键缺中文标签：{set(rt.PERSP_STRUCTURED_KEYS) - set(rt.STRUCTURED_LABEL)}"
 
 
 @pytest.mark.parametrize("rtype", _TYPES)

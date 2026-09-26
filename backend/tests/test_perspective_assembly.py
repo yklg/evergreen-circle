@@ -54,7 +54,7 @@ def test_rows_seeded_from_frozen_ranking_not_from_llm(monkeypatch):
         {"spot_id": "大理_spot_99", "cells": {"儿童票规则": {
             "text": "表外景点也不采纳", "evidence_ids": ["e_aaaa1111"], "verified": True}}},
     ], "rules": [], "packing": []})
-    rows = out["family_checklist"][0]["items"]
+    rows = out["persp_checklist"][0]["items"]
     assert [r["spot_id"] for r in rows] == [s["spot_id"] for s in _SPOTS]
     assert all(len(r["cells"]) == 4 for r in rows)
     assert not any(r.get("spot_name") == "表外景点" for r in rows)
@@ -63,7 +63,7 @@ def test_rows_seeded_from_frozen_ranking_not_from_llm(monkeypatch):
 def test_unmatched_spot_still_has_row(monkeypatch):
     """matched=False（spot_2）也占一行——行守恒覆盖长尾。"""
     out = _fill(monkeypatch, {"rows": [], "rules": [], "packing": []})
-    rows = out["family_checklist"][0]["items"]
+    rows = out["persp_checklist"][0]["items"]
     assert {r["spot_id"] for r in rows} == {s["spot_id"] for s in _SPOTS}
     assert all(c["text"].startswith("待核验") and not c["verified"]
                for r in rows for c in r["cells"])
@@ -79,7 +79,7 @@ def test_verified_without_real_evidence_is_downgraded(monkeypatch):
             "推车可行/体力门槛": {"text": "凭常识编的坡度参数", "evidence_ids": [], "verified": True},
             "母婴室/家庭卫生间": {"text": "假引用", "evidence_ids": ["e_ffffffff"], "verified": True},
         }}], "rules": [], "packing": []})
-    cells = {c["column"]: c for c in out["family_checklist"][0]["items"][0]["cells"]}
+    cells = {c["column"]: c for c in out["persp_checklist"][0]["items"][0]["cells"]}
     ok = cells["儿童票规则"]
     assert ok["verified"] and ok["evidence_ids"] == ["e_aaaa1111"]
     fake1 = cells["推车可行/体力门槛"]
@@ -93,7 +93,7 @@ def test_llm_total_failure_still_emits_placeholder_table(monkeypatch):
         raise RuntimeError("模型不可用")
     monkeypatch.setattr(llm, "chat_json", boom)
     out = O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")
-    rows = out["family_checklist"][0]["items"]
+    rows = out["persp_checklist"][0]["items"]
     assert len(rows) == len(_SPOTS)
     assert out["persp_rules"][0]["items"] == []
     assert out["persp_packing"][0]["items"] == []
@@ -133,9 +133,9 @@ def test_enforce_dest_rows_keeps_persp_rows():
     checklist = {"destination": _DEST, "items": [
         {"spot_id": "大理_spot_1", "spot_name": "洱海", "cells": []},
         {"spot_id": "大理_spot_2", "spot_name": "大理古城", "cells": []}]}
-    payload = {"family_checklist": [checklist]}
+    payload = {"persp_checklist": [checklist]}
     out = O._enforce_dest_rows(payload, [_DEST])
-    assert out["family_checklist"][0]["items"] == checklist["items"], \
+    assert out["persp_checklist"][0]["items"] == checklist["items"], \
         "景点名不是目的地——把洱海当 foreign 目的地行剔掉即 calm-reef-pigeon P0-1 事故回潮"
 
 
@@ -205,7 +205,7 @@ def test_qa_review_without_perspective_unchanged(monkeypatch):
 
 
 # ── RV-7 视角章 CSV 数据网格（一格一行、待核验如实入表）────────────
-_CHECKLIST = {"family_checklist": [{
+_CHECKLIST = {"persp_checklist": [{
     "destination": _DEST,
     "items": [
         {"spot_id": "大理_spot_1", "spot_name": "洱海", "cells": [
@@ -223,8 +223,40 @@ _CHECKLIST = {"family_checklist": [{
 
 
 def test_guide_registry_puts_perspective_section_on_csv_channel():
-    """元钉：视角章登记在章节级 CSV 注册表里（漏登记＝前端 CSV 按钮静默缺失）。"""
-    assert "persp_family" in rt.type_spec("guide")["data_grid_sections"]
+    """元钉：视角章进 CSV 通道由**注册表能力**决定，不由静态白名单写死。
+
+    静态 `data_grid_sections` 里写死 `persp_family` 是「换群体就没数据网格」的根因之一：
+    视角章是 sections_for() 按 party 动态插入的，静态表根本不知道会是哪一章。
+    """
+    static = rt.type_spec("guide")["data_grid_sections"]
+    assert not [s for s in static if s.startswith("persp_")], \
+        "视角章不得再出现在静态白名单里——应走 data_grid_sections_for 的谓词并入"
+
+    fam = rt.data_grid_sections_for("guide", rt.sections_for("guide", "expert", "亲子家庭"))
+    assert "persp_family" in fam, "配了核查表的视角章必须有 CSV（漏了＝前端按钮静默缺失）"
+
+    couple = rt.data_grid_sections_for("guide", rt.sections_for("guide", "expert", "情侣/夫妻"))
+    assert "persp_couple" not in couple, \
+        "未配 checklist_key 的视角必须整条不并入（谓词为 None 即跳过，与全链路同构）"
+    assert set(couple) == set(static), "非视角章的 CSV 集合逐值不变"
+
+
+def test_persp_grid_metric_is_row_data_not_literal(monkeypatch):
+    """指标列文案随行而变：证明它不是渲染层字面量（否则新视角会顶着「亲子核查项」出表）。"""
+    probe = "persp_zzz_metric_probe"
+    monkeypatch.setitem(rt.PERSPECTIVE_SPECS, probe, {
+        "checklist_key": "zzz_metric_checklist",
+        "checklist_columns": ("甲列",), "checklist_metric": "甲视角核查项"})
+    rows = [{"spot_id": "s1", "spot_name": "某地",
+             "cells": [{"column": "甲列", "text": "事实",
+                        "evidence_ids": ["e_aaaa1111"], "verified": True}]},
+            {"spot_id": "s2", "spot_name": "另一地",
+             "cells": [{"column": "甲列", "text": "另一事实",
+                        "evidence_ids": ["e_aaaa1111"], "verified": True}]}]
+    data = {"structured": {"zzz_metric_checklist": [{"destination": _DEST, "items": rows}]}}
+    grid = O._build_data_grid(probe, data, _EVID)
+    assert grid and grid["rows"][0]["metric"] == "甲视角核查项", \
+        "指标列必须取本行的 checklist_metric"
 
 
 def test_persp_grid_one_row_per_cell_with_traceability():

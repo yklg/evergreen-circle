@@ -26,7 +26,7 @@ def test_all_perspective_sections_registered():
 
 def test_family_spec_shape():
     p = rt.PERSPECTIVE_SPECS["persp_family"]
-    assert p["checklist_key"] == "family_checklist"
+    assert p["checklist_key"] == "persp_checklist"
     assert len(p["checklist_columns"]) == 4
     assert all("{spot}" in t for t in p["spot_probe_tpls"]), "二查模板必须含景点占位"
     assert "child_age" in p["hard_constraints"]
@@ -65,14 +65,14 @@ def test_structured_keys_for_non_perspective_equals_static():
 def test_structured_keys_for_family_appends_owned_keys():
     base = tuple(rt.type_spec("guide")["structured_keys"])
     got = rt.structured_keys_for("guide", "persp_family")
-    assert got == base + ("family_checklist", "persp_rules", "persp_packing")
+    assert got == base + ("persp_checklist", "persp_rules", "persp_packing")
 
 
 def test_perspective_grouped_keys_registered_dest_rows():
     """视角块按组级 destination 分组 → 登记 DEST_KEYED_ROWS（组级主键安全；
     行级景点名绝不登记——被整表滤光即 calm-reef-pigeon P0-1 的同族事故）。"""
     paths = dict(rt.DEST_KEYED_ROWS)
-    for k in ("structured.family_checklist", "structured.persp_rules",
+    for k in ("structured.persp_checklist", "structured.persp_rules",
               "structured.persp_packing"):
         assert paths.get(k) == "destination"
     assert not any("spot_name" in key for key in paths), "景点名不得作行主键登记"
@@ -89,7 +89,7 @@ def test_completeness_denominator_stable_without_perspective():
     golden = schema_completeness(base, "guide")
     assert schema_completeness(base, "guide", "") == golden
     # 视角键混入载荷也不改变非视角卷得分（分母不认、内容不数）
-    polluted = dict(base, family_checklist=[{"destination": "大理", "items": [{"spot_id": "x"}]}])
+    polluted = dict(base, persp_checklist=[{"destination": "大理", "items": [{"spot_id": "x"}]}])
     assert schema_completeness(polluted, "guide") == golden
 
 
@@ -99,7 +99,7 @@ def test_completeness_family_denominator_grows():
     with_persp = schema_completeness(base, "guide", "persp_family")
     assert with_persp < plain, "亲子卷分母应含三视角键（未填充则得分下移）"
     filled = dict(base,
-                  family_checklist=[{"destination": "大理", "items": [{"spot_id": "s1"}]}],
+                  persp_checklist=[{"destination": "大理", "items": [{"spot_id": "s1"}]}],
                   persp_rules=[{"destination": "大理", "items": [{"rule": "r"}]}],
                   persp_packing=[{"destination": "大理", "items": [{"item": "i"}]}])
     # 精确分数钉：guide 基础 7 键 + 视角 3 键 = 分母 10；填充 1+3 = 4 → 0.4

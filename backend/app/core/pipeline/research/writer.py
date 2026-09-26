@@ -21,18 +21,9 @@ from .analyze import _ENTITY_STAGE_KEYS, _diag, _diag_of
 from .collect import _evidence_digest
 
 
-# 结构化键 → 展示用中文名（写入章节提示时给 LLM 一个可读标签）
-_STRUCTURED_LABEL: Dict[str, str] = {
-    "spot_ranking": "景点综合评分榜", "food_ranking": "美食Top榜",
-    "spot_routes": "逐景点路线", "shop_list": "美食商铺清单",
-    "route_plan": "逐日路线", "stay_options": "住宿选项", "cost_breakdown": "花费拆解",
-    "access_matrix": "可达性矩阵", "amenity_checklist": "配套清单", "risk_profile": "风险画像",
-}
-
-
 # ── 撰写：LLM 逐章产出正文（行研/咨询级深度）─────────────
-# 章节标题 / 章节提示 / 视角映射 / 字段归属全部由 research_types 单一真相源提供，
-# 本模块只做渲染与编排（新增调研类型无需改这里）。
+# 章节标题 / 章节提示 / 视角映射 / 字段归属 / 结构化键标签全部由 research_types
+# 单一真相源提供，本模块只做渲染与编排（新增调研类型无需改这里）。
 
 
 def _structureless(st: Any) -> bool:
@@ -115,7 +106,7 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
     for key in mount_keys:
         if not structured.get(key):
             continue
-        label = _STRUCTURED_LABEL.get(key, key)
+        label = RT.STRUCTURED_LABEL.get(key, key)
         if key in _ENTITY_STAGE_KEYS:
             extra += (f"\n【{label}·唯一实体表】以下条目是本次调研锁定的景点实体（含规则算出的评分与明细）。"
                       "本章只能引用表内的景点名与 spot_id，禁止改名、合并或补充表外景点；"
