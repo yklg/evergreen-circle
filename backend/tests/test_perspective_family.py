@@ -126,19 +126,62 @@ def test_show_if_rules_are_not_dangling(rtype):
 # ── VR-B2/B3/B4 问卷闸门与题序 ──────────────────────────────────
 
 def test_missing_conditional_answers_matrix():
+    """每个已展开的群体追问都必答；未展开的（含无追问的选项）一律放行。"""
     m = rt.missing_conditional_answers
-    assert m("guide", {"party": "情侣/夫妻"}) == []
     assert m("guide", {"party": "亲子家庭"}) == ["child_age"]
+    assert m("guide", {"party": "情侣/夫妻"}) == ["couple_trip"]
+    assert m("guide", {"party": "独自旅行"}) == ["solo_priority"]
+    assert m("guide", {"party": "摄影采风"}) == ["photo_focus"]
+    assert m("guide", {"party": "带长辈"}) == ["senior_mobility"]
+    # 「朋友结伴」无对应视角章 ⇒ 无追问，选它不该被任何条件题卡住
+    assert m("guide", {"party": "朋友结伴"}) == []
+    # 已答 → 放行；空白值 → 仍算缺
     assert m("guide", {"party": "亲子家庭", "child_age": "3-6 岁"}) == []
     assert m("guide", {"party": "亲子家庭", "child_age": "  "}) == ["child_age"]
     assert m("guide", {}) == []
 
 
-def test_guide_question_order_child_age_adjacent_to_party():
-    ids = [q["id"] for q in rt.type_spec("guide")["clarify"]]
-    assert ids.index("child_age") == ids.index("party") + 1
-    assert [i for i in ids if i != "child_age"] == [
-        "days", "party", "budget_level", "travel_season", "origin", "focus", "extra"]
+def test_guide_conditional_questions_follow_their_trigger():
+    """结构不变量：每道条件题都紧跟其触发题、且同触发的多题连续成块。
+
+    原断言把「非条件题的 id 全集」写死在测试里，加一道群体追问就必红——
+    那是把顺序细节当契约，逼后来人改测试而不是改设计。这里改钉真正的规则。
+    """
+    qs = rt.type_spec("guide")["clarify"]
+    ids = [q["id"] for q in qs]
+    by_trigger: dict = {}
+    for q in qs:
+        cond = q.get("show_if") or {}
+        if cond:
+            by_trigger.setdefault(str(cond["qid"]), []).append(str(q["id"]))
+    assert by_trigger, "guide 问卷应至少有一道条件题（否则本断言空过）"
+    for trig, group in by_trigger.items():
+        start = ids.index(trig) + 1
+        assert ids[start:start + len(group)] == group, \
+            f"{trig} 的条件题必须紧接其后连续排列，实际 {ids}"
+
+
+def test_guide_unconditional_question_order_golden():
+    """非条件题的相对顺序是产品决策（先易后难、人群题在预算题前），钉住防漂移。"""
+    qs = rt.type_spec("guide")["clarify"]
+    base = [q["id"] for q in qs if not q.get("show_if")]
+    assert base == ["days", "party", "budget_level", "travel_season", "origin",
+                    "focus", "extra"]
+
+
+def test_every_party_option_has_at_most_one_conditional_question():
+    """一个人群选项只展开一道追问——多选人群不该被连环追问。"""
+    qs = rt.type_spec("guide")["clarify"]
+    party = next(q for q in qs if q["id"] == "party")
+    gated: dict = {}
+    for q in qs:
+        cond = q.get("show_if") or {}
+        if cond.get("qid") == "party":
+            gated.setdefault(str(cond["equals"]), []).append(str(q["id"]))
+    for option, ids in gated.items():
+        assert len(ids) == 1, f"「{option}」展开了 {len(ids)} 道追问：{ids}"
+    # 6 个选项里 5 个有专属追问，「朋友结伴」刻意保持通用（无对应视角章）
+    assert set(gated) == {"亲子家庭", "情侣/夫妻", "独自旅行", "摄影采风", "带长辈"}
 
 
 def test_visible_questions_filter_shares_gate_predicate():
@@ -157,14 +200,24 @@ def test_child_age_consumer_registered():
 
 def test_submit_clarify_rejects_triggered_missing(monkeypatch):
     monkeypatch.setattr(O, "_task_research_type", lambda tid: "guide")
+    monkeypatch.setattr(O.db, "get_clarify_questions", lambda tid: (None, False))
     saved = []
     monkeypatch.setattr(O.db, "update_task_clarify",
                         lambda tid, clar: saved.append(clar))
     with pytest.raises(O.ClarifyAnswerRequiredError):
         O.submit_clarify("t_gate", {"party": "亲子家庭", "destinations": ["大理"]})
     assert saved == [], "被拒的问卷绝不落库"
-    O.submit_clarify("t_gate", {"party": "情侣/夫妻", "destinations": ["大理"]})
-    assert len(saved) == 1, "未触发缺答必须放行"
+    # 群体追问已展开却没答 → 同样拒（情侣不再是"零追问"选项）
+    with pytest.raises(O.ClarifyAnswerRequiredError):
+        O.submit_clarify("t_gate", {"party": "情侣/夫妻", "destinations": ["大理"]})
+    assert saved == [], "第二轮被拒同样不落库"
+    # 答了就放行
+    O.submit_clarify("t_gate", {"party": "情侣/夫妻", "couple_trip": "蜜月/纪念日",
+                                "destinations": ["大理"]})
+    assert len(saved) == 1
+    # 无追问的选项不受任何条件题阻挡
+    O.submit_clarify("t_gate", {"party": "朋友结伴", "destinations": ["大理"]})
+    assert len(saved) == 2, "未触发缺答必须放行"
 
 
 def test_submit_clarify_family_with_age_persists(monkeypatch):
