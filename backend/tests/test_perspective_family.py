@@ -11,6 +11,7 @@
 import pytest
 
 from app.core.pipeline.research import engine as O
+from app.core.pipeline.research import errors as rt_err
 from app.core import research_types as rt
 from app.core.schemas import schema_completeness
 
@@ -253,3 +254,38 @@ def test_empty_seed_does_not_demand_perspective_keys_in_denominator():
     # 可装配 ⇒ 恰追加本行专属键（不牵连静态分母）
     sid_ok = "persp_family" if rt.perspective_assemblable("persp_family", _SEED) else ""
     assert rt.structured_keys_for("guide", sid_ok) == static + rt.SECTION_STRUCTURED["persp_family"]
+
+
+# ── VR-B6 必答闸门以「实际下发题集」为准（Part C 前置死锁防线）────
+
+def test_stale_served_set_does_not_demand_unseen_question():
+    """旧快照里没有那道条件题 ⇒ 不得要求回答（否则用户被没见过的题卡死）。"""
+    stale = [q for q in rt.type_spec("guide")["clarify"] if q["id"] != "child_age"]
+    assert rt.missing_conditional_answers("guide", {"party": "亲子家庭"}) == ["child_age"], \
+        "按注册表当前题集确实会要求娃龄（这正是死锁的来源）"
+    assert rt.missing_conditional_answers("guide", {"party": "亲子家庭"}, stale) == [], \
+        "按下发题集必须放行"
+
+
+def test_served_set_still_demands_question_user_saw():
+    """反向防线：题集里有且已触发，缺答照旧必红——放宽的是来源，不是判据。"""
+    served = list(rt.type_spec("guide")["clarify"])
+    assert rt.missing_conditional_answers("guide", {"party": "亲子家庭"}, served) == ["child_age"]
+    assert rt.missing_conditional_answers(
+        "guide", {"party": "亲子家庭", "child_age": "3-6 岁"}, served) == []
+
+
+def test_submit_clarify_unblocks_task_with_pre_existing_questionnaire(monkeypatch):
+    """端到端：任务问卷是加题前的快照时，答完 party 能正常提交。"""
+    monkeypatch.setattr(O, "_task_research_type", lambda tid: "guide")
+    monkeypatch.setattr(O.db, "get_task", lambda tid: {"clarifications": {}})
+    monkeypatch.setattr(O.db, "update_task_clarify", lambda tid, clar: None)
+    stale = {"questions": [q for q in rt.type_spec("guide")["clarify"] if q["id"] != "child_age"],
+             "complete": True}
+    monkeypatch.setattr(O.db, "get_clarify_questions", lambda tid: (stale, True))
+    O.submit_clarify("t_stale", {"party": "亲子家庭", "days": "1-2 天"})
+
+    fresh = {"questions": list(rt.type_spec("guide")["clarify"]), "complete": True}
+    monkeypatch.setattr(O.db, "get_clarify_questions", lambda tid: (fresh, True))
+    with pytest.raises(rt_err.ClarifyAnswerRequiredError):
+        O.submit_clarify("t_fresh", {"party": "亲子家庭", "days": "1-2 天"})

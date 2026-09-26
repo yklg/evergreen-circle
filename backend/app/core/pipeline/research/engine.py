@@ -211,8 +211,12 @@ def submit_clarify(task_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
             "游玩攻略报告目前仅支持单个目的地（地图、逐景点路线与评分配额都以单目的地为前提），"
             "请只保留一个城市/景区后重新提交。")
     # 条件题必答闸门：show_if 触发且缺答 → 结构化拒（判据源在注册表，不在这里散写）
+    # 题集来源用**本任务实际下发过**的那份：完整问卷在重连时是原样回放、不再生成的，
+    # 注册表若已演进（新加条件题），旧快照任务的用户根本没见过那道题，拒答即死锁。
     rtype = _task_research_type(task_id)
-    missing = RT.missing_conditional_answers(rtype, answers or {})
+    served, _complete = db.get_clarify_questions(task_id)
+    missing = RT.missing_conditional_answers(
+        rtype, answers or {}, (served or {}).get("questions"))
     if missing:
         raise ClarifyAnswerRequiredError(
             f"请先回答已展开的追问（{'、'.join(missing)}）再提交——这些答案会作为报告的硬约束。")

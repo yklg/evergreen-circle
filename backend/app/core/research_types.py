@@ -419,13 +419,23 @@ def show_if_triggered(q: Dict[str, Any], answers: Dict[str, Any]) -> bool:
     return str((answers or {}).get(str(cond.get("qid"))) or "") == str(cond.get("equals"))
 
 
-def missing_conditional_answers(rtype: Optional[str], answers: Dict[str, Any]) -> List[str]:
+def missing_conditional_answers(rtype: Optional[str], answers: Dict[str, Any],
+                                served_questions: Optional[List[Dict[str, Any]]] = None
+                                ) -> List[str]:
     """已触发但缺答的条件题 id 列表（submit 必答闸门唯一判据源）。
 
     只对带 show_if 的题生效：未触发（如 party≠亲子）缺答**不算缺**——
     前端隐藏题、非亲子用户根本看不到，拒答就是把脏判定推给用户。
+
+    `served_questions` = **本任务实际下发过**的那份题集（重连时是 DB 里的快照）。
+    缺省才回落注册表当前题集。为什么必须以"下发过的题集"为准：注册表会演进，
+    而 `generate_clarify` 对已落库的完整问卷是**原样回放、不再生成**的——
+    加了一道新条件题后，旧快照任务的用户从没见过它，却会被注册表版判据以
+    clarify_answer_required 拒提交，而页面上根本没有那道题可答（step 只跟可见集走）。
+    判据（show_if_triggered）仍只有注册表这一份实现，此处换的是**题集来源**，不是判据。
     """
-    qs = type_spec(rtype).get("clarify") or []
+    qs = served_questions if served_questions is not None \
+        else (type_spec(rtype).get("clarify") or [])
     return [str(q["id"]) for q in qs
             if q.get("show_if") and show_if_triggered(q, answers)
             and not str((answers or {}).get(str(q["id"])) or "").strip()]
