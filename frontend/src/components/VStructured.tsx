@@ -863,7 +863,32 @@ const BLOCKS: Record<StructuredBlockType, (p: { data: Row[]; ev?: EvCtx }) => Re
   persp_packing: VPerspPacking,
 }
 
-/** 结构化块分发。旧报告的已废弃类型（feature_tree 等）不渲染也不报错。
+/** 已登记渲染器的块类型清单（跨端契约测试的接缝，避免测试伸手进 BLOCKS 内部）。 */
+export const STRUCTURED_BLOCK_TYPES = Object.keys(BLOCKS) as StructuredBlockType[]
+
+/** 已退役块类型：后端不再产出，但存量报告 data 里仍带着它们（F2-3 契约）。
+ *  与「未登记」是两回事——这类块画不出东西是**设计如此**，用户无从修复，报错只是噪声。
+ *  真相源是后端 research_types.DEPRECATED_CLAIM_FIELDS，两边须一致（跨端测试钉住）。
+ *  空串按同一口径静默跳过。 */
+const RETIRED_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  'feature_tree', 'pricing_model', 'user_persona', 'swot', '',
+])
+
+/** 未识别结构化块的可见降级。
+ *  BLOCKS 未登记**且不在退役清单**里 = 后端当下会发而前端没有渲染器，唯一成因是两端
+ *  版本错位（分开部署）。原先直接 return null，用户只看到「专栏凭空少一块」毫无痕迹。
+ *  内部标识只落 data-* 供测试与排障读取，不进文案：报告页无鉴权且可 window.print()
+ *  导出，把 `persp_xxx` 印进用户会分享的 PDF 是错的失败面。 */
+function VUnknownBlock({ type }: { type: string }) {
+  return (
+    <div data-unrecognized-block={type}
+         className="mt-4 rounded-card border border-dashed border-line bg-bg/60 p-3 text-tag text-ink-3">
+      本块数据暂不可用（呈现组件缺失）
+    </div>
+  )
+}
+
+/** 结构化块分发：已登记 → 渲染器；已退役 → 静默跳过；其余 → 可见降级。
  *  ev 为可选的证据溯源接缝（序号 + 跳转）；未传则 chip 退化为裸 id 文本、不可点。 */
 export function VStructuredBlock({ block, ev }: {
   block?: StructuredBlock[] | StructuredBlock | null
@@ -876,8 +901,11 @@ export function VStructuredBlock({ block, ev }: {
     <>
       {blocks.map((b, i) => {
         const Renderer = BLOCKS[b.type]
-        if (!Renderer) return null
-        return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} ev={ev} />
+        if (Renderer) {
+          return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} ev={ev} />
+        }
+        if (RETIRED_BLOCK_TYPES.has(String(b.type ?? ''))) return null
+        return <VUnknownBlock key={`${b.type}-${i}`} type={String(b.type)} />
       })}
     </>
   )

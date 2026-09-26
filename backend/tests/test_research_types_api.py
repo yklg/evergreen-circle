@@ -155,3 +155,44 @@ def test_clarify_fallback_payload_key_is_destinations():
 if __name__ == "__main__":
     import pytest as _pytest
     raise SystemExit(_pytest.main([__file__, "-q"]))
+
+
+# ──  跨端结构化块契约镜像（D6b 的门禁强度）────────────────────
+# 前端 crossEndBlockTypes.test.ts 读的是 checked-in 快照、不联网（CI 里后端不在线）。
+# 若没人钉「快照 ≡ 注册表」，那道门守的就是一份可能过期的冻结文件而非真相源——
+# 加一个块类型只改注册表、忘了重跑生成器，前端门照样全绿。
+
+def _front_fixture_types():
+    import json
+    from pathlib import Path
+    p = (Path(__file__).resolve().parent.parent.parent
+         / "frontend" / "src" / "mocks" / "researchTypes.json")
+    return {t["key"]: t for t in json.loads(p.read_text(encoding="utf-8"))["types"]}
+
+
+def test_fixture_snapshot_matches_registry_block_types():
+    snap = _front_fixture_types()
+    assert set(snap) == set(rt.RESEARCH_TYPES), "快照类型集与注册表漂移"
+    for opt in rt.research_type_options():
+        key = opt["key"]
+        assert key in snap, f"{key} 不在快照里——重跑 gen-research-types-fixture.mjs"
+        assert snap[key].get("structured_block_types") == opt["structured_block_types"], \
+            (f"{key} 快照里的 structured_block_types 已落后于注册表："
+             f"快照={snap[key].get('structured_block_types')} 注册表={opt['structured_block_types']}")
+
+
+def test_frontend_retired_block_list_matches_backend_deprecated_fields():
+    """前端 VStructured 的退役清单必须覆盖后端 DEPRECATED_CLAIM_FIELDS。
+
+    两边各自维护一份「哪些块已死」，漂移的后果是：后端已停产的旧块在前端被当成
+    「版本错位的未知块」，在用户会分享的报告里画出「数据暂不可用」——噪声而非信号。
+    """
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent.parent / "frontend" / "src"
+           / "components" / "VStructured.tsx").read_text(encoding="utf-8")
+    m = re.search(r"RETIRED_BLOCK_TYPES[^=]*=\s*new Set\(\[(.*?)\]\)", src, re.S)
+    assert m, "前端找不到 RETIRED_BLOCK_TYPES 定义（改名或删了？退役块的静默契约随之失效）"
+    retired = set(re.findall(r"'([^']*)'", m.group(1)))
+    assert set(rt.DEPRECATED_CLAIM_FIELDS) <= retired, \
+        f"后端已废弃但前端未列入退役清单：{set(rt.DEPRECATED_CLAIM_FIELDS) - retired}"

@@ -761,10 +761,38 @@ def type_key(rtype: Optional[str]) -> str:
     return key if key in RESEARCH_TYPES else DEFAULT_RESEARCH_TYPE
 
 
-def research_type_options() -> List[Dict[str, str]]:
-    """GET /api/research-types 的载荷（前端卡片唯一数据源）。"""
-    return [{"key": k, "label": v["label"], "subtitle": v["subtitle"]}
+def research_type_options() -> List[Dict[str, Any]]:
+    """GET /api/research-types 的载荷（前端卡片唯一数据源）。
+
+    除卡片三字段外逐类型下发 `structured_block_types`：报告里可能出现的结构化块
+    type 全集。前端 VStructured 的 BLOCKS 分发对未登记类型是 `return null`——
+    **静默不渲染**（不报错、不降级），而后端/前端分开部署，加一个块类型若前端
+    没跟上，用户看到的就是"数据在但专栏空了"。本字段让这条跨端契约可被测试钉住。
+    """
+    return [{"key": k, "label": v["label"], "subtitle": v["subtitle"],
+             "structured_block_types": list(structured_block_types_for(k))}
             for k, v in RESEARCH_TYPES.items()]
+
+
+def structured_block_types_for(rtype: Optional[str]) -> Tuple[str, ...]:
+    """该类型报告可能下发的结构化块 type 全集（前端 BLOCKS 必须覆盖它）。
+
+    与 assemble._section 的挂块判据同源：类型基础键 ∪ 各可能章节的 SECTION_STRUCTURED。
+    视角章虽按 party 动态插入，但视角键已由 PERSPECTIVE_SPECS 派生进 SECTION_STRUCTURED，
+    遍历「该类型各模式章节 ∪ 该类型视角章」即可穷尽，无需另抄一份清单。
+    """
+    spec = type_spec(rtype)
+    sids = {sid for mode_ids in spec["sections"].values() for sid in mode_ids}
+    sids |= {p["section"] for p in (spec.get("perspectives") or {}).values()}
+    out: List[str] = []
+    for k in spec["structured_keys"]:
+        if k not in out:
+            out.append(k)
+    for sid in sorted(sids):
+        for k in section_structured_keys(sid):
+            if k not in out:
+                out.append(k)
+    return tuple(out)
 
 
 def sections_for(rtype: Optional[str], mode: Optional[str], perspective: str = "") -> List[str]:

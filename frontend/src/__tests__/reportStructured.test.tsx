@@ -6,7 +6,9 @@
  * 守护契约：
  *   F2-1  6 个类型（guide 三件套 + assessment 三件套）happy path 关键字段可见
  *   F2-2  空数组 / 缺子字段 → 不渲染或不崩（表格缺列回落 '-'）
- *   F2-3  旧报告的已废弃 type（feature_tree / pricing_model / user_persona / 未知值）不渲染不报错
+ *   F2-3  旧报告的**已退役** type（feature_tree / pricing_model / user_persona / swot / 空）
+ *         静默跳过；而「后端会发、前端没渲染器」的未知 type 走可见降级
+ *         （见 crossEndBlockTypes.test.ts——两者过去被同一个 `return null` 混为一谈）
  *   F2-4  ReportPage 接线：块出现在所属章节内 + 本章信源 [n] 角标 + 图集目的地角标
  *
  * 说明：F2-3 的旧 type 刻意用 `as unknown as StructuredBlockType` 绕过 TS —— 那正是
