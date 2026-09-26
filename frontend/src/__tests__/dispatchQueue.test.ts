@@ -67,7 +67,7 @@ describe('dispatch 节流队列', () => {
     expect(texts()).toEqual(['派遣-d1', '回放-1', '回放-2'])
     vi.advanceTimersByTime(DISPATCH_STAGGER_MS)
     expect(texts()).toEqual(['派遣-d1', '回放-1', '回放-2', '派遣-d2'])
-    const rp = st().thoughts.find((t) => t.id === 'rp1') as Record<string, unknown>
+    const rp = st().thoughts.find((t) => t.id === 'rp1') as unknown as Record<string, unknown>
     expect('replay' in rp).toBe(false) // replay 键不残留在 store
     vi.advanceTimersByTime(DISPATCH_STAGGER_MS * 10)
     expect(texts().length).toBe(6) // 实时余量 d2..d4 正常出场，回放未入队
