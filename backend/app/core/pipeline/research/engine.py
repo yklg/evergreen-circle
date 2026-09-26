@@ -1175,6 +1175,8 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
         # 闸门必须同时看 checklist_key：_fill_persp_blocks 无核查表键时直接返回 {}，
         # 只判 spot_probe_tpls 会为一表无人消费的证据实花搜索预算。
         persp_probe_tpls = tuple(RT.perspective_spec(persp_sid).get("spot_probe_tpls") or ())
+        # 配额按列数派生（同一函数也算给填格提示的摘要槽位，两处必须同源）
+        persp_probe_budget = RT.perspective_probe_budget(persp_sid)
         if (persp_probe_tpls and RT.perspective_spec(persp_sid).get("checklist_key")
                 and spot_entities):
             probe_topn = int(cfg.get("persp_probe_topn") or 0)
@@ -1186,7 +1188,8 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
             else:
                 probe = await _probe_spot_perspective(
                     primary_destination, spot_entities, persp_probe_tpls,
-                    cfg["freshness"], seen_urls, analyst, probe_topn)
+                    cfg["freshness"], seen_urls, analyst, probe_topn,
+                    persp_probe_budget[0], persp_probe_budget[1])
                 evidences.extend(probe["evidences"])
                 persp_probes.update(probe["by_spot"])
                 if probe["quota_error"]:

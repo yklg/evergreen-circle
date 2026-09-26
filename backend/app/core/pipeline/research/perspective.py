@@ -46,13 +46,15 @@ def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, 
     cols = tuple(p.get("checklist_columns") or ())
     ev_ids = {getattr(e, "evidence_id", "") for e in evidences}
     ev_by_id = {getattr(e, "evidence_id", ""): e for e in evidences}
+    # 摘要槽位与二查配额**同源**：按列数给，否则多采到的证据在喂给模型前就被切掉了
+    digest_slots = RT.perspective_probe_digest_slots(persp_sid)
     hard_q = tuple(p.get("hard_constraints") or ())
     constraints = "；".join(f"{q}={clar.get(q)}" for q in hard_q if str(clar.get(q) or "").strip())
     ev_lines = []
     for it in spot_entities:
         eids = [x for x in (probes.get(str(it.get("spot_id"))) or []) if x in ev_ids]
         digest = "；".join(f"[{x}] {str(getattr(ev_by_id[x], 'excerpt', ''))[:110]}"
-                           for x in eids[:4])
+                           for x in eids[:digest_slots])
         ev_lines.append(f"{it.get('spot_id')}|{it.get('name', '')}|{digest or '（二查未采到证据）'}")
     payload: Dict[str, Any] = {}
     try:

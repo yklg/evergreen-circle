@@ -240,44 +240,70 @@ _PROBE_CONCURRENCY = 4
 
 def _probe_spot_perspective_one(dest: str, spot_name: str, tpls: Tuple[str, ...],
                                 freshness: str, existing_urls: set,
-                                collector: str) -> List["Evidence"]:
-    """单景点定向二查（同步）：检索 → URL 去重 → 摘要构造 Evidence。
+                                collector: str, per_tpl: int = 2,
+                                per_spot: int = 4, aborted=None) -> List["Evidence"]:
+    """单景点定向二查（同步）：**逐探针**检索 → URL 去重 → 摘要构造 Evidence。
 
     不抓全文——二查供核查表填格，搜索摘要本身就是专项参数化事实源
     （票规/设施/机位/无障碍…随视角的 spot_probe_tpls 而变）；
     配额/密钥类终态（SearchProviderError）原样冒泡给阶段层做整体降级，不吞。
+
+    ⚠️ 配额按**探针**分（per_tpl），不是整景点共用一个池子：先跑的探针命中满 4 条就会把
+    后面探针的结果全挤出门外。实测亲子卷正是这个形状——独占一条探针的「儿童票规则」命中
+    71%，而和别的词塞在同一条探针尾部的「母婴室」命中 0%。列与探针 1:1 配对时，
+    per_spot 至少 2×列数才谈得上「每列有据」；否则多花的搜索次数只换来同一批 URL。
+    瞬时失败按**单条探针**跳过（与 search.multi_search 的逐条容错同判据），
+    一条探针挂了不牵连其余。
     """
-    queries = [f"{dest} {t.format(spot=spot_name)}" for t in tpls]
-    results = search.multi_search(queries, num=5, freshness=freshness)
     out: List[Evidence] = []
-    for r in results:
-        if len(out) >= 4:
+    for t in tpls:
+        if len(out) >= per_spot:
             break
-        url = r.get("url", "")
-        snippet = str(r.get("snippet") or "").strip()
-        if not url or not snippet or url in existing_urls:
+        # 服务商终态是**账号级**的：别的任务已判定 quota 时，本任务剩下的探针同一条也不会成，
+        # 继续发只多烧配额。逐探针查一次（旧实现一次 multi_search 内部自己循环，无此检查点）。
+        if aborted is not None and aborted():
+            break
+        try:
+            results = search.search(f"{dest} {t.format(spot=spot_name)}",
+                                    num=5, freshness=freshness)
+        except SearchProviderError:
+            raise
+        except Exception:  # noqa: BLE001
             continue
-        existing_urls.add(url)
-        stype = _source_type(url)
-        pub = r.get("captured_at", "")
-        cred = score_evidence(url, stype, captured_at=pub or _now(),
-                              has_publish_date=bool(pub), ok_fetch=False,
-                              excerpt=snippet[:280])
-        out.append(Evidence(evidence_id=_sid("e"), source_url=url, source_type=stype,
-                            title=r.get("title", spot_name), excerpt=snippet[:280],
-                            captured_at=pub or _now(), credibility=cred,
-                            collected_by=collector, destination=dest,
-                            domain=domain_of(url),
-                            freshness_days=freshness_days(pub or _now()),
-                            content_hash=content_fingerprint(snippet)))
+        kept = 0
+        for r in results:
+            if kept >= per_tpl or len(out) >= per_spot:
+                break
+            url = r.get("url", "")
+            snippet = str(r.get("snippet") or "").strip()
+            if not url or not snippet or url in existing_urls:
+                continue
+            existing_urls.add(url)
+            stype = _source_type(url)
+            pub = r.get("captured_at", "")
+            cred = score_evidence(url, stype, captured_at=pub or _now(),
+                                  has_publish_date=bool(pub), ok_fetch=False,
+                                  excerpt=snippet[:280])
+            out.append(Evidence(evidence_id=_sid("e"), source_url=url, source_type=stype,
+                                title=r.get("title", spot_name), excerpt=snippet[:280],
+                                captured_at=pub or _now(), credibility=cred,
+                                collected_by=collector, destination=dest,
+                                domain=domain_of(url),
+                                freshness_days=freshness_days(pub or _now()),
+                                content_hash=content_fingerprint(snippet)))
+            kept += 1
     return out
 
 
 async def _probe_spot_perspective(dest: str, items: List[Dict[str, Any]],
                                   tpls: Tuple[str, ...], freshness: str,
                                   existing_urls: set, collector: str,
-                                  probe_topn: int) -> Dict[str, Any]:
+                                  probe_topn: int, per_tpl: int = 2,
+                                  per_spot: int = 4) -> Dict[str, Any]:
     """冻结榜前 N 景点逐点二查（并发 ≤4 + 阶段预算，同百度 fan-out 两型）。
+
+    `per_tpl` / `per_spot` 由注册表按**列数**算出（`RT.perspective_probe_budget`）：
+    配额按探针分，才能保证每列都有证据可引用，见 `_probe_spot_perspective_one`。
 
     返回 {by_spot: {spot_id: [evidence_ids]}, evidences, failed, quota_error}。
     单点失败只记 failed（核查表该格占位）；SearchProviderError 属服务商终态——
@@ -302,7 +328,9 @@ async def _probe_spot_perspective(dest: str, items: List[Dict[str, Any]],
             try:
                 evs = await asyncio.to_thread(_probe_spot_perspective_one, dest,
                                               str(it.get("name") or ""), tpls,
-                                              freshness, existing_urls, collector)
+                                              freshness, existing_urls, collector,
+                                              per_tpl, per_spot,
+                                              lambda: quota_error is not None)
             except SearchProviderError as e:
                 quota_error = str(e)
                 return

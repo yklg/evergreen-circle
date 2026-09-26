@@ -35,13 +35,18 @@ def _mk_results(queries):
 # ── VR-C1/C2 检索词与失败隔离 ───────────────────────────────────
 
 def test_probe_queries_carry_spot_name_and_template(monkeypatch):
+    """接缝 = `search.search`（逐探针各调一次），不再是 `multi_search`（合并池）。
+
+    改判据的理由见 `test_probe_quota_is_per_template_not_shared_pool`：探针合并成一个池子
+    会让先跑的探针吃掉全部槽位，所以供给侧改成了逐探针配额，测试接缝随之重指。
+    """
     seen: list = []
 
-    def fake_multi(queries, **kw):
-        seen.extend(queries)
-        return _mk_results(queries)
+    def fake_search(query, **kw):
+        seen.append(query)
+        return _mk_results([query])
 
-    monkeypatch.setattr(search, "multi_search", fake_multi)
+    monkeypatch.setattr(search, "search", fake_search)
     out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:2], _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert len(seen) == 4  # 2 景点 × 2 模板
@@ -55,13 +60,12 @@ def test_probe_queries_carry_spot_name_and_template(monkeypatch):
 
 def test_probe_partial_failure_isolates_rows(monkeypatch):
     """7 中 2 失败：成功 5 个挂 id、失败 2 个记 failed——都不丢（装配层据此占位）。"""
-    def fake_multi(queries, **kw):
-        q = queries[0]
-        if "周城" in q or "崇圣寺" in q:
+    def fake_search(query, **kw):
+        if "周城" in query or "崇圣寺" in query:
             return []  # 搜不到（非异常）
-        return _mk_results(queries)
+        return _mk_results([query])
 
-    monkeypatch.setattr(search, "multi_search", fake_multi)
+    monkeypatch.setattr(search, "search", fake_search)
     out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert len(out["by_spot"]) == 5
@@ -73,7 +77,7 @@ def test_probe_dedupes_urls_across_spots(monkeypatch):
     """跨景点 URL 去重共用 seen_urls 池（同一条转载不得给两个景点当证据）。"""
     same = [{"url": "https://dup.com/x", "title": "t", "snippet": "s 儿童票 免票",
              "captured_at": ""}]
-    monkeypatch.setattr(search, "multi_search", lambda qs, **kw: list(same))
+    monkeypatch.setattr(search, "search", lambda q, **kw: list(same))
     urls: set = set()
     out1 = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:1], _TPLS, "oneYear",
                                             urls, "L1-012", 7))
@@ -82,23 +86,89 @@ def test_probe_dedupes_urls_across_spots(monkeypatch):
     assert out1["evidences"] and not out2["evidences"]
 
 
+def test_probe_quota_is_per_template_not_shared_pool(monkeypatch):
+    """**本批改动的正身**：配额按探针分，先跑的探针不得把后面的挤出槽位。
+
+    亲子实测的形状就是这条的反面：独占一条探针的「儿童票规则」命中 71%，而和别的词塞在
+    同一条探针里的「母婴室」命中 0%。旧实现是 `multi_search` 合并成一个池子再截前 4 条
+    ⇒ 探针 1 有 5 条结果时，探针 2 一条都进不来。列与探针 1:1 配对（4 列 4 探针）时，
+    这个挤出效应会让**每一列的命中率取决于探针排列顺序**，而不是列本身有没有事实。
+    """
+    def rich_first(query, **kw):
+        if "儿童票" in query:      # 探针 1：网络声音大
+            return _mk_results([f"{query}#{i}" for i in range(5)])
+        return _mk_results([query])  # 探针 2：只 1 条
+
+    monkeypatch.setattr(search, "search", rich_first)
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:1], _TPLS, "oneYear",
+                                           set(), "L1-012", 7, per_tpl=2, per_spot=4))
+    evs = out["evidences"]
+    assert len(evs) == 3, f"应为 探针1 取 2 + 探针2 取 1，实得 {len(evs)}"
+    from collections import Counter
+    by_tpl = Counter("票规" if "儿童票" in e.title else "母婴" for e in evs)
+    assert by_tpl["母婴"] == 1, f"后置探针被挤出了槽位：{dict(by_tpl)}"
+
+
+def test_probe_transient_failure_skips_only_that_template(monkeypatch):
+    """单条探针瞬时失败只跳过它：一条挂了不牵连同景点其余列（与 multi_search 逐条容错同判据）。
+
+    ⚠️ 但服务商**终态**（配额/密钥）必须照冒泡中止整阶段 —— 两种失败的处理方向相反，
+    把它们混成一个 except 就是「429 被当终态、核查表满屏占位」那次真机事故的形状。
+    """
+    def half_broken(query, **kw):
+        if "母婴室" in query:
+            raise RuntimeError("连接重置")
+        return _mk_results([query])
+
+    monkeypatch.setattr(search, "search", half_broken)
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:1], _TPLS, "oneYear",
+                                           set(), "L1-012", 7))
+    assert out["evidences"] and out["quota_error"] is None
+    assert out["by_spot"]["大理_spot_1"], "另一条探针的证据必须仍然挂上"
+
+
 # ── VR-C3 服务商终态中止 ────────────────────────────────────────
 
 def test_probe_quota_error_aborts_remaining(monkeypatch):
     calls: list = []
 
-    def fake_multi(queries, **kw):
-        calls.append(queries[0])
-        if "洱海" in queries[0]:
+    def fake_search(query, **kw):
+        calls.append(query)
+        if "洱海" in query:
             raise SearchProviderError("quota exceeded")
-        return _mk_results(queries)
+        return _mk_results([query])
 
-    monkeypatch.setattr(search, "multi_search", fake_multi)
+    monkeypatch.setattr(search, "search", fake_search)
     out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 7))
     assert out["quota_error"] and "quota" in out["quota_error"]
-    # 中止后不再烧剩余配额（洱海占 1~2 次调用；显著小于 14）
-    assert len(calls) <= 4  # py3.10 调度在取消传播前多放行 1 个；语义不变（4≪14，quota 中止生效）
+    # 只断言「确实少发了」：并发下具体放行几条取决于调度，写成紧数值就是条抖动的断言。
+    # 「逐探针中止」本身由下面那条单线程用例精确钉住。
+    assert len(calls) < len(_SPOTS) * len(_TPLS), (
+        f"终态后仍把 7 景点 × 2 探针全发完（中止没生效）：{len(calls)} 次")
+
+
+def test_one_probe_aborts_its_remaining_templates(monkeypatch):
+    """单景点内：别的任务已判终态 ⇒ 本任务剩下的探针一条都不该再发。
+
+    直测 `_probe_spot_perspective_one`（单线程、零调度噪声），因为阶段级用例里
+    「放行了几条」是时序函数，只能断「< 全量」这种弱命题。4×4 之后每景点最多 4 条探针，
+    没有这个检查点的代价从「多 1 次」变成「多 3 次 × 在途任务数」。
+    """
+    issued: list = []
+    state = {"aborted": False}
+
+    def fake_search(query, **kw):
+        issued.append(query)
+        state["aborted"] = True          # 第一条就把全局终态置起来
+        return _mk_results([query])
+
+    monkeypatch.setattr(search, "search", fake_search)
+    evs = O._probe_spot_perspective_one(_DEST, "洱海", _TPLS, "oneYear", set(), "L1-012",
+                                       per_tpl=2, per_spot=8,
+                                       aborted=lambda: state["aborted"])
+    assert len(issued) == 1, f"应在第一条后停下，实发 {len(issued)} 条：{issued}"
+    assert evs, "已拿到的证据不因中止而丢弃"
 
 
 # ── VR-C4 门控与零波及 ─────────────────────────────────────────
@@ -107,6 +177,7 @@ def test_probe_topn_zero_calls_nothing(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("probe_topn=0 不得发起任何搜索")
 
+    monkeypatch.setattr(search, "search", boom)
     monkeypatch.setattr(search, "multi_search", boom)
     out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS, _TPLS, "oneYear",
                                            set(), "L1-012", 0))

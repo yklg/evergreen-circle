@@ -411,6 +411,30 @@ def perspective_structured_keys(section_id: str) -> Tuple[str, ...]:
                              p.get("packing_key")) if k)
 
 
+# 每列至少留几条候选证据给填格模型挑：1 条太脆（该探针空手 ⇒ 整列归零），3 条起提示词
+# 就随列数超线性膨胀（单元格 JSON 体量大 ⇒ max_tokens 截断即全表作废）。
+_PROBE_EVIDENCES_PER_COLUMN = 2
+_PROBE_FLOOR = 4     # 旧行为基线：列数 ≤2 的视角不因此次改动多花钱
+
+
+def perspective_probe_budget(persp_sid: str) -> Tuple[int, int]:
+    """该视角的二查配额 `(每条探针上限, 每景点总上限)` —— 按**列数**算，不写死。
+
+    为什么进注册表而不是 spots.py 里给个常量：列数与探针数是 1:1 契约（B1 的填表规则），
+    配额必须随列数走，否则「加一列」在注册表改完了、供给侧还按老池子分，
+    新列天然分不到证据 —— 那是「配了表位却没有据」的原始症状换了个层位复发。
+    """
+    cols = len(perspective_spec(persp_sid).get("checklist_columns") or ())
+    return _PROBE_EVIDENCES_PER_COLUMN, max(_PROBE_FLOOR,
+                                            _PROBE_EVIDENCES_PER_COLUMN * max(1, cols))
+
+
+def perspective_probe_digest_slots(persp_sid: str) -> int:
+    """填格提示里每景点最多列出几条证据摘要 —— 必须与 `per_spot` 同源，否则采集到的
+    证据在**喂给模型前**就被切掉，供给侧多花的钱买不到分子。"""
+    return perspective_probe_budget(persp_sid)[1]
+
+
 # 视角章挂键的唯一真相源 = PERSPECTIVE_SPECS，故在此**派生重绑**而非回落查表：
 # 回落会让 section_structured_keys 变成「按 sid 命名空间隐式二义」的两处定义，
 # 双定义这个根因本身就没被消除。未配置视角派生出空元组，与「本表无此键」在
