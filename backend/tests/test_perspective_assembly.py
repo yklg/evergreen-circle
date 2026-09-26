@@ -34,6 +34,19 @@ _CLAR = {"days": "1-2 天", "budget_level": "经济实惠（人均 <1000）",
          "origin": "昆明", "child_age": "3-6 岁"}
 
 
+def _unconfigured_sid(owner: str = "") -> str:
+    """按**判据**挑一个「没配核查表」的视角当反面样本，不写死视角 id。
+
+    B1 把 guide 五视角填满之后，原先拿 `persp_couple` 充当「未配置」的三处用例全红了 ——
+    那不是判据坏，是夹具过期。写死反面样本等于把测试和某一次的注册表空位绑在一起。
+    """
+    cands = [sid for sid, p in rt.PERSPECTIVE_SPECS.items()
+             if not p.get("checklist_key")
+             and (not owner or rt.perspective_spec(sid)["owner"][0] == owner)]
+    assert cands, "所有视角都配了核查表 ⇒ 本负判据已无样本，请改判或显式删掉该断言"
+    return cands[0]
+
+
 def _fake_chat(payload):
     def _f(messages, **kw):
         return payload
@@ -125,11 +138,8 @@ def test_packing_drops_items_without_evidence(monkeypatch):
 
 def test_unconfigured_perspective_assembles_nothing(monkeypatch):
     monkeypatch.setattr(llm, "chat_json", _fake_chat({"rows": []}))
-    out, diag = O._fill_persp_blocks("persp_couple", _DEST, _SPOTS, {}, _EVID, _CLAR, "m")
-    assert out == {}
-    # 「没配能力」与「配了但 LLM 挂了」必须可分：前者 skipped、压根没调过模型
-    assert diag["llm_outcome"] == "skipped"
-    assert diag["probed_spots"] == len(_SPOTS)
+    assert O._fill_persp_blocks(_unconfigured_sid(), _DEST, _SPOTS, {}, _EVID, _CLAR,
+                                "m")[0] == {}
 
 
 # ── VR-D4 防回潮负钉：目的地行过滤不得动视角块行 ────────────────
@@ -241,9 +251,21 @@ def test_guide_registry_puts_perspective_section_on_csv_channel():
     assert "persp_family" in fam, "配了核查表的视角章必须有 CSV（漏了＝前端按钮静默缺失）"
 
     couple = rt.data_grid_sections_for("guide", rt.sections_for("guide", "expert", "情侣/夫妻"))
-    assert "persp_couple" not in couple, \
-        "未配 checklist_key 的视角必须整条不并入（谓词为 None 即跳过，与全链路同构）"
-    assert set(couple) == set(static), "非视角章的 CSV 集合逐值不变"
+    assert "persp_couple" in couple, \
+        "B1 之后情侣卷也配了核查表 ⇒ 必须并入 CSV（漏了＝前端导出按钮静默缺失）"
+    assert set(couple) == set(static) | {"persp_couple"}, \
+        "除视角章外，guide 其余 CSV 章节集合必须逐值不变（并入不得顺手改别人的归属）"
+
+    # 负判据：仍未配核查表的视角不得并入。反面样本按判据挑、触发答案取其自身关键词 ——
+    # 直接拿 sid 当答案会让 sections_for 根本不插章，断言**空过**（什么都没测还判绿）。
+    inert = _unconfigured_sid(owner="assessment")
+    answer = rt.perspective_spec(inert)["keywords"][0]
+    assert rt.sections_for("assessment", "expert", answer).count(inert) == 1, \
+        f"{answer} 没能在 assessment 卷里插出 {inert} ⇒ 下面的负断言无样本"
+    got = rt.data_grid_sections_for("assessment",
+                                    rt.sections_for("assessment", "expert", answer))
+    assert inert not in got, \
+        f"{inert} 未配 checklist_key 却并入了 CSV（谓词为 None 即跳过，与全链路同构）"
 
 
 def test_persp_grid_metric_is_row_data_not_literal(monkeypatch):

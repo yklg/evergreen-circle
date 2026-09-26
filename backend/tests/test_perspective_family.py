@@ -325,8 +325,15 @@ _SEED = [{"spot_id": "s1", "name": "洱海"}]
 def test_assemblable_predicate_covers_all_negative_shapes():
     assert rt.perspective_assemblable("persp_family", _SEED) is True
     assert rt.perspective_assemblable("persp_family", []) is False, "空 seed 不可装配"
-    assert rt.perspective_assemblable("persp_couple", _SEED) is False, "未配核查表"
     assert rt.perspective_assemblable("", _SEED) is False, "通用人群无视角"
+    # 「未配核查表」的反面样本按**判据**挑，不写死视角 id：B1 把情侣填上之后，
+    # 原先拿 persp_couple 当"未配置"的用例会误判成判据坏了（实测就这么红过一次）。
+    unconfigured = [sid for sid, p in rt.PERSPECTIVE_SPECS.items()
+                    if not p.get("checklist_key")]
+    assert unconfigured, (
+        "已没有任何未配核查表的视角 ⇒ 这条负判据无样本可测，请改判或显式删除本断言")
+    for sid in unconfigured:
+        assert rt.perspective_assemblable(sid, _SEED) is False, f"{sid} 未配核查表却判可装配"
 
 
 def test_empty_seed_does_not_demand_perspective_keys_in_denominator():
@@ -376,6 +383,29 @@ def test_submit_clarify_unblocks_task_with_pre_existing_questionnaire(monkeypatc
         O.submit_clarify("t_fresh", {"party": "亲子家庭", "days": "1-2 天"})
 
 
+# ── VR-A8 反向消费契约：登记成 constraints 的题，必须有视角行认领 ────────
+def test_every_constraints_question_is_claimed_by_a_perspective_row():
+    """登记进 `CLARIFY_CONSUMERS` 标为 constraints 的题，必须出现在某一行 hard_constraints 里。
+
+    D1 只查「声明的题真实存在」（正向），这条查反向：Part C 加了 4 道群体专属追问并登记为
+    constraints 消费者，却没人把它们写进视角行 ⇒ `perspective.py` 的
+    `constraints = "；".join(q for q in hard_q ...)` 永远读不到它们 ——
+    「问了不听」的装饰题以**新形态**复发，而当时两道门都是绿的。
+
+    为什么这道门必须存在而不是靠人记：题面、CLARIFY_CONSUMERS、视角行三处分别写在三个
+    地方，中间没有任何引用把它们拴在一起；唯一的耦合是「运行时读 hard_constraints」，
+    而漏声明的后果恰好是**什么都不发生**（不报错、不降级、报告照常出）。
+    """
+    for rtype, reg in rt.CLARIFY_CONSUMERS.items():
+        declared = {q for q, v in reg.items() if v["consumer"] == rt.CONSUMER_CONSTRAINTS}
+        claimed = {c for sid, p in rt.PERSPECTIVE_SPECS.items()
+                   if _OWNER.get(sid) == rtype
+                   for c in (p.get("hard_constraints") or ())}
+        assert declared <= claimed, (
+            f"{rtype} 有 {sorted(declared - claimed)} 登记为硬约束却无人认领 —— "
+            "答案不会进任何提示词")
+
+
 # ── VR-A7 视角行自洽（D1/D3/D4：填错一行必须当场红，而不是运行期静默劣化）──
 
 @pytest.mark.parametrize("sid", _PERSP_SIDS)
@@ -405,6 +435,12 @@ def test_perspective_row_shape_self_consistent(sid):
         assert all(shorts), f"{sid} 有列的短名为空：{p['checklist_columns']}"
         assert len(set(shorts)) == len(shorts), f"{sid} 表头短名撞车：{shorts}"
         assert p.get("checklist_metric"), f"{sid} 缺 CSV 指标列文案"
+        # D4b 列与探针**按位 1:1**：配额按列数派生（perspective_probe_budget），条数不等
+        #   就意味着有的列天生分不到探针 —— 亲子实测 2 探针喂 4 列时两列归零 0/7。
+        #   只断言长度（语义对齐靠人读：模板顺序必须与 checklist_columns 同序）。
+        assert len(p["spot_probe_tpls"]) == len(p["checklist_columns"]), (
+            f"{sid} 探针 {len(p['spot_probe_tpls'])} 条 ≠ 列 {len(p['checklist_columns'])} 个"
+            " → 有列天生无据可填")
         # D3 种子可达：核查表行 seed 自 spot_ranking，类型没有它就只能产出空表。
         assert "spot_ranking" in rt.type_spec(rtype)["structured_keys"], \
             f"{sid} 属 {rtype}，该类型无景点榜可 seed → 核查表永远全占位且拉低质量分"

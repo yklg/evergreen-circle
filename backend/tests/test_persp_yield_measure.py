@@ -138,13 +138,15 @@ def test_degraded_terminal_still_emits_placeholder_rows(monkeypatch):
 
 
 def test_skipped_when_no_capability_or_no_rows(monkeypatch):
-    """未配能力的视角 / 零 seed 的视角：不调模型，台账记 skipped 且 probed_spots 照实。"""
-    out, diag = P._fill_persp_blocks("persp_couple", _DEST, _SPOTS, {}, _EVID, _CLAR, "m")
+    """未配核查表的视角 / 零 seed 的视角：不调模型，台账记 skipped 且 probed_spots 照实。"""
+    # 反面样本按判据挑（guide 五视角 B1 后全配上了，写死 persp_couple 会拿到已配置的行）
+    inert = next(sid for sid, p in RT.PERSPECTIVE_SPECS.items() if not p.get("checklist_key"))
+    out, diag = P._fill_persp_blocks(inert, _DEST, _SPOTS, {}, _EVID, _CLAR, "m")
     assert (out, diag["llm_outcome"], diag["probed_spots"]) == ({}, "skipped", len(_SPOTS))
     _, diag0 = _fill(monkeypatch, _rows_payload(hollow=False))
     assert diag0["spots_with_evidence"] == len(_SPOTS)
     _, diag_none = P._fill_persp_blocks(_PSID, _DEST, [], _PROBES, _EVID, _CLAR, "m")
-    assert diag_none["probed_spots"] == 0
+    assert diag_none["probed_spots"] == 0 and diag_none["llm_outcome"] == "skipped"
 
 
 # ── 门槛谓词本身：条件式，不是绝对式 ──────────────────────────

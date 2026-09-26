@@ -24,6 +24,10 @@ _SPOTS = [{"spot_id": f"大理_spot_{i}", "name": n} for i, n in
           enumerate(["洱海", "大理古城", "喜洲古镇", "沙溪古镇",
                      "双廊镇", "周城", "崇圣寺三塔"], start=1)]
 _TPLS = rt.PERSPECTIVE_SPECS["persp_family"]["spot_probe_tpls"]
+# 需要手算调用次数的用例只用两条：亲子行 B1 之后从 2 条探针涨到 4 条（列与探针 1:1），
+# 把算式绑在整行上会让这条用例随注册表长度漂红——那是在测行长，不是在测分发。
+_PAIR = tuple([t for t in _TPLS if "儿童票" in t][:1]
+              + [t for t in _TPLS if "母婴" in t][:1])
 
 
 def _mk_results(queries):
@@ -47,11 +51,11 @@ def test_probe_queries_carry_spot_name_and_template(monkeypatch):
         return _mk_results([query])
 
     monkeypatch.setattr(search, "search", fake_search)
-    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:2], _TPLS, "oneYear",
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:2], _PAIR, "oneYear",
                                            set(), "L1-012", 7))
-    assert len(seen) == 4  # 2 景点 × 2 模板
+    assert len(seen) == 4  # 2 景点 × 2 探针（逐探针各一次，不再合并成一次 multi_search）
     assert any("洱海" in q and "儿童票" in q for q in seen)
-    assert any("大理古城" in q and "母婴室" in q for q in seen)
+    assert any("大理古城" in q and "母婴" in q for q in seen)
     assert set(out["by_spot"]) == {"大理_spot_1", "大理_spot_2"}
     assert all(ids and all(i.startswith("e_") for i in ids)
                for ids in out["by_spot"].values())
@@ -100,7 +104,7 @@ def test_probe_quota_is_per_template_not_shared_pool(monkeypatch):
         return _mk_results([query])  # 探针 2：只 1 条
 
     monkeypatch.setattr(search, "search", rich_first)
-    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:1], _TPLS, "oneYear",
+    out = asyncio.run(O._probe_spot_perspective(_DEST, _SPOTS[:1], _PAIR, "oneYear",
                                            set(), "L1-012", 7, per_tpl=2, per_spot=4))
     evs = out["evidences"]
     assert len(evs) == 3, f"应为 探针1 取 2 + 探针2 取 1，实得 {len(evs)}"
@@ -185,10 +189,28 @@ def test_probe_topn_zero_calls_nothing(monkeypatch):
 
 
 def test_unconfigured_perspective_has_no_probe_tpls():
-    """情侣/独行等未填表视角：spot_probe_tpls 空 → 调用点谓词天然跳过。"""
-    for sid in ("persp_couple", "persp_solo", "persp_photo"):
+    """未填表视角：spot_probe_tpls 空 → 调用点谓词天然跳过（零搜索、零波及）。
+
+    反面样本按判据挑。B1 之前写死的是 情侣/独行/摄影，那三个现在已经配上表了 ——
+    写死「谁还没填表」等于把测试绑在某一次的注册表空位上。
+    """
+    inert = [sid for sid, p in rt.PERSPECTIVE_SPECS.items() if not p.get("checklist_key")]
+    assert inert, "所有视角都已配表 ⇒ 本用例已无样本，请改判或显式删除"
+    for sid in inert:
         assert not rt.PERSPECTIVE_SPECS[sid]["spot_probe_tpls"]
         assert rt.PERSPECTIVE_SPECS[sid]["angle_tpls"] == ()
+
+
+def test_configured_guide_rows_wire_their_own_angles():
+    """正判据另一半：每个配表的 guide 视角各有自己的角度词，且**不共用亲子那份**。
+
+    共用会让情侣卷去检索「母婴室 婴儿车」——B1 要治的正是「换群体就没针对性」。
+    """
+    fam = rt.PERSPECTIVE_SPECS["persp_family"]["angle_tpls"]
+    for sid in ("persp_couple", "persp_solo", "persp_senior", "persp_photo"):
+        own = rt.PERSPECTIVE_SPECS[sid]["angle_tpls"]
+        assert len(own) == 2, f"{sid} 角度槽位应为 2（deep 档 persp_slots=2 的配额单位）"
+        assert own != fam, f"{sid} 的角度词与亲子雷同 ⇒ 换群体等于没换视角"
 
 
 def test_mode_config_persp_quotas():
@@ -231,7 +253,13 @@ def test_slot_angles_are_destination_orthogonal():
 
 # ── _plan_research 接线 ────────────────────────────────────────
 
-def test_plan_research_wires_slots_only_for_family(monkeypatch):
+def test_plan_research_wires_slots_per_configured_perspective(monkeypatch):
+    """槽位接线按**当次视角**取：配了表就带上自己的角度词，没配就是空（quick 档由 slots 挡）。
+
+    原名 `..._only_for_family`：情侣/独行等当时未填表，断言写的是「非亲子恒空」。
+    B1 填表后该命题已不成立，但它的**意图**（谁都不许串用别人的角度词、未配者零波及）
+    仍然要钉 —— 故重指而非放宽：改成逐视角各断自己那份。
+    """
     captured: dict = {}
 
     def fake_chat(messages, **kw):
@@ -244,11 +272,20 @@ def test_plan_research_wires_slots_only_for_family(monkeypatch):
 
     monkeypatch.setattr(llm, "chat_json", fake_chat)
     monkeypatch.setattr(planning, "_orthogonal_angles", fake_orth)
-    fam = {"party": "亲子家庭", "destinations": ["大理"], "_type": "guide"}
-    O._plan_research("大理攻略", fam, 8, "guide", "", persp_slots=2)
-    assert captured["persp"] == rt.PERSPECTIVE_SPECS["persp_family"]["angle_tpls"]
-    O._plan_research("大理攻略", {"party": "情侣/夫妻", "destinations": ["大理"],
-                                  "_type": "guide"}, 8, "guide", "", persp_slots=2)
-    assert captured["persp"] == ()
-    O._plan_research("大理攻略", fam, 4, "guide", "", persp_slots=0)
-    assert captured["persp"] == (), "quick 档零配额：亲子答案也不占槽位"
+
+    for answer, sid in (("亲子家庭", "persp_family"), ("情侣/夫妻", "persp_couple"),
+                        ("独自旅行", "persp_solo"), ("摄影采风", "persp_photo"),
+                        ("带长辈", "persp_senior")):
+        O._plan_research("大理攻略", {"party": answer, "destinations": ["大理"],
+                                      "_type": "guide"}, 8, "guide", "", persp_slots=2)
+        assert captured["persp"] == rt.PERSPECTIVE_SPECS[sid]["angle_tpls"], sid
+
+    inert = next(sid for sid, p in rt.PERSPECTIVE_SPECS.items() if not p.get("checklist_key"))
+    kw = rt.perspective_spec(inert)["keywords"][0]
+    O._plan_research("大理攻略", {"party": kw, "destinations": ["大理"],
+                                  "_type": "assessment"}, 8, "assessment", "",
+                     persp_slots=2)
+    assert captured["persp"] == (), f"{inert} 未配角度词却占了槽位"
+    O._plan_research("大理攻略", {"party": "亲子家庭", "destinations": ["大理"],
+                                  "_type": "guide"}, 4, "guide", "", persp_slots=0)
+    assert captured["persp"] == (), "quick 档零配额：配了表的视角也不占槽位"
