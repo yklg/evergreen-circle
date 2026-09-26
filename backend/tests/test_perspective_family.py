@@ -489,3 +489,28 @@ def test_served_question_set_exceeds_registry_only_by_enhanced_questions():
     extra = ({q["id"] for q in served}
              - {q["id"] for q in rt.type_spec("guide")["clarify"]})
     assert extra <= {"scope", "destinations"}, f"出现注册表外的意外题：{extra}"
+
+
+# ── A10′ 划界（T4：本轮只划界、不接）───────────────────────────
+def test_fallback_domain_map_is_not_derivable_from_perspective_keywords():
+    """领域表**不能**由视角关键词派生——实测会丢掉 40 条里的 31 条路由。
+
+    这是 v2 计划「A10 纯派生」被判不可实现的原身：`_FALLBACK_DOMAIN_MAP` 装的是
+    **主题词**（海岛/古镇/自驾/研学…），视角行装的是**人群词**（亲子/长辈/独行…），
+    两个词表只部分重叠。若为了「少一张表」而把前者并进后者，
+    「研学」「自驾」这类主题会静默失路由（专家分派拿不到领域 ⇒ 退化成通用团），
+    而且没有任何断言会红——所以只能把它钉成一条**禁止派生**的守卫。
+
+    真正要把视角接进领域分派时（T4 挂账），做法是给视角行加 `fallback_domain` 并与
+    原表取**并集**（不是替换），且必须带上「派生 ⊇ 原字面」的等值断言。
+    """
+    from app.core.pipeline.research import planning as PL
+    kws = {k for p in rt.PERSPECTIVE_SPECS.values() for k in (p.get("keywords") or ())}
+    theme_only = [k for k in PL._FALLBACK_DOMAIN_MAP if k not in kws]
+    assert theme_only, (
+        "主题词已全部被视角关键词覆盖 ⇒ 本断言过期：现在可以派生了，"
+        "但改用派生时必须补「并集 ⊇ 原字面」的等值断言")
+    # 人群词与主题词的重叠只占少数——重言式改判据：派生表若替换原表，覆盖不得倒退
+    assert len(theme_only) > len(PL._FALLBACK_DOMAIN_MAP) // 2, (
+        f"仅 {len(theme_only)}/{len(PL._FALLBACK_DOMAIN_MAP)} 条主题词独立于视角词，"
+        "低于半数 ⇒ 两词表已趋同，请重新评估是否合并")
