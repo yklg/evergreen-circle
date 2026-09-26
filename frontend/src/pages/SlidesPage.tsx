@@ -160,13 +160,41 @@ export default function SlidesPage() {
   )
 }
 
+interface SlideTypeCfg {
+  kind: string
+  focus: { title: string; ids: string[] }
+  insight: { title: string; h3: string; ids: string[] }
+}
+
+const SLIDE_TYPES: Record<string, SlideTypeCfg> = {
+  guide: {
+    kind: '旅游攻略汇报',
+    focus: { title: '行程与路线', ids: ['route', 'transport'] },
+    insight: { title: '避坑与反共识', h3: '避坑指南', ids: ['tips', 'season'] },
+  },
+  assessment: {
+    kind: '调研评估汇报',
+    focus: { title: '可达性与配套', ids: ['accessibility', 'amenities'] },
+    insight: { title: '研判与反共识', h3: '综合研判', ids: ['verdict', 'trend'] },
+  },
+}
+
+function slideType(rtype?: string): SlideTypeCfg {
+  return SLIDE_TYPES[rtype ?? ''] ?? SLIDE_TYPES.guide
+}
+
 /* ── 8 页模板（缺失内容返回 null 自动跳过，页码保持连续）───────── */
 function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
   if (!r) return []
+  const cfg = slideType(r.research_type)
   const sec = (id: string) => r.sections.find((s) => s.id === id)
+  const firstOf = (ids: string[]) => ids.map(sec).find(Boolean)
   const hasContent = (s?: { key_takeaway?: string; highlights?: string[] }) =>
     Boolean(s && (s.key_takeaway || (s.highlights && s.highlights.length > 0)))
-  const overview = sec('overview') ?? sec('feature')
+  const focus = firstOf(cfg.focus.ids)
+  const insight = firstOf(cfg.insight.ids)
+  const contrarian = sec('contrarian')
+  const chartSection = r.sections.find((s) => (s.charts?.length ?? 0) > 0)
 
   const byType: Record<string, number> = {}
   r.evidence.forEach((e) => {
@@ -175,57 +203,60 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
 
   return [
     // 1 封面
-    () => <Slide title={r.title} subtitle={r.subtitle} center={<CoverMeta r={r} />} />,
+    () => <Slide kind={cfg.kind} title={r.title} subtitle={r.subtitle} center={<CoverMeta r={r} />} />,
     // 2 执行摘要
     hasContent(sec('summary'))
       ? () => (
-          <Slide title="执行摘要 · 核心判断" center={<SectionKeys s={sec('summary')} isSummary />} />
+          <Slide kind={cfg.kind} title="执行摘要 · 核心判断" center={<SectionKeys s={sec('summary')} isSummary />} />
         )
       : null,
     // 3 关键数据速览
     () => (
       <Slide
+        kind={cfg.kind}
         title="关键数据速览"
         center={
           <div className="space-y-6">
             <div className="mx-auto max-w-2xl">
               <MetricsStrip report={r} />
             </div>
-            {overview?.charts?.length ? <VChart spec={overview.charts[0]} height={200} /> : null}
+            {chartSection?.charts?.length ? <VChart spec={chartSection.charts[0]} height={200} /> : null}
           </div>
         }
       />
     ),
-    // 4 竞争格局
-    hasContent(overview)
+    // 4 类型焦点（guide：行程与路线 / assessment：可达性与配套）
+    hasContent(focus)
       ? () => (
           <Slide
-            title="竞争格局"
+            kind={cfg.kind}
+            title={cfg.focus.title}
             center={
               <div className="space-y-5">
-                <SectionKeys s={overview} inlineCharts />
+                <SectionKeys s={focus} inlineCharts />
               </div>
             }
           />
         )
       : null,
-    // 5 护城河与反共识
-    hasContent(sec('moat')) || hasContent(sec('contrarian')) ? (
+    // 5 类型洞察与反共识
+    hasContent(insight) || hasContent(contrarian) ? (
       () => (
         <Slide
-          title="护城河与反共识"
+          kind={cfg.kind}
+          title={cfg.insight.title}
           center={
             <div className="space-y-6">
-              {hasContent(sec('moat')) && (
+              {hasContent(insight) && (
                 <div>
-                  <h3 className="mb-2 text-sm font-semibold text-[#2f9d6e]">护城河深度</h3>
-                  <SectionKeys s={sec('moat')} />
+                  <h3 className="mb-2 text-sm font-semibold text-[#2f9d6e]">{cfg.insight.h3}</h3>
+                  <SectionKeys s={insight} />
                 </div>
               )}
-              {hasContent(sec('contrarian')) && (
+              {hasContent(contrarian) && (
                 <div>
                   <h3 className="mb-2 text-sm font-semibold text-[#2f9d6e]">反共识洞察</h3>
-                  <SectionKeys s={sec('contrarian')} />
+                  <SectionKeys s={contrarian} />
                 </div>
               )}
             </div>
@@ -234,12 +265,13 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
       )
     ) : null,
     // 6 结论与行动建议
-    hasContent(sec('conclusion')) ? () => <Slide title="结论与行动建议" center={<SectionKeys s={sec('conclusion')} />} /> : null,
+    hasContent(sec('conclusion')) ? () => <Slide kind={cfg.kind} title="结论与行动建议" center={<SectionKeys s={sec('conclusion')} />} /> : null,
     // 7 风险清单
-    hasContent(sec('risk')) ? () => <Slide title="风险清单与不确定性" center={<SectionKeys s={sec('risk')} />} /> : null,
+    hasContent(sec('risk')) ? () => <Slide kind={cfg.kind} title="风险清单与不确定性" center={<SectionKeys s={sec('risk')} />} /> : null,
     // 8 证据与信源
     () => (
       <Slide
+        kind={cfg.kind}
         title="证据与信源"
         center={
           <div>
@@ -263,10 +295,20 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
 }
 
 /* 幻灯片页壳 */
-function Slide({ title, subtitle, center }: { title: string; subtitle?: string; center: ReactNode }) {
+function Slide({
+  title,
+  subtitle,
+  kind = '旅游调研汇报',
+  center,
+}: {
+  title: string
+  subtitle?: string
+  kind?: string
+  center: ReactNode
+}) {
   return (
     <div className="flex h-full flex-col px-14 py-12">
-      <div className="text-xs uppercase tracking-[0.25em] text-[#2f9d6e]">{BRAND.en} · 目的地调研汇报</div>
+      <div className="text-xs uppercase tracking-[0.25em] text-[#2f9d6e]">{BRAND.en} · {kind}</div>
       <h1 className="mt-2 font-serif text-[30px] font-bold leading-snug text-[#16211b]">{title}</h1>
       {subtitle && <p className="mt-1 text-sm text-[#5b6560]">{subtitle}</p>}
       <div className="mt-6 flex-1 overflow-hidden">{center}</div>
@@ -278,7 +320,7 @@ function CoverMeta({ r }: { r: Report }) {
   return (
     <div className="mt-4 space-y-2 text-sm text-[#5b6560]">
       <div>生成日期：{r.created_at}</div>
-      {r.brands && r.brands.length > 0 && <div>调研对象：{r.brands.join(' · ')}</div>}
+      {r.destinations && r.destinations.length > 0 && <div>调研范围：{r.destinations.join(' · ')}</div>}
       <div>
         {r.evidence.length} 条联网证据 · {r.claims.length} 条结论 · {r.experts.length} 位专家协作
       </div>
