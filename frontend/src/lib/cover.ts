@@ -14,13 +14,13 @@ import { BRAND } from './brand'
 
 export interface CoverSource {
   title: string
-  brands?: string[]
+  destinations?: string[]
   cover_image?: string
 }
 
-function makeCoverSvg(title: string, brands: string[]): string {
-  const t = (title || '目的地调研').slice(0, 20)
-  const b = (brands.slice(0, 3).join(' · ') || BRAND.coverByline)
+function makeCoverSvg(title: string, destinations: string[]): string {
+  const t = (title || '旅游调研').slice(0, 20)
+  const b = (destinations.slice(0, 3).join(' · ') || BRAND.coverByline)
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">' +
     '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
@@ -29,7 +29,7 @@ function makeCoverSvg(title: string, brands: string[]): string {
     '<rect width="800" height="450" fill="url(#g)"/>' +
     '<circle cx="650" cy="80" r="150" fill="#ffffff" opacity="0.06"/>' +
     '<circle cx="110" cy="390" r="90" fill="#ffffff" opacity="0.05"/>' +
-    `<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">${BRAND.en.toUpperCase()} · 调研报告</text>` +
+    `<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">${BRAND.en.toUpperCase()} · 旅游调研</text>` +
     `<text x="46" y="225" fill="#ffffff" font-family="sans-serif" font-size="40" font-weight="700">${t}</text>` +
     `<text x="48" y="272" fill="#ccfbf1" font-family="sans-serif" font-size="22">${b}</text>` +
     '<text x="48" y="410" fill="#99f6e4" font-family="sans-serif" font-size="16" opacity="0.85">结论可溯源 · 证据可沉淀</text>' +
@@ -42,5 +42,5 @@ export function coverFor(r: CoverSource): string {
   // 本地路径（/assets/...）或后端生成的 data URL → 直出；
   // 任何外部 http(s) URL（含历史失效的 bytedance 生图地址）或缺失 → 本地生成。
   if (c && !c.startsWith('http')) return c
-  return makeCoverSvg(r.title, r.brands ?? [])
+  return makeCoverSvg(r.title, r.destinations ?? [])
 }

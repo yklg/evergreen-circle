@@ -328,7 +328,7 @@ export async function fetchEvidences(params?: {
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   return safeJson<EvidenceQueryResp>(`/api/evidences${suffix}`, undefined, {
     items: [],
-    facets: { total: 0, by_type: {}, by_brand: {} },
+    facets: { total: 0, by_type: {}, by_destination: {} },
   })
 }
 

@@ -34,7 +34,7 @@ export function VSentimentPanel({
   sentiment: SentimentResult
   charts?: ChartSpec[]
 }) {
-  const { overall, by_platform, camps, voices, highlights, sample_size } = sentiment
+  const { overall, by_platform, by_spot, camps, voices, highlights, sample_size } = sentiment
   const total = overall.pos + overall.neu + overall.neg || 1
   return (
     <div className="flex flex-col gap-5">
@@ -122,6 +122,28 @@ export function VSentimentPanel({
           })}
         </div>
       </div>
+
+      {/* 逐景点口碑分布（M2c：spot×platform 双维，spot_id 直引冻结实体） */}
+      {by_spot && by_spot.length > 0 && (
+        <div>
+          <div className="mb-2 text-aux font-semibold text-ink">逐景点口碑分布</div>
+          <div className="flex flex-col gap-2">
+            {by_spot.map((s) => (
+              <div key={s.spot_id} data-spot-id={s.spot_id} className="flex items-center gap-3">
+                <span className="w-28 shrink-0 truncate text-tag text-ink-2" title={s.spot_name}>
+                  {s.spot_name || s.spot_id}
+                </span>
+                <div className="flex h-2.5 flex-1 overflow-hidden rounded-chip">
+                  <div className="bg-ok" style={{ width: `${s.pos}%` }} />
+                  <div className="bg-ink-3/40" style={{ width: `${s.neu}%` }} />
+                  <div className="bg-risk" style={{ width: `${s.neg}%` }} />
+                </div>
+                <span className="w-16 shrink-0 text-right text-tag text-ink-3">{s.sample} 条</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 观点阵营 */}
       {camps && camps.length > 0 && (

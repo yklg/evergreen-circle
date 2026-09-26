@@ -23,6 +23,8 @@ export interface MapBranch {
   /** 折叠前该分支的叶子总数（渲染 +N 用） */
   leaves: MapLeaf[]
   note?: string
+  /** 降级分支（§6.0.6 的「正文」计数）：渲染方据此改用一行说明，不再画伪导图 */
+  degraded?: boolean
 }
 
 const trunc = (s: string, n: number) => {
@@ -114,6 +116,7 @@ function ensureNonEmpty(section: ReportSection, branches: MapBranch[]): MapBranc
     {
       key: 'fallback',
       label: '正文',
+      degraded: true,
       leaves: [
         { text: `${section.paragraphs.length} 段${figCount ? ' · ' + figCount + ' 图' : ''}` },
       ],

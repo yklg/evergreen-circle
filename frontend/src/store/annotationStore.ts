@@ -30,6 +30,7 @@ export interface KBEntry {
   sourceUrl?: string
   evidenceId?: string
   brand?: string
+  destination?: string
   imageSrc?: string
   tags: string[]
   createdAt: number

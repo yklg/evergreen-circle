@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import { X, Lightbulb, Sparkles, BarChart3, Quote } from 'lucide-react'
 import type { ReportSection } from '../types'
 import { chapterMapLeaves, chapterMapChips } from '../lib/chapterMap'
+import type { MapBranch } from '../lib/chapterMap'
 import { ChapterMindmapSvg } from './ChapterMindmapSvg'
 
 export type ContentMapMode = 'detail' | 'summary'
@@ -37,14 +38,28 @@ export function ChapterContentMap({
 
   if (!hasContent) return null
 
+  // 算分输入缺口（后端 score_gap，与 structure_status 正交）：折叠态也照常显示——
+  // 「本该有图却没出」的如实说明属于结论面，不该藏在「显示本章内容结构」后面。
+  const gapNote = section.score_gap?.reason ? (
+    <p
+      data-score-gap
+      className="mb-2 rounded-chip border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2"
+    >
+      评分维度缺可核验数据 · {section.score_gap.reason}
+    </p>
+  ) : null
+
   if (isCollapsed) {
     return (
-      <button
-        onClick={() => setIsCollapsed(false)}
-        className="flex w-full items-center justify-center gap-2 rounded-card border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2 hover:border-primary hover:text-primary-deep"
-      >
-        <span>显示本章内容结构</span>
-      </button>
+      <>
+        {gapNote}
+        <button
+          onClick={() => setIsCollapsed(false)}
+          className="flex w-full items-center justify-center gap-2 rounded-card border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2 hover:border-primary hover:text-primary-deep"
+        >
+          <span>显示本章内容结构</span>
+        </button>
+      </>
     )
   }
 
@@ -61,13 +76,36 @@ export function ChapterContentMap({
         </button>
       </div>
 
+      {gapNote}
+
       {mode === 'detail' ? (
-        <ChapterMindmapSvg title={section.title} branches={branches} />
+        isDegraded(branches) ? (
+          <p className="rounded-chip border border-dashed border-line bg-card/60 px-3 py-2 text-tag text-ink-2">
+            {degradedNote(section)}
+          </p>
+        ) : (
+          <ChapterMindmapSvg title={section.title} branches={branches} />
+        )
       ) : (
         renderSummaryMode(section)
       )}
     </div>
   )
+}
+
+/**
+ * 只有一个「正文字数」降级分支时不再画导图：三个盒子的连线会被误读成「流程图」，
+ * 而它其实代表「本章没拿到结构」。文案区分「写稿丢了结构」与「本章本就没有结构化材料」。
+ */
+function isDegraded(branches: MapBranch[]): boolean {
+  return branches.length === 1 && branches[0].degraded === true
+}
+
+function degradedNote(section: ReportSection): string {
+  const n = section.paragraphs?.length ?? 0
+  return section.structure_status === 'lost'
+    ? `本章结构提炼失败 · 正文 ${n} 段完整`
+    : `本章未产出可结构化要点 · 正文 ${n} 段`
 }
 
 /** summary 模式：紧凑芯片态，内容源与 detail 共用 chapterMapLeaves（规则不漂移） */

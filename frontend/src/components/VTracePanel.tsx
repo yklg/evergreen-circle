@@ -9,18 +9,27 @@ const STAGE_LABEL: Record<string, string> = {
   orchestrator: '编排派遣',
   collect: '证据采集',
   analyze: '交叉分析',
+  spots: '景点实体',
   write: '报告撰写',
   audit: '质检审裁',
   done: '签发交付',
 }
 
-/** 工作台悬浮可拖拽日志面板：实时滚动展示每个 Agent 的 LLM 调用 trace。 */
-export function VTracePanel({ traces }: { traces: TraceSpan[] }) {
+/** 工作台悬浮可拖拽日志面板：实时滚动展示每个 Agent 的 LLM 调用 trace。
+ *  revealKey 递增时强制展开（供外部入口唤起，如目的地降级横幅）；面板自身开合不受影响。 */
+export function VTracePanel({ traces, revealKey = 0 }: { traces: TraceSpan[]; revealKey?: number }) {
   const byId = useExpertStore((s) => s.byId)
   const [open, setOpen] = useState(true)
   const [collapsed, setCollapsed] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (revealKey > 0) {
+      setOpen(true)
+      setCollapsed(false)
+    }
+  }, [revealKey])
 
   useEffect(() => {
     if (open && !collapsed) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -57,10 +66,10 @@ export function VTracePanel({ traces }: { traces: TraceSpan[] }) {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="rounded-chip bg-white/20 px-2 py-0.5 text-tag">{traces.length} 步</span>
-          <button onClick={() => setCollapsed((v) => !v)} className="opacity-80 hover:opacity-100">
+          <button onClick={() => setCollapsed((v) => !v)} aria-label="折叠决策日志" className="opacity-80 hover:opacity-100">
             {collapsed ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
           </button>
-          <button onClick={() => setOpen(false)} className="opacity-80 hover:opacity-100">
+          <button onClick={() => setOpen(false)} aria-label="关闭决策日志" className="opacity-80 hover:opacity-100">
             <X size={15} />
           </button>
         </div>

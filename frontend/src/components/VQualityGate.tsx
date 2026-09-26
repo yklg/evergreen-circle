@@ -3,14 +3,14 @@ import { RotateCcw, ArrowRight } from 'lucide-react'
 interface QualityData {
   confidence_ratio?: number
   dimension_coverage_rate?: number
-  brand_coverage_rate?: number
+  destination_coverage_rate?: number
   schema_completeness?: number
 }
 
 const METRICS: { key: keyof QualityData; label: string }[] = [
   { key: 'confidence_ratio', label: '高置信占比' },
   { key: 'dimension_coverage_rate', label: '维度覆盖' },
-  { key: 'brand_coverage_rate', label: '品牌覆盖' },
+  { key: 'destination_coverage_rate', label: '目的地覆盖' },
   { key: 'schema_completeness', label: '结构完整' },
 ]
 

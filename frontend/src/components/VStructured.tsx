@@ -1,36 +1,291 @@
 import { Check, Minus, X } from 'lucide-react'
+import { useState, type ReactElement } from 'react'
+import { BMapBlock, hasBMapAk, type MapSpot } from './BMapBlock'
+import { VSpotSketch } from './VSpotSketch'
+import type { StructuredBlock, StructuredBlockType } from '../types'
 
 type Row = Record<string, unknown>
 
-/** 功能树矩阵：展示各品牌的功能模块与支持程度。 */
-export function VFeatureMatrix({ data }: { data: Row[] }) {
+/* 三档支持度/覆盖度 → 图标 + 配色（full/partial/none 与后端 coerce 枚举一致） */
+const TRI_ICON = { full: Check, partial: Minus, none: X } as const
+const TRI_TINT = {
+  full: 'bg-ok/10 text-ok',
+  partial: 'bg-sun-soft text-warn',
+  none: 'bg-risk/10 text-risk',
+} as const
+
+function tri(v: unknown): 'full' | 'partial' | 'none' {
+  return v === 'full' || v === 'none' ? v : 'partial'
+}
+
+/* 风险等级 low|medium|high → 中文 + 配色 */
+const LEVEL_LABEL: Record<string, string> = { low: '低', medium: '中', high: '高' }
+const LEVEL_TINT: Record<string, string> = {
+  low: 'bg-ok/10 text-ok',
+  medium: 'bg-sun-soft text-warn',
+  high: 'bg-risk/10 text-risk',
+}
+
+/* ── 景点实体（spots 阶段冻结的唯一实体表） ───────────────── */
+
+/** 景点综合评分榜：规则算分（声量/口碑/性价比明细）+ 门票/停留/避峰，matched=false 显示占位。
+ * selectedId/onSelect 为与地图的双向联动接缝（spot_id 为唯一挂接键）。 */
+export function VSpotRanking({
+  data,
+  selectedId,
+  onSelect,
+}: {
+  data: Row[]
+  selectedId?: string | null
+  onSelect?: (spotId: string | null) => void
+}) {
   if (!data?.length) return null
   return (
     <div className="mt-4 space-y-4">
-      {data.map((brand, bi) => (
-        <div key={bi} className="rounded-card border border-line bg-white p-4">
-          <div className="mb-2 text-aux font-semibold text-ink">{String(brand.brand ?? '')} · 功能树</div>
-          <div className="space-y-2.5">
-            {((brand.modules as Row[]) || []).map((m: Row, mi: number) => (
-              <div key={mi}>
-                <div className="text-tag font-medium text-primary-deep">
-                  {m.category ? `${String(m.category)} · ` : ''}{String(m.name ?? '')}
-                </div>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {((m.sub_features as Row[]) || []).map((sf: Row, si: number) => {
-                    const Icon = sf.support === 'full' ? Check : sf.support === 'none' ? X : Minus
-                    const tint =
-                      sf.support === 'full' ? 'bg-ok/10 text-ok'
-                        : sf.support === 'none' ? 'bg-risk/10 text-risk'
-                          : 'bg-sun-soft text-warn'
-                    return (
-                      <span key={si} title={String(sf.note ?? '')} className={`inline-flex items-center gap-1 rounded-chip px-2 py-0.5 text-tag ${tint}`}>
-                        <Icon size={11} /> {String(sf.name ?? '')}
+      {data.map((d, di) => (
+        <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+          <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 景点综合评分榜
+          </div>
+          <table className="w-full text-tag">
+            <thead>
+              <tr className="border-b border-line text-ink-3">
+                <th className="px-3 py-1.5 text-left font-medium">#</th>
+                <th className="px-2 py-1.5 text-left font-medium">景点 / 区域</th>
+                <th className="px-2 py-1.5 text-left font-medium">综合分（声量·口碑·性价比）</th>
+                <th className="px-2 py-1.5 text-left font-medium">门票与预约</th>
+                <th className="px-2 py-1.5 text-left font-medium">停留</th>
+                <th className="px-2 py-1.5 text-left font-medium">避峰</th>
+                <th className="px-3 py-1.5 text-left font-medium">入选理由</th>
+              </tr>
+            </thead>
+            <tbody>
+              {((d.items as Row[]) || []).map((it: Row, ii: number) => {
+                const dims = (it.dims as Row) || {}
+                const unmatched = it.matched === false
+                const spotId = String(it.spot_id ?? '')
+                const active = !!spotId && spotId === selectedId
+                return (
+                  <tr
+                    key={ii}
+                    data-spot-row={spotId}
+                    data-selected={active || undefined}
+                    onMouseEnter={() => onSelect?.(spotId)}
+                    onClick={() => onSelect?.(spotId)}
+                    className={`cursor-pointer border-b border-line/60 last:border-0 ${
+                      active ? 'bg-primary-tint/60' : ''
+                    }`}
+                  >
+                    <td className="px-3 py-1.5 font-semibold text-primary-deep">{String(it.rank ?? ii + 1)}</td>
+                    <td className="px-2 py-1.5">
+                      <span className="font-medium text-ink" data-spot-id={String(it.spot_id ?? '')}>
+                        {String(it.name ?? '')}
                       </span>
-                    )
-                  })}
+                      {it.area ? <span className="ml-1 text-ink-3">· {String(it.area)}</span> : null}
+                      {unmatched ? (
+                        <span className="ml-1 rounded-chip bg-sun-soft px-1.5 py-0.5 text-tag text-warn">位置未匹配</span>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-1.5 text-primary-deep">
+                      {it.score != null ? String(it.score) : '—'}
+                      <span className="ml-1 font-normal text-ink-3">
+                        {dims.voice != null
+                          ? `（${String(dims.voice)}·${String(dims.sentiment)}·${String(dims.value)}）`
+                          : ''}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-ink-2">{String(it.ticket ?? '—')}</td>
+                    <td className="px-2 py-1.5 text-ink-2">{it.stay_minutes != null ? `${String(it.stay_minutes)}分钟` : '—'}</td>
+                    <td className="px-2 py-1.5 text-ink-2">{String(it.off_peak ?? '—')}</td>
+                    <td className="px-3 py-1.5 text-ink-2">{String(it.reason ?? '-')}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** 榜单 ↔ 地图组合位：selected spot_id 提升于此，两子件共享（唯一挂接键仍是冻结实体 spot_id）。
+ * 条图（F2 本地 CSS）恒出，不依赖 LLM/后端 spec；坐标全缺时它兼任地图的降级替身。 */
+export function VSpotAtlas({ data }: { data: Row[] }) {
+  const [selected, setSelected] = useState<string | null>(null)
+  if (!data?.length) return null
+  const spots: MapSpot[] = data
+    .flatMap((d) => ((d.items as Row[]) || []) as Row[])
+    .map((it) => ({
+      spot_id: String(it.spot_id ?? ''),
+      name: String(it.name ?? ''),
+      area: it.area ? String(it.area) : undefined,
+      score: typeof it.score === 'number' ? it.score : undefined,
+      matched: it.matched === false ? false : undefined,
+      lat: it.lat as number | null | undefined,
+      lng: it.lng as number | null | undefined,
+    }))
+    .filter((s) => s.spot_id)
+  const mappable = spots.filter(
+    (s) => s.matched !== false && typeof s.lat === 'number' && typeof s.lng === 'number',
+  )
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      {mappable.length > 0 && (
+        <BMapBlock spots={spots} selectedId={selected} onSelect={setSelected} />
+      )}
+      <VSpotRankBar data={data} />
+      <VSpotRanking data={data} selectedId={selected} onSelect={setSelected} />
+    </div>
+  )
+}
+
+/** 分数 → 条宽（%）：0-10 与 0-100 双值域自适应归一，越界钳位；非数值 → 0。 */
+export function rankBarWidth(score: unknown): number {
+  const v = typeof score === 'number' && Number.isFinite(score) ? score : Number(score) || 0
+  const pct = v <= 10 ? v * 10 : v
+  return Math.min(100, Math.max(0, pct))
+}
+
+/** 景点 Top 榜条图（F2）：纯 CSS 横向条，评分归一映射条宽 + 数值标签 + 门票价签。 */
+export function VSpotRankBar({ data }: { data: Row[] }) {
+  const groups = (data || []).filter((d) => Array.isArray(d.items) && (d.items as Row[]).length > 0)
+  if (groups.length === 0) return null
+  return (
+    <div className="space-y-4">
+      {groups.map((d, di) => (
+        <div key={di} data-spot-rankbar className="overflow-hidden rounded-card border border-line bg-white">
+          <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 景点评分条图
+          </div>
+          <div className="space-y-2 p-4">
+            {((d.items as Row[]) || []).map((it, ii) => {
+              const w = rankBarWidth(it.score)
+              return (
+                <div key={ii} className="flex items-center gap-2">
+                  <span className="w-5 shrink-0 text-right text-tag font-semibold text-primary-deep">
+                    {String(it.rank ?? ii + 1)}
+                  </span>
+                  <span className="w-28 shrink-0 truncate text-tag font-medium text-ink" title={String(it.name ?? '')}>
+                    {String(it.name ?? '')}
+                  </span>
+                  <span className="h-3 min-w-0 flex-1 overflow-hidden rounded-full bg-primary-tint/60">
+                    <span
+                      className="block h-full rounded-full bg-primary"
+                      style={{ width: `${w}%` }}
+                      data-bar-width={w}
+                    />
+                  </span>
+                  <span className="w-12 shrink-0 text-tag tabular-nums text-primary-deep">
+                    {it.score != null ? String(it.score) : '—'}
+                  </span>
+                  {it.ticket ? (
+                    <span className="hidden shrink-0 text-tag text-ink-3 sm:inline" title={String(it.ticket)}>
+                      {String(it.ticket)}
+                    </span>
+                  ) : null}
                 </div>
-              </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** 美食 Top 榜卡（N2）：名称 + 评分条（score 有则归一 0-10 映射）+ 人均价 chip + 品类标签 + 推荐理由；
+ * 缺字段逐项回落（schema 不保证 score/price 恒在，条图与 chip 只按在位字段渲染）。 */
+export function VFoodRanking({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => (
+        <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+          <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 美食 Top 榜
+          </div>
+          <div className="grid grid-cols-1 gap-2.5 p-4 sm:grid-cols-2">
+            {((d.items as Row[]) || []).map((it: Row, ii: number) => {
+              const hasScore = it.score != null && Number.isFinite(Number(it.score))
+              const w = rankBarWidth(it.score)
+              return (
+                <div key={ii} data-food-card className="rounded-card border border-line/60 bg-bg p-3">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="text-tag font-semibold text-primary-deep">{ii + 1}</span>
+                    <span className="text-aux font-medium text-ink">{String(it.name ?? '')}</span>
+                    {it.category ? (
+                      <span className="rounded-chip bg-primary-tint px-1.5 py-0.5 text-tag text-primary-deep">
+                        {String(it.category)}
+                      </span>
+                    ) : null}
+                    {it.price_range ? (
+                      <span className="rounded-chip bg-sun-soft px-1.5 py-0.5 text-tag text-warn">
+                        人均 {String(it.price_range)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {hasScore && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-card/70">
+                        <span
+                          className="block h-full rounded-full bg-warn"
+                          style={{ width: `${w}%` }}
+                          data-food-score={String(it.score)}
+                        />
+                      </span>
+                      <span className="text-tag tabular-nums text-warn">{String(it.score)}</span>
+                    </div>
+                  )}
+                  {it.reason ? (
+                    <p className="mt-1.5 text-tag leading-relaxed text-ink-2">{String(it.reason)}</p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** 逐景点路线卡：地铁/公交/打车逐条换乘方案，默认展开 Top3。 */
+export function VSpotRoutes({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => (
+        <div key={di} className="rounded-card border border-line bg-white p-4">
+          <div className="mb-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 逐景点路线
+          </div>
+          <div className="space-y-2">
+            {((d.items as Row[]) || []).map((sp: Row, si: number) => (
+              <details key={si} open={si < 3} className="rounded-btn border border-line/70 bg-white">
+                <summary className="cursor-pointer select-none px-3 py-1.5 text-tag font-medium text-ink">
+                  {String(sp.spot_name ?? '')}
+                  {sp.spot_id ? <span className="ml-1 font-normal text-ink-3">{String(sp.spot_id)}</span> : null}
+                </summary>
+                <div className="space-y-1.5 px-3 pb-2.5">
+                  {((sp.routes as Row[]) || []).map((r: Row, ri: number) => (
+                    <div key={ri} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="rounded-chip bg-bg px-1.5 py-0.5 text-tag font-medium text-primary-deep ring-1 ring-line">
+                        {String(r.mode ?? '')}
+                      </span>
+                      {r.duration ? <span className="text-tag text-ink-2">{String(r.duration)}</span> : null}
+                      {r.cost ? <span className="text-tag text-warn">{String(r.cost)}</span> : null}
+                      {r.transfer ? <span className="text-tag text-ink-2">换乘：{String(r.transfer)}</span> : null}
+                      {r.note ? <span className="text-tag text-ink-3">{String(r.note)}</span> : null}
+                    </div>
+                  ))}
+                  {!(sp.routes as Row[])?.length ? (
+                    <div className="text-tag text-risk" data-route-missing>
+                      未定位到坐标（POI 未命中），路线待补充
+                    </div>
+                  ) : null}
+                </div>
+              </details>
             ))}
           </div>
         </div>
@@ -39,37 +294,243 @@ export function VFeatureMatrix({ data }: { data: Row[] }) {
   )
 }
 
-/** 定价模型表：展示各品牌的定价档位。 */
-export function VPricingTable({ data }: { data: Row[] }) {
+/** 美食商铺清单：对应美食 / 商铺 / 区域 / 人均参考价 / 排队情况 / 公交路线（M3e 真实数据，缺则占位）。 */
+export function VShopList({ data }: { data: Row[] }) {
   if (!data?.length) return null
   return (
     <div className="mt-4 space-y-4">
-      {data.map((brand, bi) => (
-        <div key={bi} className="overflow-hidden rounded-card border border-line bg-white">
-          <div className="flex items-center justify-between bg-bg px-4 py-2">
-            <span className="text-aux font-semibold text-ink">{String(brand.brand ?? '')}</span>
-            <span className="rounded-chip bg-primary-tint px-2 py-0.5 text-tag text-primary-deep">
-              {String(brand.model_type ?? '')}{brand.free_tier ? ' · 含免费版' : ''}
-            </span>
+      {data.map((d, di) => (
+        <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+          <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 美食商铺（人均为参考价）
           </div>
           <table className="w-full text-tag">
             <thead>
               <tr className="border-b border-line text-ink-3">
-                <th className="px-4 py-1.5 text-left font-medium">档位</th>
-                <th className="px-2 py-1.5 text-left font-medium">价格</th>
-                <th className="px-2 py-1.5 text-left font-medium">目标用户</th>
-                <th className="px-4 py-1.5 text-left font-medium">主要权益</th>
+                <th className="px-4 py-1.5 text-left font-medium">商铺</th>
+                <th className="px-2 py-1.5 text-left font-medium">对应美食</th>
+                <th className="px-2 py-1.5 text-left font-medium">区域</th>
+                <th className="px-2 py-1.5 text-left font-medium">人均</th>
+                <th className="px-2 py-1.5 text-left font-medium">排队情况</th>
+                <th className="px-4 py-1.5 text-left font-medium">路线</th>
               </tr>
             </thead>
             <tbody>
-              {((brand.tiers as Row[]) || []).map((t: Row, ti: number) => (
-                <tr key={ti} className="border-b border-line/60 last:border-0">
-                  <td className="px-4 py-1.5 font-medium text-ink">{String(t.name ?? '')}</td>
+              {((d.items as Row[]) || []).map((it: Row, ii: number) => {
+                const routes = Array.isArray(it.routes) ? (it.routes as Row[]) : []
+                return (
+                  <tr key={ii} className="border-b border-line/60 last:border-0">
+                    <td className="px-4 py-1.5 font-medium text-ink">{String(it.name ?? '')}</td>
+                    <td className="px-2 py-1.5 text-ink-2">{String(it.food ?? '-')}</td>
+                    <td className="px-2 py-1.5 text-ink-2">{String(it.area ?? '-')}</td>
+                    <td className="px-2 py-1.5 text-primary-deep">
+                      {it.price_per_person != null ? `${String(it.price_per_person)}元（参考价）` : '未公开'}
+                    </td>
+                    <td className="px-2 py-1.5 text-ink-2">{String(it.queue_note ?? '-')}</td>
+                    <td className="px-4 py-1.5 text-ink-2">
+                      {routes.length ? (
+                        <span data-shop-route>
+                          {routes.map((r, ri) => (
+                            <span key={ri} className="block">
+                              {String(r.mode ?? '')}
+                              {r.duration ? ` · ${String(r.duration)}` : ''}
+                              {r.transfer ? ` · ${String(r.transfer)}` : ''}
+                              {r.note ? `（${String(r.note)}）` : ''}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span data-shop-route-unavailable className="text-ink-3">
+                          路线数据源暂不可用
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** 逐日路线（N4/A-F1）：分布海报 + 折线地图（坐标齐时）→ 逐日时间线卡。
+ * 时间线为保底形态：坐标缺/AK 缺时仅时间线，结构断言不依赖地图与海报。 */
+export function VRoutePlan({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => {
+        const days = (d.days as Row[]) || []
+        const trail: MapSpot[] = days
+          .flatMap((day) => ((day.spots as Row[]) || []) as Row[])
+          .filter((s) => s.spot_id && !s.shop_id
+            && typeof s.lat === 'number' && typeof s.lng === 'number')
+          .map((s) => ({
+            spot_id: String(s.spot_id),
+            name: String(s.name ?? ''),
+            lat: s.lat as number,
+            lng: s.lng as number,
+          }))
+        const mappableTrail = trail
+        return (
+          <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+            <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+              {String(d.destination ?? '')} · 逐日路线
+            </div>
+            <div className="space-y-3 p-4">
+              <VSpotSketch data={[d]} />
+              {hasBMapAk() && mappableTrail.length >= 2 ? (
+                <BMapBlock
+                  spots={mappableTrail}
+                  trail
+                  height={300}
+                  caption={`行程串联 · ${mappableTrail.length} 站按逐日顺序连线`}
+                />
+              ) : null}
+              <div className="space-y-4">
+                {days.map((day: Row, yi: number) => (
+                  <div key={yi} className="relative pl-6">
+                    <span
+                      className="absolute left-0 top-0.5 inline-flex h-5 items-center rounded-chip bg-primary px-1.5 text-tag font-semibold text-white"
+                      data-route-day={yi + 1}
+                    >
+                      Day {String(day.day ?? yi + 1)}
+                    </span>
+                    <div className="mt-1.5 space-y-1.5 border-l border-dashed border-line/80 pl-3">
+                      {((day.spots as Row[]) || []).map((s: Row, si: number) => (
+                        <div
+                          key={si}
+                          data-stop
+                          data-spot-id={s.spot_id ? String(s.spot_id) : undefined}
+                          data-shop-id={s.shop_id ? String(s.shop_id) : undefined}
+                          className="relative flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-btn bg-bg px-2.5 py-1.5"
+                        >
+                          <span className="absolute -left-[19px] top-2.5 h-1.5 w-1.5 rounded-full bg-primary/70" />
+                          <span className="text-tag font-medium text-ink">{String(s.name ?? '')}</span>
+                          {s.shop_id ? <span className="rounded-full bg-primary-tint px-2 py-0.5 text-tag text-primary-deep">美食停靠</span> : null}
+                          {s.transport ? <span className="rounded-chip bg-white px-1.5 py-0.5 text-tag text-ink-3">交通：{String(s.transport)}</span> : null}
+                          {s.duration ? <span className="text-tag text-ink-3">停留：{String(s.duration)}</span> : null}
+                          {s.tip ? <span className="w-full text-tag text-ink-2">{String(s.tip)}</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 住宿区域选型表（N5）：区域 / 价格区间 / 适合人群 / 优劣势 + 横向价位带。
+ * 价位带为纯 CSS 条（区域 × 区间，按全组最大值归一）；price_min/max 缺失的
+ * 区域只留在表格里看自由文本，不进带（判据不造数）。 */
+export function VStayTable({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => {
+        const areas = (d.areas as Row[]) || []
+        const num = (v: unknown): number | null =>
+          typeof v === 'number' && Number.isFinite(v) ? v : null
+        const bounds = areas.map((a) => {
+          const lo = num(a.price_min) ?? num(a.price_max)
+          const hi = num(a.price_max) ?? lo
+          return { lo, hi }
+        })
+        const scale = Math.max(0, ...bounds.map((b) => b.hi ?? 0))
+        const bandAreas = areas
+          .map((a, ai) => ({ a, b: bounds[ai] }))
+          .filter((x) => x.b.lo != null && x.b.hi != null && scale > 0)
+        return (
+          <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+            <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+              {String(d.destination ?? '')} · 住宿区域选型
+            </div>
+            <table className="w-full text-tag">
+              <thead>
+                <tr className="border-b border-line text-ink-3">
+                  <th className="px-4 py-1.5 text-left font-medium">区域</th>
+                  <th className="px-2 py-1.5 text-left font-medium">价格区间</th>
+                  <th className="px-2 py-1.5 text-left font-medium">适合人群</th>
+                  <th className="px-4 py-1.5 text-left font-medium">优劣势</th>
+                </tr>
+              </thead>
+              <tbody>
+                {areas.map((a: Row, ai: number) => (
+                  <tr key={ai} className="border-b border-line/60 last:border-0">
+                    <td className="px-4 py-1.5 font-medium text-ink">{String(a.area ?? '')}</td>
+                    <td className="px-2 py-1.5 text-primary-deep">{String(a.price_range ?? '未公开')}</td>
+                    <td className="px-2 py-1.5 text-ink-2">{String(a.for_whom ?? '-')}</td>
+                    <td className="px-4 py-1.5 text-ink-2">
+                      {[...(a.pros as string[]) || [], ...((a.cons as string[]) || []).map((c) => `⚠ ${c}`)]
+                        .slice(0, 3)
+                        .join(' / ') || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {bandAreas.length > 0 ? (
+              <div className="space-y-1.5 border-t border-line/60 bg-bg/50 px-4 py-3" data-stay-bands>
+                <div className="text-tag font-medium text-ink">价位带对比（元/晚）</div>
+                {bandAreas.map(({ a, b }, bi) => {
+                  const left = ((b.lo ?? 0) / scale) * 100
+                  const width = Math.max(3, (((b.hi ?? 0) - (b.lo ?? 0)) / scale) * 100)
+                  return (
+                    <div key={bi} className="flex items-center gap-2" data-stay-band={String(a.area ?? bi)}>
+                      <span className="w-20 shrink-0 truncate text-tag text-ink-2">{String(a.area ?? '')}</span>
+                      <div className="relative h-2.5 min-w-0 flex-1 rounded-full bg-white">
+                        <div className="absolute top-0 h-full rounded-full bg-primary/80"
+                          data-band-style style={{ left: `${left.toFixed(1)}%`, width: `${width.toFixed(1)}%` }} />
+                      </div>
+                      <span className="shrink-0 text-tag text-primary-deep">¥{b.lo}{b.hi !== b.lo ? `-${b.hi}` : ''}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 花费拆解表：分类 / 金额 / 占比。 */
+export function VCostBreakdown({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => (
+        <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+          <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 花费拆解
+          </div>
+          <table className="w-full text-tag">
+            <thead>
+              <tr className="border-b border-line text-ink-3">
+                <th className="px-4 py-1.5 text-left font-medium">分类</th>
+                <th className="px-2 py-1.5 text-left font-medium">金额</th>
+                <th className="px-2 py-1.5 text-left font-medium">占比</th>
+                <th className="px-4 py-1.5 text-left font-medium">说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {((d.items as Row[]) || []).map((it: Row, ii: number) => (
+                <tr key={ii} className="border-b border-line/60 last:border-0">
+                  <td className="px-4 py-1.5 font-medium text-ink">{String(it.category ?? '')}</td>
                   <td className="px-2 py-1.5 text-primary-deep">
-                    {t.price != null ? `${String(t.price)}${String(brand.currency ?? '')}/${String(t.period ?? '')}` : '未公开'}
+                    {it.amount != null ? `${String(it.amount)}${String(it.unit ?? '')}` : '—'}
                   </td>
-                  <td className="px-2 py-1.5 text-ink-2">{String(t.target_user ?? '-')}</td>
-                  <td className="px-4 py-1.5 text-ink-2">{((t.includes as string[]) || []).slice(0, 3).join('、') || '-'}</td>
+                  <td className="px-2 py-1.5 text-ink-2">{it.share != null ? `${String(it.share)}%` : '-'}</td>
+                  <td className="px-4 py-1.5 text-ink-2">{String(it.note ?? '-')}</td>
                 </tr>
               ))}
             </tbody>
@@ -80,48 +541,341 @@ export function VPricingTable({ data }: { data: Row[] }) {
   )
 }
 
-/** 用户画像卡：展示各品牌的核心用户画像。 */
-export function VPersonaCards({ data }: { data: Row[] }) {
+/** 可达性矩阵：交通方式 / 耗时 / 费用 / 班次频次。 */
+export function VAccessMatrix({ data }: { data: Row[] }) {
   if (!data?.length) return null
   return (
-    <div className="mt-4 space-y-3">
-      {data.map((brand, bi) =>
-        ((brand.personas as Row[]) || []).map((p: Row, pi: number) => {
-          const needs = (p.needs as string[]) || []
-          const scenarios = (p.scenarios as string[]) || []
-          const painPoints = (p.pain_points as string[]) || []
-          const decisionFactors = (p.decision_factors as string[]) || []
-          return (
-            <div key={`${bi}-${pi}`} className="rounded-card border border-line bg-white p-4">
-              <div className="flex items-center gap-2">
-                <span className="text-aux font-semibold text-ink">{String(p.name ?? '')}</span>
-                <span className="rounded-chip bg-bg px-2 py-0.5 text-tag text-ink-3">{String(brand.brand ?? '')}</span>
-                {p.segment ? <span className="text-tag text-ink-3">· {String(p.segment)}</span> : null}
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-tag">
-                {needs.length > 0 && <Field label="核心需求" items={needs} />}
-                {scenarios.length > 0 && <Field label="使用场景" items={scenarios} />}
-                {painPoints.length > 0 && <Field label="痛点" items={painPoints} />}
-                {decisionFactors.length > 0 && <Field label="决策因素" items={decisionFactors} />}
-              </div>
-              {p.migration_cost ? (
-                <p className="mt-2 rounded-btn bg-bg px-2.5 py-1.5 text-tag text-ink-2">
-                  迁移成本：{String(p.migration_cost)}
-                </p>
-              ) : null}
-            </div>
-          )
-        }),
-      )}
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => (
+        <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+          <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 可达性矩阵
+          </div>
+          <table className="w-full text-tag">
+            <thead>
+              <tr className="border-b border-line text-ink-3">
+                <th className="px-4 py-1.5 text-left font-medium">交通方式</th>
+                <th className="px-2 py-1.5 text-left font-medium">耗时</th>
+                <th className="px-2 py-1.5 text-left font-medium">费用</th>
+                <th className="px-2 py-1.5 text-left font-medium">班次频次</th>
+                <th className="px-4 py-1.5 text-left font-medium">备注</th>
+              </tr>
+            </thead>
+            <tbody>
+              {((d.routes as Row[]) || []).map((r: Row, ri: number) => (
+                <tr key={ri} className="border-b border-line/60 last:border-0">
+                  <td className="px-4 py-1.5 font-medium text-ink">{String(r.mode ?? '')}</td>
+                  <td className="px-2 py-1.5 text-ink-2">{String(r.duration ?? '-')}</td>
+                  <td className="px-2 py-1.5 text-primary-deep">{String(r.cost ?? '-')}</td>
+                  <td className="px-2 py-1.5 text-ink-2">{String(r.frequency ?? '-')}</td>
+                  <td className="px-4 py-1.5 text-ink-2">{String(r.note ?? '-')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </div>
   )
 }
 
-function Field({ label, items }: { label: string; items: string[] }) {
+/** 配套完善度清单：分类 / 项目 / 覆盖程度（full|partial|none）。 */
+export function VAmenityChecklist({ data }: { data: Row[] }) {
+  if (!data?.length) return null
   return (
-    <div>
-      <div className="text-ink-3">{label}</div>
-      <div className="text-ink-2">{items.slice(0, 4).join('、')}</div>
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => (
+        <div key={di} className="rounded-card border border-line bg-white p-4">
+          <div className="mb-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 配套完善度
+          </div>
+          <div className="space-y-2.5">
+            {((d.items as Row[]) || []).map((it: Row, ii: number) => {
+              const level = tri(it.coverage)
+              const Icon = TRI_ICON[level]
+              return (
+                <div key={ii} className="flex items-start gap-2">
+                  <span className={`mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-chip px-2 py-0.5 text-tag ${TRI_TINT[level]}`}>
+                    <Icon size={11} /> {String(it.item ?? '')}
+                  </span>
+                  <span className="min-w-0 text-tag text-ink-2">
+                    {it.category ? <span className="text-ink-3">{String(it.category)} · </span> : null}
+                    {String(it.note ?? '')}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
     </div>
+  )
+}
+
+/** 风险画像：风险维度 / 等级（low|medium|high）/ 说明。 */
+export function VRiskProfile({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4">
+      {data.map((d, di) => (
+        <div key={di} className="rounded-card border border-line bg-white p-4">
+          <div className="mb-2 text-aux font-semibold text-ink">
+            {String(d.destination ?? '')} · 风险画像
+          </div>
+          <div className="space-y-2">
+            {((d.items as Row[]) || []).map((it: Row, ii: number) => {
+              const level = typeof it.level === 'string' && it.level in LEVEL_TINT ? it.level : 'medium'
+              return (
+                <div key={ii} className="flex items-start gap-2">
+                  <span className={`inline-flex shrink-0 items-center rounded-chip px-2 py-0.5 text-tag ${LEVEL_TINT[level]}`}>
+                    {LEVEL_LABEL[level]}
+                  </span>
+                  <div className="min-w-0">
+                    <span className="text-tag font-medium text-ink">{String(it.dimension ?? '')}</span>
+                    {it.note ? <p className="text-tag text-ink-2">{String(it.note)}</p> : null}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* 类型 → 渲染器（键集与后端 research_types.structured_keys 一致） */
+/* 证据溯源接缝：序号表 + 跳转回调（由 ReportPage 透传，缺则退化为不可点的裸 id 串）。 */
+export type EvCtx = { index: Map<string, number>; onCite: (ids: string[]) => void }
+
+/** 证据 chip：与「本章信源」同款样式，显示全局序号 [41] 并跳到右栏对应证据卡。 */
+function EvChip({ id, ev }: { id: string; ev?: EvCtx }) {
+  if (!ev) return <span className="whitespace-nowrap text-ink-3">[{id}]</span>
+  return (
+    <button
+      type="button"
+      data-evidence-id={id}
+      onClick={() => ev.onCite([id])}
+      title="跳转到该证据"
+      className="rounded-chip bg-primary-tint px-2 py-0.5 text-tag font-medium text-primary-deep hover:bg-primary-soft/40"
+    >
+      [{ev.index.get(id) ?? '?'}]
+    </button>
+  )
+}
+
+/** 视角·逐景点核查表（榜单表样式，方案 A：矩阵 + 行展开）。
+ *  列宽按「该列实际文本量」分配——两列本次全空时不该再吃掉与有值列等宽的预算；
+ *  长文 line-clamp-2 截断只是呈现态，全文常驻 DOM，展开=摘掉 clamp（不卸载、不造摘要）。
+ *  缺格走 score_gap 虚线 chip 规范（可见、不造数），与 spot_routes 未命中占位同哲学。 */
+function VFamilyChecklist({ data, ev }: { data: Row[]; ev?: EvCtx }) {
+  const [openSpot, setOpenSpot] = useState<string | null>(null)
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4" data-testid="family-checklist">
+      {data.map((d, di) => {
+        const items = (d.items as Row[]) || []
+        const cellsOf = (it: Row) => (it.cells as Row[]) || []
+        const cols: string[] = cellsOf(items[0] ?? {}).map((c) => String(c.column ?? ''))
+        // 权重 = 该列已核验格的平均字数；整列未采到 → 收到能放下表头的下限
+        const weights = cols.map((_, ci) => {
+          const lens = items.map((it) => cellsOf(it)[ci]).filter((c) => c?.verified)
+            .map((c) => String(c.text ?? '').length)
+          return lens.length ? Math.max(28, Math.round(lens.reduce((a, b) => a + b, 0) / lens.length)) : 16
+        })
+        const wTotal = weights.reduce((a, b) => a + b, 0) || 1
+        const rest = 69 // 100 − (# 3 + 景点 11 + 证据 17)
+        const widths = weights.map((w) => (rest * w) / wTotal)
+        const shortName = (c: string) => c.split('/')[0]
+        return (
+          <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
+            <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
+              {String(d.destination ?? '')} · 逐景点亲子核查表
+            </div>
+            <div className="overflow-x-auto">
+              <table data-checklist-table className="w-full min-w-[640px] table-fixed text-tag">
+                <colgroup>
+                  <col style={{ width: '3%' }} />
+                  <col style={{ width: '11%' }} />
+                  {widths.map((w, i) => <col key={i} style={{ width: `${w.toFixed(2)}%` }} />)}
+                  <col style={{ width: '17%' }} />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-line text-ink-3">
+                    <th className="px-3 py-1.5 text-left font-medium">#</th>
+                    <th className="px-2 py-1.5 text-left font-medium">景点</th>
+                    {cols.map((c, i) => (
+                      <th key={i} title={c} className="px-2 py-1.5 text-left font-medium">{shortName(c)}</th>
+                    ))}
+                    <th className="px-3 py-1.5 text-left font-medium">证据</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it: Row, ii: number) => {
+                    const spotId = String(it.spot_id ?? '')
+                    const cells = cellsOf(it)
+                    const open = !!spotId && openSpot === spotId
+                    const rowEids = [...new Set(cells.flatMap((c) => (c.evidence_ids as string[]) || []))]
+                    if (open) {
+                      return (
+                        <tr key={ii} data-checklist-row={spotId} data-expanded="true"
+                            className="border-b border-line/60 last:border-0 bg-primary-tint/30">
+                          <td className="px-3 py-1.5 font-semibold text-primary-deep">{ii + 1}</td>
+                          <td className="px-2 py-1.5 font-medium text-ink">{String(it.spot_name ?? '')}</td>
+                          <td colSpan={cols.length} className="px-2 py-1.5">
+                            {cells.map((c, ci) => (
+                              <div key={ci} className="mb-1 flex gap-2 last:mb-0">
+                                <b className="shrink-0 font-medium text-primary-deep">{String(c.column ?? '')}</b>
+                                <span className="text-ink-2">
+                                  {c.verified
+                                    ? <>{String(c.text ?? '')} {((c.evidence_ids as string[]) || []).map((e) => <EvChip key={e} id={e} ev={ev} />)}</>
+                                    : <span data-cell-missing title="本次未采到可核验数据"
+                                             className="inline-block rounded-chip border border-dashed border-line bg-card/60 px-1.5 py-0.5 text-tag text-ink-3">—</span>}
+                                </span>
+                              </div>
+                            ))}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <button type="button" onClick={() => setOpenSpot(null)}
+                                    className="text-tag font-medium text-primary-deep">收起 ▴</button>
+                          </td>
+                        </tr>
+                      )
+                    }
+                    return (
+                      <tr key={ii} data-checklist-row={spotId}
+                          className="border-b border-line/60 last:border-0">
+                        <td className="px-3 py-1.5 font-semibold text-primary-deep">{ii + 1}</td>
+                        <td title={String(it.spot_name ?? '')}
+                            className="truncate px-2 py-1.5 font-medium text-ink">{String(it.spot_name ?? '')}</td>
+                        {cells.map((c, ci) => (
+                          <td key={ci} className="px-2 py-1.5 align-top">
+                            {c.verified
+                              ? <span className="line-clamp-2 text-ink-2" title={String(c.text ?? '')}>{String(c.text ?? '')}</span>
+                              : <span data-cell-missing title="本次未采到可核验数据"
+                                       className="inline-block rounded-chip border border-dashed border-line bg-card/60 px-1.5 py-0.5 text-tag text-ink-3">—</span>}
+                          </td>
+                        ))}
+                        <td className="px-3 py-1.5">
+                          <div className="flex flex-wrap items-center gap-1">
+                            {rowEids.length
+                              ? rowEids.map((e) => <EvChip key={e} id={e} ev={ev} />)
+                              : <span className="text-ink-3">—</span>}
+                            {spotId ? (
+                              <button type="button" onClick={() => setOpenSpot(spotId)}
+                                      className="text-tag font-medium text-primary-deep">展开 ▾</button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 视角铁律清单：每条由问卷硬约束驱动（refs）+ 真实证据引用。 */
+function VPerspRules({ data, ev }: { data: Row[]; ev?: EvCtx }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4" data-testid="persp-rules">
+      {data.map((d, di) => {
+        const items = (d.items as Row[]) || []
+        if (!items.length) return null
+        return (
+          <div key={di} className="rounded-card border border-line bg-white p-4">
+            <div className="mb-2 text-aux font-semibold text-ink">
+              {String(d.destination ?? '')} · 本次行程铁律（按你的问卷生成）
+            </div>
+            <ul className="space-y-2">
+              {items.map((r, ri) => (
+                <li key={ri} data-rule-row className="flex gap-2 text-tag leading-relaxed text-ink-2">
+                  <span className="text-primary-deep font-semibold">☑</span>
+                  <span>
+                    {String(r.text ?? '')}
+                    {Array.isArray(r.evidence_ids) && r.evidence_ids.length > 0 && (
+                      <span className="ml-1 inline-flex flex-wrap gap-1 align-middle">
+                        {(r.evidence_ids as string[]).map((e) => <EvChip key={e} id={e} ev={ev} />)}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 视角·行前清单（只收目的地事实挂钩项，随证据列展示）。 */
+function VPerspPacking({ data }: { data: Row[] }) {
+  if (!data?.length) return null
+  return (
+    <div className="mt-4 space-y-4" data-testid="persp-packing">
+      {data.map((d, di) => {
+        const items = (d.items as Row[]) || []
+        if (!items.length) return null
+        return (
+          <div key={di} className="rounded-card border border-line bg-white p-4">
+            <div className="mb-2 text-aux font-semibold text-ink">行前清单 · 目的地相关</div>
+            <ul className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+              {items.map((r, ri) => (
+                <li key={ri} data-packing-row className="flex gap-2 text-tag leading-relaxed text-ink-2">
+                  <span className="text-primary-deep font-semibold">□</span>
+                  <span>
+                    <span className="font-medium text-ink">{String(r.item ?? '')}</span>
+                    {r.reason ? <span className="text-ink-3">（{String(r.reason)}）</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const BLOCKS: Record<StructuredBlockType, (p: { data: Row[]; ev?: EvCtx }) => ReactElement | null> = {
+  spot_ranking: VSpotAtlas,
+  spot_routes: VSpotRoutes,
+  food_ranking: VFoodRanking,
+  shop_list: VShopList,
+  route_plan: VRoutePlan,
+  stay_options: VStayTable,
+  cost_breakdown: VCostBreakdown,
+  access_matrix: VAccessMatrix,
+  amenity_checklist: VAmenityChecklist,
+  risk_profile: VRiskProfile,
+  family_checklist: VFamilyChecklist,
+  persp_rules: VPerspRules,
+  persp_packing: VPerspPacking,
+}
+
+/** 结构化块分发。旧报告的已废弃类型（feature_tree 等）不渲染也不报错。
+ *  ev 为可选的证据溯源接缝（序号 + 跳转）；未传则 chip 退化为裸 id 文本、不可点。 */
+export function VStructuredBlock({ block, ev }: {
+  block?: StructuredBlock[] | StructuredBlock | null
+  ev?: EvCtx
+}) {
+  if (!block) return null
+  // 复数挂块契约（rough-cliff-vole）：视角一章同挂核查表+铁律+清单；旧报告为单块 dict
+  const blocks = Array.isArray(block) ? block : [block]
+  return (
+    <>
+      {blocks.map((b, i) => {
+        const Renderer = BLOCKS[b.type]
+        if (!Renderer) return null
+        return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} ev={ev} />
+      })}
+    </>
   )
 }

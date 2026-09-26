@@ -53,3 +53,16 @@ if (
   }
   ;(globalThis as { localStorage?: unknown }).localStorage = storage
 }
+
+// jsdom 未实现 ResizeObserver（浏览器专有 API，jsdom 有意不做布局模拟）。
+// VWordCloud 用 ResizeObserver 测容器宽（组件侧对宽度已有 640 回退），但构造函数
+// 本身在 jsdom 缺失会抛 ReferenceError。此处补最小桩使测试环境不炸，不改生产代码。
+if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(window as any).ResizeObserver = ResizeObserverStub
+}

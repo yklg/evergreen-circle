@@ -24,12 +24,10 @@ import {
 } from 'lucide-react'
 import { useReportStore } from '../store/reportStore'
 import { useAnnotationStore } from '../store/annotationStore'
-import type { HighlightColor } from '../store/annotationStore'
-import type { SentimentResult, SentimentFlatResult } from '../types'
+import type { Highlight, HighlightColor } from '../store/annotationStore'
 import { VChart } from '../components/VChart'
 import { VClaimCard } from '../components/VClaimCard'
 import { VSentimentPanel } from '../components/VSentimentPanel'
-import { VSentimentFlatPanel } from '../components/VSentimentFlatPanel'
 import { VEvidenceCard } from '../components/VEvidenceFeed'
 import { VEditableBlock } from '../components/VEditableBlock'
 import { VSelectionToolbar } from '../components/VSelectionToolbar'
@@ -38,10 +36,9 @@ import { VQualityGate } from '../components/VQualityGate'
 import { VAuditReview } from '../components/VAuditReview'
 import { VDecisionReplay } from '../components/VDecisionReplay'
 import { VDataGrid } from '../components/VDataGrid'
-import { VFeatureMatrix, VPricingTable, VPersonaCards } from '../components/VStructured'
+import { VStructuredBlock } from '../components/VStructured'
 import { ChapterContentMap } from '../components/ChapterContentMap'
 import { refineSection, submitFeedback, refineReportEvidence, openTaskStream } from '../lib/api'
-import { tocLinkCls } from '../lib/reportLayout'
 import { VSkeleton } from '../components/ui'
 import MetricsStrip from '../components/MetricsStrip'
 import ReportBriefView from '../components/ReportBriefView'
@@ -61,13 +58,64 @@ const HL_LABEL: Record<HighlightColor, string> = {
   info: '待办',
 }
 
-/* 舆情结构判别：目的地调研流水线产出扁平 {positive/neutral/negative/themes/quotes}；
-   旧 SentimentResult 含 overall/by_platform。以「存在整体计数且无 overall」为扁平判据。 */
-function isFlatSentiment(
-  s: SentimentResult | SentimentFlatResult | undefined
-): s is SentimentFlatResult {
-  if (!s || typeof s !== 'object') return false
-  return !('overall' in s) && ('positive' in s || 'negative' in s || 'neutral' in s)
+/**
+ * 章节正文（C1）：移除首段评注直出，全部段落收进 <details> 折叠。
+ * 折叠无条件渲染：编辑模式或本章有高亮命中时一次性置 open（评审②），
+ * 其后用户仍可手动折叠；段落编辑键 `${secId}-p${i}` 与折叠前一致。
+ */
+function VSectionProse({
+  rid,
+  secId,
+  paragraphs,
+  editMode,
+  highlights,
+  getEdit,
+  setEdit,
+}: {
+  rid: string
+  secId: string
+  paragraphs: string[]
+  editMode: boolean
+  highlights: Highlight[]
+  getEdit: (reportId: string, blockId: string) => string | undefined
+  setEdit: (reportId: string, blockId: string, text: string) => void
+}) {
+  const detailsRef = useRef<HTMLDetailsElement>(null)
+  const openedRef = useRef(false)
+  const forceOpen = editMode || highlights.length > 0
+  useEffect(() => {
+    if (forceOpen && !openedRef.current) {
+      openedRef.current = true
+      detailsRef.current?.setAttribute('open', '')
+    }
+  }, [forceOpen])
+
+  if (paragraphs.length === 0) return null
+  const renderP = (p: string, i: number) => (
+    <VEditableBlock
+      key={i}
+      as="p"
+      value={getEdit(rid, `${secId}-p${i}`) ?? p}
+      editable={editMode}
+      onSave={(t) => setEdit(rid, `${secId}-p${i}`, t)}
+      className="text-body leading-relaxed text-ink-2"
+      highlights={highlights}
+    />
+  )
+  return (
+    <div className="mt-4">
+      <details
+        ref={detailsRef}
+        data-section-body={secId}
+        className="report-body-collapse mt-3 rounded-card border border-line/60 bg-card/40 px-4 py-2"
+      >
+        <summary className="cursor-pointer select-none text-tag font-medium text-primary-deep">
+          展开完整正文（共 {paragraphs.length} 段）
+        </summary>
+        <div className="report-body-inner mt-3 space-y-3 pb-1">{paragraphs.map((p, i) => renderP(p, i))}</div>
+      </details>
+    </div>
+  )
 }
 
 export default function ReportPage() {
@@ -98,6 +146,24 @@ export default function ReportPage() {
   useEffect(() => {
     if (reportId) load(reportId)
   }, [reportId, load])
+
+  // C1 打印同步：details 闭合时浏览器经匿名 slot 隐藏内部内容，CSS 无法强制展开，
+  // beforeprint 统一置 open、afterprint 还原打印前状态（index.css 另有 summary 留底规则）。
+  useEffect(() => {
+    const COLLAPSE = 'details.report-body-collapse'
+    let prev: Element[] = []
+    const onBefore = () => {
+      prev = Array.from(document.querySelectorAll(`${COLLAPSE}:not([open])`))
+      prev.forEach((el) => el.setAttribute('open', ''))
+    }
+    const onAfter = () => prev.forEach((el) => el.removeAttribute('open'))
+    window.addEventListener('beforeprint', onBefore)
+    window.addEventListener('afterprint', onAfter)
+    return () => {
+      window.removeEventListener('beforeprint', onBefore)
+      window.removeEventListener('afterprint', onAfter)
+    }
+  }, [])
 
   // 阅读进度条 + 目录滚动高亮（scroll-spy）
   useEffect(() => {
@@ -177,10 +243,9 @@ export default function ReportPage() {
       return
     }
     const close = openTaskStream(res.taskId, {
-      onEvent: (type, data: unknown) => {
-        const d = data as { percent?: number; stage?: string; message?: string }
+      onEvent: (type, data: any) => {
         if (type === 'progress') {
-          setRefineProgress({ percent: d?.percent ?? 0, stage: d?.stage ?? '' })
+          setRefineProgress({ percent: data?.percent ?? 0, stage: data?.stage ?? '' })
         } else if (type === 'done') {
           setRefiningAll(false)
           setRefineProgress(null)
@@ -190,7 +255,7 @@ export default function ReportPage() {
         } else if (type === 'error') {
           setRefiningAll(false)
           setRefineProgress(null)
-          flash(d?.message || '精修失败，请重试')
+          flash((data?.message as string) || '精修失败，请重试')
           close()
         }
       },
@@ -238,7 +303,7 @@ export default function ReportPage() {
       kind: 'note',
       title: `摘录 · ${sectionId}`,
       content: text,
-      tags: current.brands ?? [],
+      tags: current.destinations ?? [],
     })
     flash(ok ? '已收入知识库' : '该内容已在知识库中')
   }
@@ -253,7 +318,7 @@ export default function ReportPage() {
       content: claimText,
       sourceUrl: ev?.source_url,
       evidenceId: ev?.evidence_id,
-      tags: current.brands ?? [],
+      tags: current.destinations ?? [],
     })
     flash(ok ? '论点已收入知识库' : '该论点已在知识库中')
   }
@@ -285,7 +350,7 @@ export default function ReportPage() {
   }
 
   const r = current
-  // A1 渲染适配器：living_circle（生活圈体检）报告走专属双层视图；research 报告沿用既有链路。
+  // A1 渲染适配器：living_circle（生活圈体检）报告走专属双层视图；research（旅游）报告沿用既有 C1 链路。
   if (r.report_type === 'living_circle' || r.living_circle) {
     return <LifeCircleReportView report={r} />
   }
@@ -319,7 +384,9 @@ export default function ReportPage() {
               <button
                 key={t.id}
                 onClick={() => jumpTo(t.id)}
-                className={tocLinkCls(active)}
+                className={`flex w-full items-start gap-2.5 rounded-btn px-3 py-2 text-left text-aux transition-colors ${
+                  active ? 'bg-primary-tint font-medium text-primary-deep' : 'text-ink-2 hover:bg-primary-tint/50'
+                }`}
               >
                 <span
                   className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-chip text-[11px] font-semibold transition-colors ${
@@ -409,6 +476,12 @@ export default function ReportPage() {
             {r.title}
           </motion.h1>
           <p className="mt-2 max-w-2xl text-aux text-white/85">{r.subtitle}</p>
+          {r.answers_digest && r.answers_digest.length > 0 && (
+            <p data-testid="answers-digest" className="mt-2 max-w-2xl text-tag text-white/80">
+              你的需求：
+              {r.answers_digest.map((d) => `${d.label} ${d.value}`).join(' · ')}
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-4 text-tag text-white/75">
             <span className="inline-flex items-center gap-1"><Calendar size={13} /> {r.created_at}</span>
             <span className="inline-flex items-center gap-1"><Users size={13} /> {r.experts.length} 位专家</span>
@@ -463,19 +536,33 @@ export default function ReportPage() {
               {/* 本章内容结构图 */}
               <ChapterContentMap section={sec} mode="detail" collapsed={true} />
 
-              <div className="mt-4 space-y-3">
-                {sec.paragraphs?.map((p, i) => (
-                  <VEditableBlock
-                    key={i}
-                    as="p"
-                    value={getEdit(rid, `${sec.id}-p${i}`) ?? p}
-                    editable={editMode}
-                    onSave={(t) => setEdit(rid, `${sec.id}-p${i}`, t)}
-                    className="text-body leading-relaxed text-ink-2"
-                    highlights={reportHls.filter((h) => h.sectionId === sec.id)}
-                  />
-                ))}
-              </div>
+              {/* C1 版式（全章节统一）：核心判断 → 图表/结构化/数据表置顶 → 评注段 → 折叠正文 → 亮点/论点 */}
+              {/* 图表 */}
+              {sec.charts && sec.charts.length > 0 && (
+                <div className="mt-4 grid grid-cols-1 gap-4">
+                  {sec.charts.map((c) => (
+                    <VChart key={c.chart_id} spec={c} onCite={jumpToEvidence} />
+                  ))}
+                </div>
+              )}
+
+              {/* 结构化调研知识（榜单/路线/住宿/花费 · 可达/配套/风险）
+                  ev 接缝：核查表等块内的证据引用按全局序号显示并可跳到右栏证据卡 */}
+              <VStructuredBlock block={sec.structured} ev={{ index: evIndex, onCite: jumpToEvidence }} />
+
+              {/* 数据空间（CSV 表格）*/}
+              {sec.data_grid && <VDataGrid grid={sec.data_grid} title={`${sec.title} · 数据空间`} />}
+
+              {/* 正文：首段作评注直出，其余收进折叠（后端文字不删；编辑态/高亮命中自动展开） */}
+              <VSectionProse
+                rid={rid}
+                secId={sec.id}
+                paragraphs={sec.paragraphs ?? []}
+                editMode={editMode}
+                highlights={reportHls.filter((h) => h.sectionId === sec.id)}
+                getEdit={getEdit}
+                setEdit={setEdit}
+              />
 
               {/* 亮点 / 独特洞察 */}
               {sec.highlights && sec.highlights.length > 0 && (
@@ -507,33 +594,11 @@ export default function ReportPage() {
                 </div>
               )}
 
-              {/* 图表 */}
-              {sec.charts && sec.charts.length > 0 && (
-                <div className="mt-5 grid grid-cols-1 gap-4">
-                  {sec.charts.map((c) => (
-                    <VChart key={c.chart_id} spec={c} onCite={jumpToEvidence} />
-                  ))}
-                </div>
-              )}
-
-              {/* 结构化洞察（功能树/定价表/用户画像）*/}
-              {sec.structured?.type === 'feature_tree' && <VFeatureMatrix data={sec.structured.data} />}
-              {sec.structured?.type === 'pricing_model' && <VPricingTable data={sec.structured.data} />}
-              {sec.structured?.type === 'user_persona' && <VPersonaCards data={sec.structured.data} />}
-
-              {/* 数据空间（CSV 表格）*/}
-              {sec.data_grid && <VDataGrid grid={sec.data_grid} title={`${sec.title} · 数据空间`} />}
-
-              {/* 舆情/口碑专章：按结构自适应 —— 扁平（目的地调研 research 流水线）走
-                  VSentimentFlatPanel；旧 SentimentResult（overall/by_platform）走 VSentimentPanel。
-                  目的地三档的舆情章节 id 为 guide_voice / assess_voice（无独立 sentiment 节）；此处两者皆渲染。 */}
-              {['sentiment', 'guide_voice', 'assess_voice'].includes(sec.id) && r.sentiment && (
+              {/* 舆情面板：旧报告的合成「sentiment」节与新报告的正式「sentiment_report」章节共用
+                  （面板是章节级渲染器：情感条/平台分布/逐景点口碑/阵营；图表走 sec.charts 通用管线） */}
+              {(sec.id === 'sentiment' || sec.id === 'sentiment_report') && r.sentiment && (
                 <div className="mt-5">
-                  {isFlatSentiment(r.sentiment) ? (
-                    <VSentimentFlatPanel sentiment={r.sentiment} />
-                  ) : (
-                    <VSentimentPanel sentiment={r.sentiment} />
-                  )}
+                  <VSentimentPanel sentiment={r.sentiment} />
                 </div>
               )}
 
@@ -586,7 +651,7 @@ export default function ReportPage() {
                 <h2 className="font-serif text-h2 text-ink">实景图集 · 采集自联网真实页面</h2>
               </div>
               <p className="mt-3 text-aux text-ink-2">
-                以下图片均在调研过程中从来源网站、媒体与社媒页面实时抓取（OG 预览图优先），每张图均可点击溯源至原始页面。
+                以下图片均在调研过程中从官方文旅站点、媒体与社媒页面实时抓取（OG 预览图优先），每张图均可点击溯源至原始页面。
               </p>
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {r.figures.map((f, i) => (
@@ -607,9 +672,9 @@ export default function ReportPage() {
                             if (wrap) wrap.style.display = 'none'
                           }}
                         />
-                        {f.brand && (
+                        {f.destination && (
                           <span className="absolute left-2 top-2 rounded-chip bg-ink/70 px-2 py-0.5 text-tag font-medium text-white backdrop-blur">
-                            {f.brand}
+                            {f.destination}
                           </span>
                         )}
                       </div>
@@ -624,8 +689,8 @@ export default function ReportPage() {
                           content: f.alt || f.title || '联网采集实景图',
                           sourceUrl: f.source_url,
                           imageSrc: f.src,
-                          brand: f.brand,
-                          tags: f.brand ? [f.brand] : [],
+                          destination: f.destination,
+                          tags: f.destination ? [f.destination] : [],
                         })
                         flash(ok ? '配图已收入知识库' : '该配图已在知识库中')
                       }}

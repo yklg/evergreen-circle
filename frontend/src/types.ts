@@ -30,6 +30,15 @@ export interface ClarifyQuestion {
   hint?: string
   type: 'single' | 'multi' | 'text' | 'slider'
   options?: string[]
+  /** 条件题显隐元数据（rough-cliff-vole）：仅当被引题答案恰等于 equals 时展示；旧后端无此字段=恒展示 */
+  show_if?: { qid: string; equals: string }
+  /** 目的地题的工作量事实量（后端按所选档位下发）；旧后端无此字段时不渲染提示 */
+  workload?: {
+    mode?: string
+    mode_label?: string
+    max_angles?: number
+    fetch_per_destination?: number
+  }
 }
 export interface CreateTaskResp {
   taskId: string
@@ -37,6 +46,15 @@ export interface CreateTaskResp {
   kind?: string
   /** 仅演示回放桥使用（guide/assess 历史方言）；新代码建任务以权威 type 为准。 */
   purpose?: string
+  /** 归一化后的调研类型 key（后端 type_key() 回落 guide）；演示/LC 兜底路径可不带，读侧按 guide 容错 */
+  researchType?: string
+}
+
+/* 调研类型（GET /api/research-types —— 注册表为唯一真相源，前端不复制文案） */
+export interface ResearchTypeOption {
+  key: string
+  label: string
+  subtitle: string
 }
 
 /* SSE 事件 */
@@ -109,7 +127,7 @@ export interface Evidence {
   captured_at: string
   credibility: number
   collected_by: string
-  brand?: string
+  destination?: string
   domain?: string
   freshness_days?: number | null
   /* v2.1 客观性加固元数据（信源组 / 舆论过热，均可选兼容旧数据） */
@@ -131,11 +149,19 @@ export interface Claim {
   claim_type?: 'fact' | 'opinion' | 'mixed'
 }
 
+export interface WordcloudWord {
+  word: string
+  weight: number
+}
+
 export interface ChartSpec {
   chart_id: string
   type: string
   title?: string
-  option: Record<string, unknown>
+  /** echarts 类图表的 option；wordcloud 新契约（words 载荷）无此键，故可选。 */
+  option?: Record<string, unknown>
+  /** wordcloud 语义载荷（E1 契约）：后端归一的 [{word,weight}]；旧报告无此键，走 option 双形状兼容。 */
+  words?: WordcloudWord[]
   png?: string
   evidence_ids?: string[]
 }
@@ -160,9 +186,15 @@ export interface DataGrid {
   }[]
 }
 
-/* 结构化洞察（feature_tree/pricing_model/user_persona，语义中立，非竞品专属） */
+/* 结构化调研知识（键集由后端 research_types 注册表按类型下发；竞品块已随旅游 pivot 清弃） */
+export type StructuredBlockType =
+  | 'spot_ranking' | 'spot_routes' | 'food_ranking' | 'shop_list'
+  | 'route_plan' | 'stay_options' | 'cost_breakdown'
+  | 'access_matrix' | 'amenity_checklist' | 'risk_profile'
+  | 'family_checklist' | 'persp_rules' | 'persp_packing'
+
 export interface StructuredBlock {
-  type: 'feature_tree' | 'pricing_model' | 'user_persona'
+  type: StructuredBlockType
   data: Record<string, unknown>[]
 }
 
@@ -177,8 +209,15 @@ export interface ReportSection {
   claims?: Claim[]
   charts?: ChartSpec[]
   source_evidence_ids?: string[]
-  structured?: StructuredBlock | null
+  structured?: StructuredBlock[] | StructuredBlock | null
   data_grid?: DataGrid | null
+  /** 后端写稿的结构状态：by_design=本章本无结构化材料，lost=写稿失败丢了结构（老报告无此字段） */
+  structure_status?: 'ok' | 'repaired' | 'lost' | 'by_design'
+  /**
+   * 算分输入缺口（与 structure_status 正交的轴，老报告/无缺口章节为 null 或缺字段）：
+   * kind=insufficient_input 表示「有材料但缺可核验数值」→ 本章算分图整体缺位，如实标注。
+   */
+  score_gap?: { kind?: string; reason: string } | null
   refined?: boolean
 }
 
@@ -194,6 +233,9 @@ export interface SentimentResult {
   overall: { pos: number; neu: number; neg: number }
   overall_count?: { pos: number; neu: number; neg: number }
   by_platform: Record<string, { pos: number; neu: number; neg: number }>
+  by_destination?: { destination: string; sample: number; pos: number; neu: number; neg: number }[]
+  /** (spot × platform) 双维聚合（M2c）：逐景点口碑小表/舆情卡数据源，spot_id 直引冻结实体 */
+  by_spot?: { spot_id: string; spot_name: string; sample: number; pos: number; neu: number; neg: number; by_platform: Record<string, number> }[]
   timeline: { date: string; pos: number; neu: number; neg: number }[]
   camps: { title: string; ratio: number; summary: string; quotes: { text: string; url: string; platform?: string }[] }[]
   voices?: { platform: string; platform_label: string; text: string; sentiment: string; url: string; title?: string }[]
@@ -222,6 +264,11 @@ export interface Report {
   query?: string
   /** 目的地调研产出的 brands 恒为空（不产出竞品对比）；兼容旧报告保留 */
   brands?: string[]
+  destinations?: string[]
+  /** 调研类型（guide 游玩攻略 / assessment 调研评估；旧报告缺省视为 guide） */
+  research_type?: string
+  /** 报告头部答题摘要行（后端 CLARIFY_CONSUMERS digest 白名单派生；旧报告缺省不渲染） */
+  answers_digest?: { label: string; value: string }[]
   mode?: string
   created_at: string
   experts: string[]
@@ -232,7 +279,7 @@ export interface Report {
   charts: ChartSpec[]
   evidence: Evidence[]
   claims: Claim[]
-  sentiment?: SentimentResult | SentimentFlatResult
+  sentiment?: SentimentResult
   glossary: { term: string; definition: string; source?: string }[]
   figures?: ReportFigure[]
   structured?: Record<string, Record<string, unknown>[]>
@@ -250,6 +297,25 @@ export interface Report {
   brief_failed_at?: string
   /** 常青圈·生活圈体检数据（F0 契约，地图等时圈/POI/盲区/评分） */
   living_circle?: LivingCircleReport
+}
+
+/** v2.1 方法论与局限披露 */
+export interface ReportMethodology {
+  window?: string
+  evidence_count?: number
+  unique_groups?: number
+  dup_skipped?: number
+  viral_evidence?: number
+  viral_checked_ratio?: number
+  sentiment_samples?: number
+  note?: string
+}
+
+/** v2.1 来源间存在分歧/矛盾的陈述 */
+export interface ReportContradiction {
+  claim_text: string
+  evidence_ids: string[]
+  note?: string
 }
 
 /** v2.1 方法论与局限披露 */
@@ -301,7 +367,7 @@ export interface ReportFigure {
   source_url: string
   domain?: string
   source_type?: string
-  brand?: string
+  destination?: string
   evidence_id?: string
 }
 
@@ -312,7 +378,8 @@ export interface ReportCard {
   title: string
   subtitle: string
   query: string
-  brands: string[]
+  destinations: string[]
+  research_type?: string
   experts: string[]
   cover_image?: string
   evidence_count: number
@@ -326,7 +393,7 @@ export interface ResearchCard {
   id: string
   title: string
   query: string
-  brands: string[]
+  destinations: string[]
   evidence_count: number
   claim_count: number
   high_conf_count: number
@@ -346,7 +413,7 @@ export interface DashboardStats {
   avg_evidence_per_report: number
   fact_accuracy: number
   platform_distribution: Record<string, number>
-  brand_distribution: Record<string, number>
+  destination_distribution: Record<string, number>
   // 业务闭环聚合（真实，来自各报告 metrics）
   minutes_saved?: number
   avg_efficiency?: number
@@ -366,24 +433,25 @@ export interface EvidenceRecord {
   excerpt: string
   credibility: number
   collected_by: string
-  brand: string
+  destination: string
   captured_at: string
 }
 export interface EvidenceFacets {
   total: number
   by_type: Record<string, number>
-  by_brand: Record<string, number>
+  by_destination: Record<string, number>
 }
 export interface EvidenceQueryResp {
   items: EvidenceRecord[]
   facets: EvidenceFacets
 }
 
-/* 竞品监控订阅 */
+/* 目的地监控订阅 */
 export interface Subscription {
   sub_id: string
   query: string
-  brands: string[]
+  destinations: string[]
+  type: string
   created_at: string
   last_run_at: string
   last_report_id: string

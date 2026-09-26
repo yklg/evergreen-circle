@@ -37,8 +37,8 @@ function makeReport(overrides: Partial<Report> = {}): Report {
     toc: [],
     claims: [],
     evidence: [
-      { evidence_id: 'e1', source_url: 'https://a.com', source_type: 'official', title: 'E1', excerpt: '', credibility: 92, collected_by: '', brand: '', captured_at: '' },
-      { evidence_id: 'e2', source_url: 'https://b.com', source_type: 'news', title: 'E2', excerpt: '', credibility: 80, collected_by: '', brand: '', captured_at: '' },
+      { evidence_id: 'e1', source_url: 'https://a.com', source_type: 'official', title: 'E1', excerpt: '', credibility: 92, collected_by: '', destination: '', captured_at: '' },
+      { evidence_id: 'e2', source_url: 'https://b.com', source_type: 'news', title: 'E2', excerpt: '', credibility: 80, collected_by: '', destination: '', captured_at: '' },
     ],
     figures: [],
     charts: [],
