@@ -262,6 +262,15 @@ DEST_KEYED_ROWS: Tuple[Tuple[str, str], ...] = (
 # 在视角命中时追加，保证非视角卷的质量分母逐值不变（评审 P0-1）。
 # checklist 行集由编排层从冻结榜 seed（行守恒），LLM 只填格不造行；
 # 视角块与 spot_routes 同形状（组级 destination 分组），DEST_KEYED_ROWS 只登记组级主键。
+#
+# **单视角不变量**（本表与下游三处共同依赖，改动前先读）：
+#   ① perspective_key() 取**首个**关键词命中，优先级＝本表/dict 插入序，未做冲突消解；
+#   ② sections_for() 一卷只插一个视角章；
+#   ③ 三键名跨视角共享（persp_checklist/rules/packing），两个视角同卷会在 structured 上
+#      撞键，后写覆盖前写。
+# 因此「亲子+长辈同行」这类复合人群当前**结构性不支持**。要把 party 改成 multi，
+# 必须先给 show_if 加 contains 语义——show_if_triggered 用 str(答案)==equals，
+# 列表答案恒不相等，直接改 multi 会让**所有**条件题一起消失（且不会报错）。
 PERSPECTIVE_SPECS: Dict[str, Dict[str, Any]] = {
     "persp_family": {
         "angle_tpls": ("亲子 儿童票 免票 身高 年龄 规则", "亲子 母婴室 婴儿车 遛娃 设施"),

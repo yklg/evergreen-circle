@@ -8,6 +8,8 @@
   VR-A5 PERSPECTIVE_SPECS 10 视角全登记 + 模板形状
   VR-B2/B3/B4 必答闸门正反例 / 题序 golden / 脏输入防线
 """
+import string
+
 import pytest
 
 from app.core.pipeline.research import engine as O
@@ -16,6 +18,12 @@ from app.core import research_types as rt
 from app.core.schemas import schema_completeness
 
 _PERSP_SIDS = tuple(sid for sid in rt.SECTION_PLAN if sid.startswith("persp_"))
+# 配置态按注册表派生（不写死 sid）：B1 填一行，该 sid 自动从惰性侧移到正向侧。
+_CONFIGURED = tuple(s for s in _PERSP_SIDS if rt.perspective_structured_keys(s))
+_UNCONFIGURED = tuple(s for s in _PERSP_SIDS if not rt.perspective_structured_keys(s))
+# 视角章 → 归属调研类型（从两个类型的 perspectives 表反查，不另抄一份清单）
+_OWNER = {p["section"]: t for t in rt.RESEARCH_TYPES
+          for p in rt.type_spec(t)["perspectives"].values()}
 
 
 # ── VR-A5 注册表穷尽 ────────────────────────────────────────────
@@ -34,11 +42,35 @@ def test_family_spec_shape():
 
 
 def test_unconfigured_perspectives_are_inert():
-    """非亲子视角本期 checklist/rules/packing 全 None → 专属键集为空（零波及谓词源）。"""
-    for sid in _PERSP_SIDS:
-        if sid == "persp_family":
-            continue
+    """未配置视角：专属键集为空 → 挂章/分行/分母三处零波及。
+
+    原实现写的是「除 persp_family 外全 None」——B1 填一行情侣就整体失效，
+    且它把「本期没填」误当成契约。这里改成按注册表派生配置态/未配置态。
+    """
+    for sid in _UNCONFIGURED:
         assert rt.perspective_structured_keys(sid) == ()
+        assert rt.SECTION_STRUCTURED[sid] == ()
+        for rtype in rt.RESEARCH_TYPES:
+            assert rt.structured_keys_for(rtype, sid) == tuple(
+                rt.type_spec(rtype)["structured_keys"]), f"{sid} 漂移了 {rtype} 分母"
+
+
+def test_configured_split_is_non_degenerate():
+    """两侧都非空，否则上面的惰性断言与下面的正向断言各自空过。"""
+    assert set(_CONFIGURED) | set(_UNCONFIGURED) == set(_PERSP_SIDS)
+    assert _CONFIGURED and _UNCONFIGURED
+
+
+def test_inertness_comes_from_the_predicate_not_from_nobody_filling_a_row(monkeypatch):
+    """合成一个空行，证明「惰性」是判据给的，不是恰好九行都没填出来的巧合。"""
+    monkeypatch.setitem(rt.PERSPECTIVE_SPECS, "persp_zzz_synthetic", {
+        "angle_tpls": (), "spot_probe_tpls": (), "checklist_key": None,
+        "checklist_columns": (), "rules_key": None, "packing_key": None,
+        "hard_constraints": ()})
+    sid = "persp_zzz_synthetic"
+    assert rt.perspective_structured_keys(sid) == ()
+    assert rt.perspective_assemblable(sid, [{"spot_id": "s"}]) is False
+    assert rt.data_grid_sections_for("guide", ["spots", sid]) == ("spots",)
 
 
 # ── VR-A1/A2 键集三处自洽 ───────────────────────────────────────
@@ -342,3 +374,82 @@ def test_submit_clarify_unblocks_task_with_pre_existing_questionnaire(monkeypatc
     monkeypatch.setattr(O.db, "get_clarify_questions", lambda tid: (fresh, True))
     with pytest.raises(rt_err.ClarifyAnswerRequiredError):
         O.submit_clarify("t_fresh", {"party": "亲子家庭", "days": "1-2 天"})
+
+
+# ── VR-A7 视角行自洽（D1/D3/D4：填错一行必须当场红，而不是运行期静默劣化）──
+
+@pytest.mark.parametrize("sid", _PERSP_SIDS)
+def test_perspective_row_shape_self_consistent(sid):
+    p = rt.perspective_spec(sid)
+    rtype = _OWNER[sid]
+    qids = {q["id"] for q in rt.type_spec(rtype)["clarify"]}
+    # D1 问了就得有人听：hard_constraints 必须是该类型问卷里真实存在的题 id，
+    #   否则 engine 的 `if clar.get(q)` 会静默跳过，约束形同没问。
+    assert set(p["hard_constraints"]) <= qids, \
+        f"{sid} 声明了 {rtype} 问卷里不存在的约束题"
+    # D4 二查模板必须且只能按景点格式化。写错占位名（如 {dest}）会在
+    #   asyncio.to_thread 里抛 KeyError 并被 spots 的 except 吞掉 → 全表静默占位。
+    for t in p["spot_probe_tpls"]:
+        fields = {f for _, f, _, _ in string.Formatter().parse(t) if f}
+        assert fields == {"spot"}, f"{sid} 二查模板占位符异常：{fields or '（无 {spot}）'}"
+    #   角度模板从不 format（planning 直接当检索词用），含花括号即把字面量送进检索。
+    for t in p["angle_tpls"]:
+        assert "{" not in t and "}" not in t, f"{sid} 角度模板不得含占位：{t}"
+    if p.get("checklist_key"):
+        assert p["checklist_columns"], f"{sid} 配了核查表却没有列定义"
+        assert len(p["checklist_columns"]) == 4, \
+            f"{sid} 列数 {len(p['checklist_columns'])}≠4，与前端定标（表宽/权重）不符"
+        # 前端表头用 shortName = column.split('/')[0]，故要求短名非空且互不相同
+        # （两列短名撞车＝表头无法区分；斜杠本身用不用是风格，不是契约）。
+        shorts = [c.split("/")[0].strip() for c in p["checklist_columns"]]
+        assert all(shorts), f"{sid} 有列的短名为空：{p['checklist_columns']}"
+        assert len(set(shorts)) == len(shorts), f"{sid} 表头短名撞车：{shorts}"
+        assert p.get("checklist_metric"), f"{sid} 缺 CSV 指标列文案"
+        # D3 种子可达：核查表行 seed 自 spot_ranking，类型没有它就只能产出空表。
+        assert "spot_ranking" in rt.type_spec(rtype)["structured_keys"], \
+            f"{sid} 属 {rtype}，该类型无景点榜可 seed → 核查表永远全占位且拉低质量分"
+
+
+@pytest.mark.parametrize("sid", _PERSP_SIDS)
+def test_conditional_constraints_belong_to_this_perspective(sid):
+    """D1b 反向归属：视角挂靠的条件题，其触发值必须映射回本视角。
+
+    现有断言只查「qid 存在」与「equals 唯一」，因此「长辈视角要求回答娃龄」
+    这种两处各自成立、合起来荒谬的错配能同时过两道门。
+    """
+    p = rt.perspective_spec(sid)
+    rtype = _OWNER[sid]
+    by_id = {q["id"]: q for q in rt.type_spec(rtype)["clarify"]}
+    for qid in p["hard_constraints"]:
+        cond = (by_id.get(qid) or {}).get("show_if")
+        if not cond:
+            continue
+        assert rt.perspective_section(rtype, str(cond["equals"])) == sid, \
+            f"{sid} 挂靠 {qid}，但它由「{cond['equals']}」触发，属别的视角"
+
+
+def test_party_options_resolve_to_distinct_perspectives():
+    """D2b 触发值与视角一一对应。
+
+    perspective_key 是**子串**匹配且取首个命中（优先级=dict 插入序），将来加一个
+    「非亲子」这类含子串的选项，会同时命中 family 并被静默归到亲子视角。
+    """
+    party = next(q for q in rt.type_spec("guide")["clarify"] if q["id"] == "party")
+    resolved = {opt: rt.perspective_section("guide", opt) for opt in party["options"]}
+    with_sid = {o: s for o, s in resolved.items() if s}
+    assert len(set(with_sid.values())) == len(with_sid), f"两个选项撞同一视角：{resolved}"
+    assert resolved["朋友结伴"] == "", "「朋友结伴」应保持通用（无对应视角章）"
+    assert len(with_sid) == 5
+
+
+def test_served_question_set_exceeds_registry_only_by_enhanced_questions():
+    """D7 钉住「注册表 ⊊ 服务端题集」：任何按注册表取白名单的答案过滤都是危险的。
+
+    destinations/scope 由 _build_enhanced_questions 在注册表之外追加，却承载真实载荷
+    （destinations 是 _checked_destinations 的唯一入口、进而决定核查表行种子）。
+    """
+    served = O._build_enhanced_questions({}, list(rt.type_spec("guide")["clarify"]), None,
+                                        research_type="guide", query="")
+    extra = ({q["id"] for q in served}
+             - {q["id"] for q in rt.type_spec("guide")["clarify"]})
+    assert extra <= {"scope", "destinations"}, f"出现注册表外的意外题：{extra}"
