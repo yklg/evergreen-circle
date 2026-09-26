@@ -3,7 +3,8 @@
 被测范围：γ 的规则（G-1 生产侧不得直接构造 `CallGuard` · G-2 `allow_ungated=` 只许
 `tests/**` · G-3 `tests/**` 的 assert 被测表达式内不得读挂钟 · G-4
 `SpatialScope.from_iso` 唯一出口 · G-5 pipeline 不得回握 orchestrator/runner ·
-G-6 orchestrator 只许依赖 research.engine 公共面 · G-7 research 子模块不得回握 engine）。
+G-6 orchestrator 只许依赖 research.engine 公共面 · G-7 research 子模块不得回握 engine ·
+G-8 结构化块键字面量只许待在模块顶层声明表里，且现网棘轮基线只许变短）。
 判据：**违规必红 且 合法必绿**，两半都要（只测一半会得到恒红或恒绿的假护栏）。
 
 ⚠️ 为什么用 **subprocess 跑真实 CLI**，而不是 import 进来调内部函数：
@@ -315,6 +316,120 @@ def test_m3_g7_submodule_absolute_backedge_to_engine(tmp_path):
     cp = _run(root)
     assert cp.returncode == 1
     assert "analyze.py:1: G-7" in cp.stderr, cp.stderr
+
+
+# ──  G-8 结构化块键字面量门：合法必绿 ────────────────────────────
+def test_g8_passes_on_every_declaration_table_shape(tmp_path):
+    """G-8 的豁免是 **AST 形状**（模块顶层大写常量表），不是文件路径、不是"模块级"。
+
+    ① 裸 Assign 的字典键与字典值都合法（`PERSPECTIVE_SPECS` 里 `checklist_key` 的**值**
+       就是键名 —— 只认"键位"会把注册表本身判红）；② 带类型注解的 `_COERCERS: Dict[…]`
+       同样合法（本仓 `_COERCERS`/`_STRUCTURED_SCHEMAS` 就是这个形状）；
+    ③ 表经函数调用构造（`frozenset({…})`）合法；④ docstring/注释里点名块名合法
+       （**正则实现会在此误判**，与本文件开头那条纪律同源）。
+    """
+    root = _tree(tmp_path / "g8_ok", {
+        "app/core/registry.py": (
+            '"""模块 docstring 提到 spot_ranking 与 persp_checklist —— 引用，必须不报。"""\n'
+            "from typing import Dict\n"
+            "\n"
+            "# 注释里的 amenity_checklist 同样必须不报\n"
+            "RESEARCH_TYPES = {\n"
+            "    'guide': {'structured_keys': ('spot_ranking', 'food_ranking')},\n"
+            "    'persp': {'section': 'persp_family', 'checklist_key': 'persp_checklist'},\n"
+            "}\n"
+            "_COERCERS: Dict[str, object] = {'route_plan': None, 'stay_options': None}\n"
+            "PERSP_STRUCTURED_KEYS = frozenset({'persp_rules', 'persp_packing'})\n"
+        ),
+        # tests/ 与 scripts/ 点名块名是它们的本职（夹具、断言、一次性迁移各处理一个键）
+        "tests/test_fixture_shape.py": (
+            "def test_x():\n"
+            "    assert {'spot_ranking': []} == {'spot_ranking': []}\n"
+        ),
+        "scripts/backfill_one.py": (
+            "def run(db):\n"
+            "    return db.get('shop_list')\n"
+        ),
+    })
+    cp = _run(root)
+    assert cp.returncode == 0, (
+        f"声明表形态被误判（豁免做成了文件白名单 / 只认字典键位 / 用了正则）：\n"
+        f"stdout={cp.stdout!r}\nstderr={cp.stderr!r}"
+    )
+    assert "G-8" not in cp.stderr, cp.stderr
+
+
+# ── G-8：违规必红 ──────────────────────────────────────────────
+def test_g8_block_key_literal_in_function_body_is_red(tmp_path):
+    """G-8：块键散进函数体 ⇒ 红，两种写法都要抓（`.get("key")` 与**函数体内的字典键位**）。
+
+    后者是关键判据：Part A 拆掉的 `elif section_id == "persp_family"` 那类分叉，
+    新写法往往就是一个以块名为键的局部字典 ——  exempting "字典键位" 就等于把门留着不锁。
+    """
+    root = _tree(tmp_path / "g8_bad", {
+        "app/core/pipeline/research/newmod.py": (
+            "def _fill(structured):\n"
+            "    rows = structured.get('risk_profile', [])\n"
+            "    dispatch = {'access_matrix': _chart_a}\n"
+            "    return rows, dispatch\n"
+        ),
+    })
+    cp = _run(root)
+    assert cp.returncode == 1, "函数体里的块键字面量未被拦下 ⇒ 加一块类型要改一片代码的老病会复发"
+    assert "newmod.py:2: G-8" in cp.stderr, cp.stderr
+    assert "newmod.py:3: G-8" in cp.stderr, f"函数体内的字典键位漏检：{cp.stderr!r}"
+
+
+def test_g8_lowercase_module_variable_is_not_a_declaration_table(tmp_path):
+    """G-8：豁免认的是**大写常量表**，不是「写在模块级」—— 小写模块变量照样红。
+
+    这条是把「形状判据」与「位置判据」区分开的唯一可判别样本：两者在模块级都成立，
+    只有大写这条能挡住「把散点提到文件顶部塞进 `cache = {}` 就算合规」的写法。
+    """
+    root = _tree(tmp_path / "g8_lower", {
+        "app/core/loose.py": "cache = {'cost_breakdown': None}\n",
+    })
+    cp = _run(root)
+    assert cp.returncode == 1, "位置判据冒充形状判据 ⇒ 提到模块级就绕过"
+    assert "loose.py:1: G-8" in cp.stderr, cp.stderr
+
+
+def test_g8_ratchet_counts_hits_per_group_and_reports_only_the_excess(tmp_path):
+    """棘轮比的是**每组的次数**：基线记 `coerce_spot_ranking` 有 1 处，写第 2 处才红。
+
+    ⚠️ 这条钉住「不得见一个报一个」：若实现只判「该组是否在基线里」，第二处会静默通过
+    （等于给整个函数开了口子）；若反过来对基线内的第一处也报，本仓现网直接红。
+    """
+    root = _tree(tmp_path / "g8_ratchet", {
+        "app/core/schemas.py": (
+            "def coerce_spot_ranking(raw):\n"
+            "    a = raw.get('spot_ranking')      # 基线内第 1 处 —— 必须不报\n"
+            "    b = {'spot_ranking': a}\n"
+            "    return b\n"
+        ),
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "app/core/schemas.py:3: G-8" in cp.stderr, f"基线外的第 2 处未报：{cp.stderr!r}"
+    assert "app/core/schemas.py:2: G-8" not in cp.stderr, \
+        f"基线内的第 1 处被误报（现网 38 处会一起红）：{cp.stderr!r}"
+
+
+def test_g8_stale_baseline_entry_is_also_red(tmp_path):
+    """棘轮**两个方向**都要红：基线登记了 1 处而代码里已经没有了 ⇒ 红。
+
+    只报「多了」的棘轮会悄悄长成一份文件白名单 —— 每次真实重构都留下一条没人再触发的
+    豁免，攒够多次就把门掏空。报红逼人回来删条目，基线因此**只可能变短**。
+    """
+    root = _tree(tmp_path / "g8_stale", {
+        "app/core/schemas.py": (
+            "def coerce_spot_ranking(raw):\n"
+            "    return raw          # 已改成从参数拿键名 —— 基线条目该删了\n"
+        ),
+    })
+    cp = _run(root)
+    assert cp.returncode == 1
+    assert "coerce_spot_ranking" in cp.stderr and "删" in cp.stderr, cp.stderr
 
 
 # ── 把 γ 从「一个脚本」变成「本仓的纪律」的那一步 ──────────────────────

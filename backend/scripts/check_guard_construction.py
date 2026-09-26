@@ -22,6 +22,7 @@
 | **G-5** | `app/core/pipeline/**` 任何模块 import `app.core.orchestrator` 或 `app.core.runner` ⇒ 违例 | 流水线是被调度的内层；反向握住外壳/调度器即成环，M3 提取的单向依赖被击穿 |
 | **G-6** | `app/core/orchestrator.py` 的 pipeline 导入**只能**打在 `app.core.pipeline.research.engine` 公共面 | 外壳不许伸手进 research 子模块/living_circle 内部（内部重提取会被它锁死）；需要的符号经 engine re-export |
 | **G-7** | research 包内除 `__init__.py`/`engine.py` 外，任何模块 import `engine`（绝对或相对回边）⇒ 违例 | engine 是编排顶层 + 兼容 re-export 面；子模块回握 engine 即环形依赖，子模块不再可独立测试 |
+| **G-8** | `app/**` 里出现**结构化块键字面量**（`spot_ranking` / `persp_checklist` / …），且不在**模块顶层声明表**内 ⇒ 违例 | 块键的归属是注册表。键名散进函数体 = 该函数按块名分叉，加一个块类型就得改一片编排/图表/规整代码（Part A 刚拆掉的那 5 处硬编码正是这条规则的成因） |
 
 白名单（**仅 G-1**，两处，都必须存在）
 ------------------------------------
@@ -30,7 +31,7 @@
   ⚠️ 在该文件的**其它函数**里构造 ⇒ **照红**：否则「唯一工厂」会退化成「整文件豁免」，
   守卫随之失去意义。文件被改名 / 函数被改名 ⇒ 白名单失配 ⇒ **响亮报错**（这是正确的失效方向）。
 
-⚠️ 两处刻意的不对称（都是实测踩出来的，别「修」掉）
+⚠️ 三处刻意的不对称（都是实测踩出来的，别「修」掉）
 --------------------------------------------------
 1. **G-3 只扫 `Assert.test`，不扫 `Assert.msg`**：`msg` 是**给人看的解释文案**，
    「若实现退回宿主机本地 `date.today()`，此处必红」这种**引用**正是它该出现的地方
@@ -38,6 +39,17 @@
 2. **G-1 的作用域是「`tests/**` 之外」而不是方案原文的「`app/**`」**：本仓生产侧还有
    `scripts/**`（`make_fixture_points.py` 就在那里真实构造 `BaiduClient`），
    而「新绕过写不进来」要求覆盖**未来新增的顶层目录**。作用域取严（零当前代价）。
+3. **G-8 的作用域反过来是「只有 `app/**`」，且带一份 38 处的棘轮基线**（不像 G-1/G-2 零基线）：
+   ① 测试与一次性脚本**点名块名是它们的本职**（夹具、断言、迁移脚本各只处理一个键），
+   扫它们只会逼人放宽断言或加 `# noqa`；② 落地时实测现网 **38 处**（不是方案写的 5 处），
+   全量重构要吃掉 `engine.py`（churn 第一）这一整轮回归面，与本轮「单份报告增量=0、
+   改动面有界」的代价承诺冲突 ⇒ 记成**只许变短**的棘轮，而不是文件白名单：
+   白名单豁免整个文件且永远为真，棘轮精确到「文件::函数::键×次数」，
+   新增一处即红、修掉一处不删条目也红。
+   ⚠️ **效力上限**（别把它读成"再没有视角分支了"）：G-8 管的是**块名字面量**与「在通用代码里
+   按块名分叉」，管不到 `if persp_sid == "persp_family"` 这类按**视角 id** 写的分支 —— 视角 id
+   出现在编排层本身是合法登记，不该由门顺带接管。那条由 `tests/test_perspective_family.py`
+   的注册表元测试守，不靠静态扫描。
 
 G-4 白名单（函数级，与 G-1 同纪律）
 --------------------------------
@@ -136,6 +148,34 @@ def _called_name(node: ast.Call) -> str | None:
     return None
 
 
+def _declaration_table_nodes(tree: ast.AST) -> "set[int]":
+    """G-8：标出**模块顶层声明表**内部的所有字符串常量节点（按 id）。
+
+    判据是 AST 形状而非文件路径：`UPPER_CASE 常量 = 字典/元组/集合字面量`（含 AnnAssign，
+    如 `_COERCERS: Dict[str, …] = {…}`）。注册表、`_COERCERS`、`_STRUCTURED_SCHEMAS` 这些
+    **登记处**天然合法；函数体里的同名键一律不合法 —— 与"哪个文件"无关，把表搬去别处
+    照样合法，把散点写进注册表照样违例。
+    """
+    ok: set[int] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            val = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names, val = [node.target.id], node.value
+        else:
+            continue
+        if val is None:
+            continue
+        # 「声明表」= 下划线可选 + 全大写（`_COERCERS` / `DEST_KEYED_ROWS`）；小写变量不算
+        if not any(n.replace("_", "").isupper() and any(c.isalpha() for c in n) for n in names):
+            continue
+        for sub in ast.walk(val):
+            if isinstance(sub, ast.Constant):
+                ok.add(id(sub))
+    return ok
+
+
 # ── G-5/G-6/G-7：流水线分层 import 方向（M3 模块提取后的机器纪律）──────────
 # 流水线内层禁止回握上层：pipeline/** → orchestrator/runner 一律违例。
 _FORBIDDEN_UPPER = ("app.core.orchestrator", "app.core.runner")
@@ -144,6 +184,69 @@ _FORBIDDEN_UPPER = ("app.core.orchestrator", "app.core.runner")
 _ORCH_ALLOWED_PIPELINE = "app.core.pipeline.research.engine"
 _RESEARCH_DIR = "app/core/pipeline/research/"
 _RESEARCH_BACKEDGE_FILES = frozenset({"__init__.py", "engine.py"})
+
+
+# ── G-8：结构化块键字面量只许待在声明表里 ────────────────────────────
+# 键全集**从注册表取**，不在本脚本抄第二份（抄了就又是两处口径，Part A 的病根之一）。
+_G8_BACKEND = Path(__file__).resolve().parents[1]
+
+
+def _structured_key_universe() -> "frozenset[str]":
+    """块键全集 = 各类型基础键 ∪ 各视角章挂载键 ∪ 已退役键。"""
+    import sys
+    if str(_G8_BACKEND) not in sys.path:
+        sys.path.insert(0, str(_G8_BACKEND))
+    from app.core import research_types as rt
+    keys: set[str] = set(rt.PERSP_STRUCTURED_KEYS) | set(rt.DEPRECATED_CLAIM_FIELDS)
+    for spec in rt.RESEARCH_TYPES.values():
+        keys |= set(spec["structured_keys"])
+        for p in (spec.get("perspectives") or {}).values():
+            keys |= set(rt.section_structured_keys(p["section"]))
+    return frozenset(keys)
+
+
+# 现网遗留命中（G-8 落地时如实登记，**不是文件白名单**：按 `文件::所在函数` 精确到键与次数）。
+# 语义是**棘轮**：多一处 ⇒ 红（新散点）；少一处 ⇒ 也红（那处已被改掉，条目必须从这里删掉）。
+# ⇒ 本表只会变短；每次变短都是一次真实的去硬编码。
+#
+# 分组理由（三条不同性质，别混成一句"历史原因"）：
+# ① `schemas.py coerce_*` —— 读 LLM 载荷的**自身包装子键**（`{"spot_ranking": [...]}`）。
+#    该函数已在 `_COERCERS` 表里按同名键登记，这里是同名键的第二次出现；
+#    彻底收敛要让 coerce 接住 key 入参，属独立重构，不在本道门的代价里。
+# ② `charts_build.py` —— 图元与逐景点数据网格按块名 `structured.get(...)`。
+#    Part A 已把**视角那一支**改成读 `checklist_key`（原 `elif section_id == "persp_family"`
+#    即 G-8 要拦的形状）；剩余是 guide 基础块的既有分叉。
+# ③ `engine.py` —— 主管线按块名挂阶段（`if "spot_ranking" in spec[...]` 的取数与回写）、
+#    执行摘要的事实块。此处是 churn 最高的文件，动它须单独排期。
+G8_BASELINE: "dict[str, dict[str, int]]" = {
+    # ② 图元与逐景点数据网格按块名取数（**视角那一支已改读 checklist_key，不在表里**）
+    "app/core/pipeline/research/charts_build.py::_build_data_grid": {
+        "access_matrix": 1, "cost_breakdown": 1, "food_ranking": 1,
+        "route_plan": 1, "shop_list": 1, "spot_ranking": 1},
+    "app/core/pipeline/research/charts_build.py::_chart_access_radar": {"access_matrix": 1},
+    "app/core/pipeline/research/charts_build.py::_chart_amenity_bar": {"amenity_checklist": 1},
+    "app/core/pipeline/research/charts_build.py::_chart_cost_compose": {"cost_breakdown": 1},
+    "app/core/pipeline/research/charts_build.py::_chart_risk_heat": {"risk_profile": 1},
+    # ③ 主管线按块名挂阶段与摘要
+    "app/core/pipeline/research/engine.py::_brief_facts_block": {
+        "cost_breakdown": 1, "food_ranking": 1, "persp_rules": 1,
+        "shop_list": 1, "spot_ranking": 1, "stay_options": 1},
+    "app/core/pipeline/research/engine.py::research_pipeline": {
+        "route_plan": 3, "shop_list": 4, "spot_ranking": 3, "spot_routes": 2},
+    # ① 规整器读自身包装子键（已在 _COERCERS 按同名键登记）
+    "app/core/schemas.py::coerce_access_matrix": {"access_matrix": 1},
+    "app/core/schemas.py::coerce_amenity_checklist": {"amenity_checklist": 1},
+    "app/core/schemas.py::coerce_cost_breakdown": {"cost_breakdown": 1},
+    "app/core/schemas.py::coerce_food_ranking": {"food_ranking": 1},
+    "app/core/schemas.py::coerce_risk_profile": {"risk_profile": 1},
+    "app/core/schemas.py::coerce_route_plan": {"route_plan": 1},
+    "app/core/schemas.py::coerce_shop_list": {"shop_list": 1},
+    "app/core/schemas.py::coerce_spot_ranking": {"spot_ranking": 1},
+    "app/core/schemas.py::coerce_spot_routes": {"spot_routes": 1},
+    "app/core/schemas.py::coerce_stay_options": {"stay_options": 1},
+}
+# 基线总处数（**由表算出，不硬编码**：硬编码会在删条目时忘了改总数，让打印说谎）
+G8_EXPECTED = sum(c for per_key in G8_BASELINE.values() for c in per_key.values())
 
 
 def _resolve_relative(rel: str, level: int, module: str, imported_name: str) -> str | None:
@@ -233,6 +336,16 @@ def scan(root: Path) -> "tuple[list[str], int]":
     bad: list[str] = []
     n = 0
     _from_iso_calls = [0]  # G-4：许可调用点的实际计数（用 list 便于闭包累加）
+    # G-8 命中按 `文件::函数` → 键 → 行号 收集（判红时要与棘轮基线比**次数**，不能见一个报一个）
+    g8_hits: dict[str, dict[str, list[int]]] = {}
+    # G-8 基线核对还须知道「这个函数在不在」—— 见下方 stale 判据的注释
+    g8_funcs: dict[str, set[str]] = {}
+    try:
+        universe = _structured_key_universe()
+    except Exception as e:  # noqa: BLE001
+        # 取不到键全集**不等于没有违例**：静默放行会把这道门变成恒绿假护栏。
+        bad.append(f"G-8 UNIVERSE 键全集取自注册表失败，本道门当前无效力：{type(e).__name__}: {e}")
+        universe = frozenset()
     for p in _iter_py(root):
         rel = p.relative_to(root).as_posix()
         n += 1
@@ -246,8 +359,21 @@ def scan(root: Path) -> "tuple[list[str], int]":
         # G-5/G-6/G-7：分层 import 方向（与函数体无关，整文件一次扫）
         bad.extend(_scan_layer_imports(rel, tree))
 
+        # G-8：块键字面量的合法栖身之所 = 模块顶层声明表（整文件算一次）
+        table_nodes = _declaration_table_nodes(tree) if (universe and rel.startswith("app/")) else set()
+        if rel.startswith("app/"):
+            g8_funcs.setdefault(rel, set()).update(
+                n.name for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
+
         in_tests = rel.startswith("tests/")
         for node, func in _walk_with_func(tree):
+            # ── G-8：块键字面量散进函数体 ────────────────────────────
+            if (universe and rel.startswith("app/")
+                    and isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and node.value in universe and id(node) not in table_nodes):
+                g8_hits.setdefault(f"{rel}::{func}", {}).setdefault(node.value, []).append(node.lineno)
+
             # ── G-1：生产侧不得直接构造 CallGuard ──────────────────────
             if not in_tests and isinstance(node, ast.Call) and _called_name(node) == "CallGuard":
                 allow = CALLGUARD_ALLOWLIST.get(rel, _ABSENT)
@@ -313,6 +439,43 @@ def scan(root: Path) -> "tuple[list[str], int]":
             f"G-4 `SpatialScope.from_iso(...)` 的许可调用点共 {_from_iso_calls[0]} 处，"
             f"必须恰为 {expected} 处（多了 = 又有人在别处选环；少了 = 白名单失配）"
         )
+    # G-8 棘轮：与基线比**次数**，两个方向都要报 ——
+    # 多了是新散点（本道门的存在理由）；少了是基线过期（不报就会长出一条"永远为真"的豁免，
+    # 与文件白名单同一种腐化，只是慢一些）。
+    if universe:
+        for group, per_key in sorted(g8_hits.items()):
+            rel, _, func = group.partition("::")
+            base = G8_BASELINE.get(group, {})
+            for key in sorted(per_key):
+                lines = sorted(per_key[key])
+                for ln in lines[base.get(key, 0):]:
+                    bad.append(
+                        f"{rel}:{ln}: G-8 块键字面量 `{key}` 出现在函数体 "
+                        f"{func or '<模块级>'}() —— 键名归属注册表/声明表，"
+                        "散进函数体即按块名分叉（加一块类型要改一片代码）"
+                    )
+        for group in sorted(G8_BASELINE):
+            rel, _, func = group.partition("::")
+            if rel not in g8_funcs:
+                continue  # 局部夹具树不含该文件 ⇒ 不作判定（同 G-4 期望值纪律）
+            if func and func not in g8_funcs[rel]:
+                # ⚠️ 只在「函数还在」时核对基线，是**刻意的让步**：测试注入的局部树会拿
+                # 真仓库路径写桩文件（`test_guard_construction_lint.py` 的 M3 用例就造了
+                # 一个只有 4 行的 engine.py），按文件计会凭空报 10 条假阳性 —— 那正是
+                # 「逼人关掉护栏」的失败模式。让掉的只有「函数被改名/删掉后仍留着条目」这一
+                # 种**记账噪声**；真正的防线（新增散点必红）不受影响：散点若跟着改名一起
+                # 搬走，它会落进一个基线里没有的新组 ⇒ 照样红。
+                continue
+            obs = g8_hits.get(group, {})
+            for key, want in sorted(G8_BASELINE[group].items()):
+                got = len(obs.get(key, []))
+                if got >= want:
+                    continue
+                bad.append(
+                    f"{rel}: G-8 棘轮基线登记了 {want} 处 `{key}`，实际只剩 {got} 处 —— "
+                    f"该处已去硬编码？请把 `G8_BASELINE[\"{group}\"]` 里的这条删掉"
+                    "（基线只许变短，留着过期条目等于留着一条没人再触发的豁免）"
+                )
     return bad, n
 
 
@@ -338,7 +501,8 @@ def main(argv: "list[str] | None" = None) -> int:
         f"✓ γ 静态守卫通过：{n} 个 .py（root={root}）· "
         "G-1 生产侧无直接构造 CallGuard · G-2 allow_ungated 仅在 tests/ · G-3 tests 断言未读挂钟 "
         f"· G-4 SpatialScope.from_iso 恰 {FROM_ISO_EXPECTED_CALLS} 处调用 · "
-        "G-5 pipeline 无上层回握 · G-6 orchestrator 只依赖 engine 公共面 · G-7 research 无 engine 回边"
+        "G-5 pipeline 无上层回握 · G-6 orchestrator 只依赖 engine 公共面 · G-7 research 无 engine 回边 "
+        f"· G-8 块键字面量零新增散点（棘轮基线恰 {G8_EXPECTED} 处）"
     )
     return 0
 
