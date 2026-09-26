@@ -66,3 +66,13 @@ if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).ResizeObserver = ResizeObserverStub
 }
+
+// jsdom 未实现 Element.prototype.scrollIntoView（W3C 规范外的浏览器专有滚动 API，
+// jsdom 有意不做布局/滚动模拟）。生产代码在滚动到底部时调用它（VAgentStream、
+// VTracePanel），调用点已有 ?. 兜底但拿不到方法本身就会抛 TypeError。
+// 这同样是 jsdom 环境缺口而非被测代码缺陷：注入 no-op 桩，不修改生产代码。
+if (typeof window !== 'undefined' && typeof window.HTMLElement !== 'undefined') {
+  if (typeof window.HTMLElement.prototype.scrollIntoView !== 'function') {
+    window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {}
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -23,6 +23,7 @@ import { VAgentStream } from '../components/VAgentStream'
 import { VEvidenceFeed } from '../components/VEvidenceFeed'
 import { VTracePanel } from '../components/VTracePanel'
 import { VCountUp } from '../components/ui'
+import { PLAN_FALLBACK_HINT } from '../lib/destinationFallbackCopy'
 
 export default function WorkspacePage() {
   const { taskId } = useParams()
@@ -54,9 +55,12 @@ export default function WorkspacePage() {
     reportId,
     finished,
     error,
+    planFallback,
     query: storeQuery,
   } = useTaskStore()
   const displayQuery = storeQuery || locQuery
+  // 降级横幅「查看决策日志」→ 递增以强制揭示已收起的 Trace 面板（须在早退前无条件调用）
+  const [traceReveal, setTraceReveal] = useState(0)
 
   const reworkMsg = messages.find((m) => m.kind === 'rework')
 
@@ -134,6 +138,19 @@ export default function WorkspacePage() {
           </div>
         </div>
       </header>
+
+      {/* 目的地降级：运行流专属的温和提示（非 error 通道），降级事实的持久来源是决策日志 */}
+      {planFallback && (
+        <div className="flex items-center gap-3 bg-sun-soft px-5 py-2 text-aux text-ink-2">
+          <span className="flex-1">{PLAN_FALLBACK_HINT}</span>
+          <button
+            onClick={() => setTraceReveal((v) => v + 1)}
+            className="flex items-center gap-1 rounded-btn border border-line bg-card px-2.5 h-7 text-tag text-ink-3 hover:text-primary-deep"
+          >
+            <Activity size={13} /> 查看决策日志
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="bg-risk/10 px-5 py-2 text-aux text-risk">采集流中断：{error}（已尽量降级，可返回重试）</div>
@@ -264,7 +281,7 @@ export default function WorkspacePage() {
       </div>
 
       {/* 悬浮可拖拽决策日志面板（可观测性 Trace）*/}
-      <VTracePanel traces={traces} />
+      <VTracePanel traces={traces} revealKey={traceReveal} />
     </div>
   )
 }
