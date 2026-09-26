@@ -437,6 +437,34 @@ def visible_clarify_questions(rtype: Optional[str], answers: Dict[str, Any]) -> 
     return [q for q in qs if show_if_triggered(q, answers)]
 
 
+def drop_untriggered_conditional_answers(rtype: Optional[str],
+                                         answers: Dict[str, Any]) -> Dict[str, Any]:
+    """剔除「带 show_if 且未被触发」的条件题答案——**黑名单式删除，其余键原样保留**。
+
+    脏答案闸门：用户先答亲子（娃龄入题）再改答情侣，前端会隐藏并清掉该题，但经
+    POST /api/tasks/{id}/clarify 直投、或历史任务重跑时，`child_age` 仍留在答案集里；
+    `missing_conditional_answers` 故意不拒未触发题（拒了就是把脏判定推给根本没见过
+    那道题的用户），于是「情侣同行却带娃龄」会被摘要白名单与硬约束读到。
+
+    为什么不做成"按注册表题集取白名单"：服务端实际下发题集 = 注册表 clarify 题
+    **＋** `_build_enhanced_questions` 在注册表之外追加的 `scope`/`destinations`。
+    白名单会连带删掉用户勾选的 `destinations`，而它是计划层 `_checked_destinations`
+    的唯一入口、并决定核查表行种子 `primary_destination`——删它等于把目的地从
+    「用户明说」降级成「query 猜」。`_mode`/`_type`/`_model_override`/`_region`
+    同理必须存活。判据与前端显隐、后端必答闸门同源于 show_if_triggered（三处不漂移）。
+    """
+    qs = type_spec(rtype).get("clarify") or []
+    ans = answers or {}
+    # 只看**实际答了**的条件题：没答过的题不构成"脏残留"，也不该触发整字典重建
+    # （无脏项时原对象直传，下游可凭 is 判断这次过滤是空操作）。
+    stale = {str(q["id"]) for q in qs
+             if q.get("show_if") and str(q["id"]) in ans
+             and not show_if_triggered(q, ans)}
+    if not stale:
+        return ans
+    return {k: v for k, v in ans.items() if k not in stale}
+
+
 def _type_key(rtype: Optional[str]) -> str:
     s = str(rtype or "").strip().lower()
     return s if s in CLARIFY_CONSUMERS else DEFAULT_RESEARCH_TYPE
@@ -795,6 +823,17 @@ def structured_keys_for(rtype: Optional[str], perspective_section_id: str = "") 
         if k not in keys:
             keys.append(k)
     return tuple(keys)
+
+
+def perspective_assemblable(persp_sid: str, seed_rows: Sequence[Any]) -> bool:
+    """视角专属块本卷是否**真能产出**：视角已配核查表，且冻结榜给了行种子。
+
+    装配与质量分母共用这一个判据（P1-3）：分母若只看 persp_sid，会在空 seed
+    （榜单抽取失败/截断降级）时把三键计入应产出项却永远填不上——schema_completeness
+    无谓掉档，还多烧一轮注定无效的返工（返工轮拿同一空 seed 再装配，分子不动）。
+    """
+    return bool(persp_sid) and bool(perspective_spec(persp_sid).get("checklist_key")) \
+        and bool(seed_rows)
 
 
 def data_grid_sections_for(rtype: Optional[str],

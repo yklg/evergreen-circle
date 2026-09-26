@@ -768,6 +768,10 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     # 调研类型（guide 游玩攻略 / assessment 调研评估）：章节集/图表/结构化键/舆情平台全部查表
     rtype = RT.type_key(task.get("_type") or clar.get("_type") or DEFAULT_RESEARCH_TYPE)
     spec = RT.type_spec(rtype)
+    # 脏答案闸门（唯一咽喉点）：未触发的条件题残留值在此一次性摘掉，使**所有**下游出口
+    # （答题摘要、视角硬约束、计划层）by construction 读不到「情侣同行却带娃龄」的过期值。
+    # 黑名单式删除，destinations/scope 与 _ 前缀 meta 键一律存活（判据源同 show_if_triggered）。
+    clar = RT.drop_untriggered_conditional_answers(rtype, clar)
     # 调研视角（亲子/情侣/独行/摄影/长辈 或 自住/投资/求学/养老/数字游民）→ 追加专属板块
     persp_qid, persp_key = spec["perspective_source"]
     perspective = str(clar.get(persp_key) or clar.get(persp_qid) or "")
@@ -1243,7 +1247,15 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     # 视角专属块装配（rough-cliff-vole）：行 seed 自冻结榜、LLM 只填格；
     # 时序钉死在质量评估之前（分母认键）、_write_one fan-out 之前（写作提示拿得到）。
     # 装配失败不炸管线：全「待核验」占位表照出（占位可见即正确终态）。
-    if persp_sid and RT.perspective_spec(persp_sid).get("checklist_key") and spot_entities:
+    #
+    # 装配谓词与质量分母**必须同源**（P1-3）：视角键只经 structured_keys_for 计入分母，
+    # 而分母原本只认 persp_sid，忽略了「本卷根本没有行可 seed」——空 seed（榜单抽取失败/
+    # 截断降级）时三键计入分母却永远填不上，schema_completeness 无谓掉档，还会多烧一轮
+    # 注定无效的返工（返工轮拿同一空 seed 再装配，分子根本不动）。
+    # 这里派生一个**只喂分母**的 sid：章节与散文仍由 section_ids 决定，persp_sid 本身不改。
+    persp_seedable = RT.perspective_assemblable(persp_sid, spot_entities)
+    persp_denom_sid = persp_sid if persp_seedable else ""
+    if persp_seedable:
         structured.update(await asyncio.to_thread(
             _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
             persp_probes, evidences, clar, runtime._model("aux")))
@@ -1264,7 +1276,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": auditor,
                           "text": "质检官评估证据覆盖度、维度完整性与置信度，决定是否打回返工。", "ts": _now()})
     quality_before = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
-                                      research_type=rtype, perspective_section_id=persp_sid)
+                                      research_type=rtype, perspective_section_id=persp_denom_sid)
     # 质检官 LLM 真实审阅（逐维度打分 + 问题 + 改进建议）——让质检有对比、有审阅、可观测
     trace.set_context(task_id, auditor, "audit", "质检官审阅：逐维度打分+问题+改进建议")
     review_before = await asyncio.to_thread(
@@ -1357,7 +1369,8 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                     if evt:
                         yield evt
                     # 返工轮 structured 整体重建：视角块必须重新装配（ST-01 不回潮）
-                    if persp_sid and RT.perspective_spec(persp_sid).get("checklist_key") and spot_entities:
+                    # 复用同一 persp_seedable 谓词，不与首轮分叉
+                    if persp_seedable:
                         structured.update(await asyncio.to_thread(
                             _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
                             persp_probes, evidences, clar, runtime._model("aux")))
@@ -1366,11 +1379,11 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
             rework_rounds_done += 1
             quality_after_round = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
                                                    research_type=rtype,
-                                                   perspective_section_id=persp_sid)
+                                                   perspective_section_id=persp_denom_sid)
             issues_resolved = max(0, len(quality_before.issues) - len(quality_after_round.issues))
             envelopes = decide_rework(quality_after_round, evidences)
         quality_after = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
-                                         research_type=rtype, perspective_section_id=persp_sid)
+                                         research_type=rtype, perspective_section_id=persp_denom_sid)
     else:
         quality_after = quality_before
 
@@ -1512,7 +1525,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
         destinations=destinations, focus=focus, claims=claims, evidences=evidences,
         structured=structured, elapsed_seconds=elapsed, tokens_used=tokens_used,
         rework_rounds=rework_rounds_done, issues_resolved=issues_resolved,
-        objective_stats=stats, research_type=rtype, perspective_section_id=persp_sid,
+        objective_stats=stats, research_type=rtype, perspective_section_id=persp_denom_sid,
     )
     metrics = merge_quality_into_metrics(metrics, quality_after.to_dict())
 

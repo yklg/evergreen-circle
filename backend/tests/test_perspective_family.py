@@ -179,3 +179,77 @@ def test_dirty_child_age_does_not_trigger_family_perspective():
     """VR-B4：视角解析只认 party 关键词——脏输入（情侣+娃龄）不得点亮亲子链路。"""
     assert rt.perspective_section("guide", "情侣/夫妻") != "persp_family"
     assert rt.perspective_section("guide", "亲子家庭") == "persp_family"
+
+
+# ── VR-B5 脏答案闸门（E1′：未触发条件题的残留值不得被任何出口读到）──
+
+def test_drop_untriggered_removes_stale_child_age():
+    """先答亲子再改情侣：娃龄残留必须被摘掉，否则情侣卷摘要会印「娃龄」。"""
+    dirty = {"party": "情侣/夫妻", "child_age": "3-6 岁", "days": "1-2 天"}
+    assert rt.drop_untriggered_conditional_answers("guide", dirty) == {
+        "party": "情侣/夫妻", "days": "1-2 天"}
+
+
+def test_drop_untriggered_keeps_triggered_answer():
+    clean = {"party": "亲子家庭", "child_age": "3-6 岁"}
+    assert rt.drop_untriggered_conditional_answers("guide", clean) == clean
+
+
+def test_drop_untriggered_is_noop_when_no_conditional_answer():
+    """未答条件题时不复制字典（避免给下游一个「看起来变了」的假信号）。"""
+    base = {"party": "独自旅行", "days": "3-5 天"}
+    assert rt.drop_untriggered_conditional_answers("guide", base) is base
+
+
+def test_drop_untriggered_preserves_non_registry_and_meta_keys():
+    """P0 防线：白名单式过滤会连带删掉 destinations，把目的地降级成 query 猜测。
+
+    服务端实际下发题集 = 注册表 clarify 题 + _build_enhanced_questions 追加的
+    scope/destinations；后者不在注册表里，任何"按注册表取交集"的写法都会吃掉它们。
+    """
+    from app.core.pipeline.research.planning import _checked_destinations
+    dirty = {"party": "情侣/夫妻", "child_age": "3-6 岁",
+             "destinations": ["大理"], "scope": "准确，继续",
+             "_mode": "deep", "_type": "guide", "_model_override": "m-x",
+             "_region": "云南"}
+    out = rt.drop_untriggered_conditional_answers("guide", dirty)
+    assert "child_age" not in out
+    assert out["destinations"] == ["大理"] and out["scope"] == "准确，继续"
+    assert {k: out[k] for k in out if k.startswith("_")} == {
+        "_mode": "deep", "_type": "guide", "_model_override": "m-x", "_region": "云南"}
+    assert _checked_destinations(out) == _checked_destinations(dirty), \
+        "过滤前后目的地解析结果必须逐值相等（核查表行种子 primary_destination 依赖它）"
+
+
+def test_pipeline_digest出口不再泄漏娃龄(monkeypatch):
+    """端到端：脏答案进管线后，报告头摘要不含「娃龄」（v2.1 曾误判为"重渲染会复发"）。"""
+    from app.core.pipeline.research.assemble import _answers_digest
+    dirty = {"party": "情侣/夫妻", "child_age": "3-6 岁", "days": "1-2 天"}
+    cleaned = rt.drop_untriggered_conditional_answers("guide", dirty)
+    labels = [d["label"] for d in _answers_digest(cleaned, ["三亚"], "guide")]
+    assert "娃龄" not in labels
+    assert "人群" in labels and "天数" in labels
+
+
+# ── VR-A6 装配判据与质量分母同源（P1-3）──────────────────────────
+
+_SEED = [{"spot_id": "s1", "name": "洱海"}]
+
+
+def test_assemblable_predicate_covers_all_negative_shapes():
+    assert rt.perspective_assemblable("persp_family", _SEED) is True
+    assert rt.perspective_assemblable("persp_family", []) is False, "空 seed 不可装配"
+    assert rt.perspective_assemblable("persp_couple", _SEED) is False, "未配核查表"
+    assert rt.perspective_assemblable("", _SEED) is False, "通用人群无视角"
+
+
+def test_empty_seed_does_not_demand_perspective_keys_in_denominator():
+    """空 seed 时分母必须退回静态键集——否则三键计入应产出却永远填不上。"""
+    static = rt.type_spec("guide")["structured_keys"]
+    assert rt.structured_keys_for("guide", "") == static
+    # 分母入参与装配判据同源：不可装配 ⇒ 不计入
+    sid = "persp_family" if rt.perspective_assemblable("persp_family", []) else ""
+    assert rt.structured_keys_for("guide", sid) == static
+    # 可装配 ⇒ 恰追加本行专属键（不牵连静态分母）
+    sid_ok = "persp_family" if rt.perspective_assemblable("persp_family", _SEED) else ""
+    assert rt.structured_keys_for("guide", sid_ok) == static + rt.SECTION_STRUCTURED["persp_family"]
