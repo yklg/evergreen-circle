@@ -668,11 +668,11 @@ function EvChip({ id, ev }: { id: string; ev?: EvCtx }) {
  *  列宽按「该列实际文本量」分配——两列本次全空时不该再吃掉与有值列等宽的预算；
  *  长文 line-clamp-2 截断只是呈现态，全文常驻 DOM，展开=摘掉 clamp（不卸载、不造摘要）。
  *  缺格走 score_gap 虚线 chip 规范（可见、不造数），与 spot_routes 未命中占位同哲学。 */
-function VFamilyChecklist({ data, ev }: { data: Row[]; ev?: EvCtx }) {
+function VSpotChecklist({ data, ev }: { data: Row[]; ev?: EvCtx }) {
   const [openSpot, setOpenSpot] = useState<string | null>(null)
   if (!data?.length) return null
   return (
-    <div className="mt-4 space-y-4" data-testid="family-checklist">
+    <div className="mt-4 space-y-4" data-testid="spot-checklist">
       {data.map((d, di) => {
         const items = (d.items as Row[]) || []
         const cellsOf = (it: Row) => (it.cells as Row[]) || []
@@ -690,10 +690,13 @@ function VFamilyChecklist({ data, ev }: { data: Row[]; ev?: EvCtx }) {
         return (
           <div key={di} className="overflow-hidden rounded-card border border-line bg-white">
             <div className="bg-bg px-4 py-2 text-aux font-semibold text-ink">
-              {String(d.destination ?? '')} · 逐景点亲子核查表
+              {String(d.destination ?? '')} · 逐景点核查表
             </div>
             <div className="overflow-x-auto">
-              <table data-checklist-table className="w-full min-w-[640px] table-fixed text-tag">
+              {/* 最小表宽随列数增长：写死 640px 时列一多每列被压到不可读，
+                  且表格不撑宽 → overflow-x-auto 无可滚内容，劣化是静默的。 */}
+              <table data-checklist-table className="w-full table-fixed text-tag"
+                     style={{ minWidth: `${Math.max(640, 200 + 150 * cols.length)}px` }}>
                 <colgroup>
                   <col style={{ width: '3%' }} />
                   <col style={{ width: '11%' }} />
@@ -855,7 +858,7 @@ const BLOCKS: Record<StructuredBlockType, (p: { data: Row[]; ev?: EvCtx }) => Re
   access_matrix: VAccessMatrix,
   amenity_checklist: VAmenityChecklist,
   risk_profile: VRiskProfile,
-  family_checklist: VFamilyChecklist,
+  persp_checklist: VSpotChecklist,
   persp_rules: VPerspRules,
   persp_packing: VPerspPacking,
 }

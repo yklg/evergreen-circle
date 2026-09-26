@@ -191,7 +191,7 @@ export type StructuredBlockType =
   | 'spot_ranking' | 'spot_routes' | 'food_ranking' | 'shop_list'
   | 'route_plan' | 'stay_options' | 'cost_breakdown'
   | 'access_matrix' | 'amenity_checklist' | 'risk_profile'
-  | 'family_checklist' | 'persp_rules' | 'persp_packing'
+  | 'persp_checklist' | 'persp_rules' | 'persp_packing'
 
 export interface StructuredBlock {
   type: StructuredBlockType

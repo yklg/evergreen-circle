@@ -113,7 +113,7 @@ describe('VR-B1 条件题显隐与答案残留回退', () => {
 
 describe('VR-F1/F2/F5 视角结构化块渲染', () => {
   const checklistBlock = {
-    type: 'family_checklist' as const,
+    type: 'persp_checklist' as const,
     data: [{
       destination: '大理',
       items: [
@@ -135,7 +135,7 @@ describe('VR-F1/F2/F5 视角结构化块渲染', () => {
 
   it('核查表：行全出不丢行、待核验格占位样式、证据列引用 id', () => {
     const { container } = render(<VStructuredBlock block={checklistBlock} />)
-    expect(screen.getByTestId('family-checklist')).toBeTruthy()
+    expect(screen.getByTestId('spot-checklist')).toBeTruthy()
     expect(container.querySelectorAll('[data-checklist-row]')).toHaveLength(2)
     const missing = container.querySelectorAll('[data-cell-missing]')
     expect(missing.length).toBe(5) // s1 一格 + s2 四格
@@ -153,7 +153,7 @@ describe('VR-F1/F2/F5 视角结构化块渲染', () => {
           items: [{ item: '户口本原件', reason: '免票核验', evidence_ids: ['e_a2'] }] }] },
       ] as any} />,
     )
-    expect(screen.getByTestId('family-checklist')).toBeTruthy()
+    expect(screen.getByTestId('spot-checklist')).toBeTruthy()
     expect(screen.getByTestId('persp-rules')).toBeTruthy()
     expect(screen.getByTestId('persp-packing')).toBeTruthy()
     expect(screen.getByText('每天只排 1 个主点')).toBeTruthy()
