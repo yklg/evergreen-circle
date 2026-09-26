@@ -42,7 +42,8 @@ def _fake_chat(payload):
 
 def _fill(monkeypatch, payload):
     monkeypatch.setattr(llm, "chat_json", _fake_chat(payload))
-    return O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")
+    # 装配现返回 (blocks, diag)：本夹具只关心块，diag 由批次 0 测度用例直接调原函数验
+    return O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")[0]
 
 
 # ── VR-D2/D5 行守恒 ─────────────────────────────────────────────
@@ -92,7 +93,7 @@ def test_llm_total_failure_still_emits_placeholder_table(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("模型不可用")
     monkeypatch.setattr(llm, "chat_json", boom)
-    out = O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")
+    out = O._fill_persp_blocks("persp_family", _DEST, _SPOTS, _PROBES, _EVID, _CLAR, "m")[0]
     rows = out["persp_checklist"][0]["items"]
     assert len(rows) == len(_SPOTS)
     assert out["persp_rules"][0]["items"] == []
@@ -124,7 +125,11 @@ def test_packing_drops_items_without_evidence(monkeypatch):
 
 def test_unconfigured_perspective_assembles_nothing(monkeypatch):
     monkeypatch.setattr(llm, "chat_json", _fake_chat({"rows": []}))
-    assert O._fill_persp_blocks("persp_couple", _DEST, _SPOTS, {}, _EVID, _CLAR, "m") == {}
+    out, diag = O._fill_persp_blocks("persp_couple", _DEST, _SPOTS, {}, _EVID, _CLAR, "m")
+    assert out == {}
+    # 「没配能力」与「配了但 LLM 挂了」必须可分：前者 skipped、压根没调过模型
+    assert diag["llm_outcome"] == "skipped"
+    assert diag["probed_spots"] == len(_SPOTS)
 
 
 # ── VR-D4 防回潮负钉：目的地行过滤不得动视角块行 ────────────────

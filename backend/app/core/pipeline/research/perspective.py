@@ -15,19 +15,34 @@ from app.core import research_types as RT
 
 def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, Any]],
                        probes: Dict[str, List[str]], evidences: List[Any],
-                       clar: Dict[str, Any], model: str) -> Dict[str, Any]:
+                       clar: Dict[str, Any], model: str,
+                       task_id: str = "") -> "tuple[Dict[str, Any], Dict[str, Any]]":
     """视角专属块装配（同步，to_thread 调用；rough-cliff-vole P3）。
 
     行集**由冻结榜 seed**（每个 spot_id 恰一行，LLM 只填格不造行——多报/漏报的
     行一律不采纳，缺失格走「待核验」占位）；不造数守卫：格/规则声称 verified 但
     引用不出真实证据 id → 强制降为待核验。LLM 整体失败不炸管线：照常产出全占位表
     （占位可见即正确终态，同 spot_routes 降级哲学）。
-    返回 {checklist_key: [...], rules_key: [...], packing_key: [...]}（组级 destination 分组）。
+    返回 `(blocks, diag)`：blocks = {checklist_key: [...], rules_key: [...], packing_key: [...]}
+    （组级 destination 分组）；diag = 装配台账，见下。
+
+    ⚠️ 为什么 diag 必须由**这里**产出：本函数的 `except Exception: payload = {}` 把四种异质
+    失败压成同一个产物——LLM 抛错 / 返回 None / 真没采到证据 / 反造数守卫把格子全拒——
+    四者的载荷长得一模一样，事后从 `structured` **不可反推**（批次 0 的前置条件 2）。
+    `last_finish_reason()` 是 ContextVar，在本上下文里紧跟自己那次 `chat_json` 读，拿到的
+    就是自己这次的终止原因（不是跨任务的全局汇，故并发安全）。
     """
     p = RT.perspective_spec(persp_sid)
     ck = p.get("checklist_key")
+    cols = tuple(p.get("checklist_columns") or ())
+    # 只记**不可反推**的三项。格级 verified/总数、rules/packing 条数一律不进这里 ——
+    # 那些能从 structured 算（`schemas.persp_cell_stats`），再记一份就是第二套口径，
+    # 两处一旦漂移，门槛读到的就是某个谁都不认的数。
+    diag: Dict[str, Any] = {"llm_outcome": "skipped", "probed_spots": len(spot_entities),
+                            "spots_with_evidence": sum(1 for v in probes.values() if v),
+                            "payload_rows": 0, "task_id": task_id}
     if not ck or not spot_entities:
-        return {}
+        return {}, diag
     cols = tuple(p.get("checklist_columns") or ())
     ev_ids = {getattr(e, "evidence_id", "") for e in evidences}
     ev_by_id = {getattr(e, "evidence_id", ""): e for e in evidences}
@@ -41,7 +56,7 @@ def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, 
         ev_lines.append(f"{it.get('spot_id')}|{it.get('name', '')}|{digest or '（二查未采到证据）'}")
     payload: Dict[str, Any] = {}
     try:
-        payload = llm.chat_json(
+        _raw = llm.chat_json(
             [
                 {"role": "system", "content": (
                     f"你是旅游调研「{RT.SECTION_PLAN.get(persp_sid, persp_sid)}」专项核查填格员。"
@@ -65,9 +80,16 @@ def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, 
             ],
             max_tokens=3600, temperature=0.3, model=model,
             purpose="视角专属核查表与铁律填格",
-        ) or {}
+        )
+        # 终止原因必须**紧跟自己那次调用**读：length = 被 max_tokens 截断（单元格 JSON 体量
+        # 随列数线性涨，截断即解析不出东西），与「模型答了但没内容」是两种病因、两种药。
+        diag["llm_outcome"] = ("truncated" if llm.last_finish_reason() == "length"
+                               else "ok" if isinstance(_raw, dict) else "empty")
+        payload = _raw if isinstance(_raw, dict) else {}
     except Exception:
         payload = {}
+        diag["llm_outcome"] = "error"
+    diag["payload_rows"] = len(payload.get("rows") or [])
     rows_in = {str(r.get("spot_id")): r for r in (payload.get("rows") or [])
                if isinstance(r, dict)}
     items: List[Dict[str, Any]] = []
@@ -111,4 +133,4 @@ def _fill_persp_blocks(persp_sid: str, dest: str, spot_entities: List[Dict[str, 
                 pack.append({"item": item, "reason": str(r.get("reason") or "").strip(),
                              "evidence_ids": eids})
         out[packing_key] = [{"destination": dest, "items": pack}]
-    return out
+    return out, diag

@@ -28,6 +28,13 @@ class QualityReport:
     viral_evidence_count: int = 0
     viral_evidence_ratio: float = 0.0
     opinion_ratio: float = 0.0
+    # 视角核查表**格级**产出台账（批次 0 前置测度）：块级 schema_completeness 把「全表
+    # 待核验」读成满分，产出率门槛必须另立这三个数。非视角卷保持默认值（不破既有卷口径）。
+    persp_verified_ratio: float = 0.0
+    persp_probed_spots: int = 0
+    # ∈ ok / truncated / error / skipped / ""（未装配）。**不可**从 structured 反推：
+    # LLM 抛错、返回空、真无证据、反造数守卫全拒 —— 四者在载荷里长得一模一样。
+    persp_llm_outcome: str = ""
     issues: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -42,17 +49,27 @@ class QualityReport:
             "viral_evidence_count": self.viral_evidence_count,
             "viral_evidence_ratio": self.viral_evidence_ratio,
             "opinion_ratio": self.opinion_ratio,
+            # ⚠️ 手写枚举：新字段不进这里就**不落库**（quality_before/after 是 to_dict 的产物），
+            # 门槛随后读到的是缺键而非 0 —— 静默缺指标比缺指标本身更难查。
+            "persp_verified_ratio": self.persp_verified_ratio,
+            "persp_probed_spots": self.persp_probed_spots,
+            "persp_llm_outcome": self.persp_llm_outcome,
             "issues": self.issues,
         }
 
     def summary(self) -> Dict[str, Any]:
         """供前端返工卡片展示的精简指标。"""
-        return {
+        out = {
             "confidence_ratio": round(self.confidence_ratio * 100),
             "dimension_coverage": round(self.dimension_coverage_rate * 100),
             "destination_coverage": round(self.destination_coverage_rate * 100),
             "schema_completeness": round(self.schema_completeness * 100),
         }
+        # 视角卷才追加格级两项：非视角卷凭空多两个 0 会被读成「测了且为零」而非「没测」
+        if self.persp_probed_spots or self.persp_llm_outcome:
+            out["persp_verified_ratio"] = round(self.persp_verified_ratio * 100)
+            out["persp_probed_spots"] = self.persp_probed_spots
+        return out
 
 
 # v2.1 单源占比触发返工补采的阈值
@@ -69,6 +86,7 @@ def evaluate_quality(
     min_indep_domains: int = 2,
     research_type: str = DEFAULT_RESEARCH_TYPE,
     perspective_section_id: str = "",
+    persp_llm_outcome: str = "",
 ) -> QualityReport:
     qr = QualityReport()
 
@@ -122,9 +140,16 @@ def evaluate_quality(
             })
 
     # 5. Schema 完整度
-    from app.core.schemas import schema_completeness
+    from app.core.schemas import schema_completeness, persp_cell_stats
     qr.schema_completeness = schema_completeness(structured, research_type,
                                                  perspective_section_id)
+    # 5b. 视角核查表格级台账（块级满分 ≠ 格子里有证据）
+    qr.persp_llm_outcome = persp_llm_outcome or ""
+    if perspective_section_id:
+        _pc = persp_cell_stats(structured, perspective_section_id)
+        qr.persp_probed_spots = _pc["rows"]
+        qr.persp_verified_ratio = (round(_pc["verified"] / _pc["cells"], 3)
+                                   if _pc["cells"] else 0.0)
     if qr.schema_completeness < 0.34:
         qr.issues.append({
             "issue_id": "is_" + uuid.uuid4().hex[:8],

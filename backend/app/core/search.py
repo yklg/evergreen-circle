@@ -12,7 +12,7 @@ import datetime as _dt
 import re
 import threading
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -226,6 +226,42 @@ def search(query: str, *, num: int = 10, site: Optional[str] = None,
            freshness: str = "noLimit") -> list[dict]:
     """对外入口：博查搜索。失败抛给上层处理。"""
     return search_bocha(query, num=num, site=site, freshness=freshness)
+
+
+def search_provider_probe(*, query: str = "景点 开放时间 门票", num: int = 1) -> Dict[str, Any]:
+    """搜索服务商可用性探针：`{state, ready, reason, hits}`。
+
+    为什么要有它：批次 0 / B2 的门槛是**条件式**的 —— `probed_spots == 0 ∨ llm_outcome != ok`
+    判「环境未就绪」而非「链路未通」。这个判据要能执行，就得在**烧掉整份 deep 预算之前**
+    一次问出「现在到底有没有网」。全仓此前只有 LLM 侧的能力探明（`llm.record_model_fact`），
+    搜索侧没有 healthcheck。
+
+    ⚠️ **刻意不落库、不缓存**：探针答案是**时点事实**（欠费会充值、key 会补填、429 会过去）。
+    把一次探测持久化成「能力位」，就是把时点计数当不变量用 —— 本轮已经在「存量 0 条」那条
+    前提上栽过一次（活库上的计数不能当不变量，见计划 v4.1 偏差 1）。⇒ 每次判定当场再探一次。
+
+    `state ∈ ready / no_key / terminal / transient / error`；`hits == 0 且 state == ready` 是
+    合法组合（鉴权与配额都通、只是这条探针词没命中），上层按 needs 自行取舍。
+    """
+    try:
+        rows = search(query, num=num)
+        return {"state": "ready", "ready": True, "reason": "",
+                "hits": len(rows) if isinstance(rows, list) else 0}
+    except SearchProviderError as e:
+        msg = str(e)
+        if "未配置" in msg or "API_KEY" in msg.upper():
+            return {"state": "no_key", "ready": False, "reason": msg, "hits": 0}
+        if any(h in msg for h in _PROVIDER_TERMINAL_HINTS) or "无效" in msg:
+            return {"state": "terminal", "ready": False, "reason": msg, "hits": 0}
+        if "频率超限" in msg:
+            # 429 不是终态（`_THROTTLE_CODES` 同判据：search() 内部已按退避阶梯重发过一轮，
+            # 走到这里说明退避用尽 —— 仍属"过一会儿再来"，不得与欠费同判）
+            return {"state": "transient", "ready": False, "reason": msg, "hits": 0}
+        return {"state": "error", "ready": False, "reason": msg, "hits": 0}
+    except Exception as e:  # noqa: BLE001
+        # 探针的产物是**分类**，不是异常：这里吞掉的是「归类完成」，不是「失败被藏起来」——
+        # 未归类的一律落到 state=error 并带上原文，调用方据此判「环境未就绪」。
+        return {"state": "error", "ready": False, "reason": f"{type(e).__name__}: {e}", "hits": 0}
 
 
 def multi_search(

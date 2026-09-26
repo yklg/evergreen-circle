@@ -1259,10 +1259,14 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     # 这里派生一个**只喂分母**的 sid：章节与散文仍由 section_ids 决定，persp_sid 本身不改。
     persp_seedable = RT.perspective_assemblable(persp_sid, spot_entities)
     persp_denom_sid = persp_sid if persp_seedable else ""
+    # 装配台账（llm_outcome / probed_spots / spots_with_evidence）——只有装配现场知道，
+    # 之后从 structured 反推不出来；初值 {} 让「没装配」与「装配失败」在落库时可分。
+    persp_diag: Dict[str, Any] = {}
     if persp_seedable:
-        structured.update(await asyncio.to_thread(
+        _pb, persp_diag = await asyncio.to_thread(
             _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
-            persp_probes, evidences, clar, runtime._model("aux")))
+            persp_probes, evidences, clar, runtime._model("aux"), task_id)
+        structured.update(_pb)
     analysis["structured"] = structured
 
     yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": sentiment_expert,
@@ -1280,7 +1284,8 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": auditor,
                           "text": "质检官评估证据覆盖度、维度完整性与置信度，决定是否打回返工。", "ts": _now()})
     quality_before = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
-                                      research_type=rtype, perspective_section_id=persp_denom_sid)
+                                      research_type=rtype, perspective_section_id=persp_denom_sid,
+                                      persp_llm_outcome=persp_diag.get("llm_outcome", ""))
     # 质检官 LLM 真实审阅（逐维度打分 + 问题 + 改进建议）——让质检有对比、有审阅、可观测
     trace.set_context(task_id, auditor, "audit", "质检官审阅：逐维度打分+问题+改进建议")
     review_before = await asyncio.to_thread(
@@ -1375,19 +1380,22 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                     # 返工轮 structured 整体重建：视角块必须重新装配（ST-01 不回潮）
                     # 复用同一 persp_seedable 谓词，不与首轮分叉
                     if persp_seedable:
-                        structured.update(await asyncio.to_thread(
+                        _pb, persp_diag = await asyncio.to_thread(
                             _fill_persp_blocks, persp_sid, primary_destination, spot_entities,
-                            persp_probes, evidences, clar, runtime._model("aux")))
+                            persp_probes, evidences, clar, runtime._model("aux"), task_id)
+                        structured.update(_pb)
                     analysis["structured"] = structured
                     yield _ev("node_update", {"node": "analyze", "status": "done"})
             rework_rounds_done += 1
             quality_after_round = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
                                                    research_type=rtype,
-                                                   perspective_section_id=persp_denom_sid)
+                                                   perspective_section_id=persp_denom_sid,
+                                                   persp_llm_outcome=persp_diag.get("llm_outcome", ""))
             issues_resolved = max(0, len(quality_before.issues) - len(quality_after_round.issues))
             envelopes = decide_rework(quality_after_round, evidences)
         quality_after = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
-                                         research_type=rtype, perspective_section_id=persp_denom_sid)
+                                         research_type=rtype, perspective_section_id=persp_denom_sid,
+                                         persp_llm_outcome=persp_diag.get("llm_outcome", ""))
     else:
         quality_after = quality_before
 

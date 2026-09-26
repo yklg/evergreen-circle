@@ -500,3 +500,44 @@ def schema_completeness(structured: Dict[str, Any],
                  if any(_has_content(b) for b in (structured.get(k) or []) if isinstance(b, dict)))
     expected = len(keys)
     return round(min(filled, expected) / expected, 3) if expected else 0.0
+
+
+def persp_cell_stats(structured: Dict[str, Any], persp_sid: str) -> Dict[str, int]:
+    """视角核查表的**格级**台账：{rows, cells, expected_cells, verified, rules, packing}。
+
+    为什么必须有这条：`schema_completeness` 是**块级**的（`_has_content` 只判「任一子列表
+    非空」），而核查表按行守恒、每列必出一格，未采到的格子填的是「待核验（本次未采到）」
+    ——**空表在块级是满分**。实测报告 `r_6dadffee` 即活证据：块级 1.0，格级 verified 7/28。
+    ⇒ 产出率门槛不能建在块级分母上（评审 v4 批次 0 前置条件 1）。
+
+    分子 = `verified` 且带真实 `evidence_ids` 的格，与 `_fill_persp_blocks` 的反造数守卫
+    同判据（那里 verified 就要求 eids∧text，此处不另立一套口径）。
+    分母 = 载荷里**实际存在**的格数，不按注册表列数反推 —— 旧报告列形状与今天不同时，
+    反推会让同一份数据算出两个数；`expected_cells`（行×注册表列）并列返回，两者不等即
+    形状漂移，看得见而不是悄悄稀释分母。
+    纯读 `structured`：不碰 LLM、不写库 ⇒ 存量报告可就地重算（B2 要回看批次 0 那一份）。
+    """
+    p = RT.perspective_spec(persp_sid)
+    ck = p.get("checklist_key")
+    cols = tuple(p.get("checklist_columns") or ())
+    rows = cells = verified = 0
+    for blk in (structured.get(ck) or [] if ck else []):
+        if not isinstance(blk, dict):
+            continue
+        for it in (blk.get("items") or []):
+            if not isinstance(it, dict):
+                continue
+            row_cells = [c for c in (it.get("cells") or []) if isinstance(c, dict)]
+            rows += 1
+            cells += len(row_cells)
+            verified += sum(1 for c in row_cells
+                            if c.get("verified") and (c.get("evidence_ids") or []))
+    out = {"rows": rows, "cells": cells, "expected_cells": rows * len(cols),
+           "verified": verified}
+    for field, key in (("rules", p.get("rules_key")), ("packing", p.get("packing_key"))):
+        n = 0
+        for blk in (structured.get(key) or [] if key else []):
+            if isinstance(blk, dict):
+                n += sum(1 for r in (blk.get("items") or []) if isinstance(r, dict))
+        out[field] = n
+    return out
