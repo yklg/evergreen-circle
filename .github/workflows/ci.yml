@@ -1,4 +1,6 @@
-# 常青圈 CI（唯一真源 → Gitee Go 同义流水线见 .workflow/ci.yml，保持两边一致）
+# 常青圈 CI（唯一真源）。Gitee Go 侧镜像见 .workflow/ci.yml —— 它**只覆盖** backend 与 frontend
+# 两个 job，不含本文件的 `api/` 运行时校验与 docker job（2026-09-26 实测两侧本就不一致，
+# 旧注释写「保持两边一致」是假的）。改本文件时若 Gitee 侧有意不跟，请在那份文件里记明差异。
 # 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
 name: CI
 
@@ -9,7 +11,7 @@ on:
 
 jobs:
   backend:
-    name: 后端（γ 静态守卫 + pytest 全量，含 A6 镜像守卫）
+    name: 后端（γ 静态守卫 + pytest 全量；镜像守卫在 api/ 缺失时自我 SKIP）
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,7 +30,7 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
       - name: γ 静态守卫（进程级治理不得被绕过 · AST，非正则）
         run: python scripts/check_guard_construction.py
-      - name: 全量 pytest（living_circle 域 + research 回归 + A6 mirror guard）
+      - name: 全量 pytest（living_circle 域 + research 回归 + 镜像守卫〔api/ 缺失时自我 SKIP〕）
         run: python -m pytest -q
 
   frontend:
@@ -56,7 +58,12 @@ jobs:
         run: npm run build
       - name: api/（Vercel 只读镜像）运行时校验
         working-directory: backend
-        run: python -c "import sys; sys.path.insert(0,'../api'); import app.core.db, app.core.models, app.core.audit, app.core.credibility, app.core.metrics, app.core.orchestrator"
+        run: |
+          if ! test -d ../api; then
+            echo "SKIP: ../api 不存在 —— 镜像约定已废。缺这道判据时本 step 会静默导入 backend 自己（`python -c` 已把 cwd 放进 sys.path），等于拿后端验证后端 —— 2026-09-26 实测为假绿"
+            exit 0
+          fi
+          python -c "import sys; sys.path.insert(0,'../api'); import app.core.db, app.core.models, app.core.audit, app.core.credibility, app.core.metrics, app.core.orchestrator"
 
   docker:
     name: Docker 镜像构建（可选，push 到 main 时）

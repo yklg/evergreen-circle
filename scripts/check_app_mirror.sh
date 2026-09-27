@@ -10,6 +10,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# 比对对象必须先存在。缺了就是**没有可比对象**，此时打「✓ 一致」是假绿 ——
+# 2026-09-26 实测：`diff` 的失败被 `|| true` 吞进命令替换，脚本先哭 `diff: api/app:
+# No such file or directory`、再打「✓ 镜像一致」并 exit 0（`set -e`/`pipefail` 都救不回来，
+# 因为退出码在 `||` 处已经被消化）。
+if [[ ! -d api/app ]]; then
+  echo "SKIP: api/app 不存在 —— backend→api 部署镜像约定已废（后端只有 backend/ 一份真相），本脚本无对象可比"
+  exit 0
+fi
+
 OUT=$(diff -rq backend/app api/app \
   --exclude=__pycache__ \
   --exclude='*.db*' \

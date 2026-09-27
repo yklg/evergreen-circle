@@ -1,4 +1,7 @@
-# Gitee Go 同义流水线 —— 与 .github/workflows/ci.yml 保持一致的镜像（GitHub Actions 为唯一真源）。
+# Gitee Go 流水线 —— GitHub Actions（.github/workflows/ci.yml）为唯一真源。
+# ⚠️ 本文件是它的**子集**，不是等价镜像：只有 backend + frontend 两个 job，
+# 不含真源里的 `api/` 运行时校验 step 与 docker 构建 job（2026-09-26 实测确认）。
+# 旧注释写「保持一致的镜像」是假的 —— 改真源时若有意不跟到这里，请在本行补一句说明差异与理由。
 # 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
 # 配置入口：Gitee 仓库 → 流水线（Gitee Go）→ 新建流水线 → 选择本文件。
 version: '1.0'
@@ -19,7 +22,7 @@ triggers:
 stages:
   - stage:
       name: backend-test
-      displayName: 后端 γ 静态守卫 + pytest（含 A6 镜像守卫）
+      displayName: 后端 γ 静态守卫 + pytest（镜像守卫在 api/ 缺失时自我 SKIP）
       failFast: true
       steps:
         - step: pythonbuild@1

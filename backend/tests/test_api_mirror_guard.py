@@ -69,8 +69,14 @@ def test_api_mirror_public_signatures():
 
 def test_api_mirror_common_modules_exist():
     """api/core 引用的模块文件，backend/core 都应存在（防 import 断裂）。"""
+    if not (API_CORE.exists() and BACKEND_CORE.exists()):
+        pytest_skip()
+        return
     api_files = {f.name for f in API_CORE.glob("*.py")} - {"__init__.py"}
     backend_files = {f.name for f in BACKEND_CORE.glob("*.py")} - {"__init__.py"}
+    # 空集不是「通过」而是「没扫到」：目录存在却扫出 0 个文件 ⇒ 扫描口径坏了，
+    # 此时 `absent == []` 会恒真，守卫沦为假绿（本仓 2026-09-26 实测踩过一次）。
+    assert api_files, f"{API_CORE} 存在却一个 .py 都没扫到 —— 扫描口径失效，不是镜像一致"
     absent = sorted(api_files - backend_files)
     assert not absent, f"backend/ 缺 api/ 依赖的模块文件：{absent}"
 
