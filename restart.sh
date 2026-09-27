@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 青野 Verda 一键启动 / 重启脚本
+# 常青圈 EvergreenCircle 一键启动 / 重启脚本
 # 用法：在项目根目录执行  ./restart.sh
 # 端口（后端 8010 / 前端 3400）单一真值源在 ./.dev-ports.env，与 start.sh/stop.sh 共用。
 set -u

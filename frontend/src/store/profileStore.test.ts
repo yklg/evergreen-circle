@@ -28,7 +28,7 @@ beforeEach(() => {
 })
 
 describe('profileStore · 本地层（既有契约，保持不变）', () => {
-  it('默认回退为 林研究员 / 青野科技', async () => {
+  it('默认回退为 林研究员 / 常青圈', async () => {
     const { useProfileStore, DEFAULT_NAME, DEFAULT_COMPANY } = await import('./profileStore')
     const s = useProfileStore.getState()
     expect(s.name).toBe(DEFAULT_NAME)

@@ -20,7 +20,7 @@
 | 🏪 民生设施体检 | 8 类 POI（医疗/教育/菜市/养老/购物/金融/文体/政务）+ 三要素（菜市场/药店/小学）1km 覆盖判定 |
 | 🚨 服务盲区识别 | 1km 网格扫描，聚合相邻盲点到灰区，标注缺失设施与最近可及点 |
 | 📋 综合评分 | 类别覆盖 × 三要素 × 盲区三因子打分（0–100），附差异归因 |
-| 👥 专家队诊断 | 13 位虚拟专家（空间定位师/网格规划师/各域顾问）按 GB50180 生活圈标准出具章节化报告，证据溯源可查 |
+| 👥 专家队诊断 | 从 48 位名册中按需组队（建议 8–13 人：空间定位师/网格规划师/各域顾问），按 GB50180 生活圈标准出具章节化报告，证据溯源可查 |
 | ⚡ 智能体流水线 | `intake → plan → measure → collect → diagnose → report → audit`，SSE 实时流式展示（`useTaskStream`） |
 | 📊 双社区对比 | 指标差异表 + 双雷达图，同一口径下量化设施覆盖差距 |
 | 🔍 全链路可观测 | 每个专家/阶段的 Prompt、产出、参数、Event 可回放（Trace） |
@@ -150,24 +150,24 @@ cp backend/.env.example backend/.env
 
 ---
 
-## 🧪 fixture 演示模式
+## 🧪 数据模式：真实联调 / 演示
 
-- 前端 `VITE_USE_MOCK=1`（`.env.development` 默认）：全部页面由 `src/mocks/fixtures/` 驱动，离线可用、零 AK。
-- 后端 `data_mode=fixture`（默认）：流水线走内置双样例（凯里老街 / 北京劲松），等时圈圆形近似。
-- 两种模式的 SSE 事件契约完全一致（A4），前端 `useTaskStream` 无缝切换真实编排，联调零返工。
+两种模式**运行时可切**：侧边栏「数据模式」即时生效，选择记在 localStorage
+（`frontend/src/store/dataModeStore.ts`，默认**真实联调**）。
 
-```bash
-# 切到真实编排联调
-sed -i '' 's/VITE_USE_MOCK=1/VITE_USE_MOCK=0/' frontend/.env.development
-# 联调完恢复
-```
+- 演示（fixture）：前端由 `src/mocks/fixtures/` 驱动、后端走内置双样例（凯里老街 / 北京劲松），
+  离线可用、零 AK；等时圈在离线估算下为圆形近似。
+- 真实联调（live）：区划选择、采集、等时圈、报告全部走后端 + 真实百度 AK。
+- `VITE_USE_MOCK` 只是**首次打开的默认值**（`.env.development` 当前为 `0`），不是唯一开关；
+  要改默认值就直接改那一行，不必用 sed。
+- 两种模式的 SSE 事件契约完全一致（A4），前端 `useTaskStream` 无缝切换，联调零返工。
 
 ---
 
 ## 🧪 测试与 CI
 
 ```bash
-# 后端（living_circle 域 + research 回归 + A6 镜像守卫）
+# 后端（living_circle 域 + research 回归；镜像守卫在 api/ 缺失时自我 SKIP）
 cd backend && .venv/bin/python -m pytest -q
 # 前端（lint/typecheck/vitest/build）
 cd frontend && npm run lint && npm run typecheck && npm run test && npm run build
@@ -175,7 +175,8 @@ cd frontend && npm run lint && npm run typecheck && npm run test && npm run buil
 
 CI（全 mock，不注入任何真实 AK）：
 - GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端+前端+Docker 构建。
-- Gitee 镜像：仓库推送至 Gitee 后，Gitee Go 同义流水线 `.workflow/ci.yml` 自动触发（两边保持一致）。
+- Gitee 侧：[.workflow/ci.yml](./.workflow/ci.yml) 是真源的**子集**（只有 backend + frontend 两个 job，
+  不含 api/ 校验 step 与 docker 构建 job）。改真源时若有意不跟过去，需在那份文件里记明差异。
 
 ---
 
@@ -183,10 +184,10 @@ CI（全 mock，不注入任何真实 AK）：
 
 | 文档 | 内容 |
 |---|---|
-| [基于赛题的skip项目改造计划.md](./.trae/documents/基于赛题的skip项目改造计划.md) | 项目总计划、里程碑 F0–M6、验收矩阵 |
-| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | 本地部署、Vercel、backend/api 镜像同步约定 |
+| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | 本地部署、云端三路径、端口单一真值源、`api/` 镜像约定废止记录 |
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | 系统架构、两个产品域、地图链路、数据模式与降级 |
 | [docs/AGENTS.md](./docs/AGENTS.md) | 专家分层、角色、消息协议、四条铁律 |
-| [docs/系统升级实施方案.md](./docs/系统升级实施方案.md) | 完整设计演进（含 AI 协作过程） |
+| [docs/系统升级实施方案.md](./docs/系统升级实施方案.md) | fork 前的完整设计演进（含 AI 协作过程） |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | 贡献指南、提交规范 |
 
 ---
@@ -197,4 +198,5 @@ CI（全 mock，不注入任何真实 AK）：
 
 ## ⚖️ 许可
 
-[AGPL-3.0](./LICENSE)。
+[AGPL-3.0](./LICENSE)。随附/依赖的第三方组件及其许可证与署名义务见 [NOTICE](./NOTICE)
+（其中 Apache ECharts 的 NOTICE 义务在该文件 §1 原文转述）。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 青野 Verda Worker — 自管云主机一键引导（仅本地/手动执行，不自动跑真机）
+# 常青圈 EvergreenCircle Worker — 自管云主机一键引导（仅本地/手动执行，不自动跑真机）
 #
 # 用途：在 Debian/Ubuntu 系云主机（如阿里云 ECS 47.114.101.59）上装 docker、
 #       部署 worker、挂 Nginx、注册 systemd 自启。

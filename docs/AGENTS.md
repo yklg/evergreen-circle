@@ -1,12 +1,17 @@
 # Agent 角色与协议 · Agents
 
-本文档描述青野 Verda 的多 Agent 体系：专家分层、角色职责、消息协议与四条铁律。
+本文档描述常青圈 EvergreenCircle 的多 Agent 体系：专家分层、角色职责、消息协议与四条铁律。
 
 ---
 
 ## 1. 设计理念
 
-青野 Verda 把竞品调研建模为一支**虚拟咨询团队**的协作过程。系统内置 48 位虚拟专家（定义见 [experts.json](../backend/app/data/experts.json)），按职级分为三层。每次调研由编排引擎根据需求**自动组队**：决策层拆解与终审，策略层与执行层负责具体分析与采集。
+本系统把调研建模为一支**虚拟咨询团队**的协作过程。系统内置 48 位虚拟专家（定义见 [experts.json](../backend/app/data/experts.json)），按职级分为三层。每次调研由编排引擎根据需求**自动组队**：决策层拆解与终审，策略层与执行层负责具体分析与采集。
+
+> 两个产品域共用这套分层与协议，但**各域有自己的名册与组队实现**：目的地调研用
+> `experts.json`，生活圈体检用 `experts_living_circle.json`（同为 48 条、同一 id 空间，
+> 同 id 在不同域是不同人设），并由 `app/core/pipeline/lc_team.py` 从中按需挑选 8–13 人。
+> 域包泛化（换域只换名册不换代码）见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 > 注：这里的「专家」是带有领域知识画像（`knowledge_base` / `knowledge_tags`）的角色设定，用于驱动 LLM 以对应专业视角生成论点与分析，并体现在工作台、专家页与报告署名中。
 

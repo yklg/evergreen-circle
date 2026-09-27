@@ -1,4 +1,4 @@
-# 青野 Verda — 常驻 Worker 镜像
+# 常青圈 EvergreenCircle — 常驻 Worker 镜像
 # 承载后台长任务（run_pipeline）与 SSE 思维流。
 #
 # 架构硬约束：

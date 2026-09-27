@@ -38,7 +38,7 @@ def main() -> int:
     # 标签页模拟：浅色 / 深色主题下图标在一排标签中的观感
     tab = inline(SVG, 16)
     tabs_light = "".join(
-        f'<div class="tab{" active" if i == 1 else ""}">{tab}<span>青野 Verda · AI 竞品分析 Agent 协作系统</span></div>'
+        f'<div class="tab{" active" if i == 1 else ""}">{tab}<span>常青圈 EvergreenCircle · 15 分钟生活圈智能体检与规划助手</span></div>'
         for i in range(4)
     )
 
@@ -46,7 +46,7 @@ def main() -> int:
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>品牌图标验收预览 · 青野 Verda</title>
+<title>品牌图标验收预览 · 常青圈 EvergreenCircle</title>
 <style>
   :root {{
     --primary: #7c9885; --primary-deep: #5e7a66; --ink: #3a413c; --ink-2: #6b746c;

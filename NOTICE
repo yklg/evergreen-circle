@@ -1,0 +1,90 @@
+# 第三方组件与许可声明 · NOTICE
+
+常青圈 EvergreenCircle
+本仓库整体以 **AGPL-3.0-only** 授权（见 [LICENSE](./LICENSE)）。
+本文件列出本项目**分发时随附或依赖**的第三方组件及其许可证，并转述其中的署名义务。
+
+上游项目署名：本项目 fork 自「青野 Verda · AI 竞品情报工作台」，其多 Agent 编排、全链路可观测
+与证据溯源内核的出处在 [README.md](./README.md) 中一并保留声明。
+
+---
+
+## 1. Apache-2.0 组件（含 NOTICE 义务）
+
+### Apache ECharts（`echarts@^6.1.0`）
+
+- 许可证：Apache License 2.0 —— 随包文件 `frontend/node_modules/echarts/LICENSE`
+- 本项目在构建产物中打包分发该组件，故按 Apache-2.0 §4(d) 转述其 NOTICE 原文如下：
+
+  > Apache ECharts
+  > Copyright 2017-2026 The Apache Software Foundation
+  >
+  > This product includes software developed at
+  > The Apache Software Foundation (https://www.apache.org/).
+
+- `echarts-for-react@^3.0.6` 为 MIT（见 §2），**不**继承 ECharts 本体的 Apache 义务。
+
+## 2. 前端直接依赖
+
+| 组件 | 版本约束 | 许可证 |
+|---|---|---|
+| react · react-dom | ^19.2.6 | MIT |
+| react-router-dom | ^7.17.0 | MIT |
+| zustand | ^5.0.14 | MIT |
+| framer-motion | ^12.40.0 | MIT |
+| reactflow | ^11.11.4 | MIT |
+| echarts-for-react | ^3.0.6 | MIT |
+| lucide-react | ^0.460.0 | ISC |
+| d3 | ^7.9.0 | ISC |
+| echarts | ^6.1.0 | **Apache-2.0**（见 §1） |
+
+开发期工具链（`vite` · `vitest` · `typescript` · `eslint` 及插件 · `tailwindcss` · `postcss` ·
+`autoprefixer` · `jsdom` · `@testing-library/*` · `@types/*`）为 MIT，
+其中 `typescript@~6.0.2` 为 Apache-2.0；它们不进入运行时产物。
+
+## 3. 后端直接依赖（`backend/requirements.txt` 精确锁定版本）
+
+| 组件 | 版本 | 许可证 |
+|---|---|---|
+| fastapi · pydantic · pydantic-settings | 0.115.6 / 2.10.4 / 2.7.1 | MIT |
+| langgraph · langchain-core | 0.2.60 / 0.3.28 | MIT |
+| beautifulsoup4 · jieba | 4.12.3 / 0.42.1 | MIT |
+| openai | 1.59.6 | Apache-2.0 |
+| trafilatura | 1.12.2 | Apache-2.0 |
+| uvicorn · python-dotenv · httpx | 0.32.1 / 1.0.1 / 0.28.1 | BSD-3-Clause |
+| networkx | 3.2.1 | BSD-3-Clause |
+| numpy | >=2.0,<3 | BSD-3-Clause（NumPy Developers 版权行随包） |
+| matplotlib | 3.9.4 | matplotlib 自有 BSD 风格许可（Matplotlib Development Team 许可协议，随包） |
+
+## 4. 地图服务能力（非代码依赖，但须署名与合规）
+
+本项目的底图、路网算路、POI 检索与地理编码能力来自**百度地图开放平台**：
+
+- 底图瓦片、路网数据、地名与注记的**版权归百度及相关数据提供方所有**，本项目不主张任何权利；
+  地图上的路名与行政区名属于第三方空间参照，**不是本项目的数据产出**
+  （本项目的产出是自有 Marker、等时圈轮廓、盲区网格与评分）。
+- 浏览器端渲染经百度 JS API（`api.map.baidu.com`）加载，受百度服务条款与
+  Referer 白名单约束；服务端调用受 AK 配额约束（本项目在
+  `app/living_circle/quota.py` 与 `request_guard.py` 侧做配额与共享闸治理）。
+- 前端底图样式刻意**关闭**第三方 POI 注记层（`frontend/src/lib/bmapStyle.ts`），
+  以避免第三方设施标注被误读为本项目数据 —— 这是数据可信度措施，不构成对百度权利的减损主张。
+
+## 5. 本清单的维护方式
+
+本表覆盖**直接依赖**（前端 `frontend/package.json`、后端 `backend/requirements.txt`），
+许可证取值来自安装后的包元数据与随包 `LICENSE`/`NOTICE` 文件，非凭记忆填写。
+升级或增删依赖后重新核对：
+
+```bash
+# 前端：读 node_modules 里的 license 字段
+cd frontend && node -e 'const fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json"));
+for(const n of Object.keys(p.dependencies))console.log(n, JSON.parse(fs.readFileSync("node_modules/"+n+"/package.json")).license)'
+# 后端：读已安装包的 METADATA
+cd backend && .venv/bin/python -c 'from importlib import metadata as m, re, pathlib
+for l in pathlib.Path("requirements.txt").read_text().splitlines():
+    n=re.split(r"[<>=!;\[]",l.strip())[0].strip()
+    if n and not l.startswith("#"): print(n, m.metadata(n).get("License","").splitlines()[0][:40])'
+```
+
+传递依赖的完整审计需要工具（如 `pip-licenses` / `license-checker`），本仓库当前未引入；
+若将来对外分发构建产物（而非仅源码 + lockfile），应先补这一层。

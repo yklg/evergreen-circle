@@ -1,7 +1,7 @@
-# 青野 Verda — 常驻 Worker 部署手册
+# 常青圈 EvergreenCircle — 常驻 Worker 部署手册
 
-> 本手册配套 C 计划（让线上也能跑后台长任务）。**状态：只规划不部署** —— 配置文件已就绪，
-> 实际发布需你确认并在目标主机执行。本地修复（`runner.py` 解耦）已就位，无需本手册即可本地运行。
+> 本手册配套 C 计划（让线上也能跑后台长任务）。配置文件已就绪，但**手册里的真机操作一律不自动执行**：
+> 需要你在目标主机上确认并亲自跑。本地修复（`runner.py` 解耦）已就位，无需本手册即可本地运行。
 
 ---
 
@@ -22,10 +22,13 @@
 | 路径 | 适用 | 运维成本 | 持久化 | 长任务 |
 |---|---|---|---|---|
 | ① PaaS（Railway/Render/Fly） | 想零运维上线 | 低 | 付费磁盘（free 层不持久） | ✅ |
-| ② 自管云主机（复用阿里云 ECS 47.114.101.59） | 已有主机 / 要可控 | 中 | 主机卷（稳） | ✅ |
+| ② 自管云主机（你自己的阿里云 ECS 等） | 已有主机 / 要可控 | 中 | 主机卷（稳） | ✅ |
 | ③ 本地 | 仅本机开发 | 无 | 本机 SQLite | ✅（已跑通） |
 
 三路径**共用同一份后端代码 + 同一个 Dockerfile**，只是编排语法不同。镜像源单一，无代码分叉。
+
+> 主机 IP / 域名等环境值**不要写进本手册或仓库**（它们会随 git 历史长期留存）；
+> 放在本机 `deploy/.env` 与 `VERDA_DOMAIN` 入参里。
 
 ---
 
@@ -103,8 +106,9 @@ docker compose up -d
 
 ## 5. 路径③ 本地（已完成，仅文档）
 
-- 后端 `:8020` / 前端 `:3500` 本地已跑新代码，长任务修复生效，**无需任何 Worker / C 工作**。
-- 前端 `VITE_API_BASE` 留空 → 走 `vite.config.ts` 代理 `/api` → `127.0.0.1:8020`。
+- 本地端口以仓库根 `.dev-ports.env` 为单一真值源（当前后端 `:8010` / 前端 `:3400`），
+  由 `start.sh` / `restart.sh` / `stop.sh` source，别在脚本或文档里写死。
+- 前端 `VITE_API_BASE` 留空 → 走 `vite.config.ts` 代理 `/api` → `127.0.0.1:8010`。
 - 本地 SQLite 默认 `backend/app/data/verda.db`（已 WAL）。
 
 ### 线上前端（Vercel 构建）
@@ -114,22 +118,22 @@ docker compose up -d
 
 ---
 
-## 6. Vercel 网关切换（cutover，条件触发，**本次不执行**）
+## 6. Vercel 网关切换（**已完成**，保留作背景）
 
-当前 `vercel.json` 把 `/api/*` 指向 Serverless `api/index.py`（旧版，跑不了长任务）。
-**Worker 稳定后**做两步：
+历史上 `vercel.json` 把 `/api/*` 指向 Serverless 镜像 `api/index.py`（跑不了长任务）。
+Worker 上线后该目录连同 `api/app` 副本**已删除**，双真相问题随之消除；今天
+`vercel.json` 只承担前端静态托管，其 `/api/*` rewrite 属于失效配置（见
+[docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) §3）。
 
-1. `vercel.json` rewrite 指向 worker（Vercel rewrite 支持外部 URL）：
-   ```json
-   "rewrites": [
-     { "source": "/api/(.*)", "destination": "https://<worker-domain>/api/$1" },
-     { "source": "/health",   "destination": "https://<worker-domain>/health" },
-     { "source": "/(.*)",     "destination": "/index.html" }
-   ]
-   ```
-2. 确认 worker 稳定后**删除 `api/index.py` 及 `api/app` 副本**（消除双真相、避免旧代码误导）。
+需要网关反代的场景，直接在本平台配 rewrite 指向 worker：
 
-> 门槛：必须等至少一个 worker 真实可用，否则删 `api/index.py` 会让线上 Vercel 直接 404。
+```json
+"rewrites": [
+  { "source": "/api/(.*)", "destination": "https://<worker-domain>/api/$1" },
+  { "source": "/health",   "destination": "https://<worker-domain>/health" },
+  { "source": "/(.*)",     "destination": "/index.html" }
+]
+```
 
 ---
 
@@ -153,7 +157,8 @@ docker compose up -d
 
 ## 9. 回滚
 
-- 不删 `api/index.py` 前：直接回退 `vercel.json` rewrite 即可恢复 Serverless（旧行为）。
+- 回退网关：改回本平台的 rewrite / `VITE_API_BASE` 指向上一个可用后端并重新构建前端
+  （Serverless `api/index.py` 那条退路已随目录删除而不存在了）。
 - Worker 出问题：compose `down` / PaaS 回退上个镜像；SQLite 在卷里不受影响。
 - 配置错误：改 `deploy/.env` 或平台变量 → 重启 worker（`docker compose restart` / Redeploy）。
 
@@ -161,7 +166,7 @@ docker compose up -d
 
 ## 10. 风险与约定
 
-- 不连真机、不 push、不实际部署（遵守「只规划不部署」）。
+- 不连真机、不 push、不实际部署（本手册的操作一律需你确认后亲自执行）。
 - `setup-vm.sh` 仅作可复用脚本，执行前需你确认并填真实密钥/域名。
 - PaaS free 层无持久磁盘 → 数据重启即丢；要持久请用付费磁盘或路径②。
 - 多 worker 一律禁止；SQLite 单写 → worker 必须单实例。

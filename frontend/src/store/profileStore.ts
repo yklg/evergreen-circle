@@ -24,7 +24,7 @@ import { createPersister } from '../lib/persist'
 const LS_KEY = 'verda.profile.v1'
 
 export const DEFAULT_NAME = '林研究员'
-export const DEFAULT_COMPANY = '青野科技'
+export const DEFAULT_COMPANY = '常青圈'
 
 export interface ProfileData {
   name: string

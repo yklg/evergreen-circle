@@ -250,7 +250,7 @@ export default function VSidebar() {
                 }
               }}
               className="w-full rounded-btn border border-line bg-card px-3 py-2 text-[14px] text-ink outline-none transition-colors duration-150 ease-verda focus:border-primary focus:ring-2 focus:ring-primary/20"
-              placeholder="如：青野科技"
+              placeholder="如：常青圈"
             />
           </div>
           <div className="flex justify-end gap-2 pt-4">

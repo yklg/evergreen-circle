@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 关闭青野 Verda 的后端与前端（端口见 ./.dev-ports.env，默认后端 :8010 / 前端 :3400）
+# 关闭常青圈 EvergreenCircle 的后端与前端（端口见 ./.dev-ports.env，默认后端 :8010 / 前端 :3400）
 # 优先按 PID 文件以进程组方式精确关闭（覆盖 npm→vite 子进程），再按端口兜底。
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

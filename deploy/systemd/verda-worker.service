@@ -1,5 +1,5 @@
 [Unit]
-Description=青野 Verda Worker (docker compose)
+Description=常青圈 EvergreenCircle Worker (docker compose)
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
