@@ -10,7 +10,7 @@
  *   SP-3  shop_list：人均标「参考价」；缺价 → 「未公开」（LLM 参考价不是实价）
  *   SP-4  空数组 / 缺字段容错 + VStructuredBlock 分发（未知类型静默跳过）
  */
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import {
   VStructuredBlock,
@@ -198,13 +198,12 @@ describe('K-F1 条图归一映射', () => {
   })
 
   it('SP-4 联动：VSpotAtlas 有可定位实体时地图与条图并存（条图恒出）', () => {
-    vi.stubEnv('VITE_BAIDU_AK', '') // 无 AK：BMapBlock 自有说明位，条图仍恒出
+    // 地图卡改走异步 map-config（见 bmapBlock.test.tsx），同步断言只覆盖条图恒出
     const withCoord = [{ destination: '大理', items: [
       { spot_id: 'b_spot_1', name: '古城', score: 90, matched: true, lat: 25.69, lng: 100.16 },
     ] }]
     const { container } = render(<VSpotAtlas data={withCoord as never} />)
     expect(container.querySelector('[data-spot-rankbar]')).not.toBeNull()
-    vi.unstubAllEnvs()
   })
 })
 

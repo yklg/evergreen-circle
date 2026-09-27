@@ -1,6 +1,7 @@
 import { Check, Minus, X } from 'lucide-react'
 import { useState, type ReactElement } from 'react'
-import { BMapBlock, hasBMapAk, type MapSpot } from './BMapBlock'
+import { BMapBlock, type MapSpot } from './BMapBlock'
+import { useMapConfig } from '../hooks/useMapConfig'
 import { VSpotSketch } from './VSpotSketch'
 import type { StructuredBlock, StructuredBlockType } from '../types'
 
@@ -359,6 +360,7 @@ export function VShopList({ data }: { data: Row[] }) {
 /** 逐日路线（N4/A-F1）：分布海报 + 折线地图（坐标齐时）→ 逐日时间线卡。
  * 时间线为保底形态：坐标缺/AK 缺时仅时间线，结构断言不依赖地图与海报。 */
 export function VRoutePlan({ data }: { data: Row[] }) {
+  const mapCfg = useMapConfig()
   if (!data?.length) return null
   return (
     <div className="mt-4 space-y-4">
@@ -382,7 +384,7 @@ export function VRoutePlan({ data }: { data: Row[] }) {
             </div>
             <div className="space-y-3 p-4">
               <VSpotSketch data={[d]} />
-              {hasBMapAk() && mappableTrail.length >= 2 ? (
+              {mapCfg.status === 'ready' && mappableTrail.length >= 2 ? (
                 <BMapBlock
                   spots={mappableTrail}
                   trail

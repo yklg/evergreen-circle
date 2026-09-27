@@ -3,75 +3,58 @@
  * 百度地图组件与榜单联动（TC-F02 / TC-F03 · M2e）
  *
  * 守护契约：
- *   BM-1 无 VITE_BAIDU_AK → 出「数据源暂不可用」占位，且不构造任何地图对象（不炸任务）
+ *   BM-1 后端未下发浏览器端 AK → 出「地图数据源未就绪」降级位，且零地图构造（不炸任务）
  *   BM-2 marker 数 = 榜单中坐标齐备且 matched!==false 的景点数（未匹配实体不上图、不错位）
  *   BM-3 marker 点击 → 上抛该 spot_id（弹窗/选中走冻结实体键）
  *   BM-4 榜单行 hover → data-selected 提升，地图 panTo 对应 marker（双向联动）
+ *   BM-5 底图样式必须随地图一起下发（C3 注记纪律）：缺一次 setMapStyleV2 即红
  *
- * 接缝：window.BMapGL 假命名空间（不注入真 script，JSAPI 加载路径由 loadBMap 单侧覆盖）。
+ * 接缝：`vi.mock('../lib/bmap')` + `helpers/bmapGLFake`（全套件唯一替身出口，TC-R12），
+ * AK 由 `mapConfig.browserAk` 逐用例控制 —— 组件侧已不再读构建期变量。
+ *
+ * ⚠️ 用例顺序有约束：`hooks/useMapConfig` 只缓存「取到 AK 的那一次」，
+ * 所以 BM-1（无 AK）必须排在任何成功用例之前；顺序被改动时会以「BM-1 断言失败」
+ * 的形式暴露，不会静默放行。
  */
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { LC_MAP_STYLE_LIGHT } from '../lib/bmapStyle'
+import {
+  assertBasemapStylesSound,
+  instances,
+  mapConfig,
+  resetInstances,
+  resetStyleCalls,
+  styleCalls,
+} from './helpers/bmapGLFake'
 
-const fakes = vi.hoisted(() => {
-  class Point {
-    lng: number
-    lat: number
-    constructor(lng: number, lat: number) { this.lng = lng; this.lat = lat }
-  }
-  const markers: any[] = []
-  class Marker {
-    position: any
-    title: string
-    listeners: Record<string, Function> = {}
-    constructor(pt: any, opts: any) { this.position = pt; this.title = opts?.title ?? ''; markers.push(this) }
-    addEventListener(ev: string, fn: Function) { this.listeners[ev] = fn }
-    getPosition() { return this.position }
-  }
-  const maps: any[] = []
-  class Map {
-    overlays: any[] = []
-    centerAndZoom = vi.fn()
-    enableScrollWheelZoom = vi.fn()
-    addOverlay = vi.fn((mk: any) => { this.overlays.push(mk) })
+vi.mock('../lib/bmap', async () => {
+  const H = await import('./helpers/bmapGLFake')
+  /** 只补本文件要的 `panTo`（联动平移）；样式记录沿用基类唯一实现，不得改成空桩。 */
+  class Map extends H.BMapMapBase {
     panTo = vi.fn()
-    openInfoWindow = vi.fn()
-    constructor(_el: any) { maps.push(this) }
   }
-  class InfoWindow {
-    content: string
-    constructor(c: string) { this.content = c }
-  }
-  return {
-    Point, Marker, Map, InfoWindow, markers, maps,
-    ns: null as any,
-  }
+  return H.fakeBMapModule({ Map })
 })
 
-import { BMapBlock } from '../components/BMapBlock'
+import { BMapBlock, type MapSpot } from '../components/BMapBlock'
 import { VSpotAtlas } from '../components/VStructured'
-import type { MapSpot } from '../components/BMapBlock'
 
-function installFakeBMap() {
-  const ns = {
-    Point: fakes.Point, Marker: fakes.Marker, Map: fakes.Map, InfoWindow: fakes.InfoWindow,
-  }
-  ;(globalThis as any).BMapGL = ns
-  ;(globalThis as any).window.BMapGL = ns
-  return ns
-}
+type LoggedMap = { calls: [string, unknown[]][]; panTo: ReturnType<typeof vi.fn> }
+type FakeMarker = { opts: { title?: string }; handlers: Record<string, (a?: unknown) => void> }
+
+const mapAt = (i = 0): LoggedMap => instances.maps[i] as LoggedMap
+const overlayTitles = (): (string | undefined)[] =>
+  (instances.markers as FakeMarker[]).map((m) => m.opts.title)
 
 beforeEach(() => {
-  fakes.markers.length = 0
-  fakes.maps.length = 0
+  resetStyleCalls()
+  resetInstances()
+  mapConfig.browserAk = 'test-ak'
+  mapConfig.mapStyleId = ''
 })
 
-afterEach(() => {
-  cleanup()
-  delete (globalThis as any).window.BMapGL
-  delete (globalThis as any).window.__verdaBMapPromise
-  vi.unstubAllEnvs()
-})
+afterEach(() => cleanup())
 
 const SPOTS: MapSpot[] = [
   { spot_id: '大理_spot_1', name: '大理古城', lat: 25.69, lng: 100.16, matched: true, score: 88 },
@@ -81,38 +64,43 @@ const SPOTS: MapSpot[] = [
 ]
 
 describe('BMapBlock', () => {
-  it('BM-1：缺 AK → 占位文案且零地图构造', () => {
-    installFakeBMap()
-    // 显式钉空 AK：不依赖「本机恰好没有 .env.local」的环境假设（开发机配了真
-    // VITE_BAIDU_AK 时 vitest 会加载 .env.local，隐式假设即破）。
-    vi.stubEnv('VITE_BAIDU_AK', '')
+  it('BM-1：后端未下发 AK → 降级文案且零地图构造', async () => {
+    mapConfig.browserAk = ''
     const { container } = render(<BMapBlock spots={SPOTS} />)
-    const ph = container.querySelector('[data-map-placeholder]')
-    expect(ph).toBeTruthy()
-    expect(ph!.textContent).toContain('VITE_BAIDU_AK')
-    expect(fakes.maps.length).toBe(0)
+    const ph = await waitFor(() => {
+      const el = container.querySelector('[data-map-placeholder]')
+      expect(el).toBeTruthy()
+      return el!
+    })
+    expect(ph.textContent).toContain('浏览器端 AK')
+    expect(ph.textContent).toContain('/api/life-circle/map-config')
+    expect(instances.maps).toHaveLength(0)
   })
 
   it('BM-2：marker 数只等于可定位实体数，未匹配/缺坐标不上图', async () => {
-    installFakeBMap()
-    vi.stubEnv('VITE_BAIDU_AK', 'TEST_AK')
     render(<BMapBlock spots={SPOTS} />)
-    await waitFor(() => expect(fakes.maps.length).toBe(1))
-    const map = fakes.maps[0]
-    expect(map.overlays.length).toBe(2)
-    expect(fakes.markers.map((m) => m.title)).toEqual(['大理古城', '洱海廊道'])
-    expect(map.centerAndZoom).toHaveBeenCalled()
+    await waitFor(() => expect(instances.maps).toHaveLength(1))
+    const added = mapAt().calls.filter(([m]) => m === 'addOverlay')
+    expect(added).toHaveLength(2)
+    expect(overlayTitles()).toEqual(['大理古城', '洱海廊道'])
+    expect(mapAt().calls.some(([m]) => m === 'centerAndZoom')).toBe(true)
   })
 
   it('BM-3：marker 点击上抛 spot_id', async () => {
-    installFakeBMap()
-    vi.stubEnv('VITE_BAIDU_AK', 'TEST_AK')
     const onSelect = vi.fn()
     render(<BMapBlock spots={SPOTS} onSelect={onSelect} />)
-    await waitFor(() => expect(fakes.maps.length).toBe(1))
-    fakes.markers[0].listeners.click()
+    await waitFor(() => expect(instances.maps).toHaveLength(1))
+    ;(instances.markers[0] as FakeMarker).handlers.click()
     expect(onSelect).toHaveBeenCalledWith('大理_spot_1')
-    expect(fakes.maps[0].openInfoWindow).toHaveBeenCalled()
+    expect(mapAt().calls.some(([m]) => m === 'openInfoWindow')).toBe(true)
+  })
+
+  it('BM-5：地图与底图样式同批下发，styleId 为空时用内置模板（注记关）', async () => {
+    render(<BMapBlock spots={SPOTS} />)
+    await waitFor(() => expect(instances.maps).toHaveLength(1))
+    expect(styleCalls.at(-1)!.styleJson).toBe(LC_MAP_STYLE_LIGHT)
+    expect(styleCalls.at(-1)!.styleId).toBeUndefined()
+    assertBasemapStylesSound()
   })
 })
 
@@ -127,21 +115,17 @@ describe('榜单 ↔ 地图双向联动（VSpotAtlas）', () => {
   }]
 
   it('BM-4：行 hover 提升 selected（data-selected），地图 panTo 对应 marker 坐标', async () => {
-    installFakeBMap()
-    vi.stubEnv('VITE_BAIDU_AK', 'TEST_AK')
-    const { container } = render(<VSpotAtlas data={RANKING as any} />)
-    await waitFor(() => expect(fakes.maps.length).toBe(1))
+    const { container } = render(<VSpotAtlas data={RANKING as never} />)
+    await waitFor(() => expect(instances.maps).toHaveLength(1))
     const row = container.querySelector('[data-spot-row="大理_spot_2"]')!
     fireEvent.mouseEnter(row)
     expect(row.getAttribute('data-selected')).toBe('true')
-    await waitFor(() =>
-      expect(fakes.maps[0].panTo).toHaveBeenCalledWith({ lng: 100.21, lat: 25.75 }),
-    )
+    await waitFor(() => expect(mapAt().panTo).toHaveBeenCalledWith({ lng: 100.21, lat: 25.75 }))
     // 未匹配实体无 marker：hover 只高亮表行，不上图不错位
     const badRow = container.querySelector('[data-spot-row="大理_spot_3"]')!
     fireEvent.mouseEnter(badRow)
     expect(badRow.getAttribute('data-selected')).toBe('true')
-    expect(fakes.maps[0].panTo).not.toHaveBeenCalledWith({ lng: 100.1, lat: 25.6 })
-    expect(fakes.markers.map((m) => m.title)).not.toContain('未匹配景点')
+    expect(mapAt().panTo).not.toHaveBeenCalledWith({ lng: 100.1, lat: 25.6 })
+    expect(overlayTitles()).not.toContain('未匹配景点')
   })
 })

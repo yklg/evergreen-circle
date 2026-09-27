@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>预览 · 报告地图 AK 链路收敛（改动前 / 改动后活体对照）</title>
+<style>
+  :root {
+    --bg:#f6f8f7; --card:#fff; --ink:#1d211f; --ink2:#5b6560; --ink3:#98a29d;
+    --line:#e3e8e5; --warn:#8a6420; --mark:#d97706; --after:#0f766e;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { background:var(--bg); font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif; color:var(--ink); line-height:1.6 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px }
+  .wrap { max-width:1280px; margin:0 auto; padding:16px 20px 72px }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:13px }
+  .box b { color:var(--warn) }
+  .legend { font-size:12px }
+  .legend table { border-collapse:collapse; width:100% }
+  .legend th,.legend td { border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top }
+  .legend th { background:#fafcfb; font-weight:600; white-space:nowrap }
+  .legend .id { color:var(--mark); font-weight:700; white-space:nowrap }
+  h2.sec { font-size:14px; margin:22px 0 10px; color:var(--ink) }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  @media (max-width:900px){ .pair{ grid-template-columns:1fr } }
+  /* 改动区标注：橙色描边 + 编号徽标（与图例一一对应） */
+  .panel { position:relative; background:var(--card); border:2px solid var(--mark); border-radius:10px; padding:22px 14px 14px; margin-bottom:14px }
+  .panel::before { content:attr(data-region); position:absolute; top:-11px; left:12px; background:var(--mark); color:#fff; font-size:11px; font-weight:700; padding:1px 8px; border-radius:999px }
+  .panel h3 { font-size:13px; margin-bottom:2px }
+  .panel .tag { font-size:11px; font-weight:600 }
+  .panel .tag.before { color:var(--ink3) }
+  .panel .tag.after { color:var(--after) }
+  .panel .note { font-size:12px; color:var(--ink2); margin-top:8px }
+  .map { height:380px; border:1px solid var(--line); border-radius:8px; overflow:hidden }
+  .absent { height:120px; display:grid; place-items:center; border:1px dashed var(--line); border-radius:8px; background:var(--bg); color:var(--ink3); font-size:12px }
+  #status { color:var(--ink3); font-size:12px }
+  code { background:#f2f5f3; padding:0 4px; border-radius:4px; font-size:12px }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>报告地图 AK 链路收敛 · 改动前 / 改动后 活体对照</h1>
+    <div class="sub">
+      右列（目标态）用<b style="color:#ffd9a0">真实模块</b>渲染：AK 取自后端 <code>/api/life-circle/map-config</code>、
+      加载器 <code>lib/bmap.loadBMapGL</code>、底图样式 <code>lib/bmapStyle.lcMapStyle(false)</code>、点位取自真实报告数据。
+      左列是改动后的<b style="color:#ffd9a0">真实组件</b>——两列一致即核验通过。
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="box" id="precheck">读取 map-config 与报告数据中…</div>
+    <div class="box" id="status"></div>
+
+    <h2 class="sec">① 景点榜单分布图（<code>spot_ranking</code> → <code>VSpotAtlas</code> → <code>BMapBlock</code>）</h2>
+    <div class="pair">
+      <div class="panel" data-region="C1 改动后">
+        <h3>改动后：真实组件出图</h3>
+        <div class="tag after">核验位 · 未改动的 <code>BMapBlock</code> 源码（现读 map-config）</div>
+        <div id="before-spot"></div>
+        <div class="note">本应与右列逐像素一致；若这里仍是灰框，说明改动没接上。<b>改动前</b>此处的样子见 <code>预览-报告地图AK链路-2026-09-26/probe-改动前.png</code>（改动前留档截图）。</div>
+      </div>
+      <div class="panel" data-region="C1+C2+C3 目标态">
+        <h3>目标态：真地图 + 注记纪律</h3>
+        <div class="tag after">改动后 · 同一批点位、同一份样式模板</div>
+        <div class="map" id="after-spot"></div>
+        <div class="note">与左列同一份数据；差异只在「AK 从后端拿」+「下发内置 styleJson 关掉底图 POI 注记」。</div>
+      </div>
+    </div>
+
+    <h2 class="sec">② 逐日行程串联（<code>route_plan</code> → <code>VRoutePlan</code>，折线模式）</h2>
+    <div class="pair">
+      <div class="panel" data-region="C5 改动前">
+        <h3>改动前：整块缺位</h3>
+        <div class="tag before"><code>hasBMapAk()</code> 为假 ⇒ 组件根本不挂载（连灰框都没有）</div>
+        <div class="absent" id="before-trail">（此处报告实际不渲染任何地图元素）</div>
+        <div class="note">改动前的失败模式与①不同：①出灰框，②连框都没有——因为挂载判断 <code>hasBMapAk()</code> 直接为假。该判断已随 C5 删除。</div>
+      </div>
+      <div class="panel" data-region="C5 目标态">
+        <h3>目标态：按逐日顺序串联</h3>
+        <div class="tag after">折线 + 打点，样式与 ① 同源</div>
+        <div class="map" id="after-trail"></div>
+        <div class="note" id="trail-caveat" hidden>
+          <b>⚠️ 本面板的点位是借用①的榜单坐标做机制演示</b>——现有报告里没有带坐标的逐日行程数据。
+          真实上线后串的是 <code>route_plan.days[].spots[]</code> 的原始顺序。
+        </div>
+        <div class="note">挂载条件由「同步读 env」改为「异步配置 ready 且有 AK」，pending 期间仍不挂载（不闪空框）。</div>
+      </div>
+    </div>
+
+    <h2 class="sec">③ 改动区图例</h2>
+    <div class="box legend">
+      <table>
+        <tr><th>编号</th><th>位置</th><th>当前态</th><th>目标态</th><th>预期效果</th></tr>
+        <tr><td class="id">C1</td><td><code>BMapBlock.tsx:45,65</code></td><td>同步读构建期 <code>VITE_BAIDU_AK</code>（全项目无人配置）→ 灰框</td><td>读 <code>getMapConfig()</code>（后端下发 <code>browser_ak</code>，env 兜底），新增 <code>useMapConfig()</code> 钩子 + 模块级缓存</td><td>报告打开即出真地图，与地图页共用同一份 AK；本页右列即其效果</td></tr>
+        <tr><td class="id">C2</td><td><code>BMapBlock.tsx:25-38</code></td><td>私有 <code>loadBMap</code> + 独立单例键 <code>__verdaBMapPromise</code></td><td>删掉，统一走 <code>lib/bmap.loadBMapGL</code>（含 8s 超时与失败语义）</td><td>同页不再重复注入 JSAPI 脚本；无视觉差异，风险面收窄</td></tr>
+        <tr><td class="id">C3</td><td><code>BMapBlock.tsx:91-92</code></td><td>不下发样式 ⇒ 百度默认底图 <b>POI 注记全开</b>（第三方商场/地铁名与我们的点同款呈现）</td><td><code>setMapStyleV2</code>：styleId 空→内置 <code>lcMapStyle(false)</code>，非空→styleId（互斥二选一，与 <code>LcMap.tsx:454</code> 同规则）</td><td>图上只有我们自己的点位；右列底图即该样式（注记已关）</td></tr>
+        <tr><td class="id">C4</td><td><code>BMapBlock.tsx:40</code></td><td>「…需要配置 VITE_BAIDU_AK（百度<b>服务端</b> AK…）」—— 服务端 AK 用于 JS API 必失败，文案误导</td><td>「地图数据源未就绪：后端未下发浏览器端 AK（/api/life-circle/map-config）」</td><td>左列灰框内文字即为将被替换的旧文案</td></tr>
+        <tr><td class="id">C5</td><td><code>VStructured.tsx:385</code></td><td><code>hasBMapAk()</code> 同步判断 ⇒ 行程图整块缺位</td><td>改用 <code>useMapConfig()</code>：pending 不挂载、ready 且有 AK 才挂载</td><td>逐日路线出串联地图；海报与时间线不变</td></tr>
+        <tr><td class="id">C6</td><td><code>bmapBlock.test.tsx</code> / <code>structuredSpots.test.tsx</code></td><td><code>vi.stubEnv('VITE_BAIDU_AK')</code> + 文件内手写 fake ⇒ 对底图样式回归<b>免疫</b></td><td>迁到 <code>helpers/bmapGLFake</code>（全套件唯一替身出口），断言含 <code>assertBasemapStylesSound()</code></td><td>无视觉差异；但这是 C3 的防线，不做则样式纪律仍无人看守</td></tr>
+      </table>
+      <div class="note" style="margin-top:10px">
+        <b>本次刻意不改</b>：取景方式仍是 <code>centerAndZoom(首点, 12)</code>（不顺手改成 <code>setViewport</code>）、marker 样式、弹窗内容、条图与评分榜。<br>
+        <b>演示模式（无后端）</b>：<code>getMapConfig</code> 取不到 AK ⇒ 仍走占位降级，与今天同形，不算回归。
+      </div>
+    </div>
+  </div>
+  <!-- 由 Vite dev server 直接编译；样式与加载器取自 lib/bmapStyle、lib/bmap，与线上和单测同一份真源。 -->
+  <script type="module" src="/src/dev/reportMapAkProbe.ts"></script>
+</body>
+</html>
