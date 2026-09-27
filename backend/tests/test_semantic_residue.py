@@ -7,6 +7,8 @@
 - `api/app/{core,services}` 与 `backend/app/{core,services}` 的模块文件集合一致（双向）：backend 新增模块
   （如 platforms / research_types / runner / baidu）必须同步进镜像；互补 `test_api_mirror_guard.py`
   的「api ⊆ backend 单向 + 签名比对」，合起来构成完整镜像面守卫。
+- **白名单自身不空转**（2026-09-26 补）：每条豁免至少命中一次，且扫描树必须真有文件 ——
+  否则「守卫在看守什么」这个问题会随文件改名/移出而静默失效（详见那两个新增用例的 docstring）。
 
 说明：本文件只扫源码真相源（backend/app、frontend/src）。api/ 是镜像，P5-2 整目录同步后
 其 core 内容与 backend 逐文件等同，故不重复扫描，由上面的文件集合守卫 + 镜像签名守卫覆盖。
@@ -36,8 +38,6 @@ _ALLOW = [
     (r"^backend/app/core/pipeline/research/engine\.py$",
      r'rep\.get\("brands"\)|it\.get\("brand"\)|name/brand|run_pipeline|竞品',
      "旧报告读时兼容（destinations or brands）+ LLM 偶发沿用旧键的行主键兜底 + 历史注释"),
-    (r"^backend/app/core/orchestrator\.py$", r".",
-     "flip 后为纯 re-export 外壳；run_pipeline 兼容别名的历史注释"),
     (r"^backend/app/core/schemas\.py$", r'it\.get\("brand"\)|旧键 brand',
      "LLM 偶发沿用旧键 brand 的主键兜底（防整行丢失）"),
     (r"^backend/app/core/pipeline/research/_util\.py$", r'it\.get\("brand"\)|name/brand',
@@ -66,12 +66,14 @@ _ALLOW = [
      r"assets/brand|brands|brand|竞品", "活跃前端测试夹具/负向哨兵；P2 前端 flip 后随 gaizao 版替换"),
     (r"^frontend/src/lib/cover\.test\.ts$", r"竞品|BRAND|brand",
      "封面兜底守卫自身：以「竞品」为负向哨兵，并消费品牌常量/资源路径"),
-    (r"^frontend/src/__tests__/dashboardPage\.test\.tsx$", r"历史竞品口径残留守卫",
-     "负向断言注释（断言「竞争情报中心 / 覆盖品牌」不再出现）"),
     # ── M2-flip 临时：skip 旧前端品牌组件/测试，P2 前端 flip 整文件替换后删除本组白名单 ──
     (r"^frontend/src/components/(VStructured|VMetricsPanel|VQualityGate|VSentimentFlatPanel)\.tsx$",
      r"brand|竞品",
      "P2 随 gaizao 13 块注册表/C1 版式整文件替换；替换后此条白名单删除"),
+    # （一条已按「替换后此条白名单删除」的自述纪律收窄，由本文件末尾的
+    #   `test_every_allowlist_entry_fires_at_least_once` 机器保证不再回潮：
+    #    · `dashboardPage.test.tsx` —— 该文件已移入 `_travel_pending/`，被 _EXCLUDE_DIR_PARTS
+    #      排除在扫描树之外 ⇒ 这条豁免**永远不可能命中**。若那个目录回归扫描，需连同豁免一起加回。）
     (r"^frontend/src/__tests__/(clarifyAsync|reportHero)\.test\.tsx$",
      r"competitors_fallback|竞品|ZZBRANDMARK|brands|brand",
      "P2 随问卷 v2/C1 报告页测试整文件替换"),
@@ -97,9 +99,14 @@ def _allowed(rel: str, line: str) -> bool:
     return any(re.match(path, rel) and re.search(mark, line) for path, mark, _ in _ALLOW)
 
 
-def test_no_semantic_residue_outside_whitelist():
-    """backend/app + frontend/src 中「竞品 / brand」仅剩白名单内的合法残留。"""
-    leftovers = []
+def _scan_residue():
+    """按守卫口径扫一遍树，返回 `(白名单外残留, 每条豁免的命中行数, 扫到的文件数)`。
+
+    三个产出共用一次遍历 —— 拆成三份各扫一遍会造出三套可能互相漂移的口径。
+    """
+    leftovers: list[str] = []
+    hits = {i: 0 for i in range(len(_ALLOW))}
+    files = 0
     for tree in SRC_TREES:
         for p in sorted((ROOT / tree).rglob("*")):
             if not p.is_file() or p.suffix not in SUFFIXES:
@@ -107,12 +114,54 @@ def test_no_semantic_residue_outside_whitelist():
             rel = p.relative_to(ROOT).as_posix()
             if any(part in rel for part in _EXCLUDE_DIR_PARTS):
                 continue
+            files += 1
             for i, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                if _TOKEN.search(line) and not _allowed(rel, line):
+                if not _TOKEN.search(line):
+                    continue
+                for j, (path, mark, _why) in enumerate(_ALLOW):
+                    if re.match(path, rel) and re.search(mark, line):
+                        hits[j] += 1
+                if not _allowed(rel, line):
                     leftovers.append(f"{rel}:{i}: {line.strip()[:140]}")
+    return leftovers, hits, files
+
+
+def test_no_semantic_residue_outside_whitelist():
+    """backend/app + frontend/src 中「竞品 / brand」仅剩白名单内的合法残留。"""
+    leftovers, _hits, _files = _scan_residue()
     assert not leftovers, (
         "发现白名单外的竞品语义残留（新增即说明改造不彻底；确需保留请连同理由登记白名单）：\n  "
         + "\n  ".join(leftovers)
+    )
+
+
+def test_scan_trees_actually_contain_files():
+    """扫描树必须真有内容 —— 目录被改名/被排除面扩大时集合会塌向空集，守卫随即恒绿。
+
+    这是本文件最容易静默失效的一条：`rglob` 对不存在的目录**不报错，只返回空**。
+    下界取 200（基线 283，2026-09-26 实测），留正常增删余量。
+    """
+    _leftovers, _hits, files = _scan_residue()
+    assert files >= 200, (
+        f"词表守卫只扫到 {files} 个文件（基线 283）⇒ SRC_TREES 指错或 _EXCLUDE_DIR_PARTS 过宽，"
+        "本文件其余断言正在空转"
+    )
+
+
+def test_every_allowlist_entry_fires_at_least_once():
+    """每条豁免必须**至少命中一行** —— 零命中的豁免是静默堆积的债务，不是无害的冗余。
+
+    两种真实漂移都会留下死豁免（2026-09-26 实测各抓到一条）：
+    ① 被豁免的字样已消失，豁免还留着；
+    ② 被豁免的文件移出了扫描树（如进 `_travel_pending/`），于是该豁免**永远不可能命中**，
+       而「排除面缩小覆盖面」与「豁免过期」两件事会互相掩盖。
+    判据形态取自 `check_guard_construction.py` 的 G-4 计数收口（唯一出口必须机器可校验）。
+    """
+    _leftovers, hits, _files = _scan_residue()
+    dead = [f"  · {_ALLOW[i][0]} —— {_ALLOW[i][2]}" for i, n in hits.items() if n == 0]
+    assert not dead, (
+        "存在零命中的死豁免（字样已消失，或文件已移出扫描树 ⇒ 永不命中）。"
+        "请删除该条；若文件只是被排除，需连同排除理由一并复核：\n" + "\n".join(dead)
     )
 
 
