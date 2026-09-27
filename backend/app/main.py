@@ -319,6 +319,11 @@ class CreateTaskBody(BaseModel):
     coord_sys: str = "bd09"  # bd09 | wgs84（后者经 geoconv 归一，缺 AK 拒绝）
     travel_mode: Optional[str] = None
     data_mode: Optional[str] = None
+    # R0（片 0）：生活圈采样档位是**它自己的字段**，不再借 research 的 `mode`。
+    # 前端自「R5 一名四义」改造起就一直发 `sample_profile`（`lib/api.ts:176`），而本模型
+    # 只声明 `mode` ⇒ pydantic 把它**静默丢弃**，任何档位请求都恒按 standard 跑完，
+    # 全程无提示。缝在这儿，D1/D2 的 `scenario` 走的也是这条缝 —— 先把缝缝上。
+    sample_profile: Optional[str] = None  # quick | standard | precise
 
     @field_validator("center", mode="before")
     @classmethod
@@ -341,6 +346,26 @@ def research_types():
     return rt.research_type_options()
 
 
+# 生活圈采样档位取值域（与 research 的 quick|deep|expert **是两套词表**，同名不同义）。
+LC_SAMPLE_PROFILES = ("quick", "standard", "precise")
+
+
+def _lc_sample_profile(body: "CreateTaskBody") -> str:
+    """生活圈采样档位的**唯一解析点**（R0）。
+
+    优先级：显式 `sample_profile` → 旧入口 `mode` → `standard`。
+
+    保留 `mode` 回落是刻意的，不是偷懒：它的行为被 `test_living_circle_api` 的 t6 组
+    钉着（含「非法值静默回落 standard」那条已登记的 TODO/B1）。片 0 只修「字段被
+    pydantic 丢掉」这一半；把非法值改成显式 422 属另一条独立契约变更（B1），
+    不在这里顺手改 —— 顺手改会让两套语义同时动，红了分不清是谁。
+    """
+    for candidate in (body.sample_profile, body.mode):
+        if candidate in LC_SAMPLE_PROFILES:
+            return candidate
+    return "standard"
+
+
 @app.post("/api/tasks")
 async def post_task(body: CreateTaskBody):
     # 生活圈体检：独立流水线 + 坐标系归一（WGS-84→BD-09，缺 AK 422 拒绝）。
@@ -355,7 +380,7 @@ async def post_task(body: CreateTaskBody):
         task_id = create_living_circle_task({
             "scene_name": body.query, "city": body.city, "address": body.address,
             "center": center, "study_radius_m": float(caliber.study_radius_m),
-            "sample_profile": body.mode if body.mode in ("quick", "standard", "precise") else "standard",
+            "sample_profile": _lc_sample_profile(body),
             "travel_mode": travel_mode, "data_mode": body.data_mode,
         })
         return {"taskId": task_id}
