@@ -1,4 +1,4 @@
-"""青野 Verda 后端入口（FastAPI）。
+"""常青圈后端入口（FastAPI）。
 
 挂载：48 专家 API + 任务创建/澄清 + SSE 思维流 + 报告/历史 + 仪表盘统计
 + 全局证据溯源库 + 目的地持续追踪订阅 + 专家工作量看板 + 健康/验证接口。
@@ -61,7 +61,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="青野 Verda API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="常青圈 API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -76,7 +76,7 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {
-        "name": "青野 Verda API",
+        "name": "常青圈 API",
         "version": "2.0.0",
         "slogan": "让每个结论都有出处，让每次调研都活着。",
         "llm_configured": bool(get_effective_settings().get("llm_api_key")),

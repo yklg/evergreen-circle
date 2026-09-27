@@ -1,4 +1,4 @@
-/* Verda 全局类型定义 —— 前后端契约 */
+/* 常青圈全局类型定义 —— 前后端契约 */
 
 export type ExpertLevel = 'L1' | 'L2' | 'L3'
 export type ExpertGroup = 'decision' | 'strategy' | 'facility' | 'method' | 'industry' | 'function'
