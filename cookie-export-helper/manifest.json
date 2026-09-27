@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "VerdaAI Cookie 助手",
+  "name": "常青圈 Cookie 助手",
   "version": "2.1.0",
-  "description": "在已登录的抖音 / 小红书 / B站 页面一键复制登录 Cookie，供 VerdaAI 平台采集使用。",
+  "description": "在已登录的抖音 / 小红书 / B站 页面一键复制登录 Cookie，供常青圈平台采集使用。",
   "permissions": ["cookies", "clipboardWrite", "activeTab"],
   "host_permissions": [
     "*://*.douyin.com/*",
@@ -11,6 +11,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "VerdaAI Cookie 助手"
+    "default_title": "常青圈 Cookie 助手"
   }
 }

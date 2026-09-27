@@ -1,4 +1,4 @@
-// VerdaAI Cookie 助手 —— popup 逻辑
+// 常青圈 Cookie 助手 —— popup 逻辑
 // 职责：读取当前站点全部 Cookie（含 httpOnly）→ 清洗 → 复制到剪贴板。
 // 关键：用 chrome.cookies.getAll 读取 httpOnly Cookie（document.cookie 读不到）。
 
