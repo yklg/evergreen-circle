@@ -7,6 +7,7 @@ import pytest
 
 from app.living_circle.geo_utils import haversine_m, to_local_xy
 from app.living_circle.isochrone import (
+    MODE_PARAMS,
     REACH_FULL_MIN,
     IsochroneEngine,
     _flag_of,
@@ -212,3 +213,92 @@ def test_u6_travel_modes_budget_invariant():
         pts = build_sample_points(CENTER, cal.study_radius_m, 400, 150, max_points=mp)
         assert 0 < len(pts) <= mp, f"{tm}: {len(pts)} > {mp}"
         assert math.ceil(len(pts) / chunk) <= mat_budget(), f"{tm}: 分块数超 mat_budget"
+
+
+# ── D1/D2（计划 v4 阶段 0）· fine_band 透传 与 降规格披露 ──────────
+# 形态沿用本仓先例：先「记录当前行为」把缺陷量化钉住，再配一条 `xfail(strict=True)`
+# 断言应有行为 —— 修好后必须转 XPASS 报错，逼着把判据重指（禁止就地放宽或删掉）。
+
+def test_fine_band_is_currently_borrowed_from_walking_for_wider_calibers():
+    """**记录当前行为**：`compute()` 不透传 `fine_band` ⇒ 骑行/驾车的加密环带被步行的截断。
+
+    `caliber.fine_band = (max(r_inner, 400), study_radius_m)` 是**逐档派生**的
+    （步行 2500 / 骑行 5000 / 驾车 9000），但 `isochrone.py:302` 调 `build_sample_points`
+    时不传 `fine_band`，只能落到 `:132-134` 的 `get_caliber("walking").fine_band` 硬回落
+    ⇒ 骑行 20min 圈的外沿（2500–5000m）**一格加密都没有**。这不是精度偏好问题，
+    是"配了逐档口径、实际用的是别人的口径"。
+    """
+    from app.living_circle.caliber import get_caliber
+
+    def _density_km2(pts, lo, hi):
+        n = sum(1 for p in pts if lo < haversine_m(CENTER, p) <= hi)
+        return n / (math.pi * (hi * hi - lo * lo) / 1e6)
+
+    riding_band = get_caliber("riding").fine_band
+    assert riding_band[1] > 2500.0, "前置不成立：骑行口径的环带上沿本应超出步行研究半径"
+
+    # 按 compute() 实际调用方式生成（不传 fine_band ⇒ 回落步行的 (400, 2500)）
+    as_computed = build_sample_points(CENTER, 5000.0, 400, 150)
+    per_mode = build_sample_points(CENTER, 5000.0, 400, 150, fine_band=riding_band)
+    assert len(per_mode) > len(as_computed) * 1.2, (
+        "按骑行自己的环带并没有多出点 ⇒ 对照不成立，请重指本用例"
+    )
+
+    inner = _density_km2(as_computed, 1500.0, 2500.0)  # 步行环带内 ⇒ 有 150m 加密
+    outer = _density_km2(as_computed, 2600.0, 5000.0)  # 骑行该加密、却只剩 400m 粗格
+    assert inner > outer * 2, (
+        f"骑行研究半径内 2.6–5km 的采样密度 {outer:.1f} 点/km² 相对 1.5–2.5km 的 "
+        f"{inner:.1f} 没有塌陷 ⇒ 回落效应已消失，本现状记录该转红重指了"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="计划 v4 阶段 0：`IsochroneEngine.compute()` 未收 `fine_band` 形参，"
+           "骑行/驾车档的边界加密环带被步行口径硬回落（isochrone.py:289/302/132-134）",
+)
+def test_compute_should_accept_and_forward_fine_band():
+    import inspect
+
+    sig = inspect.signature(IsochroneEngine.compute)
+    assert "fine_band" in sig.parameters, "compute() 必须能把生效环带说清楚，而不是让下游猜"
+
+
+def test_degraded_sampling_currently_discloses_no_effective_spec():
+    """**记录当前行为**：预算受限时采样规格被降（丢 fine 带），但插值格 `grid_n` 不动，
+    且 `iso["sampling"]` 里**没有任何字段**说明这次实际用的是哪套规格。
+
+    后果：IDW 拿 ~250m 间距的点云去填 83m 的插值格，图上看着一样精、实际更假 ——
+    与「最内圈网格坍缩」同族。D5 要把推导方向翻成「规格→点数→预算」，前提是
+    实际生效规格先变得**可观测**，否则降了规格也没人知道。
+    """
+    engine = IsochroneEngine()
+    iso = asyncio.run(engine.compute(CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=375))
+    assert 0 < iso["sample_count"] <= 375
+
+    grid_n = MODE_PARAMS["standard"]["grid_n"]
+    interp_step = 2 * 2500.0 / (grid_n - 1)
+    sample_step = 2 * 2500.0 / (math.sqrt(4.0 * iso["sample_count"] / math.pi) - 1)
+    assert interp_step * 2 < sample_step, (
+        f"前置不成立：插值格距 {interp_step:.0f}m 与采样间距 {sample_step:.0f}m 没拉开，"
+        f"本用例测不到过度插值"
+    )
+    leaked = {k for k in iso["sampling"] if k in {"coarse_m", "fine_m", "fine_band", "grid_n", "spec"}}
+    assert leaked == set(), (
+        f"实际生效规格已经被披露了（{leaked}）⇒ 本现状记录必须转红并重指到规格字段判据上"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="计划 v4 D5：预算不足时降的是**规格**并须如实标注；当前只降点数、"
+           "grid_n 不动且无字段可举证（isochrone.py:157-185 vs :305）",
+)
+def test_sampling_should_disclose_the_effective_spec():
+    engine = IsochroneEngine()
+    iso = asyncio.run(engine.compute(CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=375))
+    spec = iso["sampling"]["spec"]
+    assert spec["fine_m"] in (None, 0), "375 点走的是单阶段粗网格，fine 带应声明为已放弃"
+    assert spec["grid_step_m"] >= spec["sample_step_m"], (
+        "插值格距必须不细于采样间距 —— 否则 IDW 在造没有测过的细节"
+    )

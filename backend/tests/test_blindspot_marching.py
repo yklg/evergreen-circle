@@ -84,7 +84,8 @@ def test_semantics_fields_present_and_type():
     assert 0.0 <= spot["gap_score"] <= 1.0
     assert isinstance(spot["center"], list) and len(spot["center"]) == 2
     assert isinstance(spot["fixes"], list) and all("priority" in f for f in spot["fixes"])
-    assert "菜市场" or "药店" or "小学" in (spot.get("missing_facilities") or []) or True
+    assert spot["missing_facilities"], "盲区必须点名缺失类"
+    assert "小学" in spot["missing_facilities"], "_produce_spot 的 primary 全域无点 ⇒ 必缺小学"
 
 
 def test_polygon_closed_and_geojson():
