@@ -1,22 +1,28 @@
-"""rev3 改造点的能力守卫测试（TDD 红 → 能力就绪后转绿）。
+"""rev3 改造点的能力守卫测试。
 
-区别于 test_quota/test_category_rule/test_poi_collector 的整文件 `importorskip`：
-这些目标（baidu_client / poi / request_guard / data_source）**模块已存在**，
-但 rev3 的具体能力（place_search 保留 tag/type + max_pages、to_points 单一排序键、
-CallGuard 熔断、cache 跳过 S8）**尚未落地**。故用「运行时能力探测 + pytest.skip」
-守卫：能力未就绪即 skip、不污染既有 705 全绿套件；能力落地后自动转真实断言。
+**本文件的形态变更（计划 v4 阶段 0-d）**：原来 5 条用例用「运行时能力探测 + `pytest.skip`」
+守卫，理由是 rev3 的能力（place_search 保留 tag/type + max_pages、to_points 单一排序键、
+CallGuard 总量熔断）尚未落地。实测**这五项都已接线**：
+`baidu_client.py:138` 传 `max_total_calls=quota.total_calls_hard_ceiling()`、
+`poi_collector.py:411/486/510` 逐处显式传 `max_pages`、`to_points` 的排序键含 `_confidence`。
+于是那 5 个 skip 从「防污染套件」变成了**空转守卫** —— 能力若被回退，它们不会红，只会
+继续 skip（这正是 skip 形态的固有代价）。故全部转为真实断言，删除能力探测。
+
+同批修掉本文件的一处假绿：`test_to_points_prefers_high_confidence_same_distance`
+原先以 `assert True` 收尾（"能力存在性已由 src 检查守护"）—— 源文本里出现一个词并不等于
+排序真的按它发生，现在改为对产出点位排序。
 """
 import asyncio
 import inspect
 
 import httpx
-import pytest
 
 from app.living_circle.baidu_client import BaiduClient
 from app.living_circle.caliber import get_caliber
 from app.living_circle.geo_utils import xy_to_lnglat
 from app.living_circle.poi import to_points
 from app.living_circle.request_guard import CallGuard
+from app.living_circle.scope import SpatialScope
 
 CENTER = (107.9758, 26.5734)
 WALKING_CHUNK = get_caliber("walking").api.chunk
@@ -29,15 +35,23 @@ def _src(fn) -> str:
         return ""
 
 
+def _square(half: float):
+    """以 CENTER 为中心的 ±half 米方环（与 `test_poi.py` 同一手法造 scope）。"""
+    return [xy_to_lnglat(CENTER, dx, dy) for dx, dy in
+            ((-half, -half), (half, -half), (half, half), (-half, half))]
+
+
+def _scope(ring, *, reach_min: float = 20.0, study_radius_m: float = 2500.0) -> SpatialScope:
+    zone = {"minutes": reach_min, "geojson": {"type": "Polygon", "coordinates": [[list(p) for p in ring]]}}
+    return SpatialScope.from_reach_zone(
+        get_caliber("walking"), CENTER, study_radius_m, zone
+    )
+
+
 # ── place_search：保留 tag / detail_info.type（S8 来源三）─────────────
 
 def test_place_search_preserves_tag_and_type():
-    import app.living_circle.baidu_client as bc
-
-    src = _src(bc.BaiduClient.place_search)
-    if "detail_info" not in src and ".get(\"tag\"" not in src and ".get('tag'" not in src:
-        pytest.skip("place_search 尚未保留 tag/detail_info.type（rev3 §四C）")
-
+    """rev3 §四C 已接线：`tag` 与 `detail_info.type` 必须原样交回采集侧。"""
     payload = {
         "status": 0,
         "results": [
@@ -55,17 +69,14 @@ def test_place_search_preserves_tag_and_type():
         return httpx.Response(200, json=payload)
 
     c = BaiduClient(ak="t", transport=httpx.MockTransport(handler), guard=CallGuard(min_interval_s=0))
-    item = asyncio.run(c.place_search("菜市场", CENTER))
-    assert item and item[0]["tag"] == "菜市场"
-    assert item[0]["type"] == "农贸市场"
+    out = asyncio.run(c.place_search("菜市场", CENTER, radius_m=2000))
+    assert out.items and out.items[0]["tag"] == "菜市场"
+    assert out.items[0]["type"] == "农贸市场"
 
 
 def test_place_search_accepts_max_pages_param():
-    import app.living_circle.baidu_client as bc
-
-    sig = inspect.signature(bc.BaiduClient.place_search)
-    if "max_pages" not in sig.parameters:
-        pytest.skip("place_search 尚未支持 max_pages（rev3 §四C）")
+    """rev3 §四C：页深由调用方决定，默认 3 保向后兼容。"""
+    sig = inspect.signature(BaiduClient.place_search)
     assert sig.parameters["max_pages"].default == 3  # 向后兼容默认 3 页
 
 
@@ -79,32 +90,34 @@ def test_to_points_sort_key_includes_confidence():
 
 
 def test_to_points_prefers_high_confidence_same_distance():
-    """同可达同距中心时，高置信点应排前（confidence 作为第三键生效）。"""
-    src = _src(to_points)
-    if "confidence" not in src:
-        pytest.skip("to_points 尚未并入 confidence 排序键（rev3 §四E）")
-    # 构造两个距中心几乎同距、耗时同为 None 的点，高置信应更靠前
-    p_lo = {**_ll(100, 0), "name": "低置信", "tag": "", "type": "", "_confidence": 0.3}
-    p_hi = {**_ll(101, 0), "name": "高置信", "tag": "", "type": "", "_confidence": 0.9}
-    # 若能力已落地，此处应能稳定排序（占位断言由实现细化）
-    assert True  # 能力存在性已由上述 src 检查守护；排序实现细节由 category_rule 落地后细化
+    """同可达、同耗时空缺时，高置信点必须排在前 —— confidence 是生效的第三键。
+
+    两点相距 1m 且**低置信先入列**：若排序只吃输入序或只吃距离，低置信都会在前，
+    于是本用例真正判别的是「第三键有没有接上」，而不是源文本里有没有那个词。
+    """
+    per_cat = {
+        "market": [
+            {**_ll(100, 0), "name": "低置信点", "_confidence": 0.3},
+            {**_ll(101, 0), "name": "高置信点", "_confidence": 0.9},
+        ],
+    }
+    out = to_points(per_cat, {"market": [None, None]}, _scope(_square(1500.0)), CENTER)
+    names = [p["name"] for p in out.points if p["category"] == "market"]
+    assert names[0].startswith("高置信"), (
+        f"同距离下 confidence 没有参与排序 ⇒ 点位回到「按输入序/按名字挑」：{names}"
+    )
 
 
 # ── CallGuard：max_total_calls 总量熔断（rev3 §四G / v3 §3.5）────────
 
 def test_callguard_accepts_max_total_calls():
+    """rev3 §四G 已接线：默认 0 = 不启用（向后兼容），显式传值才开启总量熔断。"""
     sig = inspect.signature(CallGuard.__init__)
-    if "max_total_calls" not in sig.parameters:
-        pytest.skip("CallGuard 尚未支持 max_total_calls 熔断（rev3 §四G）")
-    # 默认 0 = 不启用总量熔断（向后兼容）；显式传值才开启
     assert sig.parameters["max_total_calls"].default == 0
 
 
 def test_callguard_meltdown_blocks_on_budget_exhausted():
     """累计调用达到预算上限 → 总量熔断置位（total_meltdown），不再发请求、返回 None。"""
-    sig = inspect.signature(CallGuard.__init__)
-    if "max_total_calls" not in sig.parameters:
-        pytest.skip("CallGuard 尚未支持总量熔断（rev3 §四G）")
     calls = {"n": 0}
 
     async def work():

@@ -28,17 +28,19 @@ import copy
 import datetime as _dt
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
 from app.living_circle.blindspot import TRIAD_LABEL, find_blindspots_with_stats
-from app.living_circle.caliber import get_caliber
+from app.living_circle.caliber import facility_merge_enabled, get_caliber
+from app.living_circle.facility_rule import FACILITY_MERGE_M, FACILITY_RULE_VERSION
 from app.living_circle.geo_utils import point_in_ring, ring_area_km2, to_local_xy
 from app.living_circle.isochrone import idw_for_points
 from app.living_circle.poi import (
     POI_CAP_PER_CAT,
     PoiConservationError,
+    backfill_nearest_minutes,
     check_poi_conservation,
     derive_stats_from_points,
     to_points,
@@ -92,6 +94,7 @@ def build_poi_block(
     scope: SpatialScope,
     center: tuple,
     stats: List[Dict[str, Any]],
+    poi_merged: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
     """`poi` 段的**唯一出口**（计划 §6 阶段 1.1/1.2）—— 报告里所有 POI 数字只在这里成型。
 
@@ -127,6 +130,15 @@ def build_poi_block(
             "cap_per_cat": POI_CAP_PER_CAT,
             "dropped": sum(int(t["dropped"]) for t in out.truncated),
             "categories": out.truncated,
+        },
+        # 设施实体归并披露（阶段「已定口径 5」）：逐类 absorbed，**字段恒存在**。
+        # 归并是「少输出」型操作，且守恒不变量对它完全免疫（老数字自洽地虚高着 8 个 ATM），
+        # 所以这条披露是「合掉了几处」的唯一可见凭据 —— 与 `truncated` 同一套不得静默的纪律。
+        "merged": {
+            "rule_version": FACILITY_RULE_VERSION,
+            "enabled": facility_merge_enabled(),
+            "absorbed": sum(int(m["absorbed"]) for m in poi_merged),
+            "categories": list(poi_merged),
         },
     }
     issue = check_poi_conservation(block)
@@ -186,6 +198,18 @@ def _affected_for(ring: Any, center: tuple, sample_pts: List[Dict[str, Any]]) ->
     }
 
 
+def _judged_share(blind_stats: Mapping[str, int]) -> Optional[float]:
+    """判定覆盖率 = 已判定格 / 可达区内格。无判定格（`cells_inside == 0`）⇒ ``None``。
+
+    交给评分的是**比例**而不是格数：格数随格距与场景大小变化，比例才是「这次判了多少面」
+    的可比量。`None` 表示覆盖率无从谈起，评分据此退回按条数扣分（不猜、不放大）。
+    """
+    inside = int(blind_stats.get("cells_inside", 0) or 0)
+    if inside <= 0:
+        return None
+    return int(blind_stats.get("cells_judged", 0) or 0) / float(inside)
+
+
 def assemble_living_circle(
     check: Any,
     iso: Dict[str, Any],
@@ -194,6 +218,7 @@ def assemble_living_circle(
     scope: SpatialScope,
     data_origin: str = "live",
     intake_meta: Optional[Dict[str, Any]] = None,
+    poi_merged: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
     """由阶段产物组装 ``LivingCircleReport``（对齐前端 F0 契约）。
 
@@ -215,33 +240,44 @@ def assemble_living_circle(
 
     # ── 类别统计（「圈内」= 可达区，由 scope 唯一决定）──────────────
     stats = to_stats(per_category, triads, scope, center)
+
+    def field_fn(pt: tuple) -> Optional[float]:
+        # 「可达」只有一个判据：**落在可达区多边形内** 且 **实测耗时 ≤ reach_min**。
+        # 只卡时间会漏 —— IDW 是平滑插值场，而 20min 等时圈是按同一场描边+简化出来的，
+        # 凹口处会出现「场值 19.9min 却在多边形外」的点 ⇒ 报告里同时写「圈内 0 处」和
+        # 「最近 19.9 分钟」（2026-09-27 重刷劲松时现形：elderly total=2 / in_circle=0 /
+        # min_minutes=19.9，即计划 G1 那条 oracle 要抓的东西）。
+        # 以多边形为准是因为它才是 `in_circle`、`poi.points` 与契约 B3/B4 的共同权威；
+        # 反过来让 `in_circle` 跟时间走，会直接破坏「送达点位 ⊆ 可达区」这条几何契约。
+        if not point_in_ring((float(pt[0]), float(pt[1])), scope.reach_ring):
+            return None
+        xy = np.array([to_local_xy(center, pt[0], pt[1])])
+        v = idw_for_points(sample_xy, sample_minutes, xy)[0]
+        # 口径来自 scope（旧实现硬编码 get_caliber("walking")，忽略 travel_mode → 骑行/驾车场景口径错）
+        return None if v is None or v > scope.reach_min else v
+
     times_by_cat: Dict[str, List[Optional[float]]] = {}
     for s in stats:
         items = per_category.get(s["category"], [])
         if not items:
             continue
         query = np.array([to_local_xy(center, it["lng"], it["lat"]) for it in items])
-        times = idw_for_points(sample_xy, sample_minutes, query)
-        times_by_cat[s["category"]] = times
-        paired = [(t, it) for t, it in zip(times, items) if t is not None]
-        if paired:
-            best_t, best_it = min(paired, key=lambda x: x[0])
-            s["min_minutes"], s["nearest_name"] = best_t, best_it.get("name") or s.get("nearest_name")
-        else:
-            s["min_minutes"] = None
+        times_by_cat[s["category"]] = idw_for_points(sample_xy, sample_minutes, query)
 
-    def field_fn(pt: tuple) -> Optional[float]:
-        xy = np.array([to_local_xy(center, pt[0], pt[1])])
-        v = idw_for_points(sample_xy, sample_minutes, xy)[0]
-        # 口径来自 scope（旧实现硬编码 get_caliber("walking")，忽略 travel_mode → 骑行/驾车场景口径错）
-        return None if v is None or v > scope.reach_min else v
+    # 「最近 X 分钟」的唯一生产者 = `backfill_nearest_minutes`，且必须过 `field_fn` 的可达封顶。
+    # 旧实现在上面的循环里直接从 `times` 取最小值赋给 stats —— `per_category` 是**采集口径**
+    # （含圈外点），于是圈外设施能定出「最近」，把评分的可达维度算错（jinsong 夹具里
+    # `elderly in_circle=0` 却带 `min_minutes=19.9` 即此缺陷现形）。采集半径一旦外扩，
+    # 该越界会同步放大 ⇒ 封顶谓词与三要素卡（`triad_from_points`）必须同源。
+    backfill_nearest_minutes(stats, per_category, field_fn)
 
     def full(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [{"lng": it["lng"], "lat": it["lat"], "name": it.get("name", "")} for it in items]
 
     # ── POI 段：唯一出口（阶段 1.1）。**必须在 compute_scores 之前**：
     #    build_poi_block 会就地收敛 stats 的 in_circle/coverage，评分读的正是这两个字段。
-    poi_block = build_poi_block(per_category, times_by_cat, scope, center, stats)
+    #    （`derive_stats_from_points` 明确不动 min_minutes/nearest_name，故封顶结果存活。）
+    poi_block = build_poi_block(per_category, times_by_cat, scope, center, stats, poi_merged)
 
     triads_conclusion = triad_from_points(
         full(triads.get("market", [])),
@@ -258,12 +294,31 @@ def assemble_living_circle(
     for b in blindspots:
         b["reach"] = _reach_for(tuple(b["center"]), field_fn, b)
         b["affected"] = _affected_for(_ring_of(b), center, sample_pts)
-    scores = compute_scores(stats, triads_conclusion, len(blindspots))
+    scores = compute_scores(
+        stats,
+        triads_conclusion,
+        len(blindspots),
+        judged_share=_judged_share(blind_stats),
+        evidence_complete=bool(scope.evidence_complete),
+    )
 
     # ── 口径举证（唯一实现；含本次实测的空间量，便于回答「盲区为什么只有这么大」）──
     caliber = get_caliber(check.travel_mode)
     caliber_report = scope.payload(caliber, blind_stats)
     caliber_report["sample_profile"] = check.sample_profile
+    # 设施归并的**回溯凭据**：点位名可能已被升格改写（`中国建设银行24小时自助银行(X支行)`
+    # → `中国建设银行(X支行)`），与百度原始 POI 名不再逐字一致。没有这段说明，报告里
+    # 的名字就对不上数据源，答辩时无法举证。条数披露在 `poi.merged`，此处只记口径本身。
+    caliber_report["facility_merge"] = {
+        "rule_version": FACILITY_RULE_VERSION,
+        "enabled": facility_merge_enabled(),
+        "merge_radius_m": FACILITY_MERGE_M,
+        "triad_channel_policy": "geometric",
+        "name_promotion": (
+            "同一设施的 24 小时自助/个贷中心/门诊/出入口等子点并入主点，"
+            "组内无主点时以机构主体名升格为代表名并标注所含职能"
+        ),
+    }
 
     return {
         "scene": {

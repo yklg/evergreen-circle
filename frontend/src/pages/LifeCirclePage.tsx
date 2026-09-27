@@ -50,6 +50,8 @@ import {
   gapScoreOf,
   blindspotCoverageBrief,
   blindspotCoverageNote,
+  confidenceBadgeLabel,
+  staleCaliberNotice,
   emptyBlindspotNote,
   poiConservationNote,
   poiMetricLabel,
@@ -771,9 +773,25 @@ export default function LifeCirclePage() {
             <StatRow label="15min 等时圈面积" value={`${(report.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`} highlight={isoHoverMinutes === 15} />
             <StatRow label="服务盲区" value={`${report.blindspots.length} 处`} />
             {/* 阶段 −1.5：判盲覆盖度必须与盲区数同屏。只写「0 处」会被读成「全圈都没问题」，
-                实际 kaili 只有 9/72 格被判定过（87.5% 数据不足未判）。 */}
+                实际 kaili 只有 9/72 格被判定过（87.5% 数据不足未判）。
+                rev2 · D-3：证据不足时综合评分已按覆盖率打折，脚注同时升为 warn 色并挂降档徽标
+                —— 灰字只说明「判了多少」，读者仍会把「0 处盲区」当结论；徽标说的是「所以这个数
+                偏乐观」。旧口径快照没有 confidence ⇒ 徽标不出现（不是猜成 full），脚注照旧。 */}
             {blindspotCoverageBrief(report) && (
-              <p className="mt-1 text-tag text-ink-3">{blindspotCoverageBrief(report)}</p>
+              <p
+                className={`mt-1 text-tag ${
+                  confidenceBadgeLabel(report) ? 'font-medium text-warn' : 'text-ink-3'
+                }`}
+              >
+                {blindspotCoverageBrief(report)}
+                {confidenceBadgeLabel(report) && (
+                  <span className="ml-1.5 rounded-chip bg-warn/10 px-1.5 py-0.5">{confidenceBadgeLabel(report)}</span>
+                )}
+              </p>
+            )}
+            {/* D-4：判盲口径升级前的历史报告仍是用户的数据（不隐藏），但必须说明它偏乐观 */}
+            {staleCaliberNotice(report) && (
+              <p className="mt-1 text-tag font-medium text-warn">{staleCaliberNotice(report)}</p>
             )}
             
             {/* R2/R6：口径举证对象 */}

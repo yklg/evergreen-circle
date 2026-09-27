@@ -61,6 +61,31 @@ def test_u2_3_no_comparable_score():
     assert r["scores"]["radar"] == []
 
 
+def test_offline_report_missing_evidence_keys_is_not_a_violation():
+    """离线骨架不带证据相 ⇒ 契约三条必须**整体跳过**（缺键 ≠ 违规）。
+
+    为什么不给它补键：离线态没有实测采集半径可谈，硬造 `evidence_*` 就是把「没采集」
+    洗成「采集齐了」。而 B5/B10/B11 的门禁挂在 `scope_policy_version` 上，正是为了让
+    「无网络时的诚实降级」不被判成脏数据 —— 否则读路径会把离线骨架一起隐藏（P0-2 的老账）。
+    """
+    from app.living_circle.report_contract import assess_geometry, report_is_presentable, reuse_policy
+    from app.living_circle.scope import SCOPE_POLICY_VERSION
+
+    r = _compute()
+    cal = r["caliber"]
+    # 前提守卫：这份报告**真的**缺整套证据键（若哪天离线也发版本，本用例要重指判据）
+    assert SCOPE_POLICY_VERSION not in cal, "离线骨架开始声明口径版本 ⇒ 本用例判据需重指"
+    for k in ("evidence_margin_m", "evidence_radius_m", "evidence_complete", "judge_radius_m"):
+        assert k not in cal, f"离线报告出现 {k} ⇒ 「没采集」被伪装成「已举证」"
+
+    assert assess_geometry(r).violations == (), assess_geometry(r).reason
+    assert report_is_presentable(r) is True
+    # 复用门只管 live 载荷冒充新答案；离线骨架不受版本约束（它的可用性由 presentability 管）
+    assert reuse_policy(r) == (True, "")
+    # 前端拿到的是「没有置信度」而不是「置信度=full」：缺键必须一路缺到展示层
+    assert r["scores"].get("confidence") is None
+
+
 def test_u2_4_poi_empty_and_marked():
     r = _compute()
     assert r["poi"] == {"categories": [], "total": 0, "in_circle": 0, "points": []}

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>取证 · 词云分层渲染（评价词大字 + 话题词小灰字）</title>
+<style>
+  :root {
+    --bg:#f6f8f7; --card:#fff; --ink:#1d211f; --ink2:#5b6560; --ink3:#98a29d;
+    --line:#e3e8e5; --warn:#8a6420;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { background:var(--bg); font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif; color:var(--ink); line-height:1.6 }
+  .topbar { position:sticky; top:0; z-index:50; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.8; margin-top:2px }
+  .wrap { max-width:1240px; margin:0 auto; padding:16px 20px 60px }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:13px }
+  .box b { color:var(--warn) }
+  #status { color:var(--ink3); font-size:12px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px }
+  .card h2 { font-size:14px; margin-bottom:8px }
+  .note { font-size:12px; color:var(--ink2); margin-top:8px }
+  table.cmp { border-collapse:collapse; margin-top:6px; font-size:12px }
+  table.cmp th, table.cmp td { border:1px solid var(--line); padding:3px 8px; text-align:left }
+  table.cmp th { background:#fafcfb; font-weight:600 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>词云分层渲染 · 改前/改后整页取证</h1>
+    <div class="sub">
+      报告页「三、全网舆情 · 全网口碑热词词云」的改动预览（计划步骤 7）。
+      载荷由 <b style="color:#ffd9a0">本机实跑后端</b> 产出，不是手编样例；
+      三列共用同一渲染栈，只有布局归一与配色解析两处不同。
+    </div>
+  </div>
+  <div class="wrap">
+    <div id="status">加载中…</div>
+    <div id="probe"></div>
+  </div>
+  <script type="module" src="/src/dev/wordcloudTierProbe.tsx"></script>
+</body>
+</html>

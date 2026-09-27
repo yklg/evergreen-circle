@@ -5,6 +5,7 @@ import { fetchReport } from '../lib/api'
 import MetricsStrip from '../components/MetricsStrip'
 import { VChart } from '../components/VChart'
 import { BRAND } from '../lib/brand'
+import { pickSlideChart } from '../lib/slideChart'
 import type { Report } from '../types'
 
 /**
@@ -194,7 +195,7 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
   const focus = firstOf(cfg.focus.ids)
   const insight = firstOf(cfg.insight.ids)
   const contrarian = sec('contrarian')
-  const chartSection = r.sections.find((s) => (s.charts?.length ?? 0) > 0)
+  const slideChart = pickSlideChart(r)
 
   const byType: Record<string, number> = {}
   r.evidence.forEach((e) => {
@@ -220,7 +221,7 @@ function buildPages(r: Report | null): ((() => ReactNode) | null)[] {
             <div className="mx-auto max-w-2xl">
               <MetricsStrip report={r} />
             </div>
-            {chartSection?.charts?.length ? <VChart spec={chartSection.charts[0]} height={200} /> : null}
+            {slideChart ? <VChart spec={slideChart} height={200} /> : null}
           </div>
         }
       />

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,11 +28,14 @@ from app.living_circle.geo_utils import haversine_m
 from app.living_circle.caliber import get_caliber, caliber_payload_key
 from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes
 from app.living_circle.degrade_policy import degrade_reason, degraded_block
+from app.living_circle.report_contract import reuse_policy
 from app.living_circle.repository import Repository
 from app.living_circle.scope import SpatialScope
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 _DEFAULT_CENTER = (107.9758, 26.5734)  # 最终兜底：凯里老街（演示样区）
+
+_logger = logging.getLogger(__name__)
 
 # 邻近缓存半径（O1/D9）：距既有实时中心 ≤500m 的新体检直接复用，零额度消耗。
 # 500m ≈ 一个街区尺度，覆盖「定位到我」的 GPS 抖动与同社区内微调中心。
@@ -43,16 +47,39 @@ async def load_poi(
     center: Tuple[float, float],
     radius_m: float,
     scope: Optional["SpatialScope"] = None,
-) -> Tuple[Dict[str, list], Dict[str, list]]:
+) -> "PoiCollection":
     """POI 采集（8 类 + 三要素）**全项目唯一实现** —— 门面，逻辑收敛到 `poi_collector.collect_poi`。
 
     ``radius_m`` 必须**由调用方从 :class:`SpatialScope` 取**（``scope.collect_radius_m``）：
     让「谁决定采集半径」保持编译期可见。预算由 `quota` 唯一来源导出；S8 扩词达标判定
     复用 ``scope`` 的圈内计数。未传 scope 时按离退出扩词（保留旧行为兼容）。
+
+    返回 :class:`PoiCollection`（点位 + 三要素 + **证据账目**）—— 第三个字段用 NamedTuple
+    承载而非塞进 dict，理由与 ``poi.PoiPointsOut`` 同构：举证无法被顺手丢掉。
     """
     from app.living_circle.poi_collector import collect_poi
 
     return await collect_poi(client, center, radius_m, scope=scope)
+
+
+def bind_evidence(scope: "SpatialScope", collected: "PoiCollection") -> "SpatialScope":
+    """把采集侧的**实测证据账目**绑进口径定格（「事后举证」相的唯一绑定点）。
+
+    唯一实现：live 分支与后台精报分支都走这里。两处各写一份换算，就会有一处漏绑 ——
+    而漏绑的形态是 ``evidence_radius_m is None`` ⇒ 判定退回「拿请求半径当证据半径」，
+    正是本轮要消灭的东西。故此处不留第二份。
+    """
+    from app.living_circle.poi_collector import PoiCollection  # noqa: F401  (类型提示用)
+    from app.living_circle.scope import TRIAD_KEYS
+
+    ev = collected.evidence
+    detail = ev.as_detail()
+    detail["truncated_terms"] = list(ev.truncated_terms)
+    return scope.with_evidence(
+        ev.triad_frontier_m(TRIAD_KEYS),
+        complete=ev.complete,
+        detail=detail,
+    )
 
 
 @dataclass
@@ -138,7 +165,12 @@ class LiveDataSource(DataSource):
         payload_key = self._scene_payload(params)
         cached = self.repo.get_report("live", payload_key)
         if cached is not None:
-            return cached
+            reusable, why = reuse_policy(cached)
+            if reusable:
+                return cached
+            # 旧口径缓存不得冒充本次体检的答案 ⇒ 落到下面的实时重算。
+            # 重算结果按**同一 payload 键**写回（`scene_key` 不变）⇒ 不产生第二条历史。
+            _logger.info("实时缓存命中但不可复用（%s）：%s", payload_key, why)
 
         center = params.center
         caliber = get_caliber(params.travel_mode)
@@ -155,6 +187,7 @@ class LiveDataSource(DataSource):
             study_radius_m=params.study_radius_m,
             mode=params.sample_profile,
             max_points=max_matrix_origins_for(params.travel_mode),
+            travel_mode=params.travel_mode,
         )
 
         # 2) 空间口径绑定：按 minutes 选可达区环（禁止 iso["isochrones"][-1] 按位置取环）
@@ -166,8 +199,10 @@ class LiveDataSource(DataSource):
         if degraded is not None:
             return degraded
 
-        # 3) POI 采集（半径唯一来自 scope.collect_radius_m）
-        per_category, triads = await load_poi(self.client, center, scope.collect_radius_m, scope=scope)
+        # 3) POI 采集（半径唯一来自 scope.collect_radius_m）+ 绑定实测证据
+        collected = await load_poi(self.client, center, scope.collect_radius_m, scope=scope)
+        per_category, triads = collected.per_category, collected.triads
+        scope = bind_evidence(scope, collected)
         degraded = await degrade_if_incomplete(
             per_category=per_category, params=params, guard=getattr(self.client, "guard", None),
         )
@@ -175,7 +210,7 @@ class LiveDataSource(DataSource):
             return degraded
 
         # 4) 组装（唯一实现，与 pipeline 共用）
-        report = assemble_living_circle(params, iso, per_category, triads, scope)
+        report = assemble_living_circle(params, iso, per_category, triads, scope, poi_merged=collected.merged)
         # 写缓存（「live 命名空间不装 offline 报告」由 `Repository.cache_report` 唯一拦截）
         self.repo.cache_report("live", payload_key, report)
         return report
@@ -212,7 +247,10 @@ class OfflineDataSource(DataSource):
             # 距离模型：直线距离 × 绕行系数 → 分钟（与 live 同源速度基准）
             return [hour_to_minutes(haversine_m(center, p) * caliber.detour_k, caliber.speed_m_per_min) for p in pts]
 
-        iso = await self.engine.compute(center, meter_fn, study_radius_m=params.study_radius_m, mode=params.sample_profile)
+        iso = await self.engine.compute(
+            center, meter_fn, study_radius_m=params.study_radius_m,
+            mode=params.sample_profile, travel_mode=params.travel_mode,
+        )
 
         # R2/R6：离线报告也增 caliber 举证对象
         caliber_report = {
@@ -280,22 +318,40 @@ class CachingDataSource(DataSource):
             params.scene_name, c, params.study_radius_m, params.sample_profile, params.travel_mode
         )
 
+    @staticmethod
+    def _reusable(hit: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """缓存命中过**复用门**；不可复用则视为未命中。
+
+        邻近分支同样必须过门：`find_recent_report_near` 走的是**键前缀扫 + 从值里读
+        `scene.center`**，所以「把版本加进缓存键」拦不住它 —— 只有读侧谓词拦得住。
+        """
+        if hit is None:
+            return None
+        reusable, why = reuse_policy(hit)
+        if not reusable:
+            _logger.info("缓存命中但不可复用：%s", why)
+            return None
+        return hit
+
     def peek(self, params: CheckParams) -> Optional[Dict[str, Any]]:
         """**单一缓存入口**（v5 E0/I1）：精确命中 → 邻近 500m 命中 → None。
 
         - 键构建与 `compute` 共用 `_payload`（D24：同参同键，唯一实现）；
+        - 两支命中都要过 :func:`reuse_policy`（口径版本门），不可复用视为未命中；
         - 命中时深度拷贝 + 标注 `served_from`（'cache' | 'nearby_cache'）+ `cached_at`，
           **不污染缓存原值**（调用方注入 team 等元数据不影响下次命中）；
         - 精确未命中才查邻近（`repo.find_recent_report_near`，SQL 预过滤 D25）；
           中心未解析（(0,0)）时跳过邻近（无意义且易误命中原点附近缓存）。
         """
         payload = self._payload(params)
-        hit = self.repo.get_report(self.data_mode, payload)
+        hit = self._reusable(self.repo.get_report(self.data_mode, payload))
         served_from = "cache"
         if hit is None:
             c = params.center or (0.0, 0.0)
             if c != (0.0, 0.0):
-                hit = self.repo.find_recent_report_near(self.data_mode, c, NEARBY_CACHE_M)
+                hit = self._reusable(
+                    self.repo.find_recent_report_near(self.data_mode, c, NEARBY_CACHE_M)
+                )
                 served_from = "nearby_cache"
         if hit is None:
             return None
@@ -436,6 +492,7 @@ async def refine_live_with_profile(
         study_radius_m=check.study_radius_m,
         mode=sample_profile,
         max_points=max_matrix_origins_for(check.travel_mode),
+        travel_mode=check.travel_mode,
     )
     caliber = get_caliber(check.travel_mode)
     scope, degraded = await scope_or_degrade(
@@ -444,14 +501,17 @@ async def refine_live_with_profile(
     )
     if degraded is not None:
         return degraded
-    per_category, triads = await load_poi(client, center, scope.collect_radius_m, scope=scope)
+    collected = await load_poi(client, center, scope.collect_radius_m, scope=scope)
+    per_category, triads = collected.per_category, collected.triads
+    scope = bind_evidence(scope, collected)
     degraded = await degrade_if_incomplete(
         per_category=per_category, params=check, guard=getattr(client, "guard", None),
     )
     if degraded is not None:
         return degraded
 
-    report_data = assemble_living_circle(check, iso, per_category, triads, scope)
+    report_data = assemble_living_circle(check, iso, per_category, triads, scope,
+                                         poi_merged=collected.merged)
     payload_key = caliber_payload_key(
         check.scene_name, center, check.study_radius_m, sample_profile, check.travel_mode
     )

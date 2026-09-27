@@ -127,9 +127,15 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
     if sentiment and "sentiment" in set(fields):
         if sentiment.get("sample_size"):
             extra += ("\n【舆情实测统计（唯一数据源，只能引用这些数字）】"
+                      "口径：`sample_size` 是**可核验用户口碑**条数（攻略/资讯/票务/交通查询页已剔除），"
+                      "`corpus_size` 才是检索到的相关条数，两者不得混用；"
+                      "`low_sample=true` 时只报计数、正文不得出现情感百分比。"
                       + json.dumps({
                           "sample_size": sentiment.get("sample_size"),
+                          "corpus_size": sentiment.get("corpus_size"),
+                          "low_sample": sentiment.get("low_sample"),
                           "overall": sentiment.get("overall"),
+                          "overall_count": sentiment.get("overall_count"),
                           "by_platform": sentiment.get("by_platform"),
                           "camps": [{"title": c.get("title"), "ratio": c.get("ratio")}
                                     for c in (sentiment.get("camps") or [])[:4]],
@@ -276,6 +282,11 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
         return {"paragraphs": [], "key_takeaway": "", "highlights": []}
 
     overall = sentiment.get("overall", {})
+    # 口径如实交代给 LLM：`sample_size` 是**可核验口碑**条数，不是检索条数。
+    # 不写清这点，LLM 会把「25 条相关内容」与「7 条口碑」混着编，好评率又变成猜的。
+    corpus = int(sentiment.get("corpus_size", 0) or 0)
+    low_sample = bool(sentiment.get("low_sample", False))
+    oc = sentiment.get("overall_count") or {}
     by_platform = sentiment.get("by_platform", {})
     camps = sentiment.get("camps", [])
     voices = sentiment.get("voices", [])
@@ -309,13 +320,22 @@ def _write_sentiment_narrative(query, destinations, sentiment: Dict[str, Any], m
                     "（如把个别吐槽写成『普遍宰客』），避免把少数/高热声音写成共识；\n"
                     "5) 开头必须交代真实样本规模与平台分布（来自给定统计，不得编造）；样本量偏小时如实在解读中点明"
                     "『样本有限、结论为方向性参考』，不得掩盖。\n"
+                    "6) 只统计『可核验用户口碑』条数，攻略/资讯/票务/交通查询页不在其中——引用样本量时必须用这个口径；"
+                    "给定统计若标注『只报计数』，正文里不得出现任何情感百分比。\n"
                     '输出 JSON（字段顺序固定：先结构、后正文）：'
                     '{"key_takeaway":"一句话核心口碑判断","highlights":["亮点1","亮点2"],"paragraphs":["段1","段2",...]}。只输出 JSON。'
                 )},
                 {"role": "user", "content": (
                     f"调研主题：{query}\n目的地：{'、'.join(destinations)}\n"
-                    f"真实样本量：{sample} 条带链接评论\n"
-                    f"整体情感占比：正面 {overall.get('pos',0)}% / 中性 {overall.get('neu',0)}% / 负面 {overall.get('neg',0)}%\n"
+                    f"检索到相关内容 {corpus or sample} 条，其中可核验用户口碑 {sample} 条（带链接）\n"
+                    + (
+                        f"整体情感计数（样本有限，只报计数、不得换算百分比）："
+                        f"正面 {oc.get('pos', 0)} / 中性 {oc.get('neu', 0)} / 负面 {oc.get('neg', 0)} 条\n"
+                        if low_sample else
+                        f"整体情感占比：正面 {overall.get('pos',0)}% / 中性 {overall.get('neu',0)}% / "
+                        f"负面 {overall.get('neg',0)}%\n"
+                    )
+                    +
                     f"平台分布：{plat_lines}\n"
                     f"观点阵营：\n{camp_lines}\n"
                     f"代表性真实原声：\n{voice_lines}"

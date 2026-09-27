@@ -27,6 +27,7 @@ from app.core.config import get_settings
 from app.living_circle.assemble import assemble_living_circle
 from app.living_circle.caliber import caliber_payload_key, get_caliber
 from app.living_circle.data_source import (
+    bind_evidence,
     CheckParams,
     degrade_if_incomplete,
     degrade_to_offline,
@@ -263,8 +264,17 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             report_data = cached_hit
             report_data["team"] = {"expert_ids": dispatch_ids, "reasons": dispatch_reasons}
 
-            # E2 幂等收尾（D19/D22）：复用既有 report_id，不重复落库
-            report_id = db.get_latest_report_id_for_scene(scene_key)
+            # E2 幂等收尾（D19/D22）：**只有精确命中**才复用既有 report_id —— 那时落库行与
+            # 服务出去的内容同源，复用 id 才等于「不重复落库」。
+            # ⚠️ 邻近命中不能走这条路：`find_recent_report_near` 服务的是**别的 scene_key**
+            # 的内容（同中心 ≤500m 的邻居），而 `get_latest_report_id_for_scene(scene_key)`
+            # 取的是**本次 scene_key** 的行 ⇒ 两者一旦配对，就是「展示新内容、DB 仍指旧行」。
+            # 实测代价：快照脚本按 done 里的 report_id 回读 DB，把一份史前载荷（sampling 还是
+            # `reachable` 字段、collect_margin=0）当成本次实跑结果写进了夹具。
+            report_id = (
+                None if served_from == "nearby_cache"
+                else db.get_latest_report_id_for_scene(scene_key)
+            )
             if report_id is not None:
                 db.mark_task_done(task_id, report_id)
                 yield _ev("message", {"stage": "report", "percent": STAGE_PERCENT["report"], "text": f"报告已签发（复用既有体检结果 · {served_from}）"})
@@ -273,8 +283,18 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report_data.get("title") or report_data.get("scene", {}).get("name", "生活圈体检")})
                 yield _ev("done", {"reportId": report_id, "report_id": report_id})
                 return
-            # 异常态：缓存有数据但落库缺失 → 兜底重算落库（D23：明确不走 replace_scene=True）
-            logger.warning("[living_circle] 缓存命中但落库缺失（异常态），兜底重算落库（不 replace_scene）：%s", scene_key)
+            # 走到这里有两种情形，都**必须把服务出去的内容落回本次 scene_key**（内容归位）：
+            #  ① 邻近命中 —— 内容来自邻居，本 scene_key 的旧行不是它（见上方 E2 说明）；
+            #  ② 精确命中但落库缺失（异常态，D23）。
+            # 与 miss 路径同构：`replace_scene=False`（不先删同场景其它行，存量历史按 D-4
+            # 继续可见）+ 落库后 `backfill` 到本次精确键 —— 否则每次复查都命中同一个邻居、
+            # 每次都长出一条新历史（`_report_id` 是随机 uuid，不是 scene_key 的确定函数）。
+            # 零百度调用：内容已在手上。
+            logger.info(
+                "[living_circle] 缓存命中需内容归位（served_from=%s，scene_key=%s）—— 按本次"
+                " scene_key 落库，不复用不相干的旧行 id",
+                served_from, scene_key,
+            )
             report_id, reason, report = _finalize_living_report(report_data, scene_key, replace_scene=False)
             if reason is not None:
                 msg = f"质检未通过：{reason}。请更换中心点或检查配额"
@@ -282,6 +302,9 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 yield _ev("error", {"stage": "audit", "code": "invalid_geometry", "message": msg})
                 yield _ev("done", {"reportId": None, "report_id": None, "status": "failed", "error": msg})
                 return
+            backfill = getattr(source, "backfill", None)
+            if backfill is not None:
+                backfill(check, report_data)
             db.mark_task_done(task_id, report_id)
             yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report["title"]})
             yield _ev("done", {"reportId": report_id, "report_id": report_id})
@@ -313,10 +336,15 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             lambda pts: live_client.measure_matrix(travel_mode, pts, center),
             study_radius_m=check.study_radius_m, mode=check.sample_profile,
             max_points=max_matrix_origins_for(travel_mode),
+            travel_mode=travel_mode,
         )
         n_timed = iso["sampling"]["timed_count"]
         n_in_reach = iso["sampling"]["in_reach_count"]
-        yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取"})
+        _spec = iso["sampling"]["spec"]
+        _degraded = "；**预算受限已降规格**：放弃边界加密带，插值格距 " \
+                    f"{_spec['grid_step_m']:g}m vs 采样间距 {_spec['sample_step_m']:g}m" \
+                    if _spec["degraded"] else ""
+        yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取{_degraded}"})
         yield _ev("evidence", {"stage": "measure", "evidence": {
             "evidence_id": f"ev-{task_id}-measure", "source_url": "live://measure", "source_type": "api_measure",
             "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_timed} 条耗时，其中 ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach} 条",
@@ -337,7 +365,10 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
 
         # collect：POI 采集（半径唯一来自 scope.collect_radius_m；不再硬编码 2000）
         if degraded is None:
-            per_category, triads = await load_poi(live_client, center, scope.collect_radius_m, scope=scope)
+            collected = await load_poi(live_client, center, scope.collect_radius_m, scope=scope)
+            per_category, triads = collected.per_category, collected.triads
+            # 绑定**实测证据边界**（事后举证相）⇒ 判盲可判定半径由采集事实决定，不由请求半径猜
+            scope = bind_evidence(scope, collected)
             # 采集中途熔断 ⇒ POI 非空但残缺，同样必须降级（架构评审 P1-2）
             degraded = await degrade_if_incomplete(per_category=per_category, params=check, guard=guard)
 
@@ -362,7 +393,9 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 2})
 
             # diagnose：统计/盲区/评分（确定性）—— 组装走全项目唯一实现
-            report_data = assemble_living_circle(check, iso, per_category, triads, scope, intake_meta=intake_meta)
+            report_data = assemble_living_circle(check, iso, per_category, triads, scope,
+                                                 intake_meta=intake_meta,
+                                                 poi_merged=collected.merged)
             # v5 E1：实时重算结果回填缓存（编排器不摸 repo/键，走数据源层 backfill）。
             # 「live 缓存不装 offline 报告」不再在此判 —— 该不变量的唯一出口是
             # `Repository.cache_report`（本分支只会是实时产物，且新入口也一并被拦住）。

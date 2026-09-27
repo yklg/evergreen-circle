@@ -12,7 +12,7 @@ import { ArrowLeftRight, ArrowUpRight, GitCompare, Inbox } from 'lucide-react'
 import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
-import { COMPARE_ROWS, compareDesc, planComparisonOverlay, poiConservationNote } from '../lib/livingCircle'
+import { COMPARE_ROWS, compareCaliberNotice, compareRows, planComparisonOverlay, poiConservationNote } from '../lib/livingCircle'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
 import LcMap from '../components/lifecircle/LcMap'
@@ -176,19 +176,13 @@ export default function ComparePage() {
   const names = useReal ? [cmp!.reports[0].scene.name, cmp!.reports[1].scene.name] : [a.title, b.title]
   const cards = useReal ? cmp!.reports : [ra, rb]
   /* 真实态的行由后端按**同一份行定义表**产出（一致性靠两侧测试读同一份契约夹具对齐）；
-     演示态由 `COMPARE_ROWS` 就地算。两模式**形状相同**，故不再有「a_value → av」这层改名。 */
+     演示态由 `compareRows()` 就地算 —— 两边**同一判据**，含 P0-3 的口径版本守卫
+     （两侧 `caliber.scope_policy_version` 不同时，「服务盲区 / 综合评分」的结论必须换成
+     「不可比」：旧口径只判了可达区一角的格，分差会被读成「社区不同」而不是「尺子换了」）。 */
+  const caliberNotice = cards.length >= 2 ? compareCaliberNotice(cards[0], cards[1]) : null
   const diffRows: LifeCircleCompare['diff'] = useReal
     ? cmp!.diff
-    : COMPARE_ROWS.map((def) => {
-        const na = def.num(cards[0])
-        const nb = def.num(cards[1])
-        return {
-          metric: def.key,
-          a_value: na,
-          b_value: nb,
-          desc: compareDesc(def, na, nb, names[0], names[1]),
-        }
-      })
+    : compareRows(cards[0], cards[1], names[0], names[1])
 
   /* R6.9：拆行把「圈内 POI」单列成一个数 —— 若不与拆行**同批**披露，图与数的矛盾就从
      「肉眼可见」变成「看不见」（症状转移）。文案直接调 poiConservationNote()，不新写一套。 */
@@ -208,6 +202,9 @@ export default function ComparePage() {
   const diffBlock = (
     <div className="h-full rounded-card border border-line bg-card p-5 shadow-card">
       <div className="mb-3 text-aux font-semibold text-ink">关键差异</div>
+      {caliberNotice && (
+        <p className="mb-3 rounded-chip bg-warn/10 px-3 py-2 text-tag font-medium text-warn">{caliberNotice}</p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-left">
           <thead>

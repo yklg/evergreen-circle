@@ -149,9 +149,18 @@ export interface Claim {
   claim_type?: 'fact' | 'opinion' | 'mixed'
 }
 
+/** 词云分层：`opinion` 评价词（大字、按极性着色）/ `topic` 话题词（地名等，小灰字垫背景）。 */
+export type WordKind = 'opinion' | 'topic'
+
+/** 情感极性（与后端 sentiment 三键、charts.SENTIMENT 同域）。 */
+export type Polarity = 'pos' | 'neg' | 'neu'
+
 export interface WordcloudWord {
   word: string
   weight: number
+  /** 缺席 = 本次之前的存量报告载荷 → 词云走单层渲染（与今天逐像素一致），不得前端补默认值。 */
+  kind?: WordKind
+  polarity?: Polarity
 }
 
 export interface ChartSpec {
@@ -234,13 +243,21 @@ export interface SentimentResult {
   overall_count?: { pos: number; neu: number; neg: number }
   by_platform: Record<string, { pos: number; neu: number; neg: number }>
   by_destination?: { destination: string; sample: number; pos: number; neu: number; neg: number }[]
-  /** (spot × platform) 双维聚合（M2c）：逐景点口碑小表/舆情卡数据源，spot_id 直引冻结实体 */
-  by_spot?: { spot_id: string; spot_name: string; sample: number; pos: number; neu: number; neg: number; by_platform: Record<string, number> }[]
+  /** (spot × platform) 双维聚合（M2c）：逐景点口碑小表/舆情卡数据源，spot_id 直引冻结实体。
+   *  `review_sample` = 该景点的可核验口碑条数（逐景点词云的出图门读它，不读 `sample`）。 */
+  by_spot?: { spot_id: string; spot_name: string; sample: number; review_sample?: number; pos: number; neu: number; neg: number; by_platform: Record<string, number> }[]
   timeline: { date: string; pos: number; neu: number; neg: number }[]
   camps: { title: string; ratio: number; summary: string; quotes: { text: string; url: string; platform?: string }[] }[]
   voices?: { platform: string; platform_label: string; text: string; sentiment: string; url: string; title?: string }[]
   highlights?: { phrase: string; platform: string; platform_label: string; sentiment: string; url: string }[]
+  /** 可核验用户口碑条数（本次之前生成的报告里它是「检索条数」，口径已收窄，故须与 corpus_size 并读）。 */
   sample_size: number
+  /** 检索到的相关语料条数；缺席 = 存量报告无此口径。 */
+  corpus_size?: number
+  /** 语料按文档类型的分布（review/guide/ticket_faq/flight/seo/news/chrome）。 */
+  doc_kind_counts?: Record<string, number>
+  /** true ⇒ 口碑样本偏小，情感占比一律降级为计数呈现（伪精度不上图）。 */
+  low_sample?: boolean
 }
 
 /* 目的地调研（guide/assess/research）扁平的确定性舆情聚合（research 流水线产出）：
@@ -308,25 +325,10 @@ export interface ReportMethodology {
   viral_evidence?: number
   viral_checked_ratio?: number
   sentiment_samples?: number
-  note?: string
-}
-
-/** v2.1 来源间存在分歧/矛盾的陈述 */
-export interface ReportContradiction {
-  claim_text: string
-  evidence_ids: string[]
-  note?: string
-}
-
-/** v2.1 方法论与局限披露 */
-export interface ReportMethodology {
-  window?: string
-  evidence_count?: number
-  unique_groups?: number
-  dup_skipped?: number
-  viral_evidence?: number
-  viral_checked_ratio?: number
-  sentiment_samples?: number
+  /** 舆情口径三件套（词云口碑化修复步骤 8）：缺席 = 本次之前的存量报告，只有旧口径 `sentiment_samples`。 */
+  sentiment_corpus?: number
+  sentiment_doc_kind_counts?: Record<string, number>
+  sentiment_low_sample?: boolean
   note?: string
 }
 
@@ -612,6 +614,28 @@ export interface PoiTruncation {
 }
 
 /**
+ * 设施实体归并披露：`poi.merged`。
+ *
+ * 同一实体设施的功能子点（24 小时自助银行 / 个贷中心 / 门诊 / 停车场 / 大门）被百度作为
+ * 独立 POI 返回，归并后每处设施只出一个点。`absorbed` 按**被吸收记录的身份**去重计数，
+ * 因此它是「报告里少掉了几个设施」，不是「判据命中了几次」。
+ *
+ * 字段恒存在于新报告；**归并上线前冻结的快照缺此键** ⇒ 消费方走 `poiDedupeRuleLabel()`
+ * 安全取值，不得无条件解构。守恒不变量对本字段完全免疫（老数字自洽地虚高着），
+ * 所以这条披露是「合掉了几处」的唯一可见凭据。
+ */
+export interface PoiFacilityMerge {
+  /** 判据版本（`facility_rule.FACILITY_RULE_VERSION`） */
+  rule_version: string
+  /** 本次报告是否在归并口径下产出 */
+  enabled: boolean
+  /** 因归并被吸收的设施总数（0 = 无归并） */
+  absorbed: number
+  /** 逐类明细，只含真的发生归并的类别 */
+  categories: { category: string; absorbed: number }[]
+}
+
+/**
  * POI 点数守恒自检结论（阶段 1.4）：`poi.conservation`。
  *
  * 不变量 `sum(categories[].in_circle) === points.length`。后端在装配出口自检：
@@ -748,6 +772,16 @@ export interface LifeCircleScores {
   triads: TriadFacility[]
   /** 评测说明/算法版本 */
   note: string
+  /* ── rev2 · D-3「证据不足必须影响结论」──
+     可选同理（旧快照与离线骨架没有）；读法一律走 `confidenceOf()` 安全取值。 */
+  /** 置信度：判定面不完整或证据不完整 ⇒ `limited`（盲区数偏乐观、扣分已按覆盖率外推） */
+  confidence?: 'full' | 'limited'
+  /** 扣分口径的证据链：`penalty_applied` 必须能由 (盲区数, judged_share) 复算 */
+  evidence?: {
+    judged_share: number | null
+    expected_blindspots: number
+    penalty_applied: number
+  }
 }
 
 /** 生活圈体检报告主体（挂载到 Report.living_circle） */
@@ -813,6 +847,28 @@ export interface LivingCircleReport {
     cells_judged?: number
     /** 其中**不可判定**的格数（数据不足，既不算有盲区也不算没盲区） */
     cells_unknown?: number
+    /* ── rev2 · 证据相（「实际查到哪儿」与「请求了多大」并列可查）──
+       全部可选：判盲口径升级**前**冻结的快照与离线骨架不带这些键。前端一律经
+       `lib/livingCircle.ts` 的安全取值读，**不得**无条件解构 —— 否则演示链（内嵌夹具
+       走的就是旧快照）会当场崩。缺键本身是信息：`staleCaliberNotice()` 据此给陈旧提示。 */
+    /** 判盲空间口径版本号（当前 `ev-1`）；缺 ⇒ 升级前的旧报告 */
+    scope_policy_version?: string
+    /** 采集证据余量 = 判定半径（由「判盲需要 1km 完整证据」导出，不是可填的名义值） */
+    evidence_margin_m?: number
+    /** **实测**证据边界（登记类逐类边界的最小值）；null ⇒ 本次没绑定实测证据 */
+    evidence_radius_m?: number | null
+    /** 逐类实测证据边界（菜市场 / 药店 / 小学各自查到哪儿） */
+    evidence_frontier_m?: Record<string, number>
+    /** 证据是否完整（false = 有词被单页截断 / 预算饿死 / 熔断） */
+    evidence_complete?: boolean
+    /** 证据边界的来源：`measured` 实测 / `unbound_geometric_fallback` 退回几何口径 */
+    evidence_bound_source?: string
+    /** 可判定半径 = 证据边界 − 判定半径（超出它的格只能标未判定） */
+    judge_radius_m?: number
+    /** 被单页上限截断的检索词（发了请求但没查全） */
+    evidence_truncated_terms?: string[]
+    /** 被预算拒绝、一次都没发的检索词（连边界都没有）—— 与截断**不是同一种缺陷** */
+    evidence_starved_terms?: string[]
   }
   isochrones: IsochroneZone[]
   sampling: {
@@ -839,6 +895,8 @@ export interface LivingCircleReport {
     points: PoiPoint[]
     /** 截断披露（阶段 1.3）；**历史快照缺此字段** ⇒ 消费方需容忍 */
     truncated?: PoiTruncation
+    /** 设施实体归并披露；**归并上线前冻结的快照缺此字段** ⇒ 走 `poiDedupeRuleLabel()` */
+    merged?: PoiFacilityMerge
     /** 守恒自检结论（阶段 1.4）；**历史快照缺此字段** ⇒ 走 `poiConservation()` 回算 */
     conservation?: PoiConservationMeta
   }

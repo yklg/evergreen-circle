@@ -44,6 +44,8 @@ import {
   scoreGrade,
   dataOriginBadge,
   blindspotCoverageNote,
+  confidenceBadgeLabel,
+  staleCaliberNotice,
   emptyBlindspotNote,
   samplingReach,
   poiConservationNote,
@@ -192,11 +194,30 @@ function jumpToSection(id: string) {
 /** 覆盖度脚注：只要存在未判定格，就必须写出来（否则盲区数会被读成「全貌」）。
  *
  * ⚠️ 判定与文案都来自 `lib/livingCircle`（体检台共用同一实现）——本组件不再自带一份，
- * 否则两处披露文案会各自漂移（旧版正是如此：报告页写了、体检台没写）。 */
+ * 否则两处披露文案会各自漂移（旧版正是如此：报告页写了、体检台没写）。
+ *
+ * rev2 · D-3：证据不足时综合评分已按判定覆盖率打折 ⇒ 该脚注从灰字升为 warn 色并挂降档
+ * 徽标。灰字只说「判了多少格」，读者仍会把「0 处盲区」当结论；徽标说的是「所以这个数
+ * 偏乐观」。旧口径快照没有 `scores.confidence` ⇒ 徽标不出现（不猜成 full），脚注照旧。 */
 function coverageNote(lc: LivingCircleReport) {
   const note = blindspotCoverageNote(lc)
   if (!note) return null
-  return <p className="mt-2 border-t border-line/60 pt-2 text-tag text-ink-3">{note}</p>
+  const badge = confidenceBadgeLabel(lc)
+  return (
+    <p className={`mt-2 border-t border-line/60 pt-2 text-tag ${badge ? 'font-medium text-warn' : 'text-ink-3'}`}>
+      {note}
+      {badge && <span className="ml-1.5 rounded-chip bg-warn/10 px-1.5 py-0.5">{badge}</span>}
+    </p>
+  )
+}
+
+/** 口径陈旧提示（D-4）：判盲口径升级前冻结的报告仍是用户的历史（不隐藏），但必须说明
+ *  「盲区数与综合评分偏乐观」。与 `coverageNote` 分开的理由：后者只在存在未判定格时出现，
+ *  而「尺子换过了」这件事与当次覆盖率无关。 */
+function caliberNote(lc: LivingCircleReport) {
+  const note = staleCaliberNotice(lc)
+  if (!note) return null
+  return <p className="mt-2 text-tag font-medium text-warn">{note}</p>
 }
 
 export default function LifeCircleReportView({ report }: { report: Report }) {
@@ -519,6 +540,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                 })}
               </div>
               {coverageNote(lc)}
+              {caliberNote(lc)}
             </div>
           ) : (
             <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
@@ -527,6 +549,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
               </div>
               <p className="text-tag text-ink-3">{emptyBlindspotNote(lc)}</p>
               {coverageNote(lc)}
+              {caliberNote(lc)}
             </div>
           )}
 

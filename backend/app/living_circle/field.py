@@ -20,14 +20,13 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.geo_utils import to_local_xy
+from app.living_circle.scope import BLIND_RADIUS_M, TRIAD_KEYS
 
-# 盲区判定半径（与 blindspot.BLIND_RADIUS_M 同源）
-BLIND_RADIUS_M = 1000.0
-
-# 必达设施三元组 —— 盲区语义的「口径单一事实源」。
-# 一个点判盲 ⟺ 任一必达类在该点 1km 内无设施（含该类整体为空/缺席）。
-# blindspot.TRIAD_LABEL 的键集合须与此一致（测试 test_field.py 固化该契约）。
-TRIAD_KEYS = ("market", "pharmacy", "primary")
+# 判定半径与必达要素登记表**不在此处定义**。
+# 旧版这里各写一份字面量，注释的理由是「与 `blindspot` 同源但不能 import —— `blindspot`
+# 已经 import 本模块，反向 import 会成环」。环是真的，但解法不该是复制口径：
+# 两者现在都从 `scope` 取（`scope` 在最底层，无环），`test_field.py` 固化的
+# 「TRIAD_LABEL 键集合 == TRIAD_KEYS」契约因此由**同一个来源**天然成立。
 
 
 class Field(ABC):

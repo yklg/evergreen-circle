@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core import llm, search
 from app.core.credibility import freshness_days, score_evidence
 from app.core.dedup import content_fingerprint
+from app.core.doc_kind import classify_doc
 from app.core.fetcher import domain_of
 from app.core.models import Evidence
 from app.core.platforms import PLATFORMS
@@ -576,7 +577,9 @@ async def _collect_spot_comments(spot_entities: List[Dict[str, Any]], platforms:
         if errs:  # 已确认欠费：一条即止，剩余任务不再烧检索
             buckets[(rank, pidx)] = []
             return
-        queries = [f"{spot_name} 真实评价{region_q}", f"{spot_name} 避坑 攻略{region_q}"]
+        # 两条查询都要口碑。旧写法第二条要「攻略」——而攻略页正是 doc_kind 会判成 guide
+        # 并排除出词云的那一类，等于自己往自己桶里灌将被丢弃的样本（查询条数不变，只换措辞）。
+        queries = [f"{spot_name} 真实评价{region_q}", f"{spot_name} 体验 吐槽{region_q}"]
         try:
             results = await asyncio.to_thread(search.multi_search, queries, num=per_take + 4,
                                               site=PLATFORMS[plat].search_site,
@@ -596,11 +599,14 @@ async def _collect_spot_comments(spot_entities: List[Dict[str, Any]], platforms:
             if not url or not text or not _name_hit(spot_name, f"{title} {text}"):
                 continue
             detected = _source_type(url)
+            doc_kind, _reasons = classify_doc(url, title, text)
             picked.append({
                 "text": text[:280], "url": url, "title": title,
                 "platform": plat if detected in ("web", "official", "news") else detected,
                 "destination": dest,
                 "spot_id": str(ent.get("spot_id") or ""), "spot_name": spot_name,
+                # 与目的地级同一判据（app.core.doc_kind），供逐景点词云分流
+                "doc_kind": doc_kind,
             })
         buckets[(rank, pidx)] = picked[:per_take]
 

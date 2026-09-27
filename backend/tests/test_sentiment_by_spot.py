@@ -83,12 +83,16 @@ def test_collect_spot_comments_filters_dedupes_and_orders(monkeypatch):
         q = queries[0]
         if "古城" in q:
             return [
-                {"url": "https://a1.example/x", "title": "大理古城夜游记", "snippet": "大理古城很好逛"},
-                {"url": "https://off.example/x", "title": "汽水音乐推荐", "snippet": "完全不相关"},
-                {"url": "https://dup.example/x", "title": "大理古城二刷", "snippet": "大理古城值得去"},
+                {"url": "https://a1.example/x", "title": "大理古城夜游记",
+                 "snippet": "大理古城很好逛，我去过一次还想再去，夜景真让人留恋。"},
+                {"url": "https://off.example/x", "title": "汽水音乐推荐",
+                 "snippet": "完全不相关的音乐推荐内容，平台热歌榜单每日更新，快来听。"},
+                {"url": "https://dup.example/x", "title": "大理古城二刷",
+                 "snippet": "大理古城值得去，这是我第二次来，住青旅很方便也很安静。"},
             ]
         if "洱海" in q:
-            return [{"url": "https://b1.example/x", "title": "洱海廊道骑行", "snippet": "洱海廊道风景好"}]
+            return [{"url": "https://b1.example/x", "title": "洱海廊道骑行",
+                     "snippet": "洱海廊道风景好，我骑车走了一下午，这是我今年最舒服的一次骑行。"}]
         return []
 
     monkeypatch.setattr(search, "multi_search", fake_multi_search)

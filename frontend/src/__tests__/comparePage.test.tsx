@@ -11,7 +11,13 @@ import ComparePage from '../pages/ComparePage'
 import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
-import { COMPARE_ROWS, compareDesc } from '../lib/livingCircle'
+import {
+  CALIBER_GAP_DESC,
+  COMPARE_ROWS,
+  compareCaliberNotice,
+  compareDesc,
+  compareRows,
+} from '../lib/livingCircle'
 import type { LifeCircleRecord, LifeCircleCompare, LivingCircleReport } from '../types'
 
 vi.mock('../lib/api', () => ({
@@ -173,15 +179,32 @@ describe('ComparePage（演示态 · fixture）', () => {
     }
   })
 
-  it('演示态盲区行结论已修正（凯里 0 处 / 劲松 1 处 ⇒ 凯里老街盲区更少）', () => {
+  it('演示态差异表的结论句只有一个出口：与 compareRows() 逐字相同（页面不再自己判方向）', () => {
+    // 旧实现把显示串交给 `>` 走字典序：'0 处' > '1 处' 为 false ⇒「北京劲松盲区更少」= 事实相反。
+    // 方向判据本身由 `compareDiffContract.test.ts` 与后端 `test_compare_endpoint_blindspot_direction_*`
+    // 用自带载体守；本页只守「演示态与真实态共用同一出口」这一条架构约束 —— 出厂快照的
+    // 盲区数/口径代际会随重刷变化，页面断言不该挂在那上面。
+    const want = compareRows(
+      SAMPLE_COMMUNITIES[0].report,
+      SAMPLE_COMMUNITIES[1].report,
+      SAMPLE_COMMUNITIES[0].title,
+      SAMPLE_COMMUNITIES[1].title,
+    )
     render(
       <MemoryRouter>
         <ComparePage />
       </MemoryRouter>,
     )
-    // 旧实现把显示串交给 `>` 走字典序：'0 处' > '1 处' 为 false ⇒「北京劲松盲区更少」= 事实相反。
-    expect(screen.getAllByText('凯里老街盲区更少').length).toBeGreaterThan(0)
-    expect(screen.queryByText('北京劲松盲区更少')).toBeNull()
+    for (const row of want) {
+      expect(
+        screen.getAllByText(row.desc).length,
+        `差异表缺少 compareRows() 判出的『${row.metric}』结论「${row.desc}」`,
+      ).toBeGreaterThan(0)
+    }
+    // 出厂对目前版本错配（kaili 未声明 / jinsong ev-1）⇒ 顶部提示必须出现；同代际后自动收起
+    const notice = compareCaliberNotice(SAMPLE_COMMUNITIES[0].report, SAMPLE_COMMUNITIES[1].report)
+    if (notice) expect(screen.getAllByText(notice).length).toBeGreaterThan(0)
+    else expect(screen.queryByText(CALIBER_GAP_DESC)).toBeNull()
   })
 
   it('提供回到地图查看等时圈叠加的入口', () => {
@@ -313,20 +336,70 @@ describe('ComparePage（真实联调 · 手动选择 + 跨城呈现）', () => {
       </MemoryRouter>,
     )
     await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'j1']))
-    // A 胜：POI 采集 217>175 · 综合评分 68.7>65.3 · 服务盲区 0<1
+    // A 胜：POI 采集 217>206 · 综合评分 68.7>65.8
     await waitFor(() => expect(screen.getAllByText('A采集面更广').length).toBeGreaterThan(0))
     expect(screen.getAllByText('A更成熟').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('A盲区更少').length).toBeGreaterThan(0)
-    // B 胜：面积 1.56<1.76 · 可达采样点 126<162 · 圈内 POI 98<104
+    // B 胜：面积 1.56<1.76 · 可达采样点 126<162 · 圈内 POI 98<150
     expect(screen.getAllByText('B可达范围更大').length).toBeGreaterThan(0)
     expect(screen.getAllByText('B可达采样点更多').length).toBeGreaterThan(0)
     expect(screen.getAllByText('B可达设施更密').length).toBeGreaterThan(0)
-    // 凯里/劲松在这 6 项上没有一项相等 ⇒ 不应出现相等词
-    expect(screen.queryByText('持平')).toBeNull()
+    // ⚠️ 出厂快照现在两城实测盲区都是 0（ev-1 重刷后劲松的 1 处判没了）⇒ 这一行是**持平**，
+    //    方向判据改由下一条自带载体的用例守（挂在快照字面数值上，快照一重刷就失去判别样本）。
+    expect(screen.getAllByText('持平').length).toBe(1)
+    expect(screen.queryByText('A盲区更少')).toBeNull()
+    expect(screen.queryByText('B盲区更少')).toBeNull()
+  })
+
+  it('盲区行方向：0<1 与 1<0 双向都渲染得出来（自带载体，不依赖出厂快照的盲区数）', async () => {
+    // 负对照：盲区越小越好。若误用「大者胜」，a=0 b=1 会输出「B盲区更少」（事实相反）。
+    const withBlindspot: LivingCircleReport = {
+      ...jinsongReport,
+      blindspots: [
+        {
+          id: 'bs-方向载体-1',
+          center: jinsongReport.scene.center,
+          radius_m: 1000,
+          missing_facilities: ['菜市场'],
+          nearest: [{ facility: 'market', name: '载体', distance_m: 1450, direction: '正东' }],
+          polygon: {
+            type: 'Polygon',
+            coordinates: [[
+              [116.457, 39.879], [116.468, 39.879], [116.468, 39.887],
+              [116.457, 39.887], [116.457, 39.879],
+            ]],
+          },
+        },
+      ],
+    }
+    const empty = { ...jinsongReport, blindspots: [] }
+
+    mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('j1', '北京劲松', '北京朝阳')])
+    mockCompare.mockImplementation(() =>
+      Promise.resolve({ reports: [empty, withBlindspot], diff: diffOf([empty, withBlindspot]) }),
+    )
+    const first = render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getAllByText('A盲区更少').length).toBeGreaterThan(0))
+    expect(screen.queryByText('B盲区更少')).toBeNull()
+    first.unmount()
+
+    mockCompare.mockImplementation(() =>
+      Promise.resolve({ reports: [withBlindspot, empty], diff: diffOf([withBlindspot, empty]) }),
+    )
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getAllByText('B盲区更少').length).toBeGreaterThan(0))
+    expect(screen.queryByText('A盲区更少')).toBeNull()
   })
 
   it('R6.9 披露成对：守恒 ⇒ 不出现；Σ≠points ⇒ 必出现', async () => {
-    // ① 守恒（真实夹具天然守恒：kaili 98/98、劲松 104/104）⇒ 不出现
+    // ① 守恒（真实夹具天然守恒：kaili 98/98、劲松 150/150）⇒ 不出现
     mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('j1', '北京劲松', '北京朝阳')])
     const first = render(
       <MemoryRouter>

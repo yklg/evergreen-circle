@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -40,6 +41,7 @@ from app.living_circle.degrade_policy import (
     degraded_block,
     DEGRADE_REASON_QUOTA_EXHAUSTED,
     DEGRADE_REASONS,
+    degrade_detail,
     degrade_reason,
     degraded_block,
     detail_label,
@@ -574,3 +576,130 @@ def test_m11_history_item_carries_degraded():
     assert hit[0]["degraded"] == dg_block, (
         "历史列表丢了 degraded ⇒ 列表里「离线估算」分不清成因（R-7 q-3）"
     )
+
+
+# ── D1 · 降级分级（计划 v4 阶段 4）：T1 边界桩 + T2 挂账对 ─────────
+
+def test_d1_isochrone_branch_is_independent_of_guard_branch():
+    """C2（T1 · 今日即绿）· 触发条件的两条分支必须互相独立，且成因在 `detail` 里不混。
+
+    D1 要把「取证配额耗尽」从触发条件里摘出去（改标 `partial`）。本用例锁住**摘的是哪一条**：
+    等时圈缺失是建制级失败（没有可达区就没有判定面），**不许**跟着松动。
+    同时锁住 `detail` 的成因可分辨性 —— `reason` 是闭集单值（K11），分级路由只能靠 `detail`。
+    """
+    clean = SimpleNamespace(total_meltdown=False, budget_exhausted=False, stats=SimpleNamespace(quota_hits=0))
+
+    # ① 等时圈缺失：guard 再干净也必须降级
+    assert degrade_reason(clean, has_isochrones=False, has_poi=True) == DEGRADE_REASON_QUOTA_EXHAUSTED
+    # ② guard 中止、数据齐：今日仍降级（D1 要改的是这一条，见下方挂账对）
+    melted = SimpleNamespace(total_meltdown=True, budget_exhausted=False, stats=SimpleNamespace(quota_hits=1))
+    assert degrade_reason(melted, has_isochrones=True, has_poi=True) == DEGRADE_REASON_QUOTA_EXHAUSTED
+    # ③ 两条都不触发 ⇒ None（不许因为「有抖动痕迹」就降级，那是 M4 防的过度降级）
+    assert degrade_reason(clean, has_isochrones=True, has_poi=True) is None
+    # ④ 成因在 detail 里各归各，且都能翻成中文标签
+    assert degrade_detail(clean, isochrone_empty=True) == "isochrone_empty"
+    assert degrade_detail(melted) == "total_meltdown"
+    assert degrade_detail(SimpleNamespace(total_meltdown=False, budget_exhausted=True,
+                                         stats=SimpleNamespace(quota_hits=0))) == "daily_budget_exhausted"
+    assert detail_label("isochrone_empty") == "测时失败"
+    assert detail_label("total_meltdown") == "总量熔断"
+    # 未知取值回落而不抛（前端拿到的永远是可读文案）
+    assert detail_label("forensic_cap") == DETAIL_LABELS["unknown"]
+    assert degrade_reason(melted, has_isochrones=True, has_poi=True) in DEGRADE_REASONS
+
+
+class _ForensicCapGuard:
+    """guard 桩：**取证**配额耗尽（数据本身够用作活报告）与网络建制级失败无从区分。
+
+    这正是 D1 缺的那个区分位 —— 桩上没有任何字段能让 `degrade_policy` 把两者分开。
+    """
+
+    total_meltdown = True          # 今日唯一的中止信号
+    budget_exhausted = False
+    stats = SimpleNamespace(quota_hits=1)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="D1 分级降级待落地（计划 v4 阶段 4）：取证配额耗尽目前会把一份"
+           "「等时圈真测时 + POI 非空」的 live 报告整份打回离线 detour_k 正圆",
+)
+def test_d1_forensic_quota_exhaustion_keeps_live_report():
+    """C1（T2 挂账）· 取证配额耗尽应是「部分完成」，不是「整份不可信」。"""
+    assert degrade_reason(_ForensicCapGuard(), has_isochrones=True, has_poi=True) is None, (
+        "取证侧主动收手 ≠ 数据残缺；降级后报告里既没有盲区、等时圈又退成正圆，"
+        "等于用「一定不出错」换掉了「本来已经算出来的东西」"
+    )
+
+
+def test_d1_current_guard_abort_degrades_whole_report_regardless_of_data():
+    """C1 的配偶 · **现状记录**：今天只要 guard 中止，数据再齐也整份降级。
+
+    写成判据是为了 D1 落地时**必须**把这条打红并显式回答「哪些中止仍算完整」。
+    直接删掉它 = 把一个未经复核的降级语义留在原地。
+    """
+    assert degrade_reason(_ForensicCapGuard(), has_isochrones=True, has_poi=True) \
+        == DEGRADE_REASON_QUOTA_EXHAUSTED
+
+
+def _thin_evidence_scope(bound_m: float):
+    """三类实测证据边界都短于判定半径的口径 ⇒ 每格的 1km 圆都查不全（永不可判）。
+
+    对应活管线里「百度单页 20 条 × 页深 3 = 60 条封顶」把稠密类卡住的真实形状
+    （`capability_manifest.json` 凯里药店实测：60 条 / 3 页才穷尽 / 单页最远 1754.5m）。
+    """
+    from app.living_circle.caliber import get_caliber
+    from app.living_circle.geo_utils import xy_to_lnglat
+    from app.living_circle.scope import TRIAD_KEYS, SpatialScope
+
+    ring = [
+        xy_to_lnglat(KAILI_CENTER, -1000, -1000),
+        xy_to_lnglat(KAILI_CENTER, 1000, -1000),
+        xy_to_lnglat(KAILI_CENTER, 1000, 1000),
+        xy_to_lnglat(KAILI_CENTER, -1000, 1000),
+    ]
+    zone = {"minutes": 20.0, "geojson": {"type": "Polygon", "coordinates": [[list(p) for p in ring]]}}
+    scope = SpatialScope.from_reach_zone(get_caliber("walking"), KAILI_CENTER, 2500.0, zone)
+    scope = scope.with_evidence({k: float(bound_m) for k in TRIAD_KEYS}, complete=False)
+    scope.invariant()
+    return scope
+
+
+def _all_blind_triads():
+    """三要素一个都不给 ⇒ 可判格必然判盲，永不可判格才是本用例关心的那批。"""
+    return {"market": [], "pharmacy": [], "primary": []}
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="D1③/三态待落地：`cells_unjudgeable_by_cap`（百度 60 条封顶导致永不可判）"
+           "目前被 `cells_unknown` 吸收 ⇒ 「接口能力封顶」与「我们没查」在报告里分不清",
+)
+def test_d1_capability_cap_neither_degrades_nor_counts_as_unknown():
+    """C3（T2 挂账）· 能力封顶既不该触发降级，也不该混进 unknown。"""
+    from app.living_circle.blindspot import find_blindspots_with_stats
+
+    _spots, stats = find_blindspots_with_stats(
+        KAILI_CENTER, _thin_evidence_scope(900.0), _all_blind_triads(), prefix="d1"
+    )
+    # 证据边界 900m < 判定半径 1000m ⇒ 没有任何一格「查得全」⇒ 属「接口封顶」而非「没查」
+    assert stats["cells_unjudgeable_by_cap"] > 0
+    assert stats["cells_inside"] == (
+        stats["cells_judged"] + stats["cells_unknown"] + stats["cells_unjudgeable_by_cap"]
+    ), "三态分账不闭合 ⇒ 封顶格被记成「我们没查」，答辩里等于自己认领一次漏采"
+    assert degrade_reason(None, has_isochrones=True, has_poi=True) is None
+
+
+def test_d1_current_third_state_is_absorbed_into_unknown():
+    """C3 的配偶 · **现状记录**：今天只出四账，封顶格被 `cells_unknown` 吸收。
+
+    D1③/阶段 2a 落地时本用例必须转红，并把判据重指到三态闭合上 —— 不许直接删。
+    """
+    from app.living_circle.blindspot import find_blindspots_with_stats
+
+    _spots, stats = find_blindspots_with_stats(
+        KAILI_CENTER, _thin_evidence_scope(900.0), _all_blind_triads(), prefix="d0"
+    )
+    assert set(stats) == {"cells_inside", "cells_judged", "cells_unknown", "cells_blind"}
+    assert stats["cells_unknown"] > 0, "前置不成立：薄证据没造出 unknown，本用例会空转"
+    assert stats["cells_inside"] == stats["cells_judged"] + stats["cells_unknown"]

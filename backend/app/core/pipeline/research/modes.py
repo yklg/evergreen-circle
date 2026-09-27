@@ -41,7 +41,10 @@ MODE_CONFIG = {
         "min_paragraphs": 5, "para_words": "180-280", "section_max_tokens": 8000,
         "analyze_max_tokens": 8000, "structured_max_tokens": 8000,
         "sentiment_destinations": 3, "platform_take": 8,
-        "spot_sent_take": 4,
+        # 逐景点口碑样本量：并发任务数 = 景点数×平台数，与此旋钮无关（它只进
+        # `num=per_take+4`，见 spots._collect_spot_comments），故提它不增加请求数。
+        # 4→8 是为喂饱 expert 档的逐景点词云（doc_kind 分流后每桶只剩约 28% 是口碑）。
+        "spot_sent_take": 8,
         "spot_topn": 7,
         "shop_route_topn": 2,
         # 行程路线章（D2，deep 起出）：用户未写天数时按每天 N 景点推算行程跨度
@@ -58,7 +61,8 @@ MODE_CONFIG = {
         "min_paragraphs": 7, "para_words": "260-420", "section_max_tokens": 8192,
         "analyze_max_tokens": 9000, "structured_max_tokens": 9000,
         "sentiment_destinations": 4, "platform_take": 10,
-        "spot_sent_take": 6,
+        # 同 deep 的理由：只放大每次查询的候选量，不放大请求数（详见 deep 注释）
+        "spot_sent_take": 12,
         "spot_topn": 10,
         "shop_route_topn": 2,
         # 一页视图节奏旋钮：用户未写天数时按每天 N 景点推算行程跨度（M3a）

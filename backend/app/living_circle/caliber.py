@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -202,6 +203,20 @@ def all_travel_modes() -> List[str]:
     return list(DEFAULT_CALIBERS.keys())
 
 
+# ── 设施实体归并开关 ─────────────────────────────────────────
+# 归并只在**采集出口**发生，而采集要烧百度检索配额 ⇒ 关掉它 = 退回旧缓存键 + 旧判据，
+# 现存缓存继续命中、不触发重采。默认开启（这是修 bug，不是实验特性）；
+# 需要回退时设环境变量 `LC_FACILITY_MERGE=off`。
+FACILITY_MERGE_ENV = "LC_FACILITY_MERGE"
+_OFF_VALUES = frozenset({"off", "0", "false", "no"})
+
+
+def facility_merge_enabled() -> bool:
+    """设施实体归并是否生效（只读，读环境变量）。"""
+    raw = os.environ.get(FACILITY_MERGE_ENV, "on").strip().lower()
+    return raw not in _OFF_VALUES
+
+
 def caliber_payload_key(
     scene_name: str,
     center: Tuple[float, float],
@@ -213,9 +228,19 @@ def caliber_payload_key(
 
     三份实现（LiveDataSource / CachingDataSource / pipeline）收敛到此函数，
     不再各自拼接字符串。
+
+    设施归并开启时把**判据版本**并进键（阶段「已定口径 5」）：口径一变旧缓存自然
+    miss，避免「新算法读到老数字」。关闭时键形保持与历史完全一致，让现存缓存继续
+    命中 —— 这正是开关存在的理由：归并生效必须重新联网采集，而重采要烧检索配额，
+    不能让一次口径变更在用户打开页面时替他把钱花了。
     """
     c = center or (0.0, 0.0)
+    # 函数内 import：本模块是口径基座，不在模块级依赖判表（与 `poi_collector._dedupe`
+    # 委托 `poi`、`data_source.load_poi` 委托 `poi_collector` 的既有写法一致）。
+    from app.living_circle.facility_rule import FACILITY_RULE_VERSION
+
+    facility = f"|facility:{FACILITY_RULE_VERSION}" if facility_merge_enabled() else ""
     return (
         f"{scene_name}|{c[0]:.6f},{c[1]:.6f}|"
-        f"{int(study_radius_m)}|{sample_profile}|{travel_mode}"
+        f"{int(study_radius_m)}|{sample_profile}|{travel_mode}{facility}"
     )

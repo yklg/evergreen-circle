@@ -135,6 +135,63 @@ MUTATIONS: list[Mutation] = [
         new='f"· 共 {poi_in_reach} 处设施（可达区内）"',
         test="tests/test_report_invariants.py::test_subtitle_separator_spacing_is_intact",
     ),
+    # ── rev2 · 证据相三条（B5 / B10 / B11）──────────────────────────
+    Mutation(
+        label="丢掉「余量≤0」判据（B5：D2 余量 0 回退不再现形）",
+        rel="app/living_circle/report_contract.py",
+        old="    if margin is not None and margin <= 0:",
+        new="    if False:",
+        test="tests/test_report_contract.py::test_evidence_margin_zero_is_flagged",
+    ),
+    Mutation(
+        label="丢掉「带缺口不得称完整」判据（B5：谎报证据面）",
+        rel="app/living_circle/report_contract.py",
+        old="        if complete is True and ev_radius < collect - EVIDENCE_RECOMPUTE_TOL_M:",
+        new="        if False:",
+        test="tests/test_report_contract.py::test_complete_flag_with_short_frontier_is_flagged",
+    ),
+    Mutation(
+        label="丢掉判定域复算判据（B10：judge_radius 与证据脱钩）",
+        rel="app/living_circle/report_contract.py",
+        old="        if abs(judge - expected_judge) > EVIDENCE_RECOMPUTE_TOL_M:",
+        new="        if False:",
+        test="tests/test_report_contract.py::test_judge_radius_not_derived_from_evidence_is_flagged",
+    ),
+    Mutation(
+        label="丢掉「未判格必须全记未定」判据（B10：判不了冒充不盲）",
+        rel="app/living_circle/report_contract.py",
+        old="        if judged == 0 and unknown != inside:",
+        new="        if False:",
+        test="tests/test_report_contract.py::test_zero_judged_cells_must_all_be_unknown",
+    ),
+    Mutation(
+        label="丢掉「低覆盖率不得称 full」判据（B11 降档方向）",
+        rel="app/living_circle/report_contract.py",
+        old='    if share is not None and conf == "full" and share < 1.0 - FULL_JUDGE_SHARE_TOL:',
+        new="    if False:",
+        test="tests/test_report_contract.py::test_full_confidence_with_partial_coverage_is_flagged",
+    ),
+    Mutation(
+        label="丢掉扣分复算判据（B11：扣分被改回只按条数也无人追究）",
+        rel="app/living_circle/report_contract.py",
+        old="        if got is None or abs(got - expected_pen) > PENALTY_RECOMPUTE_TOL:",
+        new="        if False:",
+        test="tests/test_report_contract.py::test_penalty_reverted_to_count_only_is_flagged",
+    ),
+    Mutation(
+        label="G1 复发：「最近 X 分钟」退回只卡时间、不卡可达多边形",
+        rel="app/living_circle/assemble.py",
+        old="        if not point_in_ring((float(pt[0]), float(pt[1])), scope.reach_ring):\n            return None",
+        new="        if False:\n            return None",
+        test="tests/test_report_invariants.py::test_g1_out_of_polygon_point_must_not_set_min_minutes",
+    ),
+    Mutation(
+        label="缺陷 1 复发：邻近命中也沿用本次 scene_key 的旧行 id（展示新内容、DB 指旧行）",
+        rel="app/core/pipeline/living_circle.py",
+        old="                None if served_from == \"nearby_cache\"\n                else db.get_latest_report_id_for_scene(scene_key)",
+        new="                db.get_latest_report_id_for_scene(scene_key)",
+        test="tests/test_intake_and_shell.py::test_nearby_cache_hit_persists_the_served_content",
+    ),
 ]
 
 

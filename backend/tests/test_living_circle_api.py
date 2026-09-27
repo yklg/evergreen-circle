@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.core import db
 from app.core.pipeline.living_circle import create_living_circle_task, living_circle_pipeline
 from app.main import app
+from conftest import live_payload
 
 client = TestClient(app)
 
@@ -111,14 +112,66 @@ def test_compare_endpoint_diff_and_reports():
     assert metric["综合评分"]["b_value"] == JINSONG_FX["scores"]["total"]  # 劲松
     assert metric["服务盲区"]["a_value"] == len(KAILI_FX["blindspots"])
     assert metric["服务盲区"]["b_value"] == len(JINSONG_FX["blindspots"])
-    # ⭐ 「方向」断言：契约夹具里 `服务盲区 a=0 b=1` 那条用例的**期望串**直接拿来用 ——
-    # 先证「本用例这对真实值恰好就是那条判别样本」（否则方向写错也照绿），再断言 desc。
-    blind = next(c for c in CONTRACT["desc_cases"]
-                 if c["row"] == "服务盲区" and c["a"] == 0 and c["b"] == 1)
-    assert (metric["服务盲区"]["a_value"], metric["服务盲区"]["b_value"]) == (blind["a"], blind["b"]), (
-        "真实夹具的盲区值不再是 0/1 ⇒ 这条方向断言失去判别力，请改用当前夹具实际值的判别样本"
+    # ⭐ 本用例只管「接口把两份真实快照原样搬进差异表」。**方向**与**口径不可比**两条
+    #    判据原本挂在这对出厂快照的字面数值上（0 vs 1），重刷快照就会失去判别样本 ——
+    #    已挪到下面两条自带样本的用例里：
+    #    `test_compare_endpoint_blindspot_direction_negative_control`（方向）、
+    #    `test_caliber_gap_blocks_only_the_verdict_rows`（口径不可比，④ 顺带覆盖真实代际）。
+
+
+def _store_payload_record(suffix: str, payload: dict) -> str:
+    """把一份现成 living_circle 载荷落成报告（不走流水线），返回 report_id。
+
+    给「判据需要**特定数值**当载体」的用例用：数值由测试自己拼装，与出厂快照的代际解耦
+    （快照重刷只会改快照，不会让这些用例悄悄失去判别力）。
+    """
+    rid = f"lc-syn-{suffix}"
+    db.save_living_circle_report(
+        {"id": rid, "title": payload["scene"]["name"], "living_circle": payload},
+        scene_key=f"syn-{suffix}",
     )
-    assert metric["服务盲区"]["desc"] == blind["desc"]  # 「A盲区更少」（越小越好；写反则得 B…）
+    return rid
+
+
+def test_compare_endpoint_blindspot_direction_negative_control():
+    """盲区行方向负对照：0 vs 1 必须说「A盲区更少」，倒过来必须说「B盲区更少」。
+
+    为什么是负对照：盲区越小越好，若误用「大者胜」（旧实现按字符串字典序比较时的形态）
+    就会输出「B盲区更少」—— 事实相反。契约夹具里 `服务盲区 a=0 b=1` 那条用例的期望串
+    直接拿来用，串本身由 `test_compare_diff_desc_table_matches_contract_fixture` 守。
+    """
+    import copy
+
+    zero_case = next(c for c in CONTRACT["desc_cases"]
+                     if c["row"] == "服务盲区" and (c["a"], c["b"]) == (0, 1))
+    flip_case = next(c for c in CONTRACT["desc_cases"]
+                     if c["row"] == "服务盲区" and (c["a"], c["b"]) == (1, 0))
+    # 两份载荷同源（都取自劲松快照 ⇒ `scope_policy_version` 一致，不会撞口径不可比分支），
+    # 唯一的差别就是盲区条数：这才是方向判据要的**受控**变量。
+    with_one = copy.deepcopy(JINSONG_FX)
+    with_one["blindspots"] = list(with_one["blindspots"]) + [{
+        "id": "bs-方向载体-1", "center": JINSONG_FX["scene"]["center"], "radius_m": 1000,
+        "missing_facilities": ["菜市场"],
+        "nearest": [{"facility": "market", "name": "载体", "distance_m": 1450.0, "direction": "正东"}],
+        "polygon": {"type": "Polygon", "coordinates": [[
+            [116.4570, 39.8790], [116.4680, 39.8790], [116.4680, 39.8870],
+            [116.4570, 39.8870], [116.4570, 39.8790],
+        ]]},
+    }]
+    with_zero = copy.deepcopy(JINSONG_FX)
+    with_zero["blindspots"] = []
+    rid_zero = _store_payload_record("dir-zero", with_zero)
+    rid_one = _store_payload_record("dir-one", with_one)
+
+    rows = {r["metric"]: r for r in
+            client.get(f"/api/life-circle/compare?ids={rid_zero},{rid_one}").json()["diff"]}
+    assert (rows["服务盲区"]["a_value"], rows["服务盲区"]["b_value"]) == (0, 1)
+    assert rows["服务盲区"]["desc"] == zero_case["desc"]
+
+    rows = {r["metric"]: r for r in
+            client.get(f"/api/life-circle/compare?ids={rid_one},{rid_zero}").json()["diff"]}
+    assert (rows["服务盲区"]["a_value"], rows["服务盲区"]["b_value"]) == (1, 0)
+    assert rows["服务盲区"]["desc"] == flip_case["desc"]
 
 
 def test_compare_requires_two_ids():
@@ -312,6 +365,97 @@ def test_offline_compare_keeps_the_same_row_sequence(monkeypatch):
     )
 
 
+def test_caliber_gap_blocks_only_the_verdict_rows():
+    """P0-3 · 判盲口径版本不同 ⇒ 只拦「服务盲区 / 综合评分」两行的**结论**，不动数值。
+
+    为什么只拦结论不拦数值：88.4 与 80.4 都是各自口径下真实算出来的分数（事实没被改），
+    坏的是「A 比 B 高 8 分 ⇒ A 社区更好」这条推理 —— 旧口径只判了可达区一角的格
+    （凯里实测 5/97），盲区天然少报、分数天然偏高。
+    """
+    import copy
+
+    from app.main import _DIFF_DESC_CALIBER_GAP, _lc_diff
+    from app.living_circle.scope import SCOPE_POLICY_VERSION
+
+    gap_rows = CONTRACT["caliber_incomparable"]["applies_to"]
+
+    def by_metric(rows):
+        return {r["metric"]: r for r in rows}
+
+    # ① 两侧版本相同 ⇒ 同一把尺，不得谎报不可比。版本一律由测试自己拼装（不读出厂
+    #    快照的现值）：出厂快照目前是「凯里旧口径 / 劲松 ev-1」的混代际，若直接拿它们
+    #    当"同版本"样本，这一档就会在测②那件事 —— 两档必须各测各的。
+    a, b = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
+    for fx in (a, b):
+        fx["caliber"].pop("scope_policy_version", None)   # 都当成升级前的旧快照
+    rows = by_metric(_lc_diff(a, b))
+    assert rows["综合评分"]["desc"] != _DIFF_DESC_CALIBER_GAP, (
+        "两侧同版本（均未声明）应视为可比 —— 否则存量报告两两对比全部失明")
+    a["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION
+    b["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION   # 双双升到 ev-1
+    rows = by_metric(_lc_diff(a, b))
+    assert rows["综合评分"]["desc"] != _DIFF_DESC_CALIBER_GAP, (
+        "两侧都声明了同一版本 ⇒ 可比；若这里红成『不可比』，说明守卫把『声明过版本』"
+        "当成了『版本不同』（存量报告两两对比会全部失明，只是换了个触发路径）")
+
+    # ② 版本错配 ⇒ 两行结论被拦，其余四行照常判胜负。两种错配形态都要过：
+    #    『一侧升到 ev-1、另一侧仍是旧口径』与『一侧根本没声明』（存量 26 次体检的真实形态）
+    for legacy_b in ("ev-0-legacy", None):
+        a, b = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
+        a["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION
+        if legacy_b is None:
+            b["caliber"].pop("scope_policy_version", None)
+        else:
+            b["caliber"]["scope_policy_version"] = legacy_b
+        rows = by_metric(_lc_diff(a, b))
+        for metric in gap_rows:
+            assert rows[metric]["desc"] == _DIFF_DESC_CALIBER_GAP, f"{legacy_b}/{metric}"
+            assert isinstance(rows[metric]["a_value"], (int, float)), (
+                f"{metric} 的数值必须**原样给出**（事实没被改），拦的只是结论句")
+        for metric in ("15min 等时圈面积 (km²)", "可达采样点数", "POI 采集", "圈内 POI"):
+            assert rows[metric]["desc"] != _DIFF_DESC_CALIBER_GAP, f"{legacy_b}/{metric}"
+
+    # ③ 离线优先：连 POI 都没采，谈不上口径版本 ⇒ 仍走「不可比 · 离线估算」
+    #    （两行既有口径错配又离线时，离线文案赢 —— 那是更根本的不可比）
+    a, b = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
+    b["caliber"].pop("scope_policy_version", None)
+    a["data_origin"] = "offline"
+    rows = by_metric(_lc_diff(a, b))
+    for metric in gap_rows:
+        assert rows[metric]["desc"] == CONTRACT["offline_backend_only"]["not_comparable_desc"], metric
+
+    # ④ 真数据自检（不合成）：出厂两份快照现在的版本关系决定守卫该不该亮
+    shipped = by_metric(_lc_diff(copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)))
+    mismatched = (KAILI_FX["caliber"].get("scope_policy_version")
+                  != JINSONG_FX["caliber"].get("scope_policy_version"))
+    for metric in gap_rows:
+        if mismatched:
+            assert shipped[metric]["desc"] == _DIFF_DESC_CALIBER_GAP, (
+                f"两份出厂快照版本不同（kaili="
+                f"{KAILI_FX['caliber'].get('scope_policy_version')} / jinsong="
+                f"{JINSONG_FX['caliber'].get('scope_policy_version')}）却在真实报告对上"
+                "没拦住结论 ⇒ 守卫只在合成输入上生效，真链路是空的")
+        else:
+            assert shipped[metric]["desc"] != _DIFF_DESC_CALIBER_GAP, (
+                "两份出厂快照已同代际，守卫必须随之收起 —— 否则演示态永远显示不可比")
+
+
+def test_caliber_gap_literals_match_contract_fixture():
+    """P0-3 的字面量单一真源是契约夹具：后端常量 + 判盲口径版本必须与它逐字相同。
+
+    `policy_version_current` 与前端 `SCOPE_POLICY_VERSION` 各自钉向同一份夹具 ⇒ 换版本
+    只改 `scope.SCOPE_POLICY_VERSION` + 夹具，两侧测试同时报警（不会一边新一边旧）。
+    """
+    from app.main import _DIFF_DESC_CALIBER_GAP, _CALIBER_GAP_ROWS
+    from app.living_circle.scope import SCOPE_POLICY_VERSION
+
+    gap = CONTRACT["caliber_incomparable"]
+    assert _DIFF_DESC_CALIBER_GAP == gap["desc"]
+    assert list(_CALIBER_GAP_ROWS) == gap["applies_to"]
+    assert SCOPE_POLICY_VERSION == gap["policy_version_current"], (
+        "判盲口径版本换了却没改契约夹具 ⇒ 前端的「建议重新体检」提示会静默失灵")
+
+
 def test_offline_diff_literals_match_contract_fixture():
     """离线三个字面量的**单一真源**是契约夹具；`main.py` 的模块常量必须与它逐字相同。
 
@@ -432,8 +576,15 @@ def test_t6_timestamp_formats():
     _dt.datetime.strptime(r["generated_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
 
     class Static:
+        """live 载荷必须带**当前判盲口径版本**，否则 `reuse_policy` 视为旧口径不予复用
+        （盖版本的唯一实现 = `conftest.live_payload`，负对照见 `test_caching_datasource`
+        末尾 `test_stale_policy_*`）—— 本用例测的是两套时戳精度。"""
+
         async def compute(self, params):
-            return {"scene": {"name": params.scene_name}, "data_origin": "live"}
+            return live_payload({
+                "scene": {"name": params.scene_name},
+                "data_origin": "live",
+            })
 
     ds = CachingDataSource(Static(), data_mode="live")
     p = CP(scene_name="时戳", center=(107.9758, 26.5734))

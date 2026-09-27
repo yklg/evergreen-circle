@@ -14,6 +14,7 @@ from app.living_circle.isochrone import (
     build_sample_points,
     idw_from_local,
     reach_flags,
+    sample_plan,
 )
 
 CENTER = (107.9758, 26.5734)
@@ -216,17 +217,66 @@ def test_u6_travel_modes_budget_invariant():
 
 
 # ── D1/D2（计划 v4 阶段 0）· fine_band 透传 与 降规格披露 ──────────
-# 形态沿用本仓先例：先「记录当前行为」把缺陷量化钉住，再配一条 `xfail(strict=True)`
-# 断言应有行为 —— 修好后必须转 XPASS 报错，逼着把判据重指（禁止就地放宽或删掉）。
+#
+# 阶段 0 落了两件事：① `compute()` 收 `travel_mode`/`fine_band` 并**真的**透传到采样几何；
+# ② `sampling.spec` 披露实际生效规格（被预算丢掉的 fine 带如实为 None）。
+# 于是原挂账的 D1t 转正式断言；D2t 拆成两半 —— 披露半转正，仍不成立的那一半
+# （插值格不得细于采样）判据**重指**后继续 strict 挂账到 D5（阶段 3）。
+# 为什么不靠把插值格调粗来凑绿：现状连双阶段正常路径都不满足（格 ≈77m vs 边界带 150m），
+# 动格子会让所有历史等时圈面积漂移 —— 那是拿一个错换另一个错，正解是反向导出规格。
 
-def test_fine_band_is_currently_borrowed_from_walking_for_wider_calibers():
-    """**记录当前行为**：`compute()` 不透传 `fine_band` ⇒ 骑行/驾车的加密环带被步行的截断。
+def test_compute_forwards_the_travel_mode_band():
+    """D1t 转正 · 计划 v4 阶段 0 验收原话：travel_mode 切换时细带环带随之改变。
 
-    `caliber.fine_band = (max(r_inner, 400), study_radius_m)` 是**逐档派生**的
-    （步行 2500 / 骑行 5000 / 驾车 9000），但 `isochrone.py:302` 调 `build_sample_points`
-    时不传 `fine_band`，只能落到 `:132-134` 的 `get_caliber("walking").fine_band` 硬回落
-    ⇒ 骑行 20min 圈的外沿（2500–5000m）**一格加密都没有**。这不是精度偏好问题，
-    是"配了逐档口径、实际用的是别人的口径"。
+    判据刻意不只看签名或只看 `spec` 字段 —— 那两种写法在「参数收了、传错了」时照样绿。
+    这里用点数分布证明环带真的进了几何：2.6–5km 那一圈，粗网格本来只有 ≈376 个点，
+    换成骑行自己的环带（833–5000m）会多出加密点；借来的步行环带止于 2500m，多不出来。
+    """
+    from app.living_circle.caliber import get_caliber
+
+    engine = IsochroneEngine()
+    # quick 档（fine=粗格距）即可判环带归属，与档位点数无关；R=5000 才够到步行环带之外
+    iso = asyncio.run(engine.compute(
+        CENTER, _radial_meter, study_radius_m=5000, mode="quick", travel_mode="riding"))
+    spec = iso["sampling"]["spec"]
+    assert spec["travel_mode"] == "riding"
+    assert spec["fine_band"] == [float(v) for v in get_caliber("riding").fine_band], (
+        "spec 里的环带不等于骑行口径的派生值 ⇒ 透传的是别人的口径"
+    )
+
+    borrowed = sample_plan(
+        CENTER, 5000.0, 400, 150, get_caliber("walking").fine_band).points
+    measured = [(p["lng"], p["lat"]) for p in iso["sampling"]["points"]]
+
+    def _in_annulus(pts, lo, hi):
+        return sum(1 for p in pts if lo < haversine_m(CENTER, p) <= hi)
+
+    outer_borrowed = _in_annulus(borrowed, 2600.0, 5000.0)
+    assert _in_annulus(measured, 2600.0, 5000.0) > outer_borrowed * 1.5, (
+        f"按骑行环带在 2.6–5km 并没有明显加密（{outer_borrowed} → 未达 {outer_borrowed * 1.5:.0f}）"
+        f"⇒ 本用例判别力已失效，请重指判据而不是删掉"
+    )
+
+    # 显式 `fine_band` 必须压过 `travel_mode` 的派生值，且几何真的以它的外沿为界：
+    # 骑行的派生环带到 5000m，若没被覆盖，采样点会一路铺出研究半径。
+    override = asyncio.run(engine.compute(
+        CENTER, _radial_meter, study_radius_m=1200, mode="standard",
+        travel_mode="riding", fine_band=(100.0, 1200.0)))
+    assert override["sampling"]["spec"]["fine_band"] == [100.0, 1200.0]
+    farthest = max(haversine_m(CENTER, (p["lng"], p["lat"]))
+                   for p in override["sampling"]["points"])
+    assert farthest <= 1201.0, (
+        f"传了 fine_band=(100,1200) 却仍采样到 {farthest:.0f}m ⇒ 形参没收进几何，只进了 spec"
+    )
+
+
+def test_build_sample_points_default_band_is_still_walking():
+    """**现状记录**：`build_sample_points` 不传 band 时仍回落**步行**口径（历史语义，有意保留）。
+
+    阶段 0 修的是 `compute()` 的透传；这个默认值本身没动，因为离线源与合成场测试全靠它
+    保持零回归（D4）。留本用例的理由是它把这个默认的**代价量化**出来了：骑行研究半径内
+    2.6–5km 的采样密度相对 1.5–2.5km 塌了一个量级。将来若有人把默认改成"按 mode 派生"或
+    "不给 band 就报错"，本用例必须转红 ⇒ 届时把判据重指到新默认上，别直接删。
     """
     from app.living_circle.caliber import get_caliber
 
@@ -237,68 +287,92 @@ def test_fine_band_is_currently_borrowed_from_walking_for_wider_calibers():
     riding_band = get_caliber("riding").fine_band
     assert riding_band[1] > 2500.0, "前置不成立：骑行口径的环带上沿本应超出步行研究半径"
 
-    # 按 compute() 实际调用方式生成（不传 fine_band ⇒ 回落步行的 (400, 2500)）
+    # 不传 fine_band ⇒ 回落步行的 (400, 2500)
     as_computed = build_sample_points(CENTER, 5000.0, 400, 150)
     per_mode = build_sample_points(CENTER, 5000.0, 400, 150, fine_band=riding_band)
     assert len(per_mode) > len(as_computed) * 1.2, (
         "按骑行自己的环带并没有多出点 ⇒ 对照不成立，请重指本用例"
     )
 
-    inner = _density_km2(as_computed, 1500.0, 2500.0)  # 步行环带内 ⇒ 有 150m 加密
-    outer = _density_km2(as_computed, 2600.0, 5000.0)  # 骑行该加密、却只剩 400m 粗格
+    inner = _density_km2(as_computed, 1500.0, 2500.0)  # 步行环带内 ⇒ 有加密
+    outer = _density_km2(as_computed, 2600.0, 5000.0)  # 骑行该加密、却只剩粗格
     assert inner > outer * 2, (
-        f"骑行研究半径内 2.6–5km 的采样密度 {outer:.1f} 点/km² 相对 1.5–2.5km 的 "
-        f"{inner:.1f} 没有塌陷 ⇒ 回落效应已消失，本现状记录该转红重指了"
+        f"回落效应已经消失（2.6–5km 密度 {outer:.1f} vs 1.5–2.5km 的 {inner:.1f}）⇒ "
+        f"本现状记录该转红重指了"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="计划 v4 阶段 0：`IsochroneEngine.compute()` 未收 `fine_band` 形参，"
-           "骑行/驾车档的边界加密环带被步行口径硬回落（isochrone.py:289/302/132-134）",
-)
-def test_compute_should_accept_and_forward_fine_band():
-    import inspect
+def test_degraded_sampling_discloses_the_effective_spec():
+    """D2t 的披露半转正：预算逼着降规格时，`sampling.spec` 必须说清实际用了哪一套。
 
-    sig = inspect.signature(IsochroneEngine.compute)
-    assert "fine_band" in sig.parameters, "compute() 必须能把生效环带说清楚，而不是让下游猜"
-
-
-def test_degraded_sampling_currently_discloses_no_effective_spec():
-    """**记录当前行为**：预算受限时采样规格被降（丢 fine 带），但插值格 `grid_n` 不动，
-    且 `iso["sampling"]` 里**没有任何字段**说明这次实际用的是哪套规格。
-
-    后果：IDW 拿 ~250m 间距的点云去填 83m 的插值格，图上看着一样精、实际更假 ——
-    与「最内圈网格坍缩」同族。D5 要把推导方向翻成「规格→点数→预算」，前提是
-    实际生效规格先变得**可观测**，否则降了规格也没人知道。
+    旧写法只有 `sample_count`，于是「按规格跑满」与「被预算压过、环带丢了」产出的报告
+    长得一模一样 —— D5 要把推导方向翻成「规格→点数→预算」，前提是先看得见实际规格。
     """
     engine = IsochroneEngine()
-    iso = asyncio.run(engine.compute(CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=375))
-    assert 0 < iso["sample_count"] <= 375
+    iso = asyncio.run(engine.compute(
+        CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=375))
+    spec = iso["sampling"]["spec"]
 
-    grid_n = MODE_PARAMS["standard"]["grid_n"]
-    interp_step = 2 * 2500.0 / (grid_n - 1)
-    sample_step = 2 * 2500.0 / (math.sqrt(4.0 * iso["sample_count"] / math.pi) - 1)
-    assert interp_step * 2 < sample_step, (
-        f"前置不成立：插值格距 {interp_step:.0f}m 与采样间距 {sample_step:.0f}m 没拉开，"
-        f"本用例测不到过度插值"
+    assert 0 < iso["sample_count"] <= 375
+    assert spec["degraded"] is True, "375 点走的是预算受限单阶段，必须自报降过规格"
+    assert spec["fine_m"] is None and spec["fine_band"] is None, (
+        "加密带已被丢弃，spec 却还在替名义档位作证"
     )
-    leaked = {k for k in iso["sampling"] if k in {"coarse_m", "fine_m", "fine_band", "grid_n", "spec"}}
-    assert leaked == set(), (
-        f"实际生效规格已经被披露了（{leaked}）⇒ 本现状记录必须转红并重指到规格字段判据上"
+    assert iso["sampling"]["is_scattered"] is False, (
+        "`is_scattered` 旧写法读 MODE_PARAMS 的 fine，降过规格也返回 True ⇒ 现在必须跟随实际"
+    )
+    # 名义值不删（答辩要看"本来想跑什么档"），但 `sample_step_m` 必须描述**实际**点距：
+    # 从返回的点集反推间距来对账，而不是再抄一遍 `_budget_stage_points` 的公式 ——
+    # 抄公式的判据只会自证（测的是测试自己），数不同经度个数测的才是真产出的几何。
+    distinct_lng = {p["lng"] for p in iso["sampling"]["points"]}
+    implied_step = 2 * 2500.0 / (len(distinct_lng) - 1)
+    assert abs(implied_step - spec["sample_step_m"]) < 1.0, (
+        f"spec 报的间距 {spec['sample_step_m']}m 与点集实际间距 {implied_step:.1f}m 不符"
+        f"（名义 coarse_m={spec['coarse_m']}）"
+    )
+    assert spec["profile"] == "standard" and spec["coarse_m"] == 400.0
+    assert spec["grid_n"] == MODE_PARAMS["standard"]["grid_n"]
+    assert iso["sample_count"] == len(iso["sampling"]["points"])
+
+
+def test_interpolation_grid_is_currently_finer_than_the_sampling_it_interpolates():
+    """**现状记录**：格距 ≈77m 的 IDW 在填间距 ≈250m 的点云 —— 阶段 0 只让它可观测，没让它自洽。
+
+    这正是「最内圈网格坍缩」同族根因的另一面：点被预算压过，插值格却按名义档选，
+    图上看着一样精、实际更假。配对的 `xfail(strict)` 用例钉的是应有不变量；D5 落地时
+    **两条一起动**（本用例转红、那条转正），谁先单独被删都会把这件事重新藏起来。
+    """
+    engine = IsochroneEngine()
+    iso = asyncio.run(engine.compute(
+        CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=375))
+    spec = iso["sampling"]["spec"]
+    assert spec["grid_step_m"] * 2 < spec["sample_step_m"], (
+        f"插值格距 {spec['grid_step_m']}m 已经不细于采样间距 {spec['sample_step_m']}m ⇒ "
+        f"D5 已落地，请把本现状记录转红并重指到应有判据上"
+    )
+    assert spec["grid_n"] == MODE_PARAMS["standard"]["grid_n"], (
+        "格点数已被联动下调 ⇒ 不再是「名义档 grid_n 不动」的现状，重指判据"
     )
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="计划 v4 D5：预算不足时降的是**规格**并须如实标注；当前只降点数、"
-           "grid_n 不动且无字段可举证（isochrone.py:157-185 vs :305）",
+    reason="计划 v4 D5（阶段 3）：预算不足时降的应是**规格**。阶段 0 只交付了可观测性"
+           "（sampling.spec），插值格仍按名义 grid_n 选；正常双阶段路径同样不满足该不变量"
+           "（格 ≈77m vs 边界带 150m），故解在「规格→点数→预算」反向导出，不是调粗格子",
 )
-def test_sampling_should_disclose_the_effective_spec():
+def test_sampling_must_not_interpolate_finer_than_it_measured():
+    """应有不变量：`grid_step_m ≥ sample_step_m` —— IDW 不得造没测过的细节。
+
+    两条路径都得满足：预算受限（375）与正常双阶段（None）。只测降规格那条会让"健康路径"
+    继续凭空造细节而无人知晓。
+    """
     engine = IsochroneEngine()
-    iso = asyncio.run(engine.compute(CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=375))
-    spec = iso["sampling"]["spec"]
-    assert spec["fine_m"] in (None, 0), "375 点走的是单阶段粗网格，fine 带应声明为已放弃"
-    assert spec["grid_step_m"] >= spec["sample_step_m"], (
-        "插值格距必须不细于采样间距 —— 否则 IDW 在造没有测过的细节"
-    )
+    for max_points in (375, None):
+        iso = asyncio.run(engine.compute(
+            CENTER, _radial_meter, study_radius_m=2500, mode="standard", max_points=max_points))
+        spec = iso["sampling"]["spec"]
+        assert spec["grid_step_m"] >= spec["sample_step_m"], (
+            f"max_points={max_points}：格距 {spec['grid_step_m']}m 细于采样间距 "
+            f"{spec['sample_step_m']}m（degraded={spec['degraded']}）"
+        )

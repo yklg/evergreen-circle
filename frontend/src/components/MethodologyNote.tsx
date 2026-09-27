@@ -32,7 +32,18 @@ export default function MethodologyNote({
     rows.push({ label: '过热判定覆盖率', value: `${Math.round(methodology.viral_checked_ratio * 100)}%` })
   }
   if (typeof methodology.sentiment_samples === 'number') {
-    rows.push({ label: '舆情样本量', value: String(methodology.sentiment_samples) })
+    if (typeof methodology.sentiment_corpus === 'number') {
+      // 新口径：`sentiment_samples` 已收窄为「可核验用户口碑」条数，必须与检索语料并排显示，
+      // 否则读者会拿新的 7 去比旧的 25，误读成「口碑暴跌」。
+      rows.push({ label: '有效口碑', value: `${methodology.sentiment_samples} 条` })
+      rows.push({ label: '检索相关语料', value: `${methodology.sentiment_corpus} 条` })
+      if (methodology.sentiment_low_sample) {
+        rows.push({ label: '情感呈现', value: '样本偏小·只报计数' })
+      }
+    } else {
+      // 存量报告（本次之前生成）：只有旧口径那一个数，按今天的样子显示，不追注新口径。
+      rows.push({ label: '舆情样本量', value: String(methodology.sentiment_samples) })
+    }
   }
   if (methodology.window) {
     rows.push({ label: '搜索时效窗口', value: methodology.window })

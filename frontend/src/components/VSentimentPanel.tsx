@@ -35,10 +35,19 @@ export function VSentimentPanel({
   charts?: ChartSpec[]
 }) {
   const { overall, by_platform, by_spot, camps, voices, highlights, sample_size } = sentiment
+  const corpus = sentiment.corpus_size
+  const counts = sentiment.overall_count
+  // 判据读后端 `low_sample`（阈值只在 sentiment.MIN_SENT_SAMPLE 一处），此处不写数字。
+  const lowSample = sentiment.low_sample === true
   const total = overall.pos + overall.neu + overall.neg || 1
   return (
     <div className="flex flex-col gap-5">
-      <div className="text-tag text-ink-3">基于 {sample_size} 条全网评论（抖音优先采集）</div>
+      <div className="text-tag text-ink-3">
+        基于 {sample_size} 条可核验用户口碑（抖音优先采集）
+        {typeof corpus === 'number' && corpus >= sample_size
+          ? ` · 检索到 ${corpus} 条相关内容，攻略/资讯/票务/交通查询页不计入口碑`
+          : ''}
+      </div>
 
       {/* 全网金句墙：LLM 摘抄的真实原声短语，可溯源 */}
       {highlights && highlights.length > 0 && (
@@ -81,11 +90,17 @@ export function VSentimentPanel({
       <div>
         <div className="mb-1.5 flex items-center justify-between text-tag text-ink-2">
           <span>整体情感倾向</span>
-          <span>
-            正面 {Math.round((overall.pos / total) * 100)}% · 中性{' '}
-            {Math.round((overall.neu / total) * 100)}% · 负面{' '}
-            {Math.round((overall.neg / total) * 100)}%
-          </span>
+          {lowSample && counts ? (
+            <span>
+              正面 {counts.pos} · 中性 {counts.neu} · 负面 {counts.neg} 条（样本有限，只报计数）
+            </span>
+          ) : (
+            <span>
+              正面 {Math.round((overall.pos / total) * 100)}% · 中性{' '}
+              {Math.round((overall.neu / total) * 100)}% · 负面{' '}
+              {Math.round((overall.neg / total) * 100)}%
+            </span>
+          )}
         </div>
         <div className="flex h-3 w-full overflow-hidden rounded-chip">
           <div className="bg-ok" style={{ width: `${(overall.pos / total) * 100}%` }} />
@@ -148,7 +163,12 @@ export function VSentimentPanel({
       {/* 观点阵营 */}
       {camps && camps.length > 0 && (
         <div>
-          <div className="mb-2 text-aux font-semibold text-ink">观点阵营</div>
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <span className="text-aux font-semibold text-ink">观点阵营</span>
+            {lowSample && (
+              <span className="text-tag text-ink-3">样本有限，占比为方向性参考</span>
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {camps.map((c, i) => (
               <div key={i} className="rounded-card border border-line/60 bg-bg p-4">

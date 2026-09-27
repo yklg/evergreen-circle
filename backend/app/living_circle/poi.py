@@ -9,10 +9,18 @@
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from app.living_circle.category_rule import CATEGORY_RULES, TRIAD_RULES, evaluate_category
+from app.living_circle.facility_rule import (
+    annotate_name,
+    facility_core,
+    norm_name,
+    pick_display_name,
+    pick_representative,
+    same_facility,
+    sub_point_labels,
+)
 from app.living_circle.geo_utils import haversine_m, point_in_ring, round_lnglat
 from app.living_circle.scope import SpatialScope
 
@@ -89,13 +97,8 @@ CATEGORY_DEFS = _build_category_defs()
 TRIAD_KEYWORDS = _build_triad_keywords()
 
 
-def norm_name(name: str) -> str:
-    """名称归一：去空白/停用后缀/全角转半角 → 用作聚簇主键辅助。"""
-    if not name:
-        return ""
-    s = re.sub(r"[\s\u3000]+", "", name)
-    s = re.sub(r"（.*?）|\(.*?\)", "", s)
-    return s.lower()
+# `norm_name` 的定义已归入 `facility_rule`（纯判表层不得反向依赖本模块，否则 import 成环），
+# 由上方 import 再导出：`poi.norm_name` 仍可寻址，口径索引 `poi::norm_name` 与专家团绑定照旧命中。
 
 
 # 「坐标重合」的强合并阈值（米）：不同名但贴脸同址（同一门牌）视为重复。
@@ -118,12 +121,111 @@ def is_duplicate(a: Dict[str, Any], b: Dict[str, Any], radius_m: float = 50.0) -
     return norm_name(a.get("name", "")) == norm_name(b.get("name", "")) and d < radius_m
 
 
-def dedupe_pois(items: List[Dict[str, Any]], radius_m: float = 50.0) -> List[Dict[str, Any]]:
-    """聚簇去重（o(n²) 在小样本下足够，每类 ≤ 几十条）；半径内保留先到者。
+def _facility_merges(a: Dict[str, Any], b: Dict[str, Any], radius_m: float) -> bool:
+    """是否**因设施实体判据**而合并（排除 `is_duplicate` 本来就会合掉的情形）。
 
-    去重判据唯一实现 = `is_duplicate`（D3），`clean` 与 `poi_collector` 共用，
-    消除两处 50m 逻辑双份漂移（R3/问题 3 根因）。
+    用于记账：`poi.merged.absorbed` 必须只数「这次新合掉的设施」，掺进同名重复
+    就把一个口径变更的数量和一个既有行为的数量混成了一个数字。
     """
+    if is_duplicate(a, b, radius_m):
+        return False
+    return same_facility(a, b, haversine_m((a["lng"], a["lat"]), (b["lng"], b["lat"])), radius_m)
+
+
+def _same_or_facility(a: Dict[str, Any], b: Dict[str, Any], radius_m: float) -> bool:
+    """几何判重 **或** 同一实体设施。判据分别来自 `is_duplicate` 与 `facility_rule`，
+    本函数是唯一把两者并列的地方 —— 实体判据绝不下沉进 `is_duplicate`（见其 docstring）。
+    """
+    if is_duplicate(a, b, radius_m):
+        return True
+    return same_facility(a, b, haversine_m((a["lng"], a["lat"]), (b["lng"], b["lat"])), radius_m)
+
+
+def absorbed_key(it: Dict[str, Any]) -> Tuple[str, float, float]:
+    """被吸收记录的身份键 —— 用于把「判据命中次数」折算成「少掉的设施条数」。
+
+    采集要跑 A/B/C 三轮去重，S8 扩词会把同一个 ATM 再抓回来再合一次；按次数记账
+    会把同一个设施数两遍，报告里的 `absorbed` 就成了一个无从核对的大数。
+    """
+    return (it.get("name", ""), round(float(it.get("lng", 0.0)), 5), round(float(it.get("lat", 0.0)), 5))
+
+
+def dedupe_facility(
+    items: List[Dict[str, Any]], radius_m: float, center: Tuple[float, float]
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """设施实体聚组：每组出 1 个代表点，返回 (代表点列表, **因归并而**被吸收的记录)。
+
+    **星型而非单链**：候选只与「当前组的锚点」比对，锚点 = 组内距 `center` 最近者。
+    单链（与任一成员判重即入组）会让沿街同品牌的 支行↔ATM个贷中心↔支行B 串成一长条。
+
+    代表点携带 `name`（组内主点名，全组皆子点时升格为其所属机构名，撞名则不升格）与
+    `sub_points` / `sub_roles`。**「含某职能」的标注不在这里拼** —— 采集期要连续过
+    A/B/C 三轮去重，把展示装饰拼进 `name` 会让下一轮把它当子点后缀重新匹配、重复叠加。
+    拼接只发生在 `to_points`（点位唯一出口）。
+    """
+    valid = [it for it in items if it and it.get("lat") is not None and it.get("lng") is not None]
+    # 升格撞名护栏：输入里所有主点的原名
+    parent_names = {
+        it["name"] for it in valid
+        if it.get("name") and not facility_core(it["name"]).is_sub_point
+    }
+
+    remaining = list(valid)
+    kept: List[Dict[str, Any]] = []
+    absorbed: List[Dict[str, Any]] = []
+    while remaining:
+        seed = remaining.pop(0)
+        members = [seed]
+        anchor = seed
+        i = 0
+        while i < len(remaining):
+            cand = remaining[i]
+            if _same_or_facility(cand, anchor, radius_m):
+                if _facility_merges(cand, anchor, radius_m):
+                    absorbed.append(cand)
+                members.append(cand)
+                remaining.pop(i)
+                if haversine_m((cand["lng"], cand["lat"]), center) < haversine_m(
+                    (anchor["lng"], anchor["lat"]), center
+                ):
+                    anchor = cand
+            else:
+                i += 1
+
+        rep = pick_representative(members, center)
+        out = dict(rep)
+        out["name"] = pick_display_name(members, rep, sorted(parent_names))
+        others = [m for m in members if m is not rep]
+        labels = sub_point_labels(members)
+        if labels:
+            out["sub_roles"] = labels
+        if others:
+            out["sub_points"] = [[m["lng"], m["lat"]] for m in others]
+        kept.append(out)
+    return kept, absorbed
+
+
+def dedupe_pois(
+    items: List[Dict[str, Any]],
+    radius_m: float = 50.0,
+    policy: str = "geometric",
+    center: Optional[Tuple[float, float]] = None,
+) -> List[Dict[str, Any]]:
+    """聚簇去重（o(n²) 在小样本下足够，每类 ≤ 几十条）。
+
+    两条策略，**由调用点显式选定**（`poi_collector` 分通道传）：
+      - `policy="geometric"`（默认）：判据只有 `is_duplicate`，半径内保留先到者。
+        这条分支的实现**逐字保持原样** —— 盲区三要素（菜市场/药店/小学）走它，
+        因为「1km 内有没有」是硬判，宁多勿少，不因归并少一个坐标。
+      - `policy="facility"` **且** 传了 `center`：改走 `dedupe_facility`，同一实体设施
+        只出一个代表点。缺 `center` 时**静默退回 geometric**（星型聚组必须有距离参照，
+        拿可达区环顶点当圆心会让「最近设施」变成「离某个环顶点最近的设施」）。
+
+    判据唯一实现 = `is_duplicate`（D3）+ `facility_rule.same_facility`，`clean` 与
+    `poi_collector` 共用，消除两处 50m 逻辑双份漂移（R3/问题 3 根因）。
+    """
+    if policy == "facility" and center is not None:
+        return dedupe_facility(items, radius_m, center)[0]
     kept: List[Dict[str, Any]] = []
     for it in items:
         if not it or it.get("lat") is None or it.get("lng") is None:
@@ -172,7 +274,10 @@ def to_stats(
         coverage = min(1.0, len(in_circle) / ideal)
         nearest = None
         nearest_d = float("inf")
-        for it in items:
+        # 兜底「最近」只在**圈内**点里取 —— 与下方 `in_circle`/`coverage` 同一个域。
+        # 旧实现在 `items`（采集口径，含圈外）上取最近 ⇒ 圈内一个点都没有的类别
+        # 也能报出一个「最近设施名」，采集半径一旦外扩就被放大。
+        for it in in_circle:
             d = haversine_m((it["lng"], it["lat"]), center)
             if d < nearest_d:
                 nearest_d = d
@@ -195,9 +300,12 @@ def backfill_nearest_minutes(
     per_category: Dict[str, List[Dict[str, Any]]],
     field_fn,
 ) -> List[Dict[str, Any]]:
-    """按 IDW 耗时场回填各类别 min_minutes/nearest_name（live 管线统一通道）。
+    """`min_minutes` / `nearest_name` 的**唯一生产者**（`assemble.build_report` 活路径调用）。
 
-    field_fn(point) -> 分钟数（不可达返回 None）。
+    `field_fn(point) -> 分钟数`（不可达返回 None）—— 封顶谓词由调用方持有，本函数**必须**
+    只经它取值：只有如此，「最近 X 分钟」才与三要素卡（`triad_from_points` 走同一个
+    `field_fn`）同源同域。此前该函数从未被生产代码调用，装配层另写了一份不过封顶的
+    实现，导致采集区（含圈外）的设施能定出「最近」—— 见 `assemble.py` 的封顶注释。
     """
     for s in stats:
         cat = s["category"]
@@ -261,7 +369,8 @@ def to_points(
             conf = _point_confidence(it)
             entries.append({
                 "id": f"poi-{cat}-{idx}",
-                "name": it.get("name") or (CATEGORY_DEFS.get(cat, {}).get("label", cat)),
+                "name": annotate_name(it.get("name") or (CATEGORY_DEFS.get(cat, {}).get("label", cat)),
+                                      it.get("sub_roles") or ()),
                 "category": cat,
                 "lnglat": [round(it["lng"], 6), round(it["lat"], 6)],
                 "minutes": round(t, 1) if t is not None else None,

@@ -203,3 +203,35 @@ describe('ReportPage · 渲染适配器（A1）', () => {
     expect(screen.queryByText(/演示数据模式/)).toBeNull()
   })
 })
+describe('rev2 · 证据置信度的可见面（降档徽标 + 陈旧提示）', () => {
+  it('内置快照出自升级前的判盲口径 ⇒ 体检单必须说「建议重新体检」', () => {
+    const report = getLivingCircleReportMock('lc-kaili')! as unknown as Record<string, any>
+    expect(report.living_circle.caliber.scope_policy_version ?? null).toBeNull()
+    renderPage(report)
+    expect(screen.getByText(/判盲口径已升级.*建议重新体检/)).toBeTruthy()
+  })
+
+  it('confidence=limited ⇒ 挂降档徽标；full ⇒ 不挂（否则降档变成常驻噪声）', () => {
+    const base = getLivingCircleReportMock('lc-kaili')! as unknown as Record<string, any>
+    const cal = base.living_circle.caliber
+    const pct = Math.round((cal.cells_judged / cal.cells_inside) * 100)
+
+    const limited = { ...base, living_circle: { ...base.living_circle, scores: { ...base.living_circle.scores, confidence: 'limited' } } }
+    renderPage(limited)
+    expect(screen.getAllByText(new RegExp(`证据面不足 · 覆盖率 ${pct}%`)).length).toBeGreaterThan(0)
+    cleanup()
+
+    const full = { ...base, living_circle: { ...base.living_circle, scores: { ...base.living_circle.scores, confidence: 'full' } } }
+    renderPage(full)
+    expect(screen.queryByText(/证据面不足/)).toBeNull()
+  })
+
+  it('旧快照没有 confidence ⇒ 既不徽标也不崩（前端不得无条件读新键）', () => {
+    const report = getLivingCircleReportMock('lc-kaili')! as unknown as Record<string, any>
+    expect(report.living_circle.scores.confidence).toBeUndefined()
+    renderPage(report)
+    expect(screen.queryByText(/证据面不足/)).toBeNull()
+    // 覆盖度脚注照旧披露（缺 confidence 不等于缺披露）
+    expect(screen.getByText(new RegExp(`判定覆盖：网格 ${report.living_circle.caliber.cells_inside} 格`))).toBeTruthy()
+  })
+})

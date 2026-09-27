@@ -94,14 +94,18 @@ def total_calls_hard_ceiling() -> int:
     return total_budget() + INTAKE_MARGIN
 
 
-def poi_page_depth(n_terms: int, poi_budget: Optional[int] = None) -> int:
+def poi_page_depth(n_terms: int, poi_budget: int) -> int:
     """POI 每关键词页深：由预算导出，clamp 到 [1,3]。
 
     - 免费档 floor(27/22)=1；词少/预算足时自动回升（付费档获益）；
     - 预算为 0/负 → 保守页深 1；词数为 0 → 避免除零，回退页深 1；
     - 预算远大于词数 → clamp 上限 3，杜绝爆表。
+
+    `poi_budget` **必须显式传入**，不留默认值：形参与模块级函数 `poi_budget()` 同名即遮蔽，
+    「省略参数」会走到 `poi_budget()` 调用一个 None 上 ⇒ `TypeError: 'NoneType' object is
+    not callable`。真实调用点（`poi_collector.py`）一直显式传预算，所以那条路径从未被执行过。
+    要 POI 预算就写 `quota_budget()[1]`，让漏传在签名上就报错，而不是留一个必炸的默认值。
     """
-    budget = poi_budget if poi_budget is not None else poi_budget()
-    if n_terms <= 0 or budget <= 0:
+    if n_terms <= 0 or poi_budget <= 0:
         return _DEFAULT_PAGE_DEPTH
-    return max(PAGE_DEPTH_MIN, min(PAGE_DEPTH_MAX, floor(budget / n_terms)))
+    return max(PAGE_DEPTH_MIN, min(PAGE_DEPTH_MAX, floor(poi_budget / n_terms)))

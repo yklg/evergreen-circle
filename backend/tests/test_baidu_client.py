@@ -7,7 +7,7 @@ import time
 import httpx
 import pytest
 
-from app.living_circle.baidu_client import BaiduClient
+from app.living_circle.baidu_client import BaiduClient, STOP_COMPLETE
 from app.living_circle.caliber import get_caliber
 from app.living_circle.data_source import LiveDataSource
 from app.living_circle.request_guard import (
@@ -107,7 +107,10 @@ def test_place_search_normalizes_results():
         ],
     }
     c = _client([("/place/v2/search", payload)])
-    items = asyncio_run(c.place_search("菜市场", (107.9758, 26.5734)))
+    out = asyncio_run(c.place_search("菜市场", (107.9758, 26.5734), radius_m=2000))
+    # 返回的是 PlaceSearchOut（点位 + 完整性举证），不是裸 list —— 见其 docstring 的理由
+    assert out.stop_reason == STOP_COMPLETE and out.pages_fetched == 1
+    items = out.items
     assert len(items) == 2
     assert items[0]["name"] == "凯里老街菜市场"
     assert items[0]["lng"] == pytest.approx(107.9760)

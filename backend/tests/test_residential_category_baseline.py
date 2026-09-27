@@ -8,6 +8,13 @@
    「这个 POI 属于哪一类」的分辨率，居住档取哪些类算覆盖一个字都不改（D7）。
    任何一格变化都说明改动越界了，而不是"基线该更新"。
 
+   ⚠️ 只有一类变更允许重钉：**采集口径本身升版**（`scope_policy_version` 变了）。
+   那时光标从「可达圈内」挪到「按证据需求逐类外扩」，计数必变，且是**计划爆炸半径表
+   预先登记**的变。判据：先看 `caliber.scope_policy_version` 是否换代 —— 换代 ⇒ 随快照
+   重钉并在注释里写清是哪一版；未换代而数字动了 ⇒ 越界，按原意处理。
+   当前代际：`kaili.json` 仍是升级前的旧快照（未声明版本），`beijing-jinsong.json`
+   是 `ev-1` 实测快照（2026-09-27 重刷）。
+
 2. **探针可行性核查**：加键前要先实测真实改判面，但**fixture 存的是判类之后的结果**
    （点位只留 `name/category/minutes/lnglat`，没有百度原始 `tag`）。⇒ 只拿 fixture
    重放，只能复现「按名称弱先验」那半边判据，`accept_tags / reject_tags` 那半边
@@ -39,18 +46,27 @@ BASELINE = {
         },
     },
     "beijing-jinsong.json": {
-        "totals": {"total": 175, "in_circle": 104, "points": 104},
-        "scores_total": 65.3,
-        "blindspots": 1,
+        # ev-1 实测快照（2026-09-27 重刷）。与旧口径相比 market/medical/shopping 采集数
+        # 上升 = 证据域逐类外扩 + 分页截断缓解；判定覆盖率 9.1%→21.2%，实测盲区 1→0
+        # （新判得的格三类皆有据），综合评分 65.3→65.8。
+        # ⚠️ elderly 这一行是 **G1 修复前**的产物：`in_circle=0` 却带 `min_minutes=19.9`
+        #    （等时圈凹口外的点把时间灌了进来）。代码已修（`assemble.py` 的 `field_fn`
+        #    加多边形门控 + `test_report_invariants.py` 的 G1 用例），但要等下一次真跑
+        #    重刷快照才会归 None —— 在那之前由
+        #    `test_report_invariants.py::test_g1_residual_in_shipped_jinsong_snapshot`
+        #    以 xfail(strict) 记着，别把它当合法基线复制走。
+        "totals": {"total": 206, "in_circle": 150, "points": 150},
+        "scores_total": 65.8,
+        "blindspots": 0,
         "categories": {
-            "market": (11, 8, 13.1),
-            "medical": (38, 24, 5.5),
-            "education": (23, 16, 9.6),
-            "shopping": (55, 25, 2.6),
+            "market": (28, 7, 13.9),
+            "medical": (29, 24, 5.6),
+            "education": (24, 17, 9.6),
+            "shopping": (57, 50, 2.6),
             "elderly": (2, 0, 19.9),
-            "finance": (20, 14, 7.0),
-            "recreation": (11, 6, 9.7),
-            "service": (15, 11, 10.6),
+            "finance": (15, 15, 7.0),
+            "recreation": (26, 19, 9.7),
+            "service": (25, 18, 6.9),
         },
     },
 }

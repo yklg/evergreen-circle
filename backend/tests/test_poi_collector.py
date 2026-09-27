@@ -7,6 +7,10 @@ import pytest
 
 pc = pytest.importorskip("app.living_circle.poi_collector", reason="poi_collector.py 待 rev3 落地（§四B）")
 
+# stub 模拟的是**客户端**契约 ⇒ 从 baidu_client 取其返回类型与停止原因常量，
+# 而不是从采集层拿别名：采集层只是消费者。
+from app.living_circle.baidu_client import PlaceSearchOut
+
 
 def budget():
     # quota 产出的分配快照（27 = 免费档 poi 预算）。纯工厂：刻意非 pytest fixture，
@@ -87,7 +91,7 @@ class TestCollectPOIConvergence:
 
             async def place_search(self, *a, **k):
                 self.calls += 1
-                return []
+                return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
 
         stub = Stub()
         scope = object()
@@ -128,13 +132,19 @@ class TestCollectPOIConvergence:
 
             async def place_search(self, *a, **k):
                 self.calls += 1
-                return []
+                return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
 
         stub = Stub()
         b = pc.POIBudget(total=2)
-        per_cat, triads = asyncio.run(
+        collected = asyncio.run(
             self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
         )
         assert stub.calls == 2, f"预算紧张应恰好 2 次调用（准入集合不漂移），实际 {stub.calls}"
         assert b.remaining == 0, "预算必须被恰好花完（2 词 × 1 页）"
-        assert isinstance(per_cat, dict) and isinstance(triads, dict)
+        assert isinstance(collected.per_category, dict) and isinstance(collected.triads, dict)
+        # 预算饿死的词必须**可见**：0 次调用不能悄悄等于「该类没有设施」（P0-2）
+        # 25 个展示词准入 2 ⇒ 23 饿死；三要素 pharmacy/primary 各差 1 额度 ⇒ +2（market 复用类目，不占额度）
+        assert len(collected.evidence.starved_terms) == 25, (
+            f"应记 25 个饿死词（23 展示 + 2 三要素），实际 {collected.evidence.starved_terms}"
+        )
+        assert not collected.evidence.complete

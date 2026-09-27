@@ -26,6 +26,18 @@ POI 标 True 但坐标在 3km 外     Q2 变体：标记与几何矛盾         
 口径 20min 但只有 5/10/15 圈     口径与数据不一致                     可达区口径不存在
 删掉环的 ``geojson``           判不了（信息不足）                    **不得误报**
 ===========================  ==================================  ==========================
+
+ rev2 追加三条（证据相，底本先把夹具升格成 ``ev-1`` 自洽口径）：
+
+===========================  ==================================  ==========================
+余量改回 0 / collect≠外接圆+余量   D2 回退 ⇒ 判盲面塌回 5%          B5 余量≤0、关系复算不符
+实测边界 > 请求 / 带缺口称完整     「没查完」被省略                B5
+judge_radius 未减判定半径 /      判定域与证据脱钩；「判不了」冒充    B10
+judged=0 却非全未定               「不盲」
+缺 confidence / 低覆盖称 full /   扣分口径被改回「只按条数」        B11
+penalty 复算不符
+旧口径报告（无版本号）             存量 26 次历史体检              **不得误报、不得隐藏**
+===========================  ==================================  ==========================
 """
 from __future__ import annotations
 
@@ -43,6 +55,17 @@ from app.living_circle.report_contract import (
     assess_geometry,
     report_is_presentable,
     staleness_reason,
+)
+from app.living_circle.scope import (
+    BLIND_RADIUS_M,
+    EVIDENCE_MARGIN_M,
+    SCOPE_POLICY_VERSION,
+    TRIAD_KEYS,
+)
+from app.living_circle.scoring import (
+    BLINDSPOT_PENALTY_CAP,
+    BLINDSPOT_PENALTY_PER_EXTRA,
+    compute_scores,
 )
 
 FIXTURES = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
@@ -289,3 +312,205 @@ def test_insufficient_input_is_not_a_violation(mutate, label):
     mutate(lc)
     issues = assess_geometry(lc)
     assert issues.violations == (), f"{label} 不该被当成几何违规，实际：{issues.reason}"
+
+
+# ── B5 / B10 / B11：证据相三条 ──────────────────────────────────
+# 这三条守的不是几何，而是「我实际查到哪儿」与「我据此敢下多大结论」之间的那条链。
+# 底本必须先把夹具升格成 **ev-1 自洽产物**：新口径下不合规的报告会让任何一条恒真命中，
+# 变异样本也就失去判别力（与 B1/B2 用「凯里夹具无盲区」当前提是同一纪律）。
+
+def _ev1_caliber(lc: dict, **over) -> dict:
+    """把夹具的旧 D2 口径（余量 0、collect == 外接圆）升格成 ev-1 自洽口径。"""
+    cal = lc["caliber"]
+    circum = float(cal["reach_circumradius_m"])
+    collect = circum + EVIDENCE_MARGIN_M
+    inside = int(cal["cells_inside"])
+    cal.update({
+        "collect_radius_m": round(collect, 1),
+        "collect_margin_m": round(EVIDENCE_MARGIN_M, 1),
+        "scope_policy_version": SCOPE_POLICY_VERSION,
+        "evidence_margin_m": round(EVIDENCE_MARGIN_M, 1),
+        "evidence_radius_m": round(collect, 1),
+        "evidence_frontier_m": {k: round(collect, 1) for k in TRIAD_KEYS},
+        "evidence_complete": True,
+        "evidence_bound_source": "measured",
+        "judge_radius_m": round(collect - BLIND_RADIUS_M, 1),
+        "cells_judged": inside,
+        "cells_unknown": 0,
+    })
+    cal.update(over)
+    return cal
+
+
+def _rescore(lc: dict) -> dict:
+    """按**当前** caliber/blindspots 用真公式重算 confidence/evidence（保持一致底）。"""
+    cal = lc["caliber"]
+    inside = int(cal.get("cells_inside") or 0)
+    share = (int(cal.get("cells_judged") or 0) / inside) if inside else None
+    fresh = compute_scores(
+        lc["poi"]["categories"], lc["scores"].get("triads") or [], len(lc["blindspots"]),
+        judged_share=share, evidence_complete=bool(cal.get("evidence_complete")),
+    )
+    lc["scores"]["confidence"] = fresh["confidence"]
+    lc["scores"]["evidence"] = fresh["evidence"]
+    return lc
+
+
+def _ev1(**over) -> dict:
+    """ev-1 自洽底本（默认判满可达区 ⇒ share=1、confidence=full）。"""
+    lc = _base()
+    _ev1_caliber(lc, **over)
+    return _rescore(lc)
+
+
+def test_ev1_consistent_report_is_clean():
+    """反「一律判违规」护栏：新口径下自洽的报告，三条都不得响。"""
+    lc = _ev1()
+    issues = assess_geometry(lc)
+    assert issues.ok, issues.reason
+    assert lc["caliber"]["cells_judged"] == lc["caliber"]["cells_inside"]
+
+
+def test_legacy_report_without_version_is_not_flagged():
+    """存量报告（无 ``scope_policy_version``）⇒ 三条整体跳过，**不得**被隐藏。
+
+    这正是 D-4「只拦复用、不拦可见性」的读侧落点：旧口径的 88.4 分仍是用户的历史。
+    """
+    lc = _base()
+    assert "scope_policy_version" not in lc["caliber"], "夹具须停留在旧口径，本用例才有判别力"
+    assert lc["caliber"]["collect_margin_m"] == 0.0, "夹具应是 D2（余量 0）形状"
+    assert assess_geometry(lc).ok, assess_geometry(lc).reason
+
+
+# ── B5 · 证据域自洽 ─────────────────────────────────────────────
+def test_evidence_margin_zero_is_flagged():
+    """余量被偷偷改回 0（D2 回退）⇒ 采集区不再为 1km 证据兜底。"""
+    lc = _ev1()
+    cal = lc["caliber"]
+    cal["evidence_margin_m"] = 0.0
+    cal["collect_radius_m"] = cal["evidence_radius_m"] = float(cal["reach_circumradius_m"])
+    cal["judge_radius_m"] = 0.0
+    assert any("余量" in v and "≤ 0" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_collect_radius_not_derived_from_margin_is_flagged():
+    """余量声明 1000 却只外扩一半 ⇒ 关系被写死而不是导出。"""
+    lc = _ev1()
+    lc["caliber"]["collect_radius_m"] = round(
+        float(lc["caliber"]["reach_circumradius_m"]) + EVIDENCE_MARGIN_M / 2, 1
+    )
+    assert any("≠ 可达区外接圆" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_measured_evidence_beyond_request_is_flagged():
+    """实测边界大于请求半径在物理上不可能 ⇒ 只能是没有校验的换算/绑定顺序错。"""
+    lc = _ev1()
+    lc["caliber"]["evidence_radius_m"] = round(float(lc["caliber"]["collect_radius_m"]) + 300, 1)
+    assert any("实测不可能大于请求" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_complete_flag_with_short_frontier_is_flagged():
+    """声称「证据完整」却承认只查到边内 400m ⇒ 「没查完」被省略的那条路。"""
+    lc = _ev1()
+    lc["caliber"]["evidence_radius_m"] = round(float(lc["caliber"]["collect_radius_m"]) - 400, 1)
+    assert any("不得称完整" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_short_frontier_marked_incomplete_is_clean():
+    """反例：同样只查到边内 400m，但如实标 complete=false 并同步缩判定域 ⇒ 不得判违规。
+
+    「判不了 ≠ 有罪」在证据相的落点：诚实承认证据有缺口是合规的，谎称完整才不是。
+    """
+    short = round(float(_ev1()["caliber"]["collect_radius_m"]) - 400, 1)
+    lc = _ev1(evidence_complete=False, evidence_radius_m=short,
+              judge_radius_m=round(short - BLIND_RADIUS_M, 1))
+    issues = assess_geometry(_rescore(lc))
+    assert issues.ok, issues.reason
+
+
+def test_declared_version_without_evidence_keys_is_flagged():
+    """版本号与键集是同一次发布的两半：只发版本不发键 ⇒ 无从举证。"""
+    lc = _ev1()
+    for k in ("evidence_margin_m", "evidence_frontier_m", "evidence_complete",
+              "evidence_bound_source", "judge_radius_m"):
+        lc["caliber"].pop(k, None)
+    assert any("却缺" in v and "举证" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+# ── B10 · 判定域由证据域导出 ────────────────────────────────────
+def test_judge_radius_not_derived_from_evidence_is_flagged():
+    """忘了减判定半径（judge == 证据边界）⇒ 外沿的格会被当成可判。"""
+    lc = _ev1()
+    lc["caliber"]["judge_radius_m"] = round(float(lc["caliber"]["evidence_radius_m"]), 1)
+    assert any("判定域不再由证据域导出" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_zero_judged_cells_must_all_be_unknown():
+    """一格未判却有 5 格没记未定 ⇒ 「判不了」正在被当成「不盲」。"""
+    lc = _ev1()
+    inside = int(lc["caliber"]["cells_inside"])
+    lc["caliber"].update({"cells_judged": 0, "cells_unknown": inside - 5})
+    assert any("判不了」被当成「不盲" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_judged_mask_cannot_survive_zero_judge_radius():
+    """判定半径 0m ⇒ 物理上最多中心一格可判；报出 10 格即掩码退化。"""
+    lc = _ev1()
+    cal = lc["caliber"]
+    cal["evidence_radius_m"] = round(BLIND_RADIUS_M, 1)   # 只查到 1000m ⇒ judge=0
+    cal["judge_radius_m"] = 0.0
+    cal["evidence_complete"] = False
+    cal.update({"cells_judged": 10, "cells_unknown": int(cal["cells_inside"]) - 10})
+    assert any("judged 掩码已退化" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+# ── B11 · 扣分与判定面一致 ──────────────────────────────────────
+def test_new_report_without_confidence_is_flagged():
+    lc = _ev1()
+    lc["scores"].pop("confidence")
+    assert any("缺 scores.confidence" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_full_confidence_with_partial_coverage_is_flagged():
+    """覆盖率 82% 却自称 full ⇒ 「没判的 17 格」冒充「没问题」。"""
+    lc = _ev1()
+    inside = int(lc["caliber"]["cells_inside"])
+    lc["caliber"].update({"cells_judged": inside - 17, "cells_unknown": 17})
+    lc["scores"]["confidence"] = "full"
+    assert any("冒充「没问题」" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_full_confidence_with_incomplete_evidence_is_flagged():
+    lc = _ev1(evidence_complete=False)
+    lc["scores"]["confidence"] = "full"
+    assert any("证据不完整" in v or "截断/饿死/熔断" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_penalty_reverted_to_count_only_is_flagged():
+    """本条是 D-3 的守门人：把扣分改回「只按条数」必须被复算判据抓住。
+
+    构造：判定面覆盖 8 成 + 2 处有据盲区 ⇒ 外推 2.5 处 ⇒ 扣 ≈5.9 分；按条数只扣 4.0 分。
+    两侧都必须在封顶线以下，比较才有判别力（触顶时两种口径都得 12 分，等于没测）。
+    """
+    lc = _ev1()
+    c = _center(lc)
+    inside = int(lc["caliber"]["cells_inside"])
+    judged = round(inside * 0.8)
+    lc["caliber"].update({"evidence_complete": False, "cells_judged": judged, "cells_unknown": inside - judged})
+    lc["blindspots"] = [_blindspot("bs-a", c, 300.0), _blindspot("bs-b", c, 300.0)]
+    _rescore(lc)
+    assert assess_geometry(lc).ok, assess_geometry(lc).reason
+    share = judged / inside
+    extrapolated = min(BLINDSPOT_PENALTY_CAP, max(0.0, len(lc["blindspots"]) / share - 1.0) * BLINDSPOT_PENALTY_PER_EXTRA)
+    count_only = max(0.0, len(lc["blindspots"]) - 1.0) * BLINDSPOT_PENALTY_PER_EXTRA
+    assert extrapolated > count_only > 0, "变异样本须让两种口径真的分岔"
+
+    lc["scores"]["evidence"]["penalty_applied"] = round(count_only, 1)   # 变异：回退成按条数
+    assert any("无法由公式复算" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+def test_judged_share_must_match_the_cells_accounting():
+    """评分读到的判定面与报告声明的不是同一个数 ⇒ 两处账本必须对齐。"""
+    lc = _ev1()
+    lc["scores"]["evidence"]["judged_share"] = 0.99
+    assert any("与 caliber 分账" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason

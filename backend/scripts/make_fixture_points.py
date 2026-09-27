@@ -30,7 +30,7 @@ from app.core.config import get_settings  # noqa: E402
 from app.living_circle.assemble import build_poi_block  # noqa: E402
 from app.living_circle.baidu_client import BaiduClient  # noqa: E402
 from app.living_circle.caliber import get_caliber  # noqa: E402
-from app.living_circle.data_source import load_poi  # noqa: E402
+from app.living_circle.data_source import bind_evidence, load_poi  # noqa: E402
 from app.living_circle.geo_utils import to_local_xy  # noqa: E402
 from app.living_circle.isochrone import idw_for_points  # noqa: E402
 from app.living_circle.poi import check_poi_conservation  # noqa: E402
@@ -54,7 +54,11 @@ async def augment_one(client: BaiduClient, lc: Dict[str, Any]) -> Dict[str, Any]
     sample_xy = np.array([to_local_xy(center, sp["lng"], sp["lat"]) for sp in sample_pts])
     sample_minutes: List[Optional[float]] = [sp.get("minutes") for sp in sample_pts]
 
-    per_category, _triads = await load_poi(client, center, scope.collect_radius_m)
+    collected = await load_poi(client, center, scope.collect_radius_m, scope=scope)
+    per_category, _triads = collected.per_category, collected.triads
+    # 重刷夹具必须一并绑定实测证据 —— 否则新夹具的 `caliber` 缺 evidence_* 字段，
+    # 读侧契约与前端举证会拿到「旧口径形状的新数据」。
+    scope = bind_evidence(scope, collected)
 
     times_by_cat: Dict[str, List[Optional[float]]] = {}
     for cat, items in per_category.items():

@@ -20,19 +20,62 @@ class CaliberView:
 
 
 # ── 命名空间集合（启动期注册用）──────────────────────────
+# `scope` 是 rev2 追加的：判盲口径的版本号与采集证据余量都住在 `SpatialScope`
+# （那里才是「三概念关系」能做构造即校验的地方），不登记进索引就让专家卡无法引用，
+# 而 prose 里一旦提到它们就会被词表闸判成「编造指标」。
 NAMESPACES: FrozenSet[str] = frozenset({
-    "caliber", "scoring", "poi", "blindspot", "isochrone", "report",
+    "caliber", "scoring", "poi", "facility", "blindspot", "isochrone", "report", "scope",
 })
 
 # ── 内部存储 ────────────────────────────────────────────
 _INDEX: Dict[str, CaliberView] = {}
 
 
+def _require_attr(obj: Any, name: str, ref: str) -> Any:
+    """取名册**登记过**的属性；缺失即 `AttributeError`，绝不静默跳过。
+
+    旧写法是 `getattr(mod, name, None)` + 「非 None 才登记」，于是口径常量被改名/删掉时
+    那条 ref 只是**无声缺席** —— 专家卡引用不到还算轻的，真正致命的是另一半：
+    `_build_index()` 过去不清空 `_INDEX`、只做覆盖，所以在已建过索引的进程里重建一次，
+    缺失符号的那条 ref 会带着**旧值**留在索引里替一个不存在的东西作证。
+    这是本仓挂账的「改名后 `.get` 静默归零」类缺陷的加强版，两处必须一起修才成立。
+    """
+    try:
+        return getattr(obj, name)
+    except AttributeError:
+        where = getattr(obj, "__name__", type(obj).__name__)
+        raise AttributeError(
+            f"口径名册登记的 {ref} 在 {where} 上不存在：要么把名册一起改，要么把符号补回来；"
+            f"静默跳过会让索引替已消失的口径作证（计划 v4 阶段 0）"
+        ) from None
+
+
 def _build_index() -> None:
-    """从各模块遍历容器构建索引（不硬编码任何数值）。"""
+    """重建口径索引：**先建到新表、成功才整体换出**。
+
+    两个坑一起堵（计划 v4 阶段 0）：
+    ① 只做覆盖不清空 ⇒ 名册里被改名/删掉的符号，其 ref 会带着**旧值**留在进程级全局里
+       替一个不存在的东西作证（僵尸 ref，比静默缺席更坏：它看着像有举证）；
+    ② 可"先清空再逐条填"会留下另一个坑 —— 填到一半抛错（①要逼出来的正是这种错），
+       进程就只剩半张甚至空索引，下游 `view()` 全部静默返回 None，比僵尸 ref 更难查。
+    所以构建期写入落在新表，成功后一次性换出；异常则回滚到旧表并原样抛出。
+    """
+    global _INDEX
+    previous = _INDEX
+    _INDEX = {}
+    try:
+        _populate_index()
+    except BaseException:
+        _INDEX = previous
+        raise
+
+
+def _populate_index() -> None:
+    """从各模块遍历容器把名册逐条填进当前 `_INDEX`（换出与回滚由 `_build_index` 负责）。"""
     from app.living_circle import (
         blindspot,
         caliber,
+        facility_rule,
         isochrone,
         poi,
         report_contract,
@@ -45,23 +88,21 @@ def _build_index() -> None:
         # 基础字段
         for fname in ("speed_m_per_min", "detour_k", "study_radius_m",
                        "iso_minutes", "reach_full_min", "basis"):
-            val = getattr(c, fname, None)
-            if val is not None:
-                label = _caliber_field_label(fname)
-                _INDEX[f"{ns}.{fname}"] = CaliberView(
-                    ref=f"{ns}.{fname}", kind="param", module="caliber",
-                    label=label, value=_fmt_caliber_value(fname, val),
-                )
+            val = _require_attr(c, fname, f"{ns}.{fname}")
+            label = _caliber_field_label(fname)
+            _INDEX[f"{ns}.{fname}"] = CaliberView(
+                ref=f"{ns}.{fname}", kind="param", module="caliber",
+                label=label, value=_fmt_caliber_value(fname, val),
+            )
         # 派生属性
         for dname in ("innermost_radius_m", "reach_radius_bound_m",
                        "fine_band", "grid_n_for_standard"):
-            val = getattr(c, dname, None)
-            if val is not None:
-                label = _caliber_derived_label(dname)
-                _INDEX[f"{ns}.{dname}"] = CaliberView(
-                    ref=f"{ns}.{dname}", kind="derived", module="caliber",
-                    label=label, value=str(val),
-                )
+            val = _require_attr(c, dname, f"{ns}.{dname}")
+            label = _caliber_derived_label(dname)
+            _INDEX[f"{ns}.{dname}"] = CaliberView(
+                ref=f"{ns}.{dname}", kind="derived", module="caliber",
+                label=label, value=str(val),
+            )
 
     # 2. scoring :: WEIGHTS
     for dim, w in scoring.WEIGHTS.items():
@@ -70,12 +111,11 @@ def _build_index() -> None:
             label=_scoring_dim_label(dim), value=str(w),
         )
     # BLINDSPOT_PENALTY_CAP
-    cap = getattr(scoring, "BLINDSPOT_PENALTY_CAP", None)
-    if cap is not None:
-        _INDEX["scoring::BLINDSPOT_PENALTY_CAP"] = CaliberView(
-            ref="scoring::BLINDSPOT_PENALTY_CAP", kind="param", module="scoring",
-            label="盲区扣分上限", value=str(cap),
-        )
+    cap = _require_attr(scoring, "BLINDSPOT_PENALTY_CAP", "scoring::BLINDSPOT_PENALTY_CAP")
+    _INDEX["scoring::BLINDSPOT_PENALTY_CAP"] = CaliberView(
+        ref="scoring::BLINDSPOT_PENALTY_CAP", kind="param", module="scoring",
+        label="盲区扣分上限", value=str(cap),
+    )
 
     # 3. poi :: CATEGORY_DEFS / TRIAD_KEYWORDS
     for cat, defn in poi.CATEGORY_DEFS.items():
@@ -95,34 +135,68 @@ def _build_index() -> None:
         label="POI 名称归一", value="poi.norm_name()",
     )
 
-    # 4. blindspot :: 常量
-    for cname in ("BLIND_RADIUS_M", "BLIND_GRID_M", "SEV_HEAVY", "SEV_MEDIUM"):
-        val = getattr(blindspot, cname, None)
-        if val is not None:
-            _INDEX[f"blindspot::{cname}"] = CaliberView(
-                ref=f"blindspot::{cname}", kind="param", module="blindspot",
-                label=_blindspot_label(cname), value=str(val),
-            )
-    # EFFORT_BY_DIST
-    ebd = getattr(blindspot, "EFFORT_BY_DIST", None)
-    if ebd:
-        _INDEX["blindspot::EFFORT_BY_DIST"] = CaliberView(
-            ref="blindspot::EFFORT_BY_DIST", kind="param", module="blindspot",
-            label="补点努力系数", value=str(ebd),
+    # 3b. facility :: 设施实体归并判据（口径变更必须可举证，否则报告里的点位名
+    #     与百度原始 POI 名不再逐字一致却无从回溯）
+    _INDEX["facility::FACILITY_RULE_VERSION"] = CaliberView(
+        ref="facility::FACILITY_RULE_VERSION", kind="param", module="facility",
+        label="设施归并判据版本", value=facility_rule.FACILITY_RULE_VERSION,
+    )
+    _INDEX["facility::FACILITY_MERGE_M"] = CaliberView(
+        ref="facility::FACILITY_MERGE_M", kind="param", module="facility",
+        label="设施归并半径", value=str(facility_rule.FACILITY_MERGE_M),
+    )
+    _INDEX["facility::SUB_POINT_SUFFIXES"] = CaliberView(
+        ref="facility::SUB_POINT_SUFFIXES", kind="param", module="facility",
+        label="功能子点后缀词表",
+        value=f"{len(facility_rule.SUB_POINT_SUFFIXES)} 项："
+              + "、".join(facility_rule.SUB_POINT_SUFFIXES[:6]) + "…",
+    )
+    # 三要素通道刻意**不**跟随类目归并 —— 这是判盲口径的一部分，必须可被专家卡引用
+    _INDEX["facility::triad_channel_policy"] = CaliberView(
+        ref="facility::triad_channel_policy", kind="param", module="facility",
+        label="三要素通道归并策略", value="geometric（盲区 1km 硬判不随归并减少坐标）",
+    )
+    _INDEX["facility::merge_enabled"] = CaliberView(
+        ref="facility::merge_enabled", kind="param", module="facility",
+        label="设施归并开关", value=str(caliber.facility_merge_enabled()),
+    )
+    # same_facility / dedupe_facility 作为 callable
+    for fname in ("same_facility", "facility_core", "promote_display_name"):
+        _INDEX[f"facility::{fname}"] = CaliberView(
+            ref=f"facility::{fname}", kind="callable", module="facility",
+            label=f"设施判据 {fname}", value=f"facility_rule.{fname}()",
         )
 
+    # 4. blindspot :: 常量
+    for cname in ("BLIND_RADIUS_M", "BLIND_GRID_M", "SEV_HEAVY", "SEV_MEDIUM"):
+        _INDEX[f"blindspot::{cname}"] = CaliberView(
+            ref=f"blindspot::{cname}", kind="param", module="blindspot",
+            label=_blindspot_label(cname),
+            value=str(_require_attr(blindspot, cname, f"blindspot::{cname}")),
+        )
+    # EFFORT_BY_DIST
+    _INDEX["blindspot::EFFORT_BY_DIST"] = CaliberView(
+        ref="blindspot::EFFORT_BY_DIST", kind="param", module="blindspot",
+        label="补点努力系数",
+        value=str(_require_attr(blindspot, "EFFORT_BY_DIST", "blindspot::EFFORT_BY_DIST")),
+    )
+
     # 5. isochrone :: MODE_PARAMS
+    #    名册只登记 `grid_n`：`smooth` 是历史上的幻影条目（MODE_PARAMS 里从来没有这个键，
+    #    旧写法靠 `params.get(...)` 静默跳过，于是它一直"登记在案"却永不落地）。
     for mode, params in isochrone.MODE_PARAMS.items():
-        for pname in ("grid_n", "smooth"):
-            val = params.get(pname)
-            if val is not None:
-                _INDEX[f"isochrone::{mode}.{pname}"] = CaliberView(
-                    ref=f"isochrone::{mode}.{pname}", kind="param",
-                    module="isochrone", label=f"{mode}·{pname}", value=str(val),
-                )
+        if "grid_n" not in params:
+            raise KeyError(
+                f"isochrone::{mode}.grid_n 已登记进名册，但 MODE_PARAMS[{mode!r}] 里没有这个键"
+            )
+        _INDEX[f"isochrone::{mode}.grid_n"] = CaliberView(
+            ref=f"isochrone::{mode}.grid_n", kind="param",
+            module="isochrone", label=f"{mode}·grid_n", value=str(params["grid_n"]),
+        )
 
     # 6. report :: 契约字段 + 采样点分档（timed_count / in_reach_count / sample_count）
-    live_required = getattr(report_contract, "_LIVE_REQUIRED", ())
+    live_required = _require_attr(
+        report_contract, "_LIVE_REQUIRED", "report_contract._LIVE_REQUIRED")
     for fname in live_required:
         _INDEX[f"report::{fname}"] = CaliberView(
             ref=f"report::{fname}", kind="field", module="report_contract",
@@ -144,6 +218,55 @@ def _build_index() -> None:
         ref="report::sample_count", kind="field", module="report_contract",
         label="总采样点数", value="living_circle.sample_count",
     )
+
+    # 7. scope :: 判盲口径的版本与证据余量（rev2 单一事实源）
+    #    不登记就无法被专家卡引用，而 prose 一旦提到就会被词表闸判成「编造指标」。
+    #    `BLIND_RADIUS_M` 已在 `blindspot::` 下登记（同一个定义，两个 ref 只会让名册重复），
+    #    这里只补 rev2 新增的两把常量。
+    from app.living_circle import scope as _scope
+
+    for sname, slabel in (
+        ("EVIDENCE_MARGIN_M", "采集证据余量"),
+        ("SCOPE_POLICY_VERSION", "判盲口径版本"),
+    ):
+        _INDEX[f"scope::{sname}"] = CaliberView(
+            ref=f"scope::{sname}", kind="param", module="scope",
+            label=slabel,
+            value=str(_require_attr(_scope, sname, f"scope::{sname}")),
+        )
+
+    # 8. 证据相与评分置信度的**报告载荷键**
+    #    ⚠️ 用扁平 ref（`report::evidence_radius_m`），value 才写嵌套路径 —— 不要复制
+    #    `_LIVE_REQUIRED` 那处的畸形形态（它把 path-tuple 直接当键，产出
+    #    `report::('poi','points')` 这种不可引用 ref；本期不改它，但新键不跟着错）。
+    for fname, flabel, fpath in (
+        ("cells_inside", "可达区内判定格数", "living_circle.caliber.cells_inside"),
+        ("cells_judged", "已判定格数", "living_circle.caliber.cells_judged"),
+        ("cells_unknown", "证据不足未判格数", "living_circle.caliber.cells_unknown"),
+        ("evidence_margin_m", "证据余量声明", "living_circle.caliber.evidence_margin_m"),
+        ("evidence_radius_m", "实测证据边界半径", "living_circle.caliber.evidence_radius_m"),
+        ("evidence_frontier_m", "逐类实测证据边界", "living_circle.caliber.evidence_frontier_m"),
+        ("evidence_complete", "证据完整性", "living_circle.caliber.evidence_complete"),
+        ("judge_radius_m", "可判定半径", "living_circle.caliber.judge_radius_m"),
+        ("scope_policy_version", "判盲口径版本声明", "living_circle.caliber.scope_policy_version"),
+        ("confidence", "评分置信度", "living_circle.scores.confidence"),
+        ("evidence", "盲区扣分证据链", "living_circle.scores.evidence"),
+    ):
+        _INDEX[f"report::{fname}"] = CaliberView(
+            ref=f"report::{fname}", kind="field", module="report_contract",
+            label=flabel, value=fpath,
+        )
+
+    # 9. scoring :: 盲区扣分的外推口径（rev2 新增两把）
+    for pname, plabel in (
+        ("BLINDSPOT_PENALTY_PER_EXTRA", "每处外推盲区扣分"),
+        ("JUDGE_SHARE_FLOOR", "判定覆盖率外推下限"),
+    ):
+        _INDEX[f"scoring::{pname}"] = CaliberView(
+            ref=f"scoring::{pname}", kind="param", module="scoring",
+            label=plabel,
+            value=str(_require_attr(scoring, pname, f"scoring::{pname}")),
+        )
 
 
 def view(ref: str) -> Optional[CaliberView]:

@@ -117,7 +117,11 @@ def _two_stage_points(
     fine_m: Optional[float],
     fine_band: Optional[Tuple[float, float]],
 ) -> List[LngLat]:
-    """旧双阶段采样点（粗网格全覆盖 + 边界环带加密），完整保留原语义。"""
+    """旧双阶段采样点（粗网格全覆盖 + 边界环带加密），完整保留原语义。
+
+    `fine_band` 的缺省回落在 `sample_plan` 里**只解析一次**：本函数不再自带步行口径的
+    隐式默认，否则「哪套环带生效」会有两处实现（正是本仓反复踩的三份漂移）。
+    """
     pts: List[LngLat] = []
     half = study_radius_m
     # 粗网格（奇数点数使中心点落格）
@@ -129,9 +133,6 @@ def _two_stage_points(
                 pts.append(xy_to_lnglat(center, x, y))
     # 边界带加密
     if fine_m and fine_m > 0:
-        if fine_band is None:
-            cal = get_caliber("walking")
-            fine_band = cal.fine_band
         lo, hi = fine_band
         n_fine = math.ceil((hi - lo) / fine_m) + 1
         # 以极坐标生成环内点（角度均匀 + 半径分级），避免笛卡尔网格在斜角处的空洞
@@ -158,13 +159,16 @@ def _budget_stage_points(
     center: LngLat,
     study_radius_m: float,
     max_points: int,
-) -> List[LngLat]:
+) -> Tuple[List[LngLat], float]:
     """预算受限单阶段粗网格（v5 B2/O3）：放弃 fine 带，把点数压到 ≤ max_points。
 
     - 圆内网格点 ≈ π/4·n²（圆内接于 n×n 方网格），取满足 π/4·n² ≤ max_points 的
       最大奇数 n（奇数保证中心点恰落格）；
     - 步长 = 2·R/(n−1)：预算下标准档步长 ≤ 内圈半径 308m，不触发最内圈坍缩（D1）；
     - 边构建边校验 len ≤ max_points，越界则 n 减 2 重试（保证不变量成立，杜绝边界效应破限）。
+
+    返回 `(点列, **实际**步长)` —— 步长必须回传：降预算时它会长到超过名义 `coarse_m`
+    或缩到比它更密（点数被 n 取整左右），调用方只拿点数的话就看不见这件事。
     """
     n = int(math.floor(math.sqrt(4.0 * max_points / math.pi)))
     if n % 2 == 0:
@@ -180,9 +184,69 @@ def _budget_stage_points(
             if math.hypot(x, y) <= study_radius_m
         ]
         if len(pts) <= max_points:
-            return pts
+            return pts, 2.0 * study_radius_m / (n - 1)
         n -= 2
-    return [xy_to_lnglat(center, 0.0, 0.0)]
+    # 只剩中心一个点：没有任何间距信息可言，按整个直径计（下游只会判得更粗）。
+    return [xy_to_lnglat(center, 0.0, 0.0)], 2.0 * study_radius_m
+
+
+@dataclass(frozen=True)
+class SamplePlan:
+    """一次采样的**实际生效规格**：光有点数不足以举证用的是哪一套规格。
+
+    `degraded=True` ⇒ 预算逼着放弃了边界 fine 加密带、退回单阶段粗网格，此时
+    `fine_m`/`fine_band` 如实为 None（而不是继续报名义档位那套）。存在本类型的理由：
+    `compute()` 过去只把点数交给下游，于是「点被压过」与「环带被丢」两件事实都不可见，
+    插值格仍按名义档位选 ⇒ IDW 在没有测过的尺度上凭空造细节。
+    """
+    points: List[LngLat]
+    coarse_m: float
+    fine_m: Optional[float]
+    fine_band: Optional[Tuple[float, float]]
+    sample_step_m: float
+    degraded: bool
+
+
+def sample_plan(
+    center: LngLat,
+    study_radius_m: float = 2500.0,
+    coarse_m: float = 400.0,
+    fine_m: Optional[float] = None,
+    fine_band: Optional[Tuple[float, float]] = None,
+    max_points: Optional[int] = None,
+) -> SamplePlan:
+    """采样规格的唯一推导点 —— `build_sample_points` 与 `compute` 共用，不分两处各算一遍。
+
+    `max_points` 三档语义同 `build_sample_points`（None/≤0 → 双阶段；≥双阶段点数 → 双阶段
+    全精度；否则 → 预算受限单阶段并标 `degraded`）。
+
+    `fine_band=None` 且给了 `fine_m` 时回落**步行**口径环带 —— 这是 `build_sample_points`
+    的历史语义（离线源与合成场测试零回归靠它）；真实多档调用必须由调用方显式传band，
+    见 `IsochroneEngine.compute` 的 `travel_mode`/`fine_band` 形参。
+    """
+    band = fine_band
+    if band is None and fine_m and fine_m > 0:
+        band = get_caliber("walking").fine_band
+    two_stage = _two_stage_points(center, study_radius_m, coarse_m, fine_m, band)
+    if max_points is None or max_points <= 0 or len(two_stage) <= max_points:
+        n_coarse = math.ceil(study_radius_m / coarse_m) * 2 + 1
+        return SamplePlan(
+            points=two_stage,
+            coarse_m=coarse_m,
+            fine_m=fine_m,
+            fine_band=band,
+            sample_step_m=2.0 * study_radius_m / (n_coarse - 1),
+            degraded=False,
+        )
+    pts, step = _budget_stage_points(center, study_radius_m, max_points)
+    return SamplePlan(
+        points=pts,
+        coarse_m=coarse_m,
+        fine_m=None,          # 环带确实被丢掉了：如实报 None，不替名义档位作证
+        fine_band=None,
+        sample_step_m=step,
+        degraded=True,
+    )
 
 
 def build_sample_points(
@@ -196,17 +260,21 @@ def build_sample_points(
     """生成测时采样点：粗网格全覆盖 + 边界环带细网格加密（或预算受限单阶段）。
 
     返回 (lng, lat) 列表；粗网格用奇数对称格（中心恰落在 (0,0) 采样点）。
-    fine_band 未指定时由口径派生（最内圈半径 → 研究半径），防最内圈坍缩（B8/I10）。
+    fine_band 未指定时由**步行**口径派生（最内圈半径 → 研究半径），防最内圈坍缩（B8/I10）；
+    骑行/驾车档必须自己传，否则会拿到步行的环带（历史默认，非正确行为）。
 
     ``max_points``（v5 B2）：
       - 为空/≤0 → 保持旧双阶段（离线源与测试合成场零回归，D4）；
       - 有限且 ≥ 旧双阶段点数 → 直接用旧双阶段（O3 恢复判据，付费档全精度）；
       - 否则 → 预算受限单阶段（D1，免费档：coarse 步长仍 < 内圈半径，不坍缩）。
+
+    本函数只是 `sample_plan(...).points` 的薄封装 —— 需要同时知道「实际用了哪套规格」的
+    调用方（`IsochroneEngine.compute`）直接走 `sample_plan`。
     """
-    two_stage = _two_stage_points(center, study_radius_m, coarse_m, fine_m, fine_band)
-    if max_points is None or max_points <= 0 or len(two_stage) <= max_points:
-        return two_stage
-    return _budget_stage_points(center, study_radius_m, max_points)
+    return sample_plan(
+        center, study_radius_m, coarse_m, fine_m, fine_band, max_points
+    ).points
+
 
 
 def idw_from_local(
@@ -287,21 +355,34 @@ class IsochroneEngine:
         study_radius_m: float = 2500.0,
         mode: str = "standard",
         max_points: Optional[int] = None,
+        travel_mode: str = "walking",
+        fine_band: Optional[Sequence[float]] = None,
     ) -> Dict[str, Any]:
         """执行等时圈计算 → 契约结构。
 
         meter_fn(points) -> 步行耗时(分钟)列表（None=不可达）；由调用方注入
         （live=百度 route_matrix 批量；fixture 测试=合成场）。
         ``max_points``（v5 B2）：预算感知采样上限（免费档 375）；None/≤0 保持双阶段。
+        ``travel_mode``：边界加密环带**归属哪一档口径**。必须显式传 —— 环带
+        `(max(最内圈半径,400), 研究半径)` 是逐档派生的（步行 2500 / 骑行 5000 / 驾车 9000），
+        而本函数只收到已解析好的 `study_radius_m`，无从推断，过去因此一路硬回落到步行
+        ⇒ 骑行/驾车在自己研究半径的外沿**一格加密都没有**（半径给了、精度没给）。
+        ``fine_band``：显式覆盖环带（给定时优先于 `travel_mode` 派生值）。
         """
         params = MODE_PARAMS.get(mode, MODE_PARAMS["standard"])
         coarse = params["coarse"]
         fine = params["fine"]
         grid_n = params["grid_n"]
 
-        sample_pts = build_sample_points(center, study_radius_m, coarse, (fine or coarse), max_points=max_points)
+        eff_band = tuple(float(v) for v in fine_band) if fine_band is not None else get_caliber(travel_mode).fine_band
+        plan = sample_plan(center, study_radius_m, coarse, (fine or coarse), eff_band, max_points=max_points)
+        sample_pts = plan.points
         minutes = await meter_fn(sample_pts)
 
+        # 插值格仍按名义档位的 grid_n 选（本批不改几何，只把它变成可观测的量）：
+        # 计划 v4 的 D5 要把方向翻成「规格→点数→预算」，届时 `grid_step_m ≥ sample_step_m`
+        # 才是能立起来的硬不变量 —— 现在它连双阶段正常路径都不满足（格 ~77m vs 采样 150m），
+        # 单靠把格调粗只会让所有等时圈面积凭空变化，那是拿一个错换另一个错。
         grid_xy, step = self._grid_coords(center, study_radius_m, grid_n)
 
         # 局部平面上插值：采样点与插值格点统一以 center 为原点投影
@@ -356,7 +437,26 @@ class IsochroneEngine:
         sampling = {
             "points": point_rows,
             "interpolation": "idw",
-            "is_scattered": fine is not None and fine > 0,
+            # 实际用了什么就报什么：`plan.fine_m` 在预算受限路径下是 None，
+            # 于是 `is_scattered` 不再替"名义上有边界加密"作证（旧写法读 MODE_PARAMS
+            # 的 fine，即使加密带已被丢弃也照样返回 True）。
+            "is_scattered": plan.fine_m is not None and plan.fine_m > 0,
+            # ── 实际生效规格（计划 v4 阶段 0 · D5 的前置可观测性）──────────
+            # 只有 `sample_count` 的报告会撒谎：点数被预算压过、环带被丢过，从数字上
+            # 看不出来，于是"降规格"与"按规格跑"产出的报告长得一模一样。这里把两者
+            # 拆开披露，其中 `grid_step_m` 与 `sample_step_m` 的比值就是"插值凭空造了
+            # 多少没测过的细节"的直接读数（D5 要让这个比值 ≥ 1，见下方注释）。
+            "spec": {
+                "profile": mode,                    # 名义档位（quick/standard/precise）
+                "travel_mode": travel_mode,         # 环带按哪一档口径派生
+                "coarse_m": float(coarse),          # 名义粗网格间距
+                "fine_m": None if plan.fine_m is None else float(plan.fine_m),
+                "fine_band": None if plan.fine_band is None else [float(plan.fine_band[0]), float(plan.fine_band[1])],
+                "grid_n": int(grid_n),
+                "grid_step_m": round(float(step), 1),
+                "sample_step_m": round(float(plan.sample_step_m), 1),
+                "degraded": bool(plan.degraded),
+            },
             # ⚠️ 汇总数**放在 sampling 内**，而不是叫 iso 顶层：
             # `assemble.py` 只把 `iso["sampling"]` 透传进报告，顶层字段会被丢掉，
             # 于是每个消费方（前端文案 / 诊断模板 / 专家）只好各自 filter 一遍点集 ——

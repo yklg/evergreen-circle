@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import SlidesPage from '../pages/SlidesPage'
+import { pickSlideChart } from '../lib/slideChart'
 import * as api from '../lib/api'
 import type { Report } from '../types'
 
@@ -212,5 +213,38 @@ describe('SlidesPage', () => {
     expect((await screen.findByText(/alert\(1\)/)).textContent).toContain('alert(1)')
     expect(screen.getByText(/alert\(3\)/)).toBeTruthy()
     expect(container.querySelector('img')).toBeNull()
+  })
+})
+
+/* ── TC-22：幻灯片取图按类型择优，不按下标（词云口碑化修复 步骤 10）── */
+
+const DONUT = { chart_id: 'c_donut', type: 'sentiment_donut', title: '情感分布', option: {} }
+const CLOUD = { chart_id: 'c_cloud', type: 'wordcloud', title: '口碑词云', words: [] }
+const BAR = { chart_id: 'c_bar', type: 'cost_bar', title: '花费结构', option: {} }
+
+function reportWith(sentimentCharts: unknown[]) {
+  return {
+    sections: [
+      { id: 'sentiment', title: '全网舆情', level: 1, key_takeaway: '', highlights: [], paragraphs: [], claims: [], charts: sentimentCharts },
+      { id: 'cost', title: '花费', level: 1, key_takeaway: '', highlights: [], paragraphs: [], claims: [], charts: [BAR] },
+    ],
+  } as unknown as Report
+}
+
+describe('pickSlideChart · 低样本不换图', () => {
+  it('情感环图在场时选环图', () => {
+    expect(pickSlideChart(reportWith([DONUT, CLOUD]))?.chart_id).toBe('c_donut')
+  })
+
+  it('低样本 ⇒ 环图缺位时改选别处的结构化图，而不是舆情章的词云', () => {
+    // 旧写法取「第一个含图章的 charts[0]」：这一栏会从 donut 静默变成 wordcloud，
+    // 幻灯片内容随样本量改变；且分层词云在 200px 高的幻灯片里常整体放不下。
+    expect(pickSlideChart(reportWith([CLOUD]))?.chart_id).toBe('c_bar')
+  })
+
+  it('全报告只有词云时退回词云；一张图都没有时返回 null（边界如实，不静默造图）', () => {
+    const onlyCloud = { sections: [{ id: 'sentiment', charts: [CLOUD] }] } as unknown as Report
+    expect(pickSlideChart(onlyCloud)?.chart_id).toBe('c_cloud')
+    expect(pickSlideChart(makeReport())).toBeNull()
   })
 })

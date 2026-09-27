@@ -354,3 +354,107 @@ def test_pipeline_signs_compliant_report(monkeypatch):
     assert rid, "合规产物必须被签发"
     assert db.get_task_full(tid)["status"] == "done"
     assert db.get_living_circle_report(rid) is not None, "合规产物必须落库"
+
+
+# ──────────── E2 缓存命中：内容与 report_id 必须配对（rev2 复用门暴露的错配）────────────
+
+class _CachingSource:
+    """假装缓存有货：`peek` 直接返回一份现成内容，`compute` 被调用即判失败。
+
+    为什么只喂 peek：本段守的是「命中之后怎么收尾」，与采集无关；而 `compute` 抛错
+    顺带把「命中路径零百度调用」（U39 那条纪律）也钉在这里。`backfill` 记在案上，
+    用来验「邻近命中归位后要回填成精确键」（否则每次复查都长一条新历史）。
+    """
+
+    client = None
+
+    def __init__(self, payload: dict, served_from: str):
+        self._payload = payload
+        self.served_from = served_from
+        self.compute_calls = 0
+        self.backfilled: list = []
+
+    def peek(self, check):
+        import copy
+
+        hit = copy.deepcopy(self._payload)
+        hit["served_from"] = self.served_from
+        return hit
+
+    def backfill(self, check, report):
+        self.backfilled.append(check.scene_name)
+
+    async def compute(self, check):
+        self.compute_calls += 1
+        raise AssertionError("缓存命中路径不得回落到重算")
+
+    def sample_scenes(self):
+        return []
+
+
+def _run_with_cache(monkeypatch, payload, served_from):
+    from app.living_circle import data_source as ds
+
+    src = _CachingSource(payload, served_from)
+    monkeypatch.setattr(ds, "get_data_source", lambda *a, **k: src)
+    tid = create_living_circle_task(dict(KAILI))
+    return tid, _run_pipeline(tid), src
+
+
+def _report_id_of(events):
+    return next(e for e in events if e["type"] == "done")["data"]["report_id"]
+
+
+def _rows():
+    return len(db.list_living_circle_reports())
+
+
+def test_nearby_cache_hit_persists_the_served_content(monkeypatch):
+    """邻近命中 ⇒ 服务出去的内容必须**归位**到本次 scene_key，不得挂到不相干的旧行上。
+
+    缺陷现场（rev2 复用门生效后第一次暴露）：`find_recent_report_near` 给的是同中心 ≤500m
+    **邻居**的内容，而 `get_latest_report_id_for_scene(scene_key)` 取的是**本次 scene_key**
+    的行 ⇒ 「展示新内容、DB 仍指旧行」。快照脚本按 done 里的 id 回读 DB，于是把一份史前
+    载荷当成本次实跑结果静默写进了前后端两份夹具（测试还全绿，因为两侧写的是同一份错数据）。
+    """
+    import copy
+
+    rid0 = _report_id_of(_run_with_mutation(monkeypatch, None)[1])
+    base = db.get_living_circle_report(rid0)["living_circle"]
+    neighbor = copy.deepcopy(base)
+    neighbor["scene"]["name"] = f"{base['scene']['name']}-邻居"   # 邻近命中的固有形态
+
+    _, events, src = _run_with_cache(monkeypatch, neighbor, "nearby_cache")
+    assert src.compute_calls == 0, "邻近命中不该触发重算"
+    rid1 = _report_id_of(events)
+    assert rid1, "邻近命中同样要签发 report_id"
+    stored = db.get_living_circle_report(rid1)["living_circle"]
+    assert stored["scene"]["name"] == neighbor["scene"]["name"], (
+        "落库的行与服务出去的内容不是同一份 ⇒ 内容与 id 又配错对了")
+    assert not any("复用既有体检结果" in (e["data"].get("text") or "")
+                   for e in events if e["type"] == "message"), (
+        "邻近命中不能自称「复用既有体检结果」——它复用的是别人的行")
+    assert src.backfilled == ["凯里老街"], (
+        "归位后必须回填成精确键：否则下次复查仍走邻近分支，每跑一次多一条历史")
+
+
+def test_exact_cache_hit_stays_idempotent(monkeypatch):
+    """反例护栏：精确命中的 E2 幂等**不许被我改坏** —— 不落新行、不回填、自称复用。
+
+    没有这条，上一条用例可以靠「命中一律重新落库」作弊通过（那会让每次同参复查都长出一条
+    历史，正是 D21/D22 要避免的形态）。
+    ⚠️ 判据是「不新增历史行」而不是「report_id 等于首跑那个」：`_report_id()` 是随机 uuid，
+    同 scene_key 允许多行（miss 路径每次都落一行），所以 id 相等不是这里的不变量。
+    """
+    rid0 = _report_id_of(_run_with_mutation(monkeypatch, None)[1])
+    base = db.get_living_circle_report(rid0)["living_circle"]
+
+    before = _rows()
+    _, events, src = _run_with_cache(monkeypatch, base, "cache")
+    assert src.compute_calls == 0
+    rid1 = _report_id_of(events)
+    assert rid1, "精确命中必须签发 report_id"
+    assert _rows() == before, f"精确命中不该产生第二条历史（{before} → {_rows()}）"
+    assert src.backfilled == [], "内容已在缓存里，回填是多余写"
+    assert any("复用既有体检结果" in (e["data"].get("text") or "")
+               for e in events if e["type"] == "message")

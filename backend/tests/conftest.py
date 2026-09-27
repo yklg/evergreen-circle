@@ -20,6 +20,30 @@ import pytest  # noqa: E402
 import app.core.db as db  # noqa: E402
 import app.core.runtime_config as rc  # noqa: E402
 import app.living_circle.request_guard as request_guard  # noqa: E402
+from app.living_circle.scope import SCOPE_POLICY_VERSION  # noqa: E402
+
+
+def live_payload(payload: dict) -> dict:
+    """给一份 **要过复用门** 的 live 桩载荷盖上当前判盲口径版本（就地返回同一对象）。
+
+    复用门 ``report_contract.reuse_policy``（生产调用点仅两处：``data_source.py:145``
+    ``LiveDataSource.compute`` 的缓存读、``:301`` ``CachingDataSource._reusable``
+    （经 ``peek``/``compute``））只认带 ``caliber.scope_policy_version`` 的 live 载荷 ——
+    旧口径/无口径的报告不许冒充本次体检的答案。因此**凡测试里手工落 live 缓存、
+    再指望 ``peek``/``compute`` 命中**的桩，都必须过这个门，否则会静默变成"未命中"，
+    用例照样绿但测的已经不是它以为的那件事。
+
+    **不要**在这些地方套它：
+
+    * 纯 ``Repository.cache_report`` / ``get_report`` / ``find_recent_report_near`` 层用例
+      —— 压根不走门（如 ``test_degrade_chain.py`` M1-b、``test_caching_datasource`` U25/U33）；
+    * 几何契约 / 可展示性判据的桩（``test_intake_and_shell``、``test_blindspot_marching``、
+      ``test_fixture_mirror``）—— 那是另一道门（``assess_geometry``），补版本只会稀释判据；
+    * ``test_caching_datasource.py`` 末尾 `test_stale_policy_*` 三条**故意不带版本**的
+      负对照 —— 它们负责证明门真的有牙，全量套壳会把门架空。
+    """
+    payload.setdefault("caliber", {})["scope_policy_version"] = SCOPE_POLICY_VERSION
+    return payload
 
 
 @pytest.fixture(autouse=True)

@@ -130,8 +130,10 @@ describe('阶段 2.5 · poiMetricLabel 三段式口径', () => {
     expect(poiMetricLabel(kaili as never)).toBe('采集 217 · 圈内 98 · 已展示 98')
   })
 
-  it('jinsong 采集 175 · 圈内 104 · 已展示 104（同一实现，两城市一致）', () => {
-    expect(poiMetricLabel(jinsong as never)).toBe('采集 175 · 圈内 104 · 已展示 104')
+  it('jinsong 采集 206 · 圈内 150 · 已展示 150（同一实现，两城市一致）', () => {
+    // 206/150 = jinsong 的 `ev-1` 重刷代际（证据域逐类外扩，采集数 175→206）；
+    // 与后端 `test_report_invariants.py::test_poi_metric_label_pins_cross_language_literals` 同串。
+    expect(poiMetricLabel(jinsong as never)).toBe('采集 206 · 圈内 150 · 已展示 150')
   })
 
   it('三个数各有来源，不是同一个数抄三遍', () => {

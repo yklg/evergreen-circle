@@ -1,16 +1,31 @@
-"""舆情分析（第 6 章）：真实评论情感分类 + 观点阵营 + 体量统计。
+"""舆情分析（第 6 章）：真实口碑情感分类 + 观点阵营 + 体量统计 + 评价短语词云。
 
-数据全部来自真实站内检索到的评论（带真实链接）。无评论则如实返回空结构，
+数据全部来自真实站内检索结果（带真实链接）。无评论则如实返回空结构，
 绝不使用任何 demo 假数据。LLM 可用时走 LLM 情感分类，否则规则兜底。
 观点阵营占比归一化到 100%（修复历史 >100% bug）。抖音永远排第一。
+
+两条判据分开（见 `app.core.doc_kind`）：情感统计吃「口碑 + 未打标」，
+词云只吃「真口碑」。非口碑文本（攻略/票务/交通查询/SEO/通稿/页面壳）两处都不进 ——
+早期版本把它们一起计入，导致「携程 8 条」实为 4 条航班时刻表 + 4 条门票 FAQ。
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from app.core.doc_kind import counts_as_review, counts_in_sentiment, kind_counts
 from app.core.llm import chat_json
+from app.core.opinions import NEG_TOKENS as _NEG, POS_TOKENS as _POS, extract_opinions, extract_topics
 from app.core.platforms import PLATFORMS
-from app.core.wordfreq import top_words
+
+# ── 低样本判据（单一真相源，UI 与出图门都只准读这两个常量，不得写裸数字）────
+# 语义出处：writer.py 的既有纪律「样本量偏小时如实点明『样本有限、结论为方向性参考』」。
+# 值出处：按 r_6dadffee 25 条舆情证据逐条人工定标，真实口碑占比 28%（非早期估的 4 成）。
+#   quick 档 ≈25 条候选 × 28% ≈ 7 ⇒ 恒判低样本，情感饼图缺位、只给计数。
+#   这是**有意的诚实**：在 7 条样本上画 71%/29% 的饼图就是拿 5/7 冒充精度。
+MIN_SENT_SAMPLE = 8
+# 逐景点出图门：桶内口碑不足此数则不为其单独出词云（24 词位必然凑成空壳）。
+# 与全局阈值分开是因为分母不同：全局语料是整个目的地，逐景点只有一平台的补充采集量。
+MIN_SPOT_SENT_SAMPLE = 3
 
 # 各平台元数据统一从平台注册表（app.core.platforms）派生，避免多份注册表漂移。
 # 注：抖音永远排第一（与历史行为一致）。
@@ -18,14 +33,12 @@ PLATFORM_SITES = {k: p.search_site for k, p in PLATFORMS.items()}
 PLATFORM_ORDER = list(PLATFORMS.keys())
 PLATFORM_LABEL = {k: p.label for k, p in PLATFORMS.items()}
 
-_POS = ["好", "强", "喜欢", "推荐", "优秀", "值得", "值得去", "香", "爱了", "性价比",
-        "流畅", "丝滑", "靠谱", "出片", "惊艳", "vlog", "美", "舒服", "不虚此行"]
-_NEG = ["差", "贵", "卡", "失望", "垃圾", "退", "坑", "难用", "bug", "缺点", "拉胯", "翻车",
-        "不值", "宰客", "踩坑", "排队", "人挤", "照骗", "劝退", "避雷", "排队久"]
+# 极性词表不再在此定义：单一真相源是 app.core.opinions.POS_TOKENS / NEG_TOKENS，
+# 上面以 `_POS` / `_NEG` 别名引入，供 `_rule_sentiment`（LLM 失败兜底）沿用。
 
 
 def _empty_result() -> Dict[str, Any]:
-    """无任何真实评论时如实返回空结构（不造假）。"""
+    """无任何真实评论时如实返回空结构（不造假）。键集与有样时同构。"""
     return {
         "overall": {"pos": 0, "neu": 0, "neg": 0},
         "overall_count": {"pos": 0, "neu": 0, "neg": 0},
@@ -38,6 +51,9 @@ def _empty_result() -> Dict[str, Any]:
         "voices": [],
         "highlights": [],
         "sample_size": 0,
+        "corpus_size": 0,
+        "doc_kind_counts": {},
+        "low_sample": True,
     }
 
 
@@ -86,18 +102,37 @@ def _llm_classify(destination: str, comments: List[Dict[str, Any]]) -> bool:
 
 
 def analyze_sentiment(destination: str, comments: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """comments: [{text, platform, url, title}]（均为真实检索结果）。返回 SentimentResult 结构。"""
-    if not comments:
+    """comments: [{text, platform, url, title, doc_kind}]（均为真实检索结果）。返回 SentimentResult。
+
+    两条判据分开走，别混：
+    - `counts_in_sentiment`（口碑 + 未打标）→ 情感统计。未打标「没被判过」，从好评率里
+      抹掉会让任何未接线 doc_kind 的路径静默产出空舆情，且分不清是被剔还是没采到。
+    - `counts_as_review`（仅真口碑）→ 词云与评价短语。未打标不得冒充观点证据。
+    非口碑文本（攻略/票务/交通查询/SEO/通稿/页面壳）两处都不进。
+    """
+    corpus_size = len(comments)
+    doc_kinds = kind_counts(comments)
+    if not corpus_size:
         return _empty_result()
 
-    # 逐条打情感：LLM 优先，失败规则兜底
-    if not _llm_classify(destination, comments):
-        for c in comments:
+    stats_comments = [c for c in comments if counts_in_sentiment(c)]
+    cloud_comments = [c for c in comments if counts_as_review(c)]
+
+    # 全被剔成空样本时如实返回空结构（保留 corpus_size/doc_kind_counts，看得出「采到了但没口碑」）。
+    # 不能放任走下面的归一化：零计数过 _normalize_pct 会得到 {1,1,1}，把 I5「和恰为 100」破掉。
+    if not stats_comments:
+        empty = _empty_result()
+        empty.update({"corpus_size": corpus_size, "doc_kind_counts": doc_kinds})
+        return empty
+
+    # 逐条打情感：LLM 优先，失败规则兜底（只打统计集合，不给将被丢弃的文本花 token）
+    if not _llm_classify(destination, stats_comments):
+        for c in stats_comments:
             c["sentiment"] = _rule_sentiment(c.get("text", ""))
 
     overall = {"pos": 0, "neu": 0, "neg": 0}
     by_platform: Dict[str, Dict[str, int]] = {}
-    for c in comments:
+    for c in stats_comments:
         s = c.get("sentiment", "neu")
         overall[s] += 1
         plat = c.get("platform", "douyin")
@@ -108,11 +143,11 @@ def analyze_sentiment(destination: str, comments: List[Dict[str, Any]]) -> Dict[
     overall_pct = _normalize_pct(overall, total)
 
     # 观点阵营（占比基于真实计数，归一化到 100%）
-    camps = _build_camps(destination, comments, total)
+    camps = _build_camps(destination, stats_comments, total)
 
     # 平台原声墙（各平台代表性真实评论，抖音优先）+ LLM 金句摘抄
-    voices = _build_voices(comments)
-    highlights = _extract_highlights(destination, comments)
+    voices = _build_voices(stats_comments)
+    highlights = _extract_highlights(destination, stats_comments)
 
     # 平台排序：抖音永远第一
     ordered_platform = {}
@@ -124,12 +159,18 @@ def analyze_sentiment(destination: str, comments: List[Dict[str, Any]]) -> Dict[
             ordered_platform[p] = by_platform[p]
 
     # 按目的地聚合：不同目的地的口碑对比（支持「不同平台/目的地观点聚类」）
-    by_destination = _build_by_destination(comments)
+    by_destination = _build_by_destination(stats_comments)
     # 按景点实体聚合（M2c）：(spot × platform) 双维——舆情章节逐景点小表/卡的数据源。
     # 评论必须带 spot_id（spots 阶段冻结实体后补充采集），by_platform 旧形状保持不变。
-    by_spot = _build_by_spot(comments)
-    # 词云数据（M2d）：jieba 真实词频，全局一份喂「全网口碑词云」；逐景点词云在 by_spot 行内。
-    keywords = top_words([f"{c.get('text', '')} {c.get('title', '')}" for c in comments])
+    by_spot = _build_by_spot(stats_comments)
+
+    # 词云（M2d）：评价短语 + 话题实体两层，语料只取真口碑。
+    # 实体名单既当评价层的硬排除（地名会被标成成语 i，词性挡不住），
+    # 又当话题层的白名单（「大家在聊哪个实体」）。
+    entities = _cloud_entities(destination, comments)
+    cloud_texts = [f"{c.get('text', '')} {c.get('title', '')}" for c in cloud_comments]
+    keywords = (extract_opinions(cloud_texts, exclude_entities=entities)
+                + extract_topics(cloud_texts, prefer_entities=entities))
 
     return {
         "overall": overall_pct,
@@ -142,14 +183,32 @@ def analyze_sentiment(destination: str, comments: List[Dict[str, Any]]) -> Dict[
         "camps": camps,
         "voices": voices,
         "highlights": highlights,
-        "sample_size": len(comments),
+        "sample_size": len(stats_comments),
+        "corpus_size": corpus_size,
+        "doc_kind_counts": doc_kinds,
+        "low_sample": len(stats_comments) < MIN_SENT_SAMPLE,
     }
+
+
+def _cloud_entities(destination: str, comments: List[Dict[str, Any]]) -> List[str]:
+    """词云用的实体名单：目的地 + 本批语料里出现过的冻结景点名（去重保序）。
+
+    只取 ≥2 字的名称：单字名会作为子串命中大量无关短语，把真评价词一起排掉。
+    """
+    out: List[str] = []
+    for name in [destination] + [c.get("spot_name") or "" for c in comments]:
+        n = (name or "").strip()
+        if len(n) >= 2 and n not in out:
+            out.append(n)
+    return out
 
 
 def _build_by_spot(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """按 (spot × platform) 聚合：逐景点声量、情感占比与平台分布（样本降序）。
 
     只出统计产物；spot_id 直引 spots 阶段冻结实体，不做名称二次匹配。
+    `review_sample` 单列出来：它是「该景点有多少条真口碑」，供逐景点词云的出图门
+    （`MIN_SPOT_SENT_SAMPLE`）裁决 —— 用 `sample` 判会把未打标与非口碑一起算进去。
     """
     agg: Dict[str, Dict[str, Any]] = {}
     for c in comments:
@@ -158,25 +217,35 @@ def _build_by_spot(comments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         g = agg.setdefault(sid, {
             "spot_id": sid, "spot_name": (c.get("spot_name") or "").strip(),
-            "counts": {"pos": 0, "neu": 0, "neg": 0}, "platforms": {}, "texts": [],
+            "counts": {"pos": 0, "neu": 0, "neg": 0}, "platforms": {},
+            "review_texts": [], "destinations": [],
         })
         s = c.get("sentiment", "neu")
         g["counts"][s] = g["counts"].get(s, 0) + 1
         plat = c.get("platform", "douyin")
         g["platforms"][plat] = g["platforms"].get(plat, 0) + 1
-        g["texts"].append(f"{c.get('text', '')} {c.get('title', '')}")
+        d = (c.get("destination") or "").strip()
+        if d and d not in g["destinations"]:
+            g["destinations"].append(d)
+        # 词云只吃该景点的真口碑，与全局词云同一判据
+        if counts_as_review(c):
+            g["review_texts"].append(f"{c.get('text', '')} {c.get('title', '')}")
     out: List[Dict[str, Any]] = []
     for g in agg.values():
         n = sum(g["counts"].values())
         if not n:
             continue
         pct = _normalize_pct(g["counts"], n)
+        entities = [g["spot_name"]] + g["destinations"]
+        entities = [e for e in entities if len(e) >= 2]
         out.append({
             "spot_id": g["spot_id"], "spot_name": g["spot_name"], "sample": n,
             "pos": pct["pos"], "neu": pct["neu"], "neg": pct["neg"],
             "by_platform": g["platforms"],
-            # 逐景点词云数据（expert 出「每景点独立词云」；deep 仅有小表时此表可空）
-            "keywords": top_words(g["texts"], limit=24),
+            "review_sample": len(g["review_texts"]),
+            # 逐景点词云数据（expert 出「每景点独立词云」；样本不足时由出图门裁决缺位）
+            "keywords": (extract_opinions(g["review_texts"], exclude_entities=entities, limit=18)
+                         + extract_topics(g["review_texts"], prefer_entities=entities, limit=6)),
         })
     out.sort(key=lambda x: (-x["sample"], x["spot_id"]))
     return out

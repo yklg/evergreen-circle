@@ -1,0 +1,529 @@
+{
+  "note": "本机实跑产物，仅用于改前/改后整页预览取证；非运行时数据源。 spot_name 按报告 r_6dadffee 冻结景点名对语料做子串归属（深档真实链路的等价重建）。",
+  "generated_from": {
+    "report_id": "r_6dadffee",
+    "corpus_size": 25,
+    "doc_kind_counts": {
+      "chrome": 1,
+      "review": 7,
+      "seo": 5,
+      "news": 1,
+      "guide": 3,
+      "ticket_faq": 5,
+      "flight": 3
+    },
+    "sample_size": 7,
+    "low_sample": true
+  },
+  "before_wordfreq": [
+    {
+      "word": "大理",
+      "weight": 130
+    },
+    {
+      "word": "古城",
+      "weight": 41
+    },
+    {
+      "word": "航班",
+      "weight": 23
+    },
+    {
+      "word": "攻略",
+      "weight": 19
+    },
+    {
+      "word": "旅游",
+      "weight": 19
+    },
+    {
+      "word": "查询",
+      "weight": 18
+    },
+    {
+      "word": "地方",
+      "weight": 17
+    },
+    {
+      "word": "洱海",
+      "weight": 17
+    },
+    {
+      "word": "喜洲",
+      "weight": 15
+    },
+    {
+      "word": "大理白族自治州",
+      "weight": 15
+    },
+    {
+      "word": "云南省",
+      "weight": 14
+    },
+    {
+      "word": "这里",
+      "weight": 13
+    },
+    {
+      "word": "白族",
+      "weight": 12
+    },
+    {
+      "word": "位于",
+      "weight": 11
+    },
+    {
+      "word": "古镇",
+      "weight": 11
+    },
+    {
+      "word": "当地",
+      "weight": 11
+    },
+    {
+      "word": "时间",
+      "weight": 11
+    },
+    {
+      "word": "时刻表",
+      "weight": 10
+    },
+    {
+      "word": "游客",
+      "weight": 10
+    },
+    {
+      "word": "游玩",
+      "weight": 10
+    },
+    {
+      "word": "生活",
+      "weight": 10
+    },
+    {
+      "word": "大理市",
+      "weight": 9
+    },
+    {
+      "word": "很多",
+      "weight": 9
+    },
+    {
+      "word": "机票",
+      "weight": 9
+    },
+    {
+      "word": "携程",
+      "weight": 8
+    },
+    {
+      "word": "机场",
+      "weight": 8
+    },
+    {
+      "word": "机型",
+      "weight": 8
+    },
+    {
+      "word": "苍山",
+      "weight": 8
+    },
+    {
+      "word": "云南",
+      "weight": 7
+    },
+    {
+      "word": "就是",
+      "weight": 7
+    },
+    {
+      "word": "旅行",
+      "weight": 7
+    },
+    {
+      "word": "泸州",
+      "weight": 7
+    },
+    {
+      "word": "照片",
+      "weight": 7
+    },
+    {
+      "word": "会理",
+      "weight": 6
+    },
+    {
+      "word": "出行",
+      "weight": 6
+    },
+    {
+      "word": "历史",
+      "weight": 6
+    },
+    {
+      "word": "季节",
+      "weight": 6
+    },
+    {
+      "word": "班期",
+      "weight": 6
+    },
+    {
+      "word": "理由",
+      "weight": 6
+    },
+    {
+      "word": "航班号",
+      "weight": 6
+    }
+  ],
+  "after_layered": [
+    {
+      "word": "独特",
+      "weight": 2,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "美好",
+      "weight": 2,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "不错",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "亲切",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "值得去",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "前所未有",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "合适",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "奇山异水",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "很偏僻",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neg"
+    },
+    {
+      "word": "很慢",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "很繁华",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "很难",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "惊喜",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "打卡",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "推荐去",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "日出而作",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "欢乐",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "比较好",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "比较有名",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "浪漫",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "温暖",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "热情好客",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "自由",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "谨慎",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "neu"
+    },
+    {
+      "word": "非常不错",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "非常好",
+      "weight": 1,
+      "kind": "opinion",
+      "polarity": "pos"
+    },
+    {
+      "word": "大理",
+      "weight": 7,
+      "kind": "topic",
+      "polarity": "neu"
+    },
+    {
+      "word": "洱海",
+      "weight": 3,
+      "kind": "topic",
+      "polarity": "neu"
+    },
+    {
+      "word": "喜洲古镇",
+      "weight": 1,
+      "kind": "topic",
+      "polarity": "neu"
+    },
+    {
+      "word": "大理古城",
+      "weight": 1,
+      "kind": "topic",
+      "polarity": "neu"
+    }
+  ],
+  "legacy_report_spec": {
+    "note": "从 verda.db 直接读出的 r_6dadffee 存量 spec（未回写、未重算）—— 它就是用户截图里那张词云的数据源，用于验证改动后老报告渲染逐位不变。",
+    "chart_id": "ch_2995f33e",
+    "title": "全网口碑热词词云",
+    "words": [
+      {
+        "word": "大理",
+        "weight": 309
+      },
+      {
+        "word": "洱海",
+        "weight": 116
+      },
+      {
+        "word": "古城",
+        "weight": 114
+      },
+      {
+        "word": "古镇",
+        "weight": 92
+      },
+      {
+        "word": "苍山",
+        "weight": 79
+      },
+      {
+        "word": "云南",
+        "weight": 76
+      },
+      {
+        "word": "云南省",
+        "weight": 62
+      },
+      {
+        "word": "喜洲",
+        "weight": 59
+      },
+      {
+        "word": "大理市",
+        "weight": 52
+      },
+      {
+        "word": "游客",
+        "weight": 45
+      },
+      {
+        "word": "这里",
+        "weight": 44
+      },
+      {
+        "word": "双廊",
+        "weight": 43
+      },
+      {
+        "word": "旅游",
+        "weight": 43
+      },
+      {
+        "word": "大理白族自治州",
+        "weight": 42
+      },
+      {
+        "word": "白族",
+        "weight": 39
+      },
+      {
+        "word": "攻略",
+        "weight": 38
+      },
+      {
+        "word": "图片",
+        "weight": 34
+      },
+      {
+        "word": "三塔",
+        "weight": 31
+      },
+      {
+        "word": "历史",
+        "weight": 29
+      },
+      {
+        "word": "位于",
+        "weight": 27
+      },
+      {
+        "word": "地方",
+        "weight": 26
+      },
+      {
+        "word": "崇圣",
+        "weight": 26
+      },
+      {
+        "word": "机场",
+        "weight": 25
+      },
+      {
+        "word": "文化",
+        "weight": 24
+      },
+      {
+        "word": "时间",
+        "weight": 23
+      },
+      {
+        "word": "沙溪",
+        "weight": 23
+      },
+      {
+        "word": "航班",
+        "weight": 23
+      },
+      {
+        "word": "人民",
+        "weight": 21
+      },
+      {
+        "word": "发表",
+        "weight": 21
+      },
+      {
+        "word": "体验",
+        "weight": 20
+      },
+      {
+        "word": "照片",
+        "weight": 19
+      },
+      {
+        "word": "出行",
+        "weight": 18
+      },
+      {
+        "word": "感受",
+        "weight": 18
+      },
+      {
+        "word": "查询",
+        "weight": 18
+      },
+      {
+        "word": "游玩",
+        "weight": 17
+      },
+      {
+        "word": "生活",
+        "weight": 17
+      },
+      {
+        "word": "当地",
+        "weight": 16
+      },
+      {
+        "word": "机型",
+        "weight": 16
+      },
+      {
+        "word": "建筑",
+        "weight": 15
+      },
+      {
+        "word": "很多",
+        "weight": 15
+      }
+    ]
+  }
+}

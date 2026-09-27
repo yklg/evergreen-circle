@@ -60,8 +60,12 @@ def test_caliber_payload_key_includes_travel_mode():
     base = caliber_payload_key("凯里老街", (107.9758, 26.5734), 2500, "standard", "walking")
     riding = caliber_payload_key("凯里老街", (107.9758, 26.5734), 2500, "standard", "riding")
     assert base != riding
-    assert base.endswith("|walking")
-    assert riding.endswith("|riding")
+    # travel_mode 恒为第 5 段，其后**可能**再跟归并判据版本段（开关开着才有）⇒
+    # 判据不能写成 `endswith("|walking")`，那等于把键格式再抄一份进测试，
+    # 键一加维度就只是把这条副本判成红（同一格式的判决已在 test_caching_datasource
+    # 的 facility 段用例里正向守着，这里只守 travel_mode 这一维）。
+    assert base.split("|")[4] == "walking"
+    assert riding.split("|")[4] == "riding"
 
 
 def test_caliber_payload_key_none_center_uses_zero():

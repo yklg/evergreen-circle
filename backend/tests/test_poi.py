@@ -16,9 +16,11 @@ from app.living_circle.caliber import get_caliber
 from app.living_circle.geo_utils import xy_to_lnglat
 from app.living_circle.poi import (
     POI_CAP_PER_CAT,
+    absorbed_key,
     backfill_nearest_minutes,
     check_poi_conservation,
     clean,
+    dedupe_facility,
     dedupe_pois,
     derive_stats_from_points,
     is_duplicate,
@@ -186,6 +188,28 @@ def test_backfill_nearest_minutes():
     assert out[0]["nearest_name"] == "诊所近"
 
 
+def test_backfill_nearest_minutes_all_out_of_reach_yields_none():
+    """**全部**采集点都在可达区外 ⇒ `min_minutes` 必须是 None，不得退化成「最远那个的耗时」。
+
+    这是 jinsong 夹具现形缺陷的最小复现：`elderly total=0, in_circle=0` 却报出
+    `min_minutes=19.9` —— 装配层当时绕过 `field_fn` 的封顶直接取 `times` 最小值，
+    于是采集区（含圈外）里的点替可达区回答了「最近 X 分钟」。
+    本函数是 `min_minutes` 的唯一生产者，封顶由调用方注入的 `field_fn` 承担 ⇒
+    全 None 时只能得 None（G1 判据 `in_circle == 0 ⇒ min_minutes is None` 的单元侧）。
+    """
+    stats = [{"category": "elderly", "min_minutes": None, "nearest_name": "兜底名"}]
+    per_cat = {"elderly": [{**_ll(3000, 0), "name": "远郊养老院"}]}
+
+    def field_fn(pt):
+        dx = (pt[0] - CENTER[0]) * 111_320 * math.cos(math.radians(CENTER[1]))
+        return None if dx > 1500 else dx / 75.0
+
+    out = backfill_nearest_minutes(stats, per_cat, field_fn)
+    assert out[0]["min_minutes"] is None
+    # 无可达点时不得凭空改写出域兜底名（保留 to_stats 的圈内兜底语义）
+    assert out[0]["nearest_name"] == "兜底名"
+
+
 # ── T4 · POI 归一化与点位化的边界（I8）──────────────────────────────
 
 
@@ -194,19 +218,27 @@ def _cat_items(cat, xs):
 
 
 def test_to_stats_with_degenerate_scope_no_crash_and_zero_coverage():
-    """可达区极小时：圈内 0 / 覆盖度 0，但 total 与最近设施仍成立（不得抛、不得伪装成满覆盖）。
+    """可达区极小时：圈内 0 / 覆盖度 0 / **最近设施也必须为空**（不得抛、不得伪装成满覆盖）。
 
     旧版标题是「empty_ring」：`iso15` 圈缺失时传空环。现在**空环在构造 `SpatialScope`
     时就被拒**（见 `test_scope.py::test_from_iso_rejects_empty_isochrones`），
     所以这里退化为「一个有界的极小可达区」——语义相同（圈内必然为空），但不再允许
     「没有可达区」这种自相矛盾的状态流到统计层。
+
+    ⚠️ 旧断言 `nearest_name == "菜市场0"` 记录的正是本次修掉的越界：「最近设施」在
+    `items`（**采集口径**，含圈外）上取最近 ⇒ 圈内一个点都没有的类别也能报出一个
+    「最近菜市场」，并喂给评分的可达维度（`scoring.py` 的 `reach_dim`）。jinsong 夹具里
+    `elderly total=0, in_circle=0` 却带 `min_minutes=19.9` 是同一缺陷的现形。
+    现在 `nearest_name` 与 `in_circle`/`coverage` **同域** ⇒ 圈内空则无「最近」，
+    与 `to_points` 的「圈外点不进报告」判据（见下条）保持一致。
+    `total` 仍为 3：采集事实不得被展示口径反算（审查 R1）。
     """
     per_cat = {"market": _cat_items("菜市场", [100, 900, 2000])}
     s = to_stats(per_cat, {}, TINY_SCOPE, CENTER)[0]
     assert s["total"] == 3
     assert s["in_circle"] == 0
     assert s["coverage"] == 0.0
-    assert s["nearest_name"] == "菜市场0"
+    assert s["nearest_name"] is None  # 圈内空 ⇒ 没有「最近」可言，不得拿圈外点顶数
     assert s["min_minutes"] is None  # 由 live 管线回填
 
 
@@ -443,3 +475,206 @@ def test_u20_clean_converged_to_new_rule():
     ]
     out = clean(items)
     assert len(out) == 4
+
+
+# ── v4 · 设施实体归并（U14–U25）──────────────────────────────────────
+# 期望值全部来自 `tests/fixtures/facility_merge_golden.json` 的真实配对，
+# 不从实现反推：归并是「少输出」型改动，守恒不变量对它免疫，实现写错不会让任何
+# 既有测试变红 —— 只有这批断言钉得住。
+
+_ATM_BRANCH = {**_ll(400, 0), "name": "中国工商银行(昆明关上支行)"}
+_ATM_SELF = {**_ll(415, 0), "name": "中国工商银行24小时自助银行(关上支行)"}   # 实测 15.5m
+
+
+def test_u14_atm_absorbed_into_branch_under_facility_policy():
+    """U14：ATM 与所属支行（15.5m）在 facility 策略下出 1 个代表点。"""
+    kept, absorbed = dedupe_facility([dict(_ATM_BRANCH), dict(_ATM_SELF)], 50.0, CENTER)
+    assert len(kept) == 1
+    assert [it["name"] for it in kept] == ["中国工商银行(昆明关上支行)"]
+    assert kept[0]["sub_roles"] == ["24小时自助银行"]
+    assert len(absorbed) == 1 and absorbed[0]["name"] == _ATM_SELF["name"]
+
+
+def test_u15_loan_center_absorbed_by_same_branch():
+    """U15：「个贷中心」属功能子点，与支行同体（实测 12–17m）⇒ 三点合一。"""
+    items = [
+        {**_ll(0, 0), "name": "中国建设银行(昆明兴关支行)"},
+        {**_ll(11, 0), "name": "中国建设银行24小时自助银行(兴关支行)"},
+        {**_ll(17, 0), "name": "中国建设银行第五个贷中心(昆明兴关支行)"},
+    ]
+    kept, absorbed = dedupe_facility(items, 50.0, CENTER)
+    assert len(kept) == 1, "兴关路三点实为一处设施"
+    assert kept[0]["name"] == "中国建设银行(昆明兴关支行)"
+    assert len(absorbed) == 2
+
+
+def test_u16_orphan_atm_promoted_to_institution_name():
+    """U16：圈里没有对应支行主点时，孤儿 ATM 升格为该网点的代表点而非被删。
+
+    截图那个 `中国建设银行24小时自助银行(昆明官渡支行)` 正是此形 —— 它是建行官渡支行
+    在这份采集里唯一的痕迹，删掉或并进隔壁交通银行都会**漏算一个真实网点**。
+    """
+    orphan = {**_ll(900, 0), "name": "中国建设银行24小时自助银行(昆明官渡支行)"}
+    other = {**_ll(923, 0), "name": "交通银行(昆明官渡支行)"}      # 实测 22.98m，不同品牌
+    kept, absorbed = dedupe_facility([dict(orphan), dict(other)], 50.0, CENTER)
+    assert len(kept) == 2, "不同品牌绝不合并"
+    assert kept[0]["name"] == "中国建设银行(昆明官渡支行)"   # 升格掉「24小时自助银行」
+    assert kept[0]["sub_roles"] == ["24小时自助银行"]
+    assert absorbed == []
+
+
+def test_u17_different_institutions_23m_never_merge():
+    """U17（回归锁）：交通银行 ↔ 建设银行自助 相距 23m，是两家银行。
+
+    这条直接否掉「不必在意是什么银行，看关键词就行」的方案 —— 真实数据里
+    还有 40.8m 的农行自助 ↔ 建行支行 同形。
+    """
+    kept, _ = dedupe_facility(
+        [
+            {**_ll(0, 0), "name": "交通银行(昆明官渡支行)"},
+            {**_ll(23, 0), "name": "中国建设银行24小时自助银行(昆明官渡支行)"},
+        ],
+        50.0,
+        CENTER,
+    )
+    assert len(kept) == 2
+
+
+def test_u18_same_institution_incompatible_qualifiers_do_not_merge():
+    """U18：同品牌但限定语互不包含 ⇒ 拒合（防止抹掉一个真实网点）。"""
+    kept, _ = dedupe_facility(
+        [
+            {**_ll(0, 0), "name": "中国工商银行(关上支行)"},
+            {**_ll(27, 0), "name": "中国工商银行24小时自助银行(北京路支行)"},
+        ],
+        50.0,
+        CENTER,
+    )
+    assert len(kept) == 2
+
+
+@pytest.mark.parametrize(
+    "parent_name, atm_name",
+    [
+        ("中国工商银行(昆明关上支行)", "中国工商银行24小时自助银行(关上支行)"),   # 城市名前缀
+        ("中国农业银行(潘家园支行)", "中国农业银行24小时自助银行(北京潘家园支行)"),  # 反向
+        ("中国农业银行(凯里迎宾路支行)", "中国农业银行24小时自助银行(迎宾路支行)"),
+    ],
+)
+def test_u19_qualifier_prefix_asymmetry_still_merges(parent_name, atm_name):
+    """U19（v4 P0-1）：限定语**相容**而非相等。
+
+    真实数据里 5/5 个该合案例都是城市名前缀不对称。若按字面相等判，本条三种形态
+    全部会被拒合，且**不抛错、守恒照样全绿** —— 整个修复静默打空。
+    """
+    kept, absorbed = dedupe_facility(
+        [{**_ll(0, 0), "name": parent_name}, {**_ll(15, 0), "name": atm_name}], 50.0, CENTER
+    )
+    assert len(kept) == 1
+    assert len(absorbed) == 1
+
+
+def test_u21_gate_and_parking_fold_back_into_market():
+    """U21：「门 / 停车场」也是功能子点（劲松实测 46.1m）。"""
+    kept, absorbed = dedupe_facility(
+        [
+            {**_ll(0, 0), "name": "潘家园旧货市场-立体停车场"},
+            {**_ll(46, 0), "name": "潘家园旧货市场-西2门"},
+        ],
+        50.0,
+        CENTER,
+    )
+    assert len(kept) == 1 and len(absorbed) == 1
+
+
+def test_u22_representative_is_nearest_to_query_center():
+    """U22：代表点取组内距**查询中心**最近者（它天然耗时最小）。
+
+    fixture 的距离刻意与**输入顺序相反**：主点先到列但离中心更远，自助银行后到却更近。
+    若实现退回「保留组内第一个（锚点/seed）」，代表点坐标就是主点那条，本用例立刻红 ——
+    这才是要判别的缺陷形状（展示名仍应是机构主点名，两者不冲突）。
+    """
+    far_parent = {**_ll(5015, 0), "name": "中国工商银行(昆明关上支行)"}
+    near_atm = {**_ll(5000, 0), "name": "中国工商银行24小时自助银行(关上支行)"}
+    kept, _ = dedupe_facility([far_parent, near_atm], 50.0, CENTER)
+    assert len(kept) == 1
+    # 坐标来自更近的那个（ATM），展示名来自主点（工行支行）
+    assert kept[0]["lng"] == near_atm["lng"]
+    assert kept[0]["name"] == "中国工商银行(昆明关上支行)"
+
+
+def test_u23_star_clustering_not_single_linkage():
+    """U23：星型聚组 —— 成员必须距**锚点** <50m，不能沿街串成长链。
+
+    单链实现下 P3 会因为距 P2 只有 38m 而入组（P1↔P3 实距 78m）；星型下锚点是 P1，
+    78m 出界 ⇒ 必须留在组外。沿街同品牌连号网点正是这个形状。
+    """
+    p1 = {**_ll(0, 0), "name": "中国建设银行(城东支行)"}
+    p2 = {**_ll(40, 0), "name": "中国建设银行24小时自助银行(城东支行)"}
+    p3 = {**_ll(78, 0), "name": "中国建设银行第五个贷中心(城东支行)"}
+    kept, _ = dedupe_facility([p1, p2, p3], 50.0, CENTER)
+    assert len(kept) == 2, "P3 距锚点 78m 出界，不得经 P2 单链入组"
+
+
+def test_u24_geometric_policy_is_byte_identical_to_legacy():
+    """U24（v4 P0-3 分道闭合锁）：`policy="geometric"` 必须与改动前逐条相同。
+
+    三要素通道靠它隔离。若哪天有人把实体判据塞进 `is_duplicate`，本条立刻变红 ——
+    否则盲区 1km 硬判会被归并悄悄啃掉坐标。
+    """
+    items = [
+        {**_ll(0, 0), "name": "中国工商银行(昆明关上支行)"},
+        {**_ll(15, 0), "name": "中国工商银行24小时自助银行(关上支行)"},
+        {**_ll(40, 0), "name": "金马便利店"},
+        {**_ll(80, 0), "name": "金马便利店"},
+    ]
+    legacy = []
+    for it in items:                       # 手工重演改动前的「先到者 + is_duplicate」
+        if not any(is_duplicate(it, k, 50.0) for k in legacy):
+            legacy.append(it)
+    assert dedupe_pois([dict(i) for i in items]) == legacy
+    assert dedupe_pois([dict(i) for i in items], 50.0, "geometric", CENTER) == legacy
+    # 缺 center 时必须退回 geometric，而不是拿 None 当圆心
+    assert dedupe_pois([dict(i) for i in items], 50.0, "facility", None) == legacy
+    # facility 策略 = 几何判重**之上**再叠实体判据（`poi._same_or_facility` 明写），
+    # 于是它只会比 legacy 更激进：工行吸收 ATM（实体判据），两家同名 40m 的金马由几何那条
+    # 吸收（口径 2026-09-27 拍板：同名又只隔 40 米按一家设施算）⇒ 3 条变 2 条。
+    # 旧写法只断 `== 3`（数错），且只数条数不记组成 —— 被吃掉的那家必须留下子点痕迹，
+    # 否则「少输出」型归并又变成无从核对的静默丢弃。
+    facility = dedupe_pois([dict(i) for i in items], 50.0, "facility", CENTER)
+    assert len(facility) < len(legacy), (
+        "开归并反而比不开留更多点 ⇒ 几何/实体的层叠关系被改反了"
+    )
+    assert [p["name"] for p in facility] == ["中国工商银行(昆明关上支行)", "金马便利店"]
+    assert [p.get("sub_roles") for p in facility] == [["24小时自助银行"], None]
+    assert [p["sub_points"] for p in facility][1], (
+        "被吸收的金马第二家必须留在 `sub_points` 里，不许凭空蒸发"
+    )
+
+
+def test_u25_annotation_appears_once_and_only_at_report_exit():
+    """U25：「含某职能」只在 `to_points` 拼一次。
+
+    采集要连跑 A/B/C 三轮去重；把标注拼进 `name` 会让下一轮把「· 含24小时自助银行」
+    当成子点后缀重新匹配、重复叠加（实测产出过 `… · 含 · 含24小时自助银行`）。
+    """
+    items = [dict(_ATM_BRANCH), dict(_ATM_SELF)]
+    once, _ = dedupe_facility(items, 50.0, CENTER)
+    twice, _ = dedupe_facility([dict(i) for i in once], 50.0, CENTER)   # 再跑一轮
+    assert [i["name"] for i in twice] == [i["name"] for i in once], "去重必须幂等"
+
+    ring = _square(5000.0)
+    scope = _scope(ring)
+    pts = to_points({"finance": twice}, {"finance": [8.0]}, scope, CENTER).points
+    assert len(pts) == 1
+    assert pts[0]["name"].count("含") == 1
+    assert pts[0]["name"] == "中国工商银行(昆明关上支行) · 含24小时自助银行"
+    # 内部元数据不得漏进报告契约
+    assert set(pts[0]) == {"id", "name", "category", "lnglat", "minutes", "in_circle"}
+
+
+def test_u26_absorbed_key_collapses_refetched_duplicate():
+    """U26：`absorbed` 按记录身份去重 —— S8 扩词把同一个 ATM 再抓回来时不得数两遍。"""
+    a = {**_ll(15, 0), "name": "中国工商银行24小时自助银行(关上支行)"}
+    assert absorbed_key(a) == absorbed_key(dict(a))
+    assert absorbed_key(a) != absorbed_key({**a, "name": "中国工商银行(昆明关上支行)"})

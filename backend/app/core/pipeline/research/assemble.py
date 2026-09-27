@@ -161,22 +161,35 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
                                       ("sentiment_donut", "platform_bar"))
     st = sentiment_text or {}
     has_sample = bool(sentiment.get("sample_size"))
+    corpus = int(sentiment.get("corpus_size", 0) or 0)
+    review_n = int(sentiment.get("sample_size", 0) or 0)
+    low_sample = bool(sentiment.get("low_sample", False))
     # 优先使用 LLM 基于真实数据生成的多段深度解读；无则如实兜底说明
     sent_paras = [p for p in st.get("paragraphs", []) if str(p).strip()]
     if not sent_paras:
         if has_sample:
             sent_paras = [
-                f"基于 {sentiment.get('sample_size', 0)} 条全网真实评论的情感与观点阵营分析（抖音优先），"
-                f"每条代表性观点均附真实平台链接，可逐条溯源。下方为各平台情感分布、观点阵营占比与代表性原声墙。"
+                f"检索到 {corpus or review_n} 条相关内容，其中 {review_n} 条为可核验用户口碑"
+                "（攻略/资讯/票务/交通查询页不计入口碑），"
+                f"据此做情感与观点阵营分析（抖音优先），每条代表性观点均附真实平台链接，可逐条溯源。"
+                "下方为各平台情感分布、观点阵营占比与代表性原声墙。"
             ]
         else:
             sent_paras = ["本次未能在各社媒平台站内检索到带真实链接的有效评论，"
                           "故不对全网口碑做定量结论（坚持无证据不立论，绝不编造舆情数据）。"]
-    sent_takeaway = st.get("key_takeaway") or (
-        (f"全网 {sentiment.get('sample_size', 0)} 条真实评论显示，"
-         f"正面 {sentiment.get('overall', {}).get('pos', 0)}% / "
-         f"中性 {sentiment.get('overall', {}).get('neu', 0)}% / "
-         f"负面 {sentiment.get('overall', {}).get('neg', 0)}%。") if has_sample else "")
+    # 小样本只报计数不报占比：7 条口碑写成 67%/33% 就是伪精度（判据读 low_sample，
+    # 阈值口径只在 sentiment.MIN_SENT_SAMPLE 一处）。数字本身不销毁。
+    oc = sentiment.get("overall_count") or {}
+    if has_sample and low_sample:
+        sent_takeaway = st.get("key_takeaway") or (
+            f"{review_n} 条可核验口碑（样本有限，只报计数）："
+            f"正面 {oc.get('pos', 0)} / 中性 {oc.get('neu', 0)} / 负面 {oc.get('neg', 0)} 条。")
+    else:
+        sent_takeaway = st.get("key_takeaway") or (
+            (f"全网 {review_n} 条可核验口碑显示，"
+             f"正面 {sentiment.get('overall', {}).get('pos', 0)}% / "
+             f"中性 {sentiment.get('overall', {}).get('neu', 0)}% / "
+             f"负面 {sentiment.get('overall', {}).get('neg', 0)}%。") if has_sample else "")
     sentiment_sec = {
         "id": "sentiment", "title": "全网舆情与观点阵营", "level": 1,
         "key_takeaway": sent_takeaway,
@@ -282,9 +295,16 @@ def _build_methodology(objective_meta: Optional[Dict], evidences: List[Evidence]
         "dup_skipped": int(ost.get("dup_skipped", 0)),
         "viral_evidence": int(ost.get("viral_count", 0)),
         "viral_checked_ratio": checked_ratio,
+        # 舆情三件套（口径注册，非新增第二套算法）：`sentiment_samples` 自本次起语义收窄为
+        # 「可核验用户口碑条数」，故必须与 `sentiment_corpus`（检索到的相关条数）并排呈现，
+        # 否则读者会拿新的 7 去比旧的 25，误读成「口碑暴跌」。
         "sentiment_samples": int(om.get("sentiment_samples", 0)),
+        "sentiment_corpus": int(om.get("sentiment_corpus", 0)),
+        "sentiment_doc_kind_counts": dict(om.get("sentiment_doc_kind_counts") or {}),
+        "sentiment_low_sample": bool(om.get("sentiment_low_sample", False)),
         "note": ("信息来源于公开网络搜索，已做内容级去重（同质转载归并为信源组）与舆论过热标注；"
                  f"过热判定覆盖率 {round(checked_ratio * 100)}%（低覆盖率即多数证据无互动信号、未做过度推断）；"
+                 "舆情占比与词云基于可核验用户口碑文本（已剔除攻略/资讯/票务/交通查询页），非全部检索结果；"
                  "报告可能存在舆论偏好与时效局限，仅供参考，不作事实认证。"),
     }
 

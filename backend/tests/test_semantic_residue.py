@@ -67,11 +67,10 @@ _ALLOW = [
     (r"^frontend/src/lib/cover\.test\.ts$", r"竞品|BRAND|brand",
      "封面兜底守卫自身：以「竞品」为负向哨兵，并消费品牌常量/资源路径"),
     # ── M2-flip 临时：skip 旧前端品牌组件/测试，P2 前端 flip 整文件替换后删除本组白名单 ──
-    (r"^frontend/src/components/(VStructured|VMetricsPanel|VQualityGate|VSentimentFlatPanel)\.tsx$",
-     r"brand|竞品",
-     "P2 随 gaizao 13 块注册表/C1 版式整文件替换；替换后此条白名单删除"),
-    # （一条已按「替换后此条白名单删除」的自述纪律收窄，由本文件末尾的
+    # （两条已按「替换后此条白名单删除」的自述纪律收窄，由本文件末尾的
     #   `test_every_allowlist_entry_fires_at_least_once` 机器保证不再回潮：
+    #    · `VStructured|VMetricsPanel|VQualityGate|VSentimentFlatPanel` 组 —— 随词云口碑化修复
+    #      删除孤儿组件 VSentimentFlatPanel 后整组零命中；
     #    · `dashboardPage.test.tsx` —— 该文件已移入 `_travel_pending/`，被 _EXCLUDE_DIR_PARTS
     #      排除在扫描树之外 ⇒ 这条豁免**永远不可能命中**。若那个目录回归扫描，需连同豁免一起加回。）
     (r"^frontend/src/__tests__/(clarifyAsync|reportHero)\.test\.tsx$",

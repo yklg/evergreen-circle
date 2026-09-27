@@ -15,7 +15,7 @@ from app.core import scoring as SC
 from app.core.fetcher import domain_of
 from app.core.models import Evidence
 from app.core.research_types import DEFAULT_RESEARCH_TYPE
-from app.core.sentiment import PLATFORM_ORDER
+from app.core.sentiment import MIN_SPOT_SENT_SAMPLE, PLATFORM_ORDER
 
 from ._util import _row_dest_ok, _row_name, _sid
 
@@ -255,8 +255,14 @@ def _chart_trend(ctx: ChartContext) -> List[Dict[str, Any]]:
 
 @_builder("sentiment_donut", ("@sentiment",))
 def _chart_sentiment_donut(ctx: ChartContext) -> List[Dict[str, Any]]:
-    """整体情感分布环图（舆情章）：数据源 sentiment.overall_count。"""
+    """整体情感分布环图（舆情章）：数据源 sentiment.overall_count。
+
+    小样本不出比例图：7 条口碑画成 67%/33% 就是伪精度。判据读 `low_sample`
+    （阈值口径只在 sentiment.MIN_SENT_SAMPLE 一处），此处不另写数字。
+    """
     if "sentiment_donut" not in ctx.allowed or not ctx.sentiment.get("sample_size"):
+        return []
+    if ctx.sentiment.get("low_sample"):
         return []
     title = "整体舆情情感分布"
     return [{"chart_id": ctx.new_id("ch"), "type": "sentiment_donut", "title": title,
@@ -271,8 +277,13 @@ def _chart_platform_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
 
     只吃平台键白名单（C.platform_bar 内部按 PLATFORM_ORDER 过滤）——非平台数据的
     对照条（共识/证据计数）走 growth_bar，不借用本图类型。
+
+    小样本门与环图一致（读 `low_sample`，不另写阈值）：声量柱的占比读数同样
+    建立在样本量上，7 条评论画「抖音 3 / 携程 2」的相对高度就是伪精度。
     """
     if "platform_bar" not in ctx.allowed or not ctx.sentiment.get("sample_size"):
+        return []
+    if ctx.sentiment.get("low_sample"):
         return []
     by_platform = ctx.sentiment.get("by_platform")
     if not by_platform:
@@ -285,7 +296,10 @@ def _chart_platform_bar(ctx: ChartContext) -> List[Dict[str, Any]]:
 
 @_builder("wordcloud", ("@sentiment",))
 def _chart_wordcloud(ctx: ChartContext) -> List[Dict[str, Any]]:
-    """口碑词云（M2d · E1 语义载荷）：wordfreq 真实词频为源；无词不产图。
+    """口碑词云（M2d · E1 语义载荷）：评价词 + 话题词分层为源；无词不产图。
+
+    词表由 opinions.extract_opinions（评价词，带 kind/polarity）+ extract_topics
+    （话题词，地名）分层产出，不再是 wordfreq 通用词频。
 
     expert 档在「全网口碑词云」之外逐景点各出一张（引用冻结实体名与行内真实词频）。
     """
@@ -299,6 +313,11 @@ def _chart_wordcloud(ctx: ChartContext) -> List[Dict[str, Any]]:
                     "sections": _SENT_SECTIONS, "words": wc_words, "evidence_ids": []})
         if ctx.mode == "expert":
             for g in ctx.sentiment.get("by_spot") or []:
+                # 出图门读 review_sample（doc_kind==review 的条数），不是 sample：
+                # 后者把攻略/票务/航班页一起算进来，用它等于绕过语料分流，
+                # 拿 5 条票务 FAQ 也能凑出一张 3 词空壳云。
+                if int(g.get("review_sample") or 0) < MIN_SPOT_SENT_SAMPLE:
+                    continue
                 gw = C.wordcloud_words(g.get("keywords") or [])
                 if not gw:
                     continue

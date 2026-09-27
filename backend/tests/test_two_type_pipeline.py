@@ -71,6 +71,22 @@ def _alpha(n: int) -> str:
     return chr(97 + n)
 
 
+# 舆情检索角度的标记词，**从注册表派生**而非另抄一份（避免第二套口径：
+# 注册表改了措辞，这里自动跟上；若写死，桩会静默不再命中舆情分支、用例照绿却什么都没测）。
+_SENTIMENT_ANGLE_MARKS = frozenset(
+    a.replace("{d}", "").strip()
+    for t in ("guide", "assessment")
+    for a in RT.type_spec(t).get("sentiment_angles", ())
+) | {
+    # 逐景点补充采集的内联模板（spots._collect_spot_comments）
+    "真实评价", "体验 吐槽",
+}
+
+
+def _is_sentiment_angle(q: str) -> bool:
+    return any(m in q for m in _SENTIMENT_ANGLE_MARKS)
+
+
 def _install_fakes(monkeypatch) -> dict:
     """装齐全量假外部依赖；返回调用记录，供断言「确实走了 LLM/搜索路径」。
 
@@ -128,11 +144,24 @@ def _install_fakes(monkeypatch) -> dict:
     def fake_multi_search(queries, *, num=10, site=None, freshness="noLimit"):
         calls["search"] += 1
         calls["search_queries"].extend(queries)
+        # 舆情查询要回「像用户口碑」的文本：真实检索里约 28% 是用户口碑（其余是攻略/
+        # 票务/交通查询页），doc_kind 分流后若桩语料一条口碑都没有，整个舆情章会空掉，
+        # 情感饼图/词云都无从验证。刻意带第一人称形态标记，与 doc_kind 的正门判据对齐。
+        is_sentiment = any(_is_sentiment_angle(q) for q in queries)
         out = []
         for q in queries:
             per = 2 if site else 3
             for i in range(per):
                 uid = f"{_alpha(calls['search'])}{_alpha(calls['search'] // 26)}{_alpha(i)}{_alpha(i * 3)}"
+                if is_sentiment:
+                    out.append({
+                        "url": f"https://sns{uid}.example.com/p/{uid}",
+                        "title": f"{q}｜我的真实体验 {uid}",
+                        "snippet": f"{q}，我去过一次还想再去，这是我今年最舒服的一趟，"
+                                   f"古城很安静也很干净，让人感到很放松 {uid}",
+                        "captured_at": "2026-08-01",
+                    })
+                    continue
                 out.append({
                     "url": f"https://news{uid}.example.com/p/{uid}",
                     "title": f"{q}｜公开资料 {uid}",

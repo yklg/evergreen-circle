@@ -9,6 +9,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 import LifeCirclePage from '../pages/LifeCirclePage'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
+import jinsong from '../mocks/fixtures/livingCircle/beijing-jinsong.json'
 import { useDataModeStore } from '../store/dataModeStore'
 import { LC_CANVAS, lcMeters } from '../lib/livingCircle'
 import type { LngLat } from '../types'
@@ -132,15 +133,33 @@ describe('LifeCirclePage（fixture 态）', () => {
     // ② 0 处盲区时的结论句不得说「三要素齐备」而隐去未判定面
     expect(screen.getByText(new RegExp(`仍有 ${cal.cells_unknown} 格无法判定`))).toBeTruthy()
     // ③ 完整脚注（含少报提示）
-    expect(screen.getByText(/判定覆盖：网格 72 格中已判定 9 格/)).toBeTruthy()
+    expect(
+      screen.getByText(new RegExp(`判定覆盖：网格 ${cal.cells_inside} 格中已判定 ${cal.cells_judged} 格`)),
+    ).toBeTruthy()
+  })
+
+  it('判盲口径升级前的快照必须挂「建议重新体检」陈旧提示（D-4 只拦复用，不拦可见性）', async () => {
+    renderScene('kaili')
+    await screen.getByText(/内置快照/)
+    // 前提守卫：夹具确实是升级前的旧报告（没有 scope_policy_version）
+    expect(kaili.caliber.scope_policy_version ?? null).toBeNull()
+    expect(screen.getByText(/判盲口径已升级.*建议重新体检/)).toBeTruthy()
+    // 旧快照没有 scores.confidence ⇒ 降档徽标**不应**出现（不猜成 full，也不误报 limited）
+    expect(kaili.scores.confidence ?? undefined).toBeUndefined()
+    expect(screen.queryByText(/证据面不足/)).toBeNull()
   })
 
   it('劲松样例（有盲区）同样披露判盲覆盖度', async () => {
     renderScene('kaili')
     fireEvent.click(screen.getByRole('button', { name: /北京劲松/ }))
+    const cal = jinsong.caliber
     await waitFor(() => {
       expect(
-        screen.getByText(new RegExp(`可达区 99 格中仅判 9 格，90 格数据不足未判`)),
+        screen.getByText(
+          new RegExp(
+            `可达区 ${cal.cells_inside} 格中仅判 ${cal.cells_judged} 格，${cal.cells_unknown} 格数据不足未判`,
+          ),
+        ),
       ).toBeTruthy()
     })
   })

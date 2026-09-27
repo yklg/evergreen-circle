@@ -71,6 +71,32 @@ def poi_metric_label(poi: Dict[str, Any]) -> str:
     return f"{base} · 另有 {dropped} 处未展示（{detail}{cap_note}）"
 
 
+def poi_dedupe_rule_label(poi: Dict[str, Any]) -> str:
+    """POI 清洗规则文案 —— 与前端 ``lib/livingCircle.poiDedupeRuleLabel`` **逐字同口径**。
+
+    报告叙述「做了什么清洗」必须由报告自己的披露推出，不能钉死在模板里：旧写法把
+    「名称归一与 50m 聚簇去重」写死，设施归并上线后报告仍在描述修复前的算法 ——
+    词表闸抓虚构指标，抓不到这种**过期描述**，它是报告文本层造假。
+
+    ``poi.merged`` 缺失 = 归并上线前冻结的快照 ⇒ 退回旧描述，而不是谎报新规则生效过。
+    """
+    poi = poi or {}
+    base = "名称归一与 50m 聚簇去重"
+    mg = poi.get("merged") or {}
+    if not mg.get("enabled"):
+        return base
+    version = mg.get("rule_version") or "?"
+    n = int(mg.get("absorbed") or 0)
+    if n <= 0:
+        return f"{base} + 设施实体归并（{version}，本次无同体子点）"
+    detail = "/".join(
+        f"{(x or {}).get('category')} {int((x or {}).get('absorbed') or 0)}"
+        for x in (mg.get("categories") or [])
+        if int((x or {}).get("absorbed") or 0) > 0
+    )
+    return f"{base} + 设施实体归并（{version}，吸收 {n} 处同体子点：{detail}）"
+
+
 def _expert(eid: str) -> Dict[str, str]:
     """署名由权威名册 experts.json 派生（不再有第二份姓名表）。
 

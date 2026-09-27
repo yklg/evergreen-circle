@@ -20,7 +20,7 @@ import type {
   ReportSection,
 } from '../types'
 import { SAMPLE_COMMUNITIES } from './livingCircleMock'
-import { lcLocPrefix, poiMetricLabel, samplingReach, scoreGrade } from '../lib/livingCircle'
+import { lcLocPrefix, poiDedupeRuleLabel, poiMetricLabel, samplingReach, scoreGrade } from '../lib/livingCircle'
 
 /** D4 · 专家署名表（与 backend/app/data/experts.json 及 api 副本的 id 对齐；M2 换血后仅文案微调） */
 export const LC_EXPERT: Record<string, { name: string; role: string }> = {
@@ -104,7 +104,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `圈内医疗设施 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近 ${fmtMin(m?.min_minutes ?? null)}；社区医院/诊所/药店三类中${(ph?.nearest_name || m?.nearest_name) ? `最近为「${ph?.nearest_name ?? m?.nearest_name}」` : '尚无近端设施'}`,
     paragraphs: [
-      `对研究范围内医疗类 POI（社区医院/诊所/药店）按 ${m?.total ?? 0} 处做名称归一与 50m 聚簇去重，15 分钟步行圈内保留 ${m?.in_circle ?? 0} 处，覆盖度 ${pct(m?.coverage ?? 0)}。`,
+      `对研究范围内医疗类 POI（社区医院/诊所/药店）按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，15 分钟步行圈内保留 ${m?.in_circle ?? 0} 处，覆盖度 ${pct(m?.coverage ?? 0)}。`,
       `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一，圈内可达性为「${triad?.covered ? '可达' : '不可达'}」${triad?.nearest_minutes != null ? `（最近 ${triad.nearest_minutes}min）` : ''}。`,
     ],
     claims,
@@ -157,7 +157,10 @@ function secMarket(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `菜市场 ${mk ? `${mk.in_circle}/${mk.total}` : '—'} 处圈内；购物(超市/便利店/商场) ${sp ? `${sp.in_circle}/${sp.total}` : '—'} 处圈内；菜市场三要素${triad?.covered ? `可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'}`,
     paragraphs: [
-      `以「菜市场/生鲜」与「超市/便利店/综合商场」两组关键词独立检索并聚簇去重：菜市场 ${mk?.total ?? 0} 处（圈内 ${mk?.in_circle ?? 0}，覆盖 ${pct(mk?.coverage ?? 0)}），购物 ${sp?.total ?? 0} 处（圈内 ${sp?.in_circle ?? 0}，覆盖 ${pct(sp?.coverage ?? 0)}）。`,
+      `以「菜市场/生鲜」与「超市/便利店/综合商场」两组关键词独立检索并做${poiDedupeRuleLabel(r)}：菜市场 ${mk?.total ?? 0} 处（圈内 ${mk?.in_circle ?? 0}，覆盖 ${pct(mk?.coverage ?? 0)}），购物 ${sp?.total ?? 0} 处（圈内 ${sp?.in_circle ?? 0}，覆盖 ${pct(sp?.coverage ?? 0)}）。`,
+      // 两个菜市场数字并存是刻意的：类目统计按归并后的设施数，盲区三要素按未归并的坐标集
+      // （1km 硬判宁多勿少）。不写出来就会被读成口径打架。
+      `注：本处菜市场数为**设施统计口径**；盲区判定另用未归并的三要素坐标集（菜市场/药店/小学是 1km 硬判，宁多勿少），两个数不一致属预期。`,
       `每日采买的便利度是居民感知最强的民生指标，本样区最近菜市场「${mk?.nearest_name ?? '—'}」${fmtMin(mk?.min_minutes ?? null)}${triad?.covered ? '' : '，缺席于三要素盲区视角'}`,
     ],
     claims: [

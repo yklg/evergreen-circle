@@ -10,7 +10,7 @@ import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -799,6 +799,12 @@ _DIFF_VALUE_OFFLINE = "离线估算"
 _DIFF_DESC_NOT_COLLECTED = "离线估算未采集 POI"
 _DIFF_DESC_NOT_COMPARABLE = "不可比 · 离线估算"
 _DIFF_EQUAL_WORD = "持平"
+# 判盲口径版本不一致 ⇒ 盲区数与综合评分不可直接比（字面量由契约夹具钉住）。
+# 为什么必须专门有一条：旧口径只判了可达区一角的格（凯里实测 5/97），盲区天然少报、
+# 分数天然偏高。把 88.4 与折扣后的 80.4 并排放在一起，读者会读成「两个社区不同」，
+# 而不是「同一套判据换了定义」—— 这正是答辩演示路径（双样例对比）上最贵的一次误读。
+_DIFF_DESC_CALIBER_GAP = "不可比 · 判盲口径已升级"
+_CALIBER_GAP_ROWS: Tuple[str, ...] = ("服务盲区", "综合评分")
 
 
 def _as_num(x: Any) -> float:
@@ -837,6 +843,11 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     P0-2：offline 报告不产出可比评分/盲区 → 相关行标注「离线估算·不可比」，不参与比较。
     ⚠️ 该离线分支**逐行保留**，不得因「两模式对齐」而被吞掉（`test_living_circle_api.py:236` 在守）。
 
+    P0-3：两侧 `caliber.scope_policy_version` 不同（含一侧未声明 = 判盲口径升级前的旧报告）
+    ⇒ 「服务盲区」「综合评分」标注「不可比 · 判盲口径已升级」。这两行**数值照原样给**（事实
+    没被改），只有结论句被拦 —— 旧口径的证据面只有可达区一角（凯里实测 5/97），盲区少报、
+    分数偏高，分差会被读成「社区不同」而不是「尺子换了」。双样例对比是答辩演示路径。
+
     实现形态：**一张行规格表 + 一个循环**。加一行只改这张表一处 —— 而不是在返回值里
     手工拼一行（那样行名/行序/句式会分散，与前端分叉时无人发现）。
     """
@@ -852,6 +863,10 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     pa, pb = a.get("poi", {}), b.get("poi", {})
     a_off, b_off = a.get("data_origin") == "offline", b.get("data_origin") == "offline"
     off = a_off or b_off
+    # 判盲口径版本对照：两侧不同（含一侧根本没声明）⇒ 那两个数不是同一把尺量出来的。
+    a_pol = (a.get("caliber") or {}).get("scope_policy_version")
+    b_pol = (b.get("caliber") or {}).get("scope_policy_version")
+    caliber_gap = a_pol != b_pol
     sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
     ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
     # 「可达采样点数」走 sampling_counts()（叙述文案的**唯一取值口径**）：汇总数缺失的历史快照
@@ -886,7 +901,14 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
 
     rows: List[dict] = []
     for metric, na, nb, va, vb, better, template, off_desc in specs:
-        desc = off_desc if (off and off_desc) else _diff_desc(better, template, na, nb)
+        # 处置优先级：离线 > 口径版本 > 常规胜负。离线那档连 POI 都没采，没什么可比可言；
+        # 口径版本这档比的是「同一指标换了一把尺」，数值本身没坏，但差值没有意义。
+        if off and off_desc:
+            desc = off_desc
+        elif caliber_gap and metric in _CALIBER_GAP_ROWS:
+            desc = _DIFF_DESC_CALIBER_GAP
+        else:
+            desc = _diff_desc(better, template, na, nb)
         rows.append({"metric": metric, "a_value": va, "b_value": vb, "desc": desc})
     return rows
 

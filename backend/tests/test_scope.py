@@ -18,7 +18,12 @@ import pytest
 
 from app.living_circle.caliber import get_caliber
 from app.living_circle.geo_utils import haversine_m, xy_to_lnglat
-from app.living_circle.scope import COLLECT_MARGIN_M, SpatialScope
+from app.living_circle.scope import (
+    BLIND_RADIUS_M,
+    EVIDENCE_MARGIN_M,
+    SCOPE_POLICY_VERSION,
+    SpatialScope,
+)
 
 CENTER = (107.9758, 26.5734)
 CALIBER = get_caliber("walking")  # reach_full_min = 20.0
@@ -92,13 +97,32 @@ def test_from_reach_zone_rejects_degenerate_ring():
         SpatialScope.from_reach_zone(CALIBER, CENTER, 2500.0, zone)
 
 
-# ── 3. 可达区 ⊆ 采集区（构造即校验）──────────────────────────────
-def test_collect_equals_circumradius_under_d2():
-    """D2 口径锁定：采集半径 == 可达区外接圆（余量 0），且必须是**实测**外接圆。"""
-    assert COLLECT_MARGIN_M == 0.0
+# ── 3. 采集区 ⊇ 可达区 + 证据余量（构造即校验）────────────────────
+def test_evidence_margin_is_derived_from_blind_radius():
+    """采集余量由**证据需求**导出，不是可填的名义值（原「D2 口径锁定」用例的原地改造）。
+
+    这条用例本身曾是缺陷的**制度化载体**：它断言 `COLLECT_MARGIN_M == 0.0`，把「余量取 0」
+    当成口径锁定 —— 而取 0 让可判定面积实测只剩 5%（97 格里判 5 格），而它换来的东西
+    （「圈外点不进报告」）已由可达区过滤独立完整地保证 ⇒ 一个零收益的取舍。
+    现在锁定的不再是某个数，而是**关系**：余量就是判定半径本身。
+    """
+    assert EVIDENCE_MARGIN_M == BLIND_RADIUS_M
+    assert EVIDENCE_MARGIN_M is BLIND_RADIUS_M, "必须是同一个量，不是抄来的第二个 1000.0"
     scope = SpatialScope.from_iso(CALIBER, CENTER, 2500.0, _iso(_zone(20.0, 1000.0)))
-    assert scope.collect_radius_m == pytest.approx(scope.reach_circumradius_m)
+    assert scope.collect_radius_m == pytest.approx(scope.reach_circumradius_m + BLIND_RADIUS_M)
     assert scope.invariant() is None  # 不抛即通过
+
+
+def test_invariant_rejects_the_retired_zero_margin():
+    """把余量改回 0（旧 D2）必须**当场报错**，而不是悄悄把判盲能力砍掉 95%。
+
+    这是本次修复的防复发主闸：旧世界里 `COLLECT_MARGIN_M = 0.0` 是一行随时可改的常量，
+    且没有任何一层会发现 —— 现在它是 invariant 的违反项，改回去第一次运行就炸。
+    """
+    scope = SpatialScope.from_iso(CALIBER, CENTER, 2500.0, _iso(_zone(20.0, 1000.0)))
+    d2 = dataclasses.replace(scope, collect_radius_m=scope.reach_circumradius_m)
+    with pytest.raises(ValueError, match="D2（余量 0）已废止"):
+        d2.invariant()
 
 
 def test_circumradius_is_measured_max_vertex_distance():
@@ -120,7 +144,7 @@ def test_invariant_rejects_collect_smaller_than_reach():
     """采集区小于可达区 → 可达区内必然有无数据格，构造后校验必须拦下。"""
     scope = SpatialScope.from_iso(CALIBER, CENTER, 2500.0, _iso(_zone(20.0, 1000.0)))
     broken = dataclasses.replace(scope, collect_radius_m=scope.reach_circumradius_m - 1.0)
-    with pytest.raises(ValueError, match="可达区内必然存在无数据格"):
+    with pytest.raises(ValueError, match="D2（余量 0）已废止"):
         broken.invariant()
 
 
@@ -141,6 +165,7 @@ def test_payload_declares_three_concepts_and_unknown_count():
         "reach_circumradius_m",
         "collect_radius_m",
         "collect_margin_m",
+        "scope_policy_version",
         "cells_inside",
         "cells_judged",
         "cells_unknown",
@@ -148,6 +173,9 @@ def test_payload_declares_three_concepts_and_unknown_count():
         assert key in payload, f"报告口径缺少 {key}（无可观测性出口 ⇒ 采集半径算错也看不出来）"
     assert payload["reach_full_min"] == 20.0
     assert payload["cells_unknown"] == 60
+    # 版本由 payload **唯一发射**（读侧 `report_contract.reuse_policy` 与契约判据都读它，
+    # 不进缓存键 —— 见 scope.SCOPE_POLICY_VERSION 的理由）
+    assert payload["scope_policy_version"] == SCOPE_POLICY_VERSION
     # 原有字段不得丢（前端/评分依赖）
     for key in ("travel_mode", "speed_m_per_min", "detour_k", "study_radius_m", "iso_minutes", "basis", "measured"):
         assert key in payload

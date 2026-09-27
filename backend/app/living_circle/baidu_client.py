@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import urllib.parse
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import httpx
 
@@ -32,6 +32,59 @@ BASE = "https://api.map.baidu.com"
 
 # 翻页收益止损：place/search 某页去重后新增条数低于此值即停止翻页（rev3 §2.3）
 PAGE_STOP_MIN_NEW = 3
+
+# 百度 place/v2/search **单页真实上限**（探针实测回填，勿凭印象改）。
+# `scripts/probe_baidu.py place` 组 @凯里：请求 10/20 → 如实返回；请求 30/50 →
+# `status=0` 但**静默降级**回 20 条（不报错、不告警）。
+# ⇒ 这条实测事实不是性能参数，而是**正确性前提**：「短页 = 半径内已查全」这条判据
+#   只在「服务端真的按 page_size 供货」时成立。若按 30 请求并按 30 判短页，
+#   拿到 20 条会被误判成「查全了」⇒ 把「没查到」洗成「没有」—— 正是本仓 Q1 的缺陷形态。
+# 与 `capability_manifest.json:poi_search.page_size_max` 同源，漂移由
+# `tests/test_baidu_client.py` 的对照用例判红。
+PLACE_PAGE_SIZE_MAX = 20
+
+# `place_search` 的停止原因 —— **证据完整性的唯一承重判据**（P0-1）。
+# 为什么必须显式建模：`results.append` 是无条件的（跨页去重只累加 `new_in_page`、从不删行），
+# 故 `len(results)` 不编码任何内部状态；五个退出点共享同一个整数。探针亦确认
+# `len_alone_decisive = false`（`len == page_size` 时「恰好查完」与「被截断」同值）。
+STOP_COMPLETE = "complete"        # 短页 ⇒ 半径内已查全 ⇒ 可把请求半径当作证据边界
+STOP_EMPTY = "empty"              # status=0 且 0 条 ⇒ 该半径内**真的没有**（可用于判盲）
+STOP_PAGE_CAP = "page_cap"        # 页深耗尽而末页仍是满页 ⇒ **被截断** ⇒ 边界只能取最远实测点
+STOP_DUP_STOP = "dup_stop"        # 收益止损 ⇒ 同「被截断」处理（再翻也未必有新点，但边界外仍可能有）
+STOP_API_ERROR = "api_error"      # 请求失败/非 0 status ⇒ **一无所知**，绝不可当作「没有」
+STOP_NOT_RUN = "not_run"          # 未发起任何请求（页深 0 / 预算拒绝）⇒ 同样是一无所知
+
+
+class PlaceSearchOut(NamedTuple):
+    """`place_search` 的返回：点位 + **证据完整性举证**。
+
+    用 NamedTuple 而非裸 list，理由与 `poi.py:39 PoiPointsOut` 完全同构：
+    后者是为「静默截断」把披露做成**无法被顺手丢掉**的形状；本类型是它的采集侧对偶 ——
+    判盲要回答的是「某点 1km 内**没有**药店」这种全称否定，而它的前提恰恰是
+    「这一圈的药店**查全了**」。裸 list 把这个前提丢在函数内部，于是下游只能靠
+    几何半径猜，猜错就是误报盲区。
+
+    `total` 只作旁证：探针实测同一次逐页翻检中它会漂移（60 → 63 → 60），
+    **承重判据是 `stop_reason`**。
+    """
+
+    items: List[Dict[str, Any]]
+    total: Optional[int]
+    pages_fetched: int
+    stop_reason: str
+
+    @property
+    def evidence_complete(self) -> bool:
+        """半径内是否已查全 —— 只有为真时，请求半径才可以被当作**证据边界**使用。
+
+        `api_error` / `not_run` 落 False 是刻意的：一无所知 ≠ 没有设施。
+        """
+        return self.stop_reason in (STOP_COMPLETE, STOP_EMPTY)
+
+    @property
+    def truncated(self) -> bool:
+        """明确「还想拿但没拿到」的两种情形（不含失败/未跑，那些是 unknown）。"""
+        return self.stop_reason in (STOP_PAGE_CAP, STOP_DUP_STOP)
 
 
 def _shared_gate_params(ak: str) -> Tuple[int, float, GlobalRateLimiter, GlobalDailyBudget]:
@@ -247,18 +300,30 @@ class BaiduClient:
         self,
         query: str,
         center: Tuple[float, float],
-        radius_m: int = 2000,
+        radius_m: int,
         scope: int = 2,
-        page_size: int = 20,
+        page_size: int = PLACE_PAGE_SIZE_MAX,
         max_pages: int = 3,
-    ) -> List[Dict[str, Any]]:
-        """place/v2/search 分类检索 → 归一化 POI [{name,lng,lat,address,tag,type}]。
+    ) -> PlaceSearchOut:
+        """place/v2/search 分类检索 → :class:`PlaceSearchOut`（点位 + 证据完整性举证）。
 
+        - `radius_m` **无默认值**：检索半径就是证据边界，必须由调用方显式决定。
+          旧默认 `2000` 是「与 caliber 无关的硬编码采集半径」的最后一处残骸
+          （见 `data_source.py` 「采集半径由调用方传入」纪律与 `scope.py` 的三概念表）。
+        - `page_size` 默认取**探针实测的单页上限**（见 `PLACE_PAGE_SIZE_MAX` 的理由）。
         - `max_pages` 默认 3（V3 向后兼容全量兜底）；S8 扩词/预算感知采集传更小值或 1。
         - 保留 `tag`（服务属性）+ `detail_info.type`（别名）—— S2 标签裁决 / S8 扩词来源三的判据。
-        - 收益止损：某页 `num_in_page` 去重后新增 < `min_new`（默认 3）即停止翻页，不再无脑翻满。
+        - 收益止损：某页去重后新增 < `PAGE_STOP_MIN_NEW` 即停止翻页，不再无脑翻满。
+
+        「短页 = 查全」这条判据按**实测页容量**而非请求值比对（`effective_page_size`）：
+        百度对超额 `page_size` 静默降级，按请求值判短页会把「降级返回的满页」误读成「查全」。
         """
+        effective_page_size = min(int(page_size or PLACE_PAGE_SIZE_MAX), PLACE_PAGE_SIZE_MAX)
         results: List[Dict[str, Any]] = []
+        total: Optional[int] = None
+        pages_fetched = 0
+        stop = STOP_NOT_RUN
+
         for page_num in range(0, max(0, max_pages)):
             params: Dict[str, Any] = {
                 "query": query,
@@ -266,14 +331,20 @@ class BaiduClient:
                 "radius": radius_m,
                 "scope": scope,
                 "filter": "sort_name:distance",
-                "page_size": page_size,
+                "page_size": effective_page_size,
                 "page_num": page_num,
             }
             resp = await self._get("/place/v2/search", params)
             if not resp or resp.get("status") != 0:
+                stop = STOP_API_ERROR
                 break
+            if total is None and resp.get("total") is not None:
+                total = int(resp["total"])
             items = resp.get("results") or []
+            pages_fetched += 1
             if not items:
+                # 首页就空 ⇒ 该半径内确实没有；中途空页 ⇒ 上页已给满、此处收尾 ⇒ 视为查全
+                stop = STOP_EMPTY if pages_fetched == 1 else STOP_COMPLETE
                 break
             new_in_page = 0
             for it in items:
@@ -285,6 +356,10 @@ class BaiduClient:
                     "address": it.get("address", ""),
                     "tag": it.get("tag", ""),
                     "type": (it.get("detail_info") or {}).get("type", ""),
+                    # 设施身份的原始凭据。此前被整场丢弃 ⇒ 归并层只剩「名称 + 坐标」可用，
+                    # 只能靠几何与字符串相等猜同一实体（`facility_rule` 的原则 1 因此
+                    # 只能读名称）。`tag`/`address` 本来就在，只是从未被下游判据消费。
+                    "uid": it.get("uid", ""),
                 }
                 # 页内去重收益判定：名称+坐标已存在 → 不计新增（配合翻页止损）
                 if not any(
@@ -293,11 +368,16 @@ class BaiduClient:
                 ):
                     new_in_page += 1
                 results.append(entry)
-            if len(items) < page_size:
+            if len(items) < effective_page_size:
+                stop = STOP_COMPLETE          # 短页 ⇒ 半径内已查全
                 break
             if new_in_page < PAGE_STOP_MIN_NEW:
-                break  # 收益止损（rev3 §2.3）
-        return results
+                stop = STOP_DUP_STOP          # 收益止损 ⇒ 按截断处理，不得当作查全
+                break
+        else:
+            # 页深跑满且末页仍是满页 ⇒ 后面还有，只是没翻 —— 这就是被截断
+            stop = STOP_PAGE_CAP if pages_fetched else STOP_NOT_RUN
+        return PlaceSearchOut(results, total, pages_fetched, stop)
 
 
     # ── 测时（批量矩阵 + 单点兜底）────────────────────────

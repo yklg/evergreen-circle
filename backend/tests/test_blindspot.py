@@ -6,7 +6,7 @@
 现在网格只铺 `scope.reach_circumradius_m` 且只保留落在可达区多边形内、且 1km 邻域
 被采集区完整覆盖的格（其余计入 `cells_unknown`，见 `test_report_invariants.py`）。
 """
-from app.living_circle.blindspot import BLIND_RADIUS_M, find_blindspots
+from app.living_circle.blindspot import BLIND_RADIUS_M, find_blindspots, find_blindspots_with_stats
 from app.living_circle.caliber import get_caliber
 from app.living_circle.geo_utils import xy_to_lnglat
 from app.living_circle.scope import SpatialScope
@@ -58,6 +58,64 @@ def test_no_blindspots_when_triad_everywhere():
                 triads[k].append(name)
     spots = find_blindspots(CENTER, SCOPE, triads, prefix="t")
     assert spots == []
+
+
+# ── 证据域修复：判定覆盖率与逐类门控 ─────────────────────────────
+
+def test_judged_coverage_spans_reach_not_just_the_center_cells():
+    """判定覆盖率不再被「采集余量 0」锁死在中心几格。
+
+    旧口径：可判定半径 = 外接圆 − 1km（凯里实测 1367 − 1000 = 367m）⇒ 97 格里只有 5 格
+    有资格被判定。用户问的「左上角右下角设施更稀疏为何不判」就是这么丢的。
+    现在余量由证据需求导出（= 判定半径本身）⇒ 未绑定实测证据时，可达区内的格全部可判。
+
+    允许 4 格边界余量：方形可达区的角点距中心恰等于外接圆半径，浮点上可能差之毫厘。
+    """
+    triads = {k: [_fac(f"{k}-only", 0.0, 0.0)] for k in ("market", "pharmacy", "primary")}
+    spots, stats = find_blindspots_with_stats(CENTER, SCOPE, triads, prefix="t")
+    assert stats["cells_inside"] > 0
+    assert stats["cells_judged"] >= stats["cells_inside"] - 4, (
+        f"仍有格被证据门控挡在外面：judged={stats['cells_judged']} / inside={stats['cells_inside']}"
+    )
+    assert stats["cells_blind"] > 0 and spots, "只有中心有设施 ⇒ 外围应判出盲区，不该整片 unknown"
+
+
+def test_blind_verdict_needs_only_one_category_with_complete_evidence():
+    """判盲是**存在性**结论：一类证据齐 + 该类确实没有 ⇒ 可判，不必等三类都齐。
+
+    这是把 `judged` 从「三类边界取最小」改成「逐类门控」的直接效果。凯里实测：
+    菜市场 18 家 / 小学 17 家**一页即穷尽**（边界可达 2.3km），药店 60 家被单页 20 条
+    截断（边界只到 1754m）。若按 min 统一门控，最稠密那一类的证据缺口会替最稀疏那两类
+    下结论 —— 本可判出的角落会被整体降级成 unknown。
+
+    场景：market 证据到 2400m，药店/小学只到 300m；三要素全放中心 200m 处。
+    ⇒ 距中心 ≤1400m 的格对 market 有据可断，外围 1km 圆内无 market ⇒ 应判盲。
+    """
+    scope = SCOPE.with_evidence(
+        {"market": 2400.0, "pharmacy": 300.0, "primary": 300.0}, complete=False
+    )
+    triads = {k: [_fac(f"{k}-c", 200.0, 0.0)] for k in ("market", "pharmacy", "primary")}
+    spots, stats = find_blindspots_with_stats(CENTER, scope, triads, prefix="t")
+    assert stats["cells_blind"] > 0, "market 证据已覆盖该格 ⇒ 应判出盲区，不该整片 unknown"
+    assert spots, "有盲区格就必须产出盲区簇"
+
+
+def test_not_blind_verdict_requires_all_three_categories():
+    """不对称规则的另一半：说「这格**不盲**」要求三类**都**有据且都命中。
+
+    上一用例的场景里，中心附近那格三类都有设施，但药店/小学证据只到 300m ⇒
+    该格 1km 圆伸出药店/小学的证据边界 ⇒ 只能说「不知道」，不能说「不盲」。
+    把 unknown 当成 covered 是反向的过度乐观，与 Q1 同源。
+    """
+    scope = SCOPE.with_evidence(
+        {"market": 2400.0, "pharmacy": 300.0, "primary": 300.0}, complete=False
+    )
+    triads = {k: [_fac(f"{k}-c", 200.0, 0.0)] for k in ("market", "pharmacy", "primary")}
+    _spots, stats = find_blindspots_with_stats(CENTER, scope, triads, prefix="t")
+    assert stats["cells_unknown"] > 0, (
+        "药店/小学证据边界外、但三要素都在 1km 内的格必须落 unknown，不得记成「已覆盖」"
+    )
+    assert (stats["cells_judged"] + stats["cells_unknown"]) == stats["cells_inside"], "分账必须闭合"
 
 
 def test_single_missing_facility_produces_blindspot():

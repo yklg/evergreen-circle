@@ -1,0 +1,16 @@
+{
+  "_note": "由 backend/app/core/charts.py 导出，供前端色值同步守卫使用；请勿手改。 生成：backend/ 下 `python3 -c \"from app.core import charts as C; ...\"`（见 tests/test_charts_options.py 的守卫用例）",
+  "sentiment": {
+    "pos": "#8AB58A",
+    "neu": "#C9CFC9",
+    "neg": "#CE9A92"
+  },
+  "series": [
+    "#7C9885",
+    "#E0B775",
+    "#8FA8C0",
+    "#CE9A92",
+    "#A8C0A8",
+    "#C2B59B"
+  ]
+}

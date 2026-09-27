@@ -140,16 +140,57 @@ def test_get_data_source_factory_modes():
     assert offline.read_only is True  # 离线结果不写回 live 缓存
 
 
+# 补点注解的**载体**。⚠️ 为什么要自带：`ev-1` 重刷后两份出厂快照的实测盲区都是 0
+# （劲松判定覆盖率 9.1%→21.2%，新判得的格三类皆有据），于是原来那句
+# `assert bs, "劲松快照应至少含 1 处盲区"` 会变成"永远拿不到样本"—— 若只是把它删掉，
+# 整条注解链路（severity/gap/fixes/reach/affected）就在无人察觉的情况下空转了。
+# 载体结构照出厂快照：只有 `id/center/radius_m/missing_facilities/nearest/polygon`
+# 是**未注解**的原始盲区，正好是要交给 `annotate_blindspots` 补齐的那副输入。
+SYN_BLINDSPOT: dict = {
+    "id": "bs-合成载体-1",
+    "center": [116.4637, 39.8832],
+    "radius_m": 1000,
+    "missing_facilities": ["菜市场", "小学"],
+    "nearest": [
+        {"facility": "market", "name": "载体用最近菜市", "distance_m": 1450.0, "direction": "正东"},
+        {"facility": "primary", "name": "载体用最近小学", "distance_m": 1320.0, "direction": "正南"},
+    ],
+    "polygon": {
+        "type": "Polygon",
+        "coordinates": [[
+            [116.4570, 39.8790], [116.4680, 39.8790], [116.4680, 39.8870],
+            [116.4570, 39.8870], [116.4570, 39.8790],
+        ]],
+    },
+}
+
+
+def _jinsong_with_carrier() -> dict:
+    """劲松快照 + 一枚未注解的合成盲区（出厂快照若有真盲区，一并留在里面受同样的检）。"""
+    import copy as _copy
+
+    ds = FixtureDataSource()
+    r = asyncio.run(ds.compute(CheckParams(scene_name="jing", center=JINSONG_CENTER)))
+    out = _copy.deepcopy(r)
+    out["blindspots"] = list(out.get("blindspots") or []) + [_copy.deepcopy(SYN_BLINDSPOT)]
+    return out
+
+
 def test_fixture_blindspots_annotated_with_new_fields():
-    """契约文档 §8：fixture 演示态由后端归一化补齐盲区新字段（不手编 JSON）。
+    """契约文档 §8：演示态由后端归一化补齐盲区新字段（不手编 JSON）。
 
     守护：severity∈三枚举、gap∈[0,1]、fixes 目标不重复且 priority 连续唯一、
     reach.isochrone_based 为 true（fixture 有实测采样点）、affected 为诚实 proxy。
     """
-    ds = FixtureDataSource()
-    r = asyncio.run(ds.compute(CheckParams(scene_name="jing", center=JINSONG_CENTER)))
-    bs = r["blindspots"]
-    assert bs, "劲松快照应至少含 1 处盲区（补点注解的载体）"
+    from app.living_circle.assemble import annotate_blindspots
+
+    r = _jinsong_with_carrier()
+    raw = r["blindspots"][-1]
+    assert not {"severity", "fixes"} & set(raw), "合成载体必须是一副未注解的原始输入"
+    out = annotate_blindspots(r)
+    bs = out["blindspots"]
+    assert len(bs) == len(r["blindspots"]), "annotate 不得增删盲区"
+    assert bs, "合成载体失效：一条样本都没有，本用例等于没跑"
     priorities: set = set()
     for b in bs:
         assert b["severity"] in {"heavy", "medium", "light"}
@@ -177,11 +218,7 @@ def test_annotate_blindspots_offline_null_affected():
 
     from app.living_circle.assemble import annotate_blindspots
 
-    ds = FixtureDataSource()
-    r = asyncio.run(ds.compute(CheckParams(scene_name="jing", center=JINSONG_CENTER)))
-    if not r["blindspots"]:
-        return
-    stripped = _copy.deepcopy(r)
+    stripped = _copy.deepcopy(_jinsong_with_carrier())
     stripped["sampling"]["points"] = []  # 模拟离线：无采样
     out = annotate_blindspots(stripped)
     for b in out["blindspots"]:

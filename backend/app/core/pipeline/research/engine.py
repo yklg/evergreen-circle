@@ -33,6 +33,7 @@ from app.core import audit
 from app.core.audit import decide_rework, llm_quality_review
 from app.core.runtime_config import get_effective_settings
 from app.core.credibility import score_evidence, assess_viral
+from app.core.doc_kind import classify_doc, kind_counts
 from app.core.fetcher import domain_of
 from app.core.platforms import PLATFORMS
 from app.core import llm
@@ -988,13 +989,15 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
             plat_label = PLATFORM_LABEL.get(plat, plat)
             # 多角度口碑检索词（查表渲染），带上地区消歧（覆盖体验/优缺点/踩坑/真实评价）
             site_q = [t.replace("{d}", sb) + region_q for t in sentiment_angle_tpl[:2]]
+            # 候选量必须高于配额：结果里混着题不对版/票务/交通查询页，先取后滤会吃光名额
+            probe_n = take + 6
             try:
-                plat_results = await asyncio.to_thread(search.multi_search, site_q, num=8, site=site,
-                                                       freshness=cfg["freshness"])
+                plat_results = await asyncio.to_thread(search.multi_search, site_q, num=probe_n,
+                                                       site=site, freshness=cfg["freshness"])
                 # 站内受限（如抖音/小红书常被 include 过滤掉）→ 回退：全网检索 + 平台关键词
                 if not plat_results:
                     fb_q = [f"{t.replace('{d}', sb)}{region_q} {plat_label}" for t in sentiment_angle_tpl]
-                    plat_results = await asyncio.to_thread(search.multi_search, fb_q, num=8,
+                    plat_results = await asyncio.to_thread(search.multi_search, fb_q, num=probe_n,
                                                            freshness=cfg["freshness"])
             except SearchProviderError as e:
                 # 中途欠费：可见 thought 如实送达真因，已完成的采集不炸掉（降级继续）
@@ -1005,7 +1008,13 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                 break
             for e in _drain_trace():
                 yield e
-            for r in plat_results[:take]:
+            # 先过滤后计数：`take` 是「要收多少条口碑」的配额，不是「要看多少条搜索结果」。
+            # 旧写法 `for r in plat_results[:take]` 让题不对版的结果照样吃掉配额，
+            # 一批航班/票务页就能把整平台的口碑名额耗光（tests/test_engine_sentiment_collect.py 钉住）。
+            kept_for_plat = 0
+            for r in plat_results:
+                if kept_for_plat >= take:
+                    break
                 url = r.get("url", "")
                 title = r.get("title", "")
                 text = (r.get("snippet") or title or "").strip()
@@ -1019,8 +1028,14 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                 # 平台归属：站内搜索用 plat；回退搜索按真实域名判定，判不出则归到当前平台
                 detected = _source_type(url)
                 plat_final = plat if detected in ("web", "official", "news") else detected
+                # 文档类型打标（此刻只记录不消费：统计与词云行为零变化）。
+                # 舆情语料实为搜索引擎摘要，逐条人工定标只有约 28% 是用户口碑，
+                # 剩下是票务 FAQ / 交通查询 / SEO 介绍页 —— 必须先成为被建模的事实。
+                doc_kind, _reasons = classify_doc(url, title, text)
                 sentiment_comments.append({"text": text, "platform": plat_final, "url": url,
-                                           "title": title, "destination": sb})
+                                           "title": title, "destination": sb,
+                                           "doc_kind": doc_kind})
+                kept_for_plat += 1
                 plat_counts[plat_final] += 1
                 pub = r.get("captured_at", "")
                 # 舆论过热单点判定（有信号才判；当前博查 snippet 无互动字段 → checked=False 如实标注）
@@ -1051,7 +1066,9 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
         if provider_err:
             break
     yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": sentiment_expert,
-                          "text": f"舆情共采集到 {len(sentiment_comments)} 条带真实链接的多平台口碑（覆盖 {len(sentiment_destinations)} 个目的地）。",
+                          "text": f"舆情共采集到 {len(sentiment_comments)} 条带真实链接的多平台语料（覆盖 {len(sentiment_destinations)} 个目的地），"
+                                  f"文档类型分布 {kind_counts(sentiment_comments)}"
+                                  "（只有 review 类进词云，review+未打标进情感统计）。",
                           "ts": _now()})
 
     yield _ev("node_update", {"node": "collect", "status": "done"})
@@ -1555,7 +1572,12 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     objective_meta = {
         "stats": stats,
         "unique_groups": len({ev.source_group for ev in evidences if ev.source_group}),
+        # 舆情口径三件套：`sentiment_samples` 从此**只等于可核验口碑条数**，不再是检索结果条数。
+        # 只写这一处即可 —— objective_meta 是方法论块唯一的生产者，assemble 侧只透传。
         "sentiment_samples": sentiment.get("sample_size", 0),
+        "sentiment_corpus": sentiment.get("corpus_size", 0),
+        "sentiment_doc_kind_counts": sentiment.get("doc_kind_counts", {}),
+        "sentiment_low_sample": bool(sentiment.get("low_sample", False)),
         "freshness": cfg["freshness"],
     }
 

@@ -17,13 +17,27 @@
    ⇒ 所有多边形尺寸被放大 4%。现在 ``cover_matrix`` 返回**实际格距** ``step``，
    下游（``trace_exterior`` / ``_has_in_cluster`` / 簇质心）一律只用 ``step``，不再用名义值。
 
-## 第三件事：采集区外沿的格必须标 unknown，不能判盲
+## 第三件事：证据不足的格必须标 unknown，不能判盲
 
-判「某格 1km 内没有药店」的前提是**那个 1km 圆被采集区完整覆盖**。格越靠近采集边界，
-其 1km 圆就有越大比例落在采集区外 —— 那部分「没查」，不构成「没有」。
-故引入 ``judged``（可判定）掩码：``|cell| ≤ 采集半径 − 1km`` 的格才判盲，
-其余落在可达区内的格计入 ``cells_unknown`` 并在报告口径里**显式暴露**。
-⇒ 采集半径若算错，症状是「unknown 计数上升（可见、可诊断）」，而不是「盲区膨胀成整张网格（静默错误）」。
+判「某格 1km 内没有药店」的前提是**那个 1km 圆被完整查过一遍**。格越靠近证据边界，
+其 1km 圆就有越大比例落在边界外 —— 那部分「没查」，不构成「没有」。
+⇒ 采集半径若算错，症状是「unknown 计数上升（可见、可诊断）」，
+   而不是「盲区膨胀成整张网格（静默错误）」。
+
+## 第四件事（本轮）：证据门控必须**逐类**，不能取三类边界的最小值
+
+上一轮的 ``judged`` 掩码用单一几何半径（``采集半径 − 1km``）门控三类，两个后果：
+
+1. **能力被最稠密那一类拖死**。判盲是**存在性**结论 —— 缺任意一类即成立。所以只要
+   **有一类**在该格周围 1km 查全了，这个格就有资格被判定。取 min 等于让药店
+   （凯里实测 60 家、百度单页 20 条封顶 ⇒ 证据边界仅 ~1754m）把菜市场（18 家）
+   与小学（17 家）—— 两类**一页就穷尽**、边界可达 2.3km —— 本已足够的证据一起废掉。
+   用户报的「左上角右下角设施更稀疏为何不判」正是这么丢的。
+2. **反过来也不许偷懒**：说「这格**不盲**」要求三类**都**有据且都命中，
+   否则只能回答「不知道」。⇒ 不对称规则：**判盲只需一类有据，说『不盲』要三类有据。**
+
+现在门控来自 ``SpatialScope.triad_judge_radius_m(类别)`` —— 由采集侧**实测**的逐类证据
+边界（``CollectionEvidence``，含分页饱和事实）导出，不再由请求半径猜。
 """
 from __future__ import annotations
 
@@ -51,26 +65,27 @@ from app.living_circle.geo_utils import (
     to_local_xy,
     xy_to_lnglat,
 )
-from app.living_circle.scope import SpatialScope
+from app.living_circle.scope import (
+    BLIND_RADIUS_M,
+    SpatialScope,
+    TRIAD_KEYS,
+    TRIAD_LABEL,
+)
 
 _logger = logging.getLogger(__name__)
 
-# 盲区判定半径（赛题标准）与判定网格
-BLIND_RADIUS_M = 1000.0
+# 判定网格格距。
+#
+# **判定半径与必达要素登记表不住在这里**：`BLIND_RADIUS_M` 是「采集区 / 可达区 / 判定区」
+# 三概念关系的一半，归 `scope`（那里才能做构造即校验）；`TRIAD_KEYS` / `TRIAD_LABEL`
+# 同时驱动采集侧的证据半径，一处定义才不会被抄歪。本模块只导入、不再各写一份。
+# （`caliber_index` 以 `blindspot::BLIND_RADIUS_M` 为 ref 索引**本模块属性**，
+#   经导入仍然取得到 —— 换定义位置不动 ref，否则专家名册的引用会集体失效。）
 BLIND_GRID_M = 200.0
 
 # marching-squares 采样细化倍率：把每个判定格细分为 refine² 个子采样，
 # 使边界能贴合设施真实覆盖（破除规则四边形）。取值平衡精度与开销。
 MS_REFINE = 4
-
-# 三要素键 → 前端缺位名（与契约 missing_facilities 一致）
-TRIAD_LABEL: Dict[str, str] = {
-    "market": "菜市场",
-    "pharmacy": "药店",
-    "primary": "小学",
-}
-
-TRIAD_KEYS = ("market", "pharmacy", "primary")
 
 # 补点策略：按「最近替代距离」分档（数据驱动，可扩展策略类型）
 #  ≤600m → 流动服务；600–1200m → 移动点/改道；>1200m → 新建
@@ -85,14 +100,6 @@ SEV_MEDIUM = 0.33
 SEVERITIES = ("heavy", "medium", "light")
 
 
-def judge_radius_m(scope: SpatialScope, radius_m: float = BLIND_RADIUS_M) -> float:
-    """可判定半径：圆心到「1km 圆仍完整落在采集区内」的最远距离。
-
-    = 采集半径 − 判定半径。可达区内超出该半径的格**不判盲**（数据不足以支撑结论）。
-    """
-    return max(0.0, float(scope.collect_radius_m) - float(radius_m))
-
-
 def cover_matrix(
     center: LngLat,
     scope: SpatialScope,
@@ -104,31 +111,31 @@ def cover_matrix(
 
     网格铺 ``±scope.reach_circumradius_m``，仅保留两重筛选后的格：
       - ``inside``：格心落在可达区多边形内（可达区外不判盲）；
-      - ``judged``：格心距中心 ≤ ``采集半径 − radius_m``（1km 圆被采集区完整覆盖）。
+      - 有结论：该格至少有一类必达要素**证据齐**（其 1km 圆被该类实测边界完整覆盖）。
+
+    ## 为什么判定门控必须**逐类**，不能用三类里最短的那条半径
+
+    判盲是**存在性**结论：缺任意一类即判盲。所以某格能否判盲，取决于
+    「有没有**至少一类**在该格周围 1km 查全了」，而不是「三类是否都查全」。
+    取三类边界的最小值当统一门控 ⇒ 最稠密那一类（凯里实测药店 60 家、单页 20 条封顶，
+    证据边界只到 1754m）会把最稀疏那两类（菜市场 18 / 小学 17，**一页即穷尽**）
+    本来足够的证据一起废掉 —— 用户问的「左上角右下角设施更稀疏为何不判」正是这么丢的。
+
+    反过来，「确认不盲」要求三类**都**查全且都有命中；否则只能说「不知道」，
+    落进 ``cells_unknown``。⇒ 一条不对称规则：**判盲只需一类有据，说『不盲』要三类有据。**
 
     返回 ``(miss, step, stats)``：
       - ``step`` 为**实际格距** ``2R/(n-1)``（不是名义 ``grid_m``）；
-      - ``stats`` 为格数分档（``cells_inside`` / ``cells_judged`` / ``cells_unknown``），
-        供报告口径显式暴露「有多少可达区内的格没被判定」。
+      - ``stats`` 为格数分档（``cells_inside`` / ``cells_judged`` / ``cells_unknown`` /
+        ``cells_blind``），供报告口径显式暴露「有多少可达区内的格没被判定」。
     """
     scan = float(scope.reach_circumradius_m)
     k = max(1, int(math.ceil(scan / grid_m)))
     n = 2 * k + 1
     step = (2.0 * scan) / (n - 1)  # ← 真实格距（旧实现返回的是名义 grid_m，尺寸偏 4%）
     coords = np.linspace(-scan, scan, n)
-    judge_r = judge_radius_m(scope, radius_m)
-
-    inside = np.zeros((n, n), dtype=bool)
-    judged = np.zeros((n, n), dtype=bool)
-    for i in range(n):          # i = y 行
-        for j in range(n):      # j = x 列
-            x, y = float(coords[j]), float(coords[i])
-            lng, lat = xy_to_lnglat(center, x, y)
-            if not point_in_ring((lng, lat), scope.reach_ring):
-                continue
-            inside[i, j] = True
-            if math.hypot(x, y) <= judge_r + 1e-9:
-                judged[i, j] = True
+    # 逐类可判定半径（米）：该类实测证据边界 − 判定半径。未绑定证据时三类同值退回几何口径。
+    judge_by_key = {key: scope.triad_judge_radius_m(key, radius_m) for key in TRIAD_KEYS}
 
     # 预转三要素为局部米坐标（加速 1km 命中判定）
     local: Dict[str, np.ndarray] = {}
@@ -138,21 +145,49 @@ def cover_matrix(
         local[k2] = np.array([_local_m(center, lng, lat) for (lng, lat) in pts], dtype=float)
 
     miss = np.zeros((n, n), dtype=bool)
-    rows, cols = np.where(judged)
-    for i, j in zip(rows, cols):
+    verdict = np.zeros((n, n), dtype=bool)   # 该格是否得出了结论（判盲 或 确认不盲）
+    inside_rows, inside_cols = np.where(inside_mask(center, scan, coords, n, scope))
+    for i, j in zip(inside_rows, inside_cols):
         x, y = float(coords[j]), float(coords[i])
-        has_m = _has_within(x, y, local.get("market"), radius_m)
-        has_f = _has_within(x, y, local.get("pharmacy"), radius_m)
-        has_e = _has_within(x, y, local.get("primary"), radius_m)
-        if (not has_m) or (not has_f) or (not has_e):
-            miss[i, j] = True
+        d = math.hypot(x, y)
+        # 该类在该格「有据」⇔ 该格的 1km 圆完整落在该类的实测证据边界内
+        conclusive = [key for key in TRIAD_KEYS if d <= judge_by_key[key] + 1e-9]
+        if not conclusive:
+            continue                          # 一类都无从下结论 ⇒ unknown
+        missing_here = [
+            key for key in conclusive
+            if not _has_within(x, y, local.get(key), radius_m)
+        ]
+        if missing_here:
+            miss[i, j] = True                 # 存在性结论：至少一类有据且确实没有
+            verdict[i, j] = True
+        elif len(conclusive) == len(TRIAD_KEYS):
+            verdict[i, j] = True              # 三类皆有据且皆有命中 ⇒ 确认不盲
 
     stats = {
-        "cells_inside": int(inside.sum()),
-        "cells_judged": int(judged.sum()),
-        "cells_unknown": int((inside & ~judged).sum()),
+        "cells_inside": int(inside_rows.size),
+        "cells_judged": int(verdict.sum()),
+        "cells_unknown": int(inside_rows.size - verdict.sum()),
+        "cells_blind": int(miss.sum()),
     }
     return miss, float(step), stats
+
+
+def inside_mask(
+    center: LngLat,
+    scan: float,
+    coords: np.ndarray,
+    n: int,
+    scope: SpatialScope,
+) -> np.ndarray:
+    """可达区内的判定格掩码 —— 可达区外**语义上就不该判盲**（没有「可达但缺设施」这回事）。"""
+    inside = np.zeros((n, n), dtype=bool)
+    for i in range(n):          # i = y 行
+        for j in range(n):      # j = x 列
+            lng, lat = xy_to_lnglat(center, float(coords[j]), float(coords[i]))
+            if point_in_ring((lng, lat), scope.reach_ring):
+                inside[i, j] = True
+    return inside
 
 
 def _local_m(center: LngLat, lng: float, lat: float) -> Tuple[float, float]:

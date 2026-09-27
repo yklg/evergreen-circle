@@ -7,7 +7,8 @@
       116.4637,
       39.8832
     ],
-    "study_radius_m": 2500
+    "study_radius_m": 2500,
+    "name_source": "user_query"
   },
   "generated_at": "2026-09-19T12:00:00.000Z",
   "data_origin": "live",
@@ -27,11 +28,33 @@
     "reach_full_min": 20.0,
     "reach_radius_bound_m": 1230.8,
     "reach_circumradius_m": 1273.0,
-    "collect_radius_m": 1273.0,
-    "collect_margin_m": 0.0,
+    "collect_radius_m": 2273.0,
+    "collect_margin_m": 1000.0,
+    "evidence_margin_m": 1000.0,
+    "evidence_radius_m": 1494.5,
+    "evidence_frontier_m": {
+      "market": 1973.4,
+      "pharmacy": 1494.5,
+      "primary": 2273.0
+    },
+    "evidence_complete": false,
+    "evidence_bound_source": "measured",
+    "judge_radius_m": 494.5,
+    "evidence_truncated_terms": [
+      "market:生鲜市场",
+      "medical:诊所",
+      "shopping:超市",
+      "shopping:便利店",
+      "shopping:市场",
+      "finance:银行",
+      "pharmacy:药店"
+    ],
+    "evidence_starved_terms": [],
+    "scope_policy_version": "ev-1",
     "cells_inside": 99,
-    "cells_judged": 9,
-    "cells_unknown": 90,
+    "cells_judged": 21,
+    "cells_unknown": 78,
+    "cells_blind": 0,
     "sample_profile": "standard"
   },
   "isochrones": [
@@ -484,16 +507,16 @@
               39.88423651289422
             ],
             [
-              116.47157945525343,
-              39.88440926504326
-            ],
-            [
-              116.47112920066752,
-              39.884754769341335
+              116.47135432796047,
+              39.88423651289422
             ],
             [
               116.4706789460816,
-              39.88510027363941
+              39.88440926504326
+            ],
+            [
+              116.47045381878866,
+              39.88492752149037
             ],
             [
               116.47045381878866,
@@ -726,7 +749,7 @@
           ]
         ]
       },
-      "area_km2": 1.764
+      "area_km2": 1.758
     },
     {
       "minutes": 20,
@@ -1091,16 +1114,16 @@
               39.8897645816634
             ],
             [
-              116.47135432796047,
-              39.89045559025954
-            ],
-            [
               116.47112920066752,
-              39.89097384670666
+              39.89028283811051
             ],
             [
-              116.47045381878866,
-              39.89114659885569
+              116.4706789460816,
+              39.89062834240858
+            ],
+            [
+              116.4702286914957,
+              39.89097384670666
             ],
             [
               116.46977843690979,
@@ -1333,7 +1356,7 @@
           ]
         ]
       },
-      "area_km2": 3.291
+      "area_km2": 3.285
     }
   ],
   "sampling": {
@@ -1750,7 +1773,7 @@
         "idx": 51,
         "lng": 116.455338,
         "lat": 39.896033,
-        "minutes": 30.4,
+        "minutes": 30.5,
         "timed": true,
         "in_reach": false
       },
@@ -1758,7 +1781,7 @@
         "idx": 52,
         "lng": 116.455338,
         "lat": 39.899241,
-        "minutes": 34.8,
+        "minutes": 34.9,
         "timed": true,
         "in_reach": false
       },
@@ -1766,7 +1789,7 @@
         "idx": 53,
         "lng": 116.455338,
         "lat": 39.90245,
-        "minutes": 43.1,
+        "minutes": 43.2,
         "timed": true,
         "in_reach": false
       },
@@ -2070,7 +2093,7 @@
         "idx": 91,
         "lng": 116.467881,
         "lat": 39.892825,
-        "minutes": 19.8,
+        "minutes": 19.9,
         "timed": true,
         "in_reach": true
       },
@@ -2078,7 +2101,7 @@
         "idx": 92,
         "lng": 116.467881,
         "lat": 39.896033,
-        "minutes": 24.7,
+        "minutes": 24.8,
         "timed": true,
         "in_reach": false
       },
@@ -2110,7 +2133,7 @@
         "idx": 96,
         "lng": 116.472062,
         "lat": 39.867159,
-        "minutes": 32.6,
+        "minutes": 32.5,
         "timed": true,
         "in_reach": false
       },
@@ -2182,7 +2205,7 @@
         "idx": 105,
         "lng": 116.472062,
         "lat": 39.896033,
-        "minutes": 30.2,
+        "minutes": 30.3,
         "timed": true,
         "in_reach": false
       },
@@ -2270,7 +2293,7 @@
         "idx": 116,
         "lng": 116.476243,
         "lat": 39.889617,
-        "minutes": 26.7,
+        "minutes": 26.8,
         "timed": true,
         "in_reach": false
       },
@@ -2366,7 +2389,7 @@
         "idx": 128,
         "lng": 116.480424,
         "lat": 39.889617,
-        "minutes": 37.0,
+        "minutes": 37.1,
         "timed": true,
         "in_reach": false
       },
@@ -2454,7 +2477,7 @@
         "idx": 139,
         "lng": 116.484605,
         "lat": 39.892825,
-        "minutes": 40.5,
+        "minutes": 40.6,
         "timed": true,
         "in_reach": false
       },
@@ -2542,7 +2565,7 @@
         "idx": 150,
         "lng": 116.468026,
         "lat": 39.884575,
-        "minutes": 10.8,
+        "minutes": 11.5,
         "timed": true,
         "in_reach": true
       },
@@ -2550,7 +2573,7 @@
         "idx": 151,
         "lng": 116.467011,
         "lat": 39.885741,
-        "minutes": 11.1,
+        "minutes": 11.2,
         "timed": true,
         "in_reach": true
       },
@@ -2862,7 +2885,7 @@
         "idx": 190,
         "lng": 116.471137,
         "lat": 39.88584,
-        "minutes": 16.0,
+        "minutes": 16.1,
         "timed": true,
         "in_reach": true
       },
@@ -3110,7 +3133,7 @@
         "idx": 221,
         "lng": 116.471194,
         "lat": 39.888224,
-        "minutes": 17.3,
+        "minutes": 17.4,
         "timed": true,
         "in_reach": true
       },
@@ -3254,7 +3277,7 @@
         "idx": 239,
         "lng": 116.456823,
         "lat": 39.877681,
-        "minutes": 16.7,
+        "minutes": 16.6,
         "timed": true,
         "in_reach": true
       },
@@ -3382,7 +3405,7 @@
         "idx": 255,
         "lng": 116.474191,
         "lat": 39.887186,
-        "minutes": 21.1,
+        "minutes": 21.2,
         "timed": true,
         "in_reach": false
       },
@@ -3406,7 +3429,7 @@
         "idx": 258,
         "lng": 116.470797,
         "lat": 39.890344,
-        "minutes": 19.8,
+        "minutes": 19.9,
         "timed": true,
         "in_reach": true
       },
@@ -3726,7 +3749,7 @@
         "idx": 298,
         "lng": 116.474381,
         "lat": 39.889489,
-        "minutes": 24.6,
+        "minutes": 24.7,
         "timed": true,
         "in_reach": false
       },
@@ -4118,7 +4141,7 @@
         "idx": 347,
         "lng": 116.475358,
         "lat": 39.890707,
-        "minutes": 26.6,
+        "minutes": 26.7,
         "timed": true,
         "in_reach": false
       },
@@ -4142,7 +4165,7 @@
         "idx": 350,
         "lng": 116.471309,
         "lat": 39.893313,
-        "minutes": 25.2,
+        "minutes": 25.3,
         "timed": true,
         "in_reach": false
       },
@@ -4558,7 +4581,7 @@
         "idx": 402,
         "lng": 116.476315,
         "lat": 39.891916,
-        "minutes": 28.9,
+        "minutes": 29.0,
         "timed": true,
         "in_reach": false
       },
@@ -4654,7 +4677,7 @@
         "idx": 414,
         "lng": 116.456796,
         "lat": 39.895099,
-        "minutes": 27.9,
+        "minutes": 28.0,
         "timed": true,
         "in_reach": false
       },
@@ -4662,7 +4685,7 @@
         "idx": 415,
         "lng": 116.455213,
         "lat": 39.89448,
-        "minutes": 28.1,
+        "minutes": 28.2,
         "timed": true,
         "in_reach": false
       },
@@ -4966,7 +4989,7 @@
         "idx": 453,
         "lng": 116.480304,
         "lat": 39.880492,
-        "minutes": 24.6,
+        "minutes": 25.5,
         "timed": true,
         "in_reach": false
       },
@@ -5030,7 +5053,7 @@
         "idx": 461,
         "lng": 116.479543,
         "lat": 39.890867,
-        "minutes": 31.5,
+        "minutes": 31.6,
         "timed": true,
         "in_reach": false
       },
@@ -5062,7 +5085,7 @@
         "idx": 465,
         "lng": 116.47478,
         "lat": 39.894788,
-        "minutes": 33.9,
+        "minutes": 34.0,
         "timed": true,
         "in_reach": false
       },
@@ -5094,7 +5117,7 @@
         "idx": 469,
         "lng": 116.468477,
         "lat": 39.897098,
-        "minutes": 27.3,
+        "minutes": 27.4,
         "timed": true,
         "in_reach": false
       },
@@ -5102,7 +5125,7 @@
         "idx": 470,
         "lng": 116.46676,
         "lat": 39.89738,
-        "minutes": 28.3,
+        "minutes": 28.4,
         "timed": true,
         "in_reach": false
       },
@@ -5150,7 +5173,7 @@
         "idx": 476,
         "lng": 116.456431,
         "lat": 39.896446,
-        "minutes": 31.6,
+        "minutes": 31.7,
         "timed": true,
         "in_reach": false
       },
@@ -5158,7 +5181,7 @@
         "idx": 477,
         "lng": 116.454846,
         "lat": 39.895866,
-        "minutes": 30.5,
+        "minutes": 30.6,
         "timed": true,
         "in_reach": false
       },
@@ -5606,7 +5629,7 @@
         "idx": 533,
         "lng": 116.47567,
         "lat": 39.895958,
-        "minutes": 35.4,
+        "minutes": 35.5,
         "timed": true,
         "in_reach": false
       },
@@ -5702,7 +5725,7 @@
         "idx": 545,
         "lng": 116.455556,
         "lat": 39.897625,
-        "minutes": 32.4,
+        "minutes": 32.5,
         "timed": true,
         "in_reach": false
       },
@@ -5710,7 +5733,7 @@
         "idx": 546,
         "lng": 116.45397,
         "lat": 39.897034,
-        "minutes": 35.4,
+        "minutes": 36.0,
         "timed": true,
         "in_reach": false
       },
@@ -5918,7 +5941,7 @@
         "idx": 572,
         "lng": 116.455556,
         "lat": 39.868775,
-        "minutes": 32.5,
+        "minutes": 32.4,
         "timed": true,
         "in_reach": false
       },
@@ -6158,7 +6181,7 @@
         "idx": 602,
         "lng": 116.482584,
         "lat": 39.892219,
-        "minutes": 40.1,
+        "minutes": 40.2,
         "timed": true,
         "in_reach": false
       },
@@ -6238,7 +6261,7 @@
         "idx": 612,
         "lng": 116.468526,
         "lat": 39.899861,
-        "minutes": 31.7,
+        "minutes": 31.8,
         "timed": true,
         "in_reach": false
       },
@@ -6294,7 +6317,7 @@
         "idx": 619,
         "lng": 116.456324,
         "lat": 39.899302,
-        "minutes": 33.6,
+        "minutes": 33.7,
         "timed": true,
         "in_reach": false
       },
@@ -6310,7 +6333,7 @@
         "idx": 621,
         "lng": 116.453093,
         "lat": 39.898202,
-        "minutes": 35.9,
+        "minutes": 36.0,
         "timed": true,
         "in_reach": false
       },
@@ -6614,7 +6637,7 @@
         "idx": 659,
         "lng": 116.471904,
         "lat": 39.867336,
-        "minutes": 32.3,
+        "minutes": 32.2,
         "timed": true,
         "in_reach": false
       },
@@ -6878,7 +6901,7 @@
         "idx": 692,
         "lng": 116.46941,
         "lat": 39.901087,
-        "minutes": 34.8,
+        "minutes": 34.9,
         "timed": true,
         "in_reach": false
       },
@@ -6918,7 +6941,7 @@
         "idx": 697,
         "lng": 116.460604,
         "lat": 39.901462,
-        "minutes": 32.5,
+        "minutes": 32.6,
         "timed": true,
         "in_reach": false
       },
@@ -6942,7 +6965,7 @@
         "idx": 700,
         "lng": 116.455446,
         "lat": 39.900492,
-        "minutes": 38.5,
+        "minutes": 38.8,
         "timed": true,
         "in_reach": false
       },
@@ -6950,7 +6973,7 @@
         "idx": 701,
         "lng": 116.453804,
         "lat": 39.899977,
-        "minutes": 38.0,
+        "minutes": 38.1,
         "timed": true,
         "in_reach": false
       },
@@ -6958,7 +6981,7 @@
         "idx": 702,
         "lng": 116.452216,
         "lat": 39.89937,
-        "minutes": 38.6,
+        "minutes": 38.8,
         "timed": true,
         "in_reach": false
       },
@@ -7454,7 +7477,7 @@
         "idx": 764,
         "lng": 116.487968,
         "lat": 39.889818,
-        "minutes": 40.7,
+        "minutes": 40.8,
         "timed": true,
         "in_reach": false
       },
@@ -7558,7 +7581,7 @@
         "idx": 777,
         "lng": 116.472325,
         "lat": 39.901822,
-        "minutes": 39.5,
+        "minutes": 39.6,
         "timed": true,
         "in_reach": false
       },
@@ -7630,7 +7653,7 @@
         "idx": 786,
         "lng": 116.456752,
         "lat": 39.90223,
-        "minutes": 37.8,
+        "minutes": 38.0,
         "timed": true,
         "in_reach": false
       },
@@ -7638,7 +7661,7 @@
         "idx": 787,
         "lng": 116.455075,
         "lat": 39.901822,
-        "minutes": 42.9,
+        "minutes": 43.0,
         "timed": true,
         "in_reach": false
       },
@@ -7646,7 +7669,7 @@
         "idx": 788,
         "lng": 116.453439,
         "lat": 39.901327,
-        "minutes": 44.2,
+        "minutes": 44.3,
         "timed": true,
         "in_reach": false
       },
@@ -7654,7 +7677,7 @@
         "idx": 789,
         "lng": 116.451851,
         "lat": 39.900747,
-        "minutes": 41.8,
+        "minutes": 42.0,
         "timed": true,
         "in_reach": false
       },
@@ -8030,7 +8053,7 @@
         "idx": 836,
         "lng": 116.477082,
         "lat": 39.866314,
-        "minutes": 40.6,
+        "minutes": 40.5,
         "timed": true,
         "in_reach": false
       },
@@ -8190,7 +8213,7 @@
         "idx": 856,
         "lng": 116.489809,
         "lat": 39.889852,
-        "minutes": 43.2,
+        "minutes": 43.3,
         "timed": true,
         "in_reach": false
       },
@@ -8206,7 +8229,7 @@
         "idx": 858,
         "lng": 116.488486,
         "lat": 39.892359,
-        "minutes": 44.7,
+        "minutes": 44.8,
         "timed": true,
         "in_reach": false
       },
@@ -8230,7 +8253,7 @@
         "idx": 861,
         "lng": 116.485747,
         "lat": 39.895826,
-        "minutes": 46.7,
+        "minutes": 46.8,
         "timed": true,
         "in_reach": false
       },
@@ -8302,7 +8325,7 @@
         "idx": 870,
         "lng": 116.473201,
         "lat": 39.903011,
-        "minutes": 42.5,
+        "minutes": 42.6,
         "timed": true,
         "in_reach": false
       },
@@ -8318,7 +8341,7 @@
         "idx": 872,
         "lng": 116.469822,
         "lat": 39.903781,
-        "minutes": 41.4,
+        "minutes": 41.5,
         "timed": true,
         "in_reach": false
       },
@@ -8382,7 +8405,7 @@
         "idx": 880,
         "lng": 116.455872,
         "lat": 39.903438,
-        "minutes": 43.7,
+        "minutes": 43.8,
         "timed": true,
         "in_reach": false
       },
@@ -8390,7 +8413,7 @@
         "idx": 881,
         "lng": 116.454199,
         "lat": 39.903011,
-        "minutes": 42.3,
+        "minutes": 42.5,
         "timed": true,
         "in_reach": false
       },
@@ -8398,7 +8421,7 @@
         "idx": 882,
         "lng": 116.452564,
         "lat": 39.902504,
-        "minutes": 44.0,
+        "minutes": 44.1,
         "timed": true,
         "in_reach": false
       },
@@ -8982,7 +9005,7 @@
         "idx": 955,
         "lng": 116.490388,
         "lat": 39.892417,
-        "minutes": 47.0,
+        "minutes": 47.1,
         "timed": true,
         "in_reach": false
       },
@@ -9094,7 +9117,7 @@
         "idx": 969,
         "lng": 116.472407,
         "lat": 39.904641,
-        "minutes": 44.0,
+        "minutes": 44.1,
         "timed": true,
         "in_reach": false
       },
@@ -9118,7 +9141,7 @@
         "idx": 972,
         "lng": 116.467228,
         "lat": 39.905494,
-        "minutes": 41.1,
+        "minutes": 41.2,
         "timed": true,
         "in_reach": false
       },
@@ -9174,7 +9197,7 @@
         "idx": 979,
         "lng": 116.453322,
         "lat": 39.904198,
-        "minutes": 48.0,
+        "minutes": 48.2,
         "timed": true,
         "in_reach": false
       },
@@ -9182,7 +9205,7 @@
         "idx": 980,
         "lng": 116.451689,
         "lat": 39.903679,
-        "minutes": 50.5,
+        "minutes": 50.7,
         "timed": true,
         "in_reach": false
       },
@@ -9741,26 +9764,26 @@
       {
         "category": "market",
         "label": "菜市场",
-        "total": 11,
-        "in_circle": 8,
+        "total": 28,
+        "in_circle": 7,
         "coverage": 1.0,
-        "min_minutes": 13.1,
-        "nearest_name": "天天鲜果生鲜超市(嘉禾园店)"
+        "min_minutes": 13.9,
+        "nearest_name": "果蔬蔬生鲜大卖场(潘家园小区店)"
       },
       {
         "category": "medical",
         "label": "医疗",
-        "total": 38,
+        "total": 29,
         "in_circle": 24,
         "coverage": 1.0,
-        "min_minutes": 5.5,
+        "min_minutes": 5.6,
         "nearest_name": "北京市朝阳区潘家园街道华威北里社区卫生服务站"
       },
       {
         "category": "education",
         "label": "教育",
-        "total": 23,
-        "in_circle": 16,
+        "total": 24,
+        "in_circle": 17,
         "coverage": 1.0,
         "min_minutes": 9.6,
         "nearest_name": "劲松第二幼儿园(华威部)"
@@ -9768,8 +9791,8 @@
       {
         "category": "shopping",
         "label": "购物",
-        "total": 55,
-        "in_circle": 25,
+        "total": 57,
+        "in_circle": 50,
         "coverage": 1.0,
         "min_minutes": 2.6,
         "nearest_name": "华威便民店"
@@ -9786,8 +9809,8 @@
       {
         "category": "finance",
         "label": "金融",
-        "total": 20,
-        "in_circle": 14,
+        "total": 15,
+        "in_circle": 15,
         "coverage": 1.0,
         "min_minutes": 7.0,
         "nearest_name": "中国建设银行24小时自助银行服务(北京架松支行)"
@@ -9795,8 +9818,8 @@
       {
         "category": "recreation",
         "label": "文体",
-        "total": 11,
-        "in_circle": 6,
+        "total": 26,
+        "in_circle": 19,
         "coverage": 1.0,
         "min_minutes": 9.7,
         "nearest_name": "河南大厦游泳池"
@@ -9804,40 +9827,18 @@
       {
         "category": "service",
         "label": "政务",
-        "total": 15,
-        "in_circle": 11,
+        "total": 25,
+        "in_circle": 18,
         "coverage": 1.0,
-        "min_minutes": 10.6,
-        "nearest_name": "潘家园东里-社区服务站"
+        "min_minutes": 6.9,
+        "nearest_name": "万东医疗公司家属委员会朝阳区潘家园街道办事处"
       }
     ],
-    "total": 175,
-    "in_circle": 104,
+    "total": 206,
+    "in_circle": 150,
     "points": [
       {
-        "id": "poi-market-2",
-        "name": "果蔬蔬生鲜大卖场(潘家园小区店)",
-        "category": "market",
-        "lnglat": [
-          116.457357,
-          39.884621
-        ],
-        "minutes": 13.9,
-        "in_circle": true
-      },
-      {
-        "id": "poi-market-10",
-        "name": "天天鲜果生鲜超市(嘉禾园店)",
-        "category": "market",
-        "lnglat": [
-          116.455405,
-          39.881804
-        ],
-        "minutes": 13.1,
-        "in_circle": true
-      },
-      {
-        "id": "poi-market-3",
+        "id": "poi-market-11",
         "name": "万意嘉生鲜超市-出口",
         "category": "market",
         "lnglat": [
@@ -9848,7 +9849,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-market-4",
+        "id": "poi-market-12",
         "name": "旺柜生鲜超市(劲松店)",
         "category": "market",
         "lnglat": [
@@ -9859,7 +9860,18 @@
         "in_circle": true
       },
       {
-        "id": "poi-market-5",
+        "id": "poi-market-10",
+        "name": "果蔬蔬生鲜大卖场(潘家园小区店)",
+        "category": "market",
+        "lnglat": [
+          116.457357,
+          39.884621
+        ],
+        "minutes": 13.9,
+        "in_circle": true
+      },
+      {
+        "id": "poi-market-13",
         "name": "京捷生鲜(劲松八区店)",
         "category": "market",
         "lnglat": [
@@ -9870,7 +9882,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-market-6",
+        "id": "poi-market-14",
         "name": "欣源家成生鲜(武圣西里店)",
         "category": "market",
         "lnglat": [
@@ -9881,7 +9893,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-market-7",
+        "id": "poi-market-15",
         "name": "京客隆京捷生鲜(劲松二区店)",
         "category": "market",
         "lnglat": [
@@ -9892,7 +9904,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-market-9",
+        "id": "poi-market-17",
         "name": "大个子粮油店",
         "category": "market",
         "lnglat": [
@@ -9900,61 +9912,6 @@
           39.892823
         ],
         "minutes": 19.8,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-0",
-        "name": "北京市朝阳区潘家园街道华威北里社区卫生服务站",
-        "category": "medical",
-        "lnglat": [
-          116.46502,
-          39.883547
-        ],
-        "minutes": 5.5,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-9",
-        "name": "北京市朝阳区艾滋病自愿咨询检测门诊",
-        "category": "medical",
-        "lnglat": [
-          116.4638,
-          39.879764
-        ],
-        "minutes": 7.7,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-10",
-        "name": "何氏眼科视光中心(潘家园店)",
-        "category": "medical",
-        "lnglat": [
-          116.468291,
-          39.883683
-        ],
-        "minutes": 10.4,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-1",
-        "name": "北京市朝阳区潘家园街道华威西里社区卫生服务站",
-        "category": "medical",
-        "lnglat": [
-          116.459449,
-          39.880999
-        ],
-        "minutes": 9.7,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-11",
-        "name": "美冠塔中老年口腔(潘家园院区)",
-        "category": "medical",
-        "lnglat": [
-          116.468597,
-          39.885226
-        ],
-        "minutes": 12.6,
         "in_circle": true
       },
       {
@@ -9980,6 +9937,94 @@
         "in_circle": true
       },
       {
+        "id": "poi-medical-22",
+        "name": "十八里店社区卫生服务中心-弘善预防接种门诊",
+        "category": "medical",
+        "lnglat": [
+          116.460459,
+          39.875088
+        ],
+        "minutes": 16.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-5",
+        "name": "北京市朝阳区十八里店社区卫生服务中心(弘善分部)",
+        "category": "medical",
+        "lnglat": [
+          116.460533,
+          39.874893
+        ],
+        "minutes": 16.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-27",
+        "name": "派特医疗·北京中科博康诊所(派特灵十里河店)",
+        "category": "medical",
+        "lnglat": [
+          116.457791,
+          39.875311
+        ],
+        "minutes": 19.2,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-0",
+        "name": "北京市朝阳区潘家园街道华威北里社区卫生服务站",
+        "category": "medical",
+        "lnglat": [
+          116.46502,
+          39.883547
+        ],
+        "minutes": 5.6,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-9",
+        "name": "北京市朝阳区艾滋病自愿咨询检测门诊",
+        "category": "medical",
+        "lnglat": [
+          116.4638,
+          39.879764
+        ],
+        "minutes": 7.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-10",
+        "name": "何氏眼科视光中心(潘家园店)",
+        "category": "medical",
+        "lnglat": [
+          116.468291,
+          39.883683
+        ],
+        "minutes": 10.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-1",
+        "name": "北京市朝阳区潘家园街道华威西里社区卫生服务站",
+        "category": "medical",
+        "lnglat": [
+          116.459449,
+          39.880999
+        ],
+        "minutes": 9.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-11",
+        "name": "美冠塔中老年口腔(潘家园院区)",
+        "category": "medical",
+        "lnglat": [
+          116.468597,
+          39.885226
+        ],
+        "minutes": 12.8,
+        "in_circle": true
+      },
+      {
         "id": "poi-medical-13",
         "name": "北京中海中医医院-门诊",
         "category": "medical",
@@ -9999,6 +10044,17 @@
           39.888428
         ],
         "minutes": 11.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-15",
+        "name": "北京华大中医医院-发热门诊",
+        "category": "medical",
+        "lnglat": [
+          116.462111,
+          39.888403
+        ],
+        "minutes": 11.2,
         "in_circle": true
       },
       {
@@ -10024,7 +10080,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-15",
+        "id": "poi-medical-16",
         "name": "北京广仁中西医结合医院-门诊",
         "category": "medical",
         "lnglat": [
@@ -10035,7 +10091,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-16",
+        "id": "poi-medical-17",
         "name": "北京华安世口腔",
         "category": "medical",
         "lnglat": [
@@ -10046,7 +10102,18 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-17",
+        "id": "poi-medical-18",
+        "name": "北京广仁中西医结合医院-发热门诊",
+        "category": "medical",
+        "lnglat": [
+          116.47034,
+          39.888888
+        ],
+        "minutes": 18.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-medical-19",
         "name": "社区口腔健康管理机构",
         "category": "medical",
         "lnglat": [
@@ -10057,7 +10124,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-18",
+        "id": "poi-medical-20",
         "name": "张代钊名医工作室",
         "category": "medical",
         "lnglat": [
@@ -10068,7 +10135,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-19",
+        "id": "poi-medical-21",
         "name": "大宅门中医",
         "category": "medical",
         "lnglat": [
@@ -10079,25 +10146,25 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-5",
-        "name": "北京市朝阳区十八里店社区卫生服务中心(弘善分部)",
+        "id": "poi-medical-23",
+        "name": "中医馆(弘善家园H区店)",
         "category": "medical",
         "lnglat": [
-          116.460533,
-          39.874893
+          116.46025,
+          39.874891
         ],
-        "minutes": 16.8,
+        "minutes": 17.1,
         "in_circle": true
       },
       {
-        "id": "poi-medical-21",
+        "id": "poi-medical-25",
         "name": "乐逸口腔",
         "category": "medical",
         "lnglat": [
           116.470589,
           39.890433
         ],
-        "minutes": 19.9,
+        "minutes": 20.0,
         "in_circle": true
       },
       {
@@ -10112,62 +10179,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-medical-23",
-        "name": "派特医疗·北京中科博康诊所(派特灵十里河店)",
-        "category": "medical",
-        "lnglat": [
-          116.457791,
-          39.875311
-        ],
-        "minutes": 19.2,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-25",
-        "name": "蒙一堂家中医诊所(劲松店)",
-        "category": "medical",
-        "lnglat": [
-          116.457805,
-          39.891209
-        ],
-        "minutes": 19.8,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-27",
-        "name": "北京市垂杨柳医院-门诊",
-        "category": "medical",
-        "lnglat": [
-          116.467043,
-          39.89262
-        ],
-        "minutes": 20.3,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-31",
-        "name": "垂杨柳医院-肠道门诊",
-        "category": "medical",
-        "lnglat": [
-          116.465371,
-          39.893027
-        ],
-        "minutes": 20.2,
-        "in_circle": true
-      },
-      {
-        "id": "poi-medical-29",
-        "name": "北京市天友化工工程公司卫生所-发热门诊",
-        "category": "medical",
-        "lnglat": [
-          116.462729,
-          39.893273
-        ],
-        "minutes": 18.6,
-        "in_circle": true
-      },
-      {
-        "id": "poi-education-10",
+        "id": "poi-education-11",
         "name": "劲松第二幼儿园(华威部)",
         "category": "education",
         "lnglat": [
@@ -10178,7 +10190,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-11",
+        "id": "poi-education-12",
         "name": "北京精诚实验幼儿园(潘家园园)",
         "category": "education",
         "lnglat": [
@@ -10189,18 +10201,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-5",
-        "name": "北京工业大学实验学校(南校区)",
-        "category": "education",
-        "lnglat": [
-          116.458539,
-          39.880069
-        ],
-        "minutes": 15.1,
-        "in_circle": true
-      },
-      {
-        "id": "poi-education-12",
+        "id": "poi-education-13",
         "name": "睿泽幼儿园(劲松东路)",
         "category": "education",
         "lnglat": [
@@ -10211,18 +10212,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-6",
-        "name": "北京工业大学实验学校(北校区)",
-        "category": "education",
-        "lnglat": [
-          116.461256,
-          39.888389
-        ],
-        "minutes": 11.4,
-        "in_circle": true
-      },
-      {
-        "id": "poi-education-13",
+        "id": "poi-education-14",
         "name": "雨禾幼儿园(劲松三区分园)",
         "category": "education",
         "lnglat": [
@@ -10233,14 +10223,14 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-7",
+        "id": "poi-education-8",
         "name": "陈经纶中学帝景劲松分校(鲲鹏校区)",
         "category": "education",
         "lnglat": [
           116.47119,
           39.885739
         ],
-        "minutes": 16.1,
+        "minutes": 16.2,
         "in_circle": true
       },
       {
@@ -10266,7 +10256,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-15",
+        "id": "poi-education-16",
         "name": "北京星海艺术幼儿园",
         "category": "education",
         "lnglat": [
@@ -10277,7 +10267,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-16",
+        "id": "poi-education-17",
         "name": "朝阳区劲松第一幼儿园",
         "category": "education",
         "lnglat": [
@@ -10289,6 +10279,17 @@
       },
       {
         "id": "poi-education-2",
+        "name": "垂杨柳中心小学-东区",
+        "category": "education",
+        "lnglat": [
+          116.473895,
+          39.880412
+        ],
+        "minutes": 16.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-education-3",
         "name": "沙板庄小学",
         "category": "education",
         "lnglat": [
@@ -10299,7 +10300,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-3",
+        "id": "poi-education-4",
         "name": "新文达中小学(劲松校区)",
         "category": "education",
         "lnglat": [
@@ -10310,7 +10311,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-8",
+        "id": "poi-education-9",
         "name": "北京汇文中学朝阳学校(弘善校区)",
         "category": "education",
         "lnglat": [
@@ -10321,7 +10322,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-17",
+        "id": "poi-education-18",
         "name": "北京市朝阳区松榆里幼儿园",
         "category": "education",
         "lnglat": [
@@ -10332,7 +10333,29 @@
         "in_circle": true
       },
       {
-        "id": "poi-education-20",
+        "id": "poi-education-6",
+        "name": "北京工业大学实验学校(南校区)",
+        "category": "education",
+        "lnglat": [
+          116.458539,
+          39.880069
+        ],
+        "minutes": 15.1,
+        "in_circle": true
+      },
+      {
+        "id": "poi-education-7",
+        "name": "北京工业大学实验学校(北校区)",
+        "category": "education",
+        "lnglat": [
+          116.461256,
+          39.888389
+        ],
+        "minutes": 11.4,
+        "in_circle": true
+      },
+      {
+        "id": "poi-education-21",
         "name": "金雁",
         "category": "education",
         "lnglat": [
@@ -10343,36 +10366,47 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-37",
-        "name": "华威便民店",
+        "id": "poi-shopping-40",
+        "name": "梦石楼(潘家园旧货市场店)",
         "category": "shopping",
         "lnglat": [
-          116.464581,
-          39.883161
+          116.46389,
+          39.881692
         ],
-        "minutes": 2.6,
+        "minutes": 6.5,
         "in_circle": true
       },
       {
-        "id": "poi-shopping-38",
-        "name": "牛奶便利(潘家园东里店)",
+        "id": "poi-shopping-42",
+        "name": "潘家园旧货市场",
         "category": "shopping",
         "lnglat": [
-          116.462572,
-          39.885265
+          116.464883,
+          39.881124
         ],
-        "minutes": 9.7,
+        "minutes": 8.8,
         "in_circle": true
       },
       {
-        "id": "poi-shopping-39",
-        "name": "酒便利(潘家园店)",
+        "id": "poi-shopping-43",
+        "name": "潘家园旧货市场-立体停车场",
         "category": "shopping",
         "lnglat": [
-          116.462355,
-          39.879855
+          116.463169,
+          39.880881
         ],
-        "minutes": 7.2,
+        "minutes": 7.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-45",
+        "name": "潘家园旧货市场-西2门",
+        "category": "shopping",
+        "lnglat": [
+          116.462833,
+          39.880556
+        ],
+        "minutes": 7.9,
         "in_circle": true
       },
       {
@@ -10387,14 +10421,14 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-40",
-        "name": "爱家便利(潘家园店)",
+        "id": "poi-shopping-48",
+        "name": "潘家园旧货市场-东门",
         "category": "shopping",
         "lnglat": [
-          116.468907,
-          39.882086
+          116.467361,
+          39.880634
         ],
-        "minutes": 9.7,
+        "minutes": 10.1,
         "in_circle": true
       },
       {
@@ -10420,18 +10454,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-41",
-        "name": "牛奶冷饮",
-        "category": "shopping",
-        "lnglat": [
-          116.462918,
-          39.888278
-        ],
-        "minutes": 11.3,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-42",
+        "id": "poi-shopping-25",
         "name": "吉利石油朝阳加油站便利店",
         "category": "shopping",
         "lnglat": [
@@ -10442,7 +10465,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-43",
+        "id": "poi-shopping-26",
         "name": "罗森便利店(劲松海文大厦店)",
         "category": "shopping",
         "lnglat": [
@@ -10464,6 +10487,17 @@
         "in_circle": true
       },
       {
+        "id": "poi-shopping-52",
+        "name": "鑫华成钢材批发市场",
+        "category": "shopping",
+        "lnglat": [
+          116.466953,
+          39.888647
+        ],
+        "minutes": 13.8,
+        "in_circle": true
+      },
+      {
         "id": "poi-shopping-4",
         "name": "华源道佳生活超市(劲松东社区店)",
         "category": "shopping",
@@ -10475,7 +10509,337 @@
         "in_circle": true
       },
       {
+        "id": "poi-shopping-6",
+        "name": "万意嘉生鲜超市",
+        "category": "shopping",
+        "lnglat": [
+          116.457331,
+          39.887844
+        ],
+        "minutes": 14.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-7",
+        "name": "烟酒茶超市(华威西里社区店)",
+        "category": "shopping",
+        "lnglat": [
+          116.457719,
+          39.878002
+        ],
+        "minutes": 15.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-8",
+        "name": "便民超市",
+        "category": "shopping",
+        "lnglat": [
+          116.458924,
+          39.889189
+        ],
+        "minutes": 15.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-9",
+        "name": "达嘉维康北京正济堂药品连锁超市(潘家园店)",
+        "category": "shopping",
+        "lnglat": [
+          116.454233,
+          39.88179
+        ],
+        "minutes": 15.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-10",
+        "name": "华欣超市(潘家园店)",
+        "category": "shopping",
+        "lnglat": [
+          116.453865,
+          39.881756
+        ],
+        "minutes": 15.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-11",
+        "name": "农光里超市",
+        "category": "shopping",
+        "lnglat": [
+          116.471843,
+          39.887698
+        ],
+        "minutes": 19.0,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-12",
+        "name": "旺柜生鲜超市(劲松店)",
+        "category": "shopping",
+        "lnglat": [
+          116.460758,
+          39.890719
+        ],
+        "minutes": 15.9,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-29",
+        "name": "多点便利店(劲松店)",
+        "category": "shopping",
+        "lnglat": [
+          116.468313,
+          39.890277
+        ],
+        "minutes": 16.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-14",
+        "name": "爱鲜蜂超市(松榆西里社区店)",
+        "category": "shopping",
+        "lnglat": [
+          116.47141,
+          39.877845
+        ],
+        "minutes": 18.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-15",
+        "name": "利云生活超市(弘善家园店)",
+        "category": "shopping",
+        "lnglat": [
+          116.457859,
+          39.876565
+        ],
+        "minutes": 16.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-16",
+        "name": "易客超市",
+        "category": "shopping",
+        "lnglat": [
+          116.460885,
+          39.890916
+        ],
+        "minutes": 16.1,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-18",
+        "name": "华瑞生活超市(弘善路店)",
+        "category": "shopping",
+        "lnglat": [
+          116.457184,
+          39.876592
+        ],
+        "minutes": 17.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-31",
+        "name": "7-11便利店(劲松桥东南侧店)",
+        "category": "shopping",
+        "lnglat": [
+          116.469521,
+          39.890551
+        ],
+        "minutes": 19.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-20",
+        "name": "华威便民店",
+        "category": "shopping",
+        "lnglat": [
+          116.464581,
+          39.883161
+        ],
+        "minutes": 2.6,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-41",
+        "name": "北京潘家园古玩城",
+        "category": "shopping",
+        "lnglat": [
+          116.464094,
+          39.881114
+        ],
+        "minutes": 7.9,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-21",
+        "name": "牛奶便利(潘家园东里店)",
+        "category": "shopping",
+        "lnglat": [
+          116.462572,
+          39.885265
+        ],
+        "minutes": 9.7,
+        "in_circle": true
+      },
+      {
         "id": "poi-shopping-44",
+        "name": "名镜苑眼镜城",
+        "category": "shopping",
+        "lnglat": [
+          116.467039,
+          39.883879
+        ],
+        "minutes": 10.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-46",
+        "name": "兆佳眼镜城",
+        "category": "shopping",
+        "lnglat": [
+          116.467069,
+          39.884952
+        ],
+        "minutes": 11.6,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-22",
+        "name": "酒便利(潘家园店)",
+        "category": "shopping",
+        "lnglat": [
+          116.462355,
+          39.879855
+        ],
+        "minutes": 7.2,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-47",
+        "name": "北京眼镜城-西门",
+        "category": "shopping",
+        "lnglat": [
+          116.468302,
+          39.884216
+        ],
+        "minutes": 11.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-49",
+        "name": "北京眼镜城-地上停车场",
+        "category": "shopping",
+        "lnglat": [
+          116.468798,
+          39.883944
+        ],
+        "minutes": 11.4,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-23",
+        "name": "爱家便利(潘家园店)",
+        "category": "shopping",
+        "lnglat": [
+          116.468907,
+          39.882086
+        ],
+        "minutes": 9.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-39",
+        "name": "兆佳商场",
+        "category": "shopping",
+        "lnglat": [
+          116.462315,
+          39.887491
+        ],
+        "minutes": 10.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-50",
+        "name": "北京眼镜城",
+        "category": "shopping",
+        "lnglat": [
+          116.469315,
+          39.88422
+        ],
+        "minutes": 13.4,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-24",
+        "name": "牛奶冷饮",
+        "category": "shopping",
+        "lnglat": [
+          116.462918,
+          39.888278
+        ],
+        "minutes": 11.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-51",
+        "name": "北京古玩城-A座",
+        "category": "shopping",
+        "lnglat": [
+          116.466509,
+          39.877697
+        ],
+        "minutes": 14.1,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-53",
+        "name": "秋石斋(北京古玩城A座店)",
+        "category": "shopping",
+        "lnglat": [
+          116.466398,
+          39.877562
+        ],
+        "minutes": 14.2,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-54",
+        "name": "北京古玩城A座-东门",
+        "category": "shopping",
+        "lnglat": [
+          116.467254,
+          39.877839
+        ],
+        "minutes": 14.0,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-55",
+        "name": "弘钰博古玩城-东门",
+        "category": "shopping",
+        "lnglat": [
+          116.463909,
+          39.876938
+        ],
+        "minutes": 13.0,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-56",
+        "name": "北京古玩城(溢雅阁艺术品店)",
+        "category": "shopping",
+        "lnglat": [
+          116.466454,
+          39.877269
+        ],
+        "minutes": 14.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-shopping-27",
         "name": "便利蜂(潘家园东路37号店)",
         "category": "shopping",
         "lnglat": [
@@ -10497,18 +10861,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-6",
-        "name": "万意嘉生鲜超市",
-        "category": "shopping",
-        "lnglat": [
-          116.457331,
-          39.887844
-        ],
-        "minutes": 14.3,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-45",
+        "id": "poi-shopping-28",
         "name": "美好邻里(劲松店)",
         "category": "shopping",
         "lnglat": [
@@ -10519,62 +10872,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-7",
-        "name": "烟酒茶超市(华威西里社区店)",
-        "category": "shopping",
-        "lnglat": [
-          116.457719,
-          39.878002
-        ],
-        "minutes": 15.9,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-8",
-        "name": "便民超市",
-        "category": "shopping",
-        "lnglat": [
-          116.458973,
-          39.889236
-        ],
-        "minutes": 15.5,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-9",
-        "name": "达嘉维康北京正济堂药品连锁超市(潘家园店)",
-        "category": "shopping",
-        "lnglat": [
-          116.454233,
-          39.88179
-        ],
-        "minutes": 15.5,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-10",
-        "name": "农光里超市",
-        "category": "shopping",
-        "lnglat": [
-          116.471843,
-          39.887698
-        ],
-        "minutes": 18.9,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-11",
-        "name": "旺柜生鲜超市(劲松店)",
-        "category": "shopping",
-        "lnglat": [
-          116.460758,
-          39.890719
-        ],
-        "minutes": 15.9,
-        "in_circle": true
-      },
-      {
-        "id": "poi-shopping-12",
+        "id": "poi-shopping-13",
         "name": "京捷生鲜(劲松八区店)",
         "category": "shopping",
         "lnglat": [
@@ -10585,36 +10883,36 @@
         "in_circle": true
       },
       {
-        "id": "poi-shopping-46",
-        "name": "多点便利店(劲松店)",
+        "id": "poi-shopping-17",
+        "name": "欣源家成生鲜(武圣西里店)",
         "category": "shopping",
         "lnglat": [
-          116.468313,
-          39.890277
+          116.474207,
+          39.882824
         ],
-        "minutes": 16.7,
+        "minutes": 17.6,
         "in_circle": true
       },
       {
-        "id": "poi-shopping-13",
-        "name": "爱鲜蜂超市(松榆西里社区店)",
+        "id": "poi-shopping-30",
+        "name": "便利蜂(富顿中心店)",
         "category": "shopping",
         "lnglat": [
-          116.47141,
-          39.877845
+          116.469367,
+          39.890568
         ],
-        "minutes": 18.3,
+        "minutes": 19.0,
         "in_circle": true
       },
       {
-        "id": "poi-shopping-14",
-        "name": "利云生活超市(弘善家园店)",
+        "id": "poi-shopping-32",
+        "name": "惠恩便利",
         "category": "shopping",
         "lnglat": [
-          116.457859,
-          39.876565
+          116.469027,
+          39.890889
         ],
-        "minutes": 16.3,
+        "minutes": 19.5,
         "in_circle": true
       },
       {
@@ -10658,7 +10956,7 @@
           116.468295,
           39.88608
         ],
-        "minutes": 12.8,
+        "minutes": 12.9,
         "in_circle": true
       },
       {
@@ -10735,11 +11033,22 @@
           116.457243,
           39.877727
         ],
-        "minutes": 16.8,
+        "minutes": 16.7,
         "in_circle": true
       },
       {
         "id": "poi-finance-11",
+        "name": "中国农业银行24小时自助银行(北京潘家园支行)",
+        "category": "finance",
+        "lnglat": [
+          116.457252,
+          39.8776
+        ],
+        "minutes": 16.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-finance-12",
         "name": "北京银行(九龙山支行)",
         "category": "finance",
         "lnglat": [
@@ -10750,7 +11059,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-finance-12",
+        "id": "poi-finance-13",
         "name": "中国银行24小时自助银行(劲松支行)",
         "category": "finance",
         "lnglat": [
@@ -10761,7 +11070,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-finance-13",
+        "id": "poi-finance-14",
         "name": "中国工商银行24小时自助银行(东三环南路支行)",
         "category": "finance",
         "lnglat": [
@@ -10772,7 +11081,117 @@
         "in_circle": true
       },
       {
+        "id": "poi-recreation-23",
+        "name": "新华书店(超级玛特动漫主题书店)",
+        "category": "recreation",
+        "lnglat": [
+          116.457754,
+          39.887666
+        ],
+        "minutes": 13.5,
+        "in_circle": true
+      },
+      {
         "id": "poi-recreation-0",
+        "name": "劲松五区公园",
+        "category": "recreation",
+        "lnglat": [
+          116.458232,
+          39.888414
+        ],
+        "minutes": 14.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-24",
+        "name": "新华书店(劲松店)",
+        "category": "recreation",
+        "lnglat": [
+          116.467094,
+          39.889843
+        ],
+        "minutes": 15.8,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-15",
+        "name": "首都图书馆-北区",
+        "category": "recreation",
+        "lnglat": [
+          116.468768,
+          39.876854
+        ],
+        "minutes": 17.6,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-17",
+        "name": "首都图书馆-A座",
+        "category": "recreation",
+        "lnglat": [
+          116.469444,
+          39.876308
+        ],
+        "minutes": 18.6,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-18",
+        "name": "首都图书馆",
+        "category": "recreation",
+        "lnglat": [
+          116.469161,
+          39.875898
+        ],
+        "minutes": 19.1,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-19",
+        "name": "首都图书馆-南区",
+        "category": "recreation",
+        "lnglat": [
+          116.46937,
+          39.875882
+        ],
+        "minutes": 19.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-20",
+        "name": "首都图书馆-B座",
+        "category": "recreation",
+        "lnglat": [
+          116.470344,
+          39.876197
+        ],
+        "minutes": 20.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-21",
+        "name": "首都图书馆-视听资料中心",
+        "category": "recreation",
+        "lnglat": [
+          116.470124,
+          39.87574
+        ],
+        "minutes": 20.4,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-1",
+        "name": "松榆里公园",
+        "category": "recreation",
+        "lnglat": [
+          116.476754,
+          39.880371
+        ],
+        "minutes": 20.3,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-4",
         "name": "顺鑫台球俱乐部",
         "category": "recreation",
         "lnglat": [
@@ -10783,7 +11202,18 @@
         "in_circle": true
       },
       {
-        "id": "poi-recreation-1",
+        "id": "poi-recreation-22",
+        "name": "明境书院",
+        "category": "recreation",
+        "lnglat": [
+          116.467205,
+          39.880997
+        ],
+        "minutes": 10.0,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-5",
         "name": "河南大厦游泳池",
         "category": "recreation",
         "lnglat": [
@@ -10794,7 +11224,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-recreation-2",
+        "id": "poi-recreation-6",
         "name": "拳心拳力搏击俱乐部(劲松店)",
         "category": "recreation",
         "lnglat": [
@@ -10805,7 +11235,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-recreation-3",
+        "id": "poi-recreation-7",
         "name": "长安康体健身俱乐部",
         "category": "recreation",
         "lnglat": [
@@ -10816,7 +11246,29 @@
         "in_circle": true
       },
       {
-        "id": "poi-recreation-7",
+        "id": "poi-recreation-16",
+        "name": "书香艺站",
+        "category": "recreation",
+        "lnglat": [
+          116.462292,
+          39.875246
+        ],
+        "minutes": 15.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-25",
+        "name": "人卫酒店书香人卫书吧",
+        "category": "recreation",
+        "lnglat": [
+          116.452628,
+          39.881467
+        ],
+        "minutes": 17.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-recreation-11",
         "name": "康体中心-游泳池",
         "category": "recreation",
         "lnglat": [
@@ -10827,7 +11279,7 @@
         "in_circle": true
       },
       {
-        "id": "poi-recreation-8",
+        "id": "poi-recreation-12",
         "name": "潘家园社区文体中心(松榆里社区东区西北)",
         "category": "recreation",
         "lnglat": [
@@ -10835,6 +11287,105 @@
           39.880272
         ],
         "minutes": 19.4,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-15",
+        "name": "万东医疗公司家属委员会朝阳区潘家园街道办事处",
+        "category": "service",
+        "lnglat": [
+          116.464133,
+          39.884372
+        ],
+        "minutes": 6.9,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-16",
+        "name": "潘家园街道办事处有机家委会",
+        "category": "service",
+        "lnglat": [
+          116.460873,
+          39.885041
+        ],
+        "minutes": 9.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-24",
+        "name": "北京市公安局朝阳分局潘家园派出所",
+        "category": "service",
+        "lnglat": [
+          116.460781,
+          39.880187
+        ],
+        "minutes": 8.9,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-17",
+        "name": "潘家园街道办事处个人出租房屋税款代征点",
+        "category": "service",
+        "lnglat": [
+          116.468137,
+          39.878929
+        ],
+        "minutes": 12.7,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-3",
+        "name": "朝阳区潘家园街道政务服务中心",
+        "category": "service",
+        "lnglat": [
+          116.468376,
+          39.878946
+        ],
+        "minutes": 12.9,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-18",
+        "name": "潘家园街道办事处劳动就业和社会保障服务中心",
+        "category": "service",
+        "lnglat": [
+          116.468879,
+          39.878925
+        ],
+        "minutes": 14.0,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-14",
+        "name": "中国邮政(劲松八区邮政所)",
+        "category": "service",
+        "lnglat": [
+          116.456971,
+          39.887516
+        ],
+        "minutes": 14.6,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-19",
+        "name": "潘家园街道办事处安全生产检查队",
+        "category": "service",
+        "lnglat": [
+          116.471995,
+          39.880016
+        ],
+        "minutes": 15.5,
+        "in_circle": true
+      },
+      {
+        "id": "poi-service-20",
+        "name": "朝阳区人民政府潘家园街道办事处市城建集团家属委员会",
+        "category": "service",
+        "lnglat": [
+          116.453267,
+          39.883389
+        ],
+        "minutes": 19.5,
         "in_circle": true
       },
       {
@@ -10871,17 +11422,6 @@
         "in_circle": true
       },
       {
-        "id": "poi-service-3",
-        "name": "朝阳区潘家园街道政务服务中心",
-        "category": "service",
-        "lnglat": [
-          116.468376,
-          39.878946
-        ],
-        "minutes": 12.9,
-        "in_circle": true
-      },
-      {
         "id": "poi-service-4",
         "name": "劲松街道农光里中社区来京人员和出租房屋服务站",
         "category": "service",
@@ -10890,17 +11430,6 @@
           39.885096
         ],
         "minutes": 19.8,
-        "in_circle": true
-      },
-      {
-        "id": "poi-service-14",
-        "name": "中国邮政(劲松八区邮政所)",
-        "category": "service",
-        "lnglat": [
-          116.456971,
-          39.887516
-        ],
-        "minutes": 14.6,
         "in_circle": true
       },
       {
@@ -10966,104 +11495,21 @@
     },
     "conservation": {
       "ok": true,
-      "declared_in_circle": 104,
-      "actual_points": 104
+      "declared_in_circle": 150,
+      "actual_points": 150
     }
   },
-  "blindspots": [
-    {
-      "id": "bs-北京劲松-1",
-      "center": [
-        116.462423,
-        39.882873
-      ],
-      "radius_m": 1000,
-      "missing_facilities": [
-        "菜市场"
-      ],
-      "nearest": [
-        {
-          "facility": "market",
-          "name": "农光里市场蔬菜区",
-          "distance_m": 1134.3,
-          "direction": "正东"
-        },
-        {
-          "facility": "pharmacy",
-          "name": "北京嘉润康大药房",
-          "distance_m": 615.1,
-          "direction": "西南"
-        },
-        {
-          "facility": "primary",
-          "name": "东城区汇文实验小学朝阳学校",
-          "distance_m": 835.6,
-          "direction": "正南"
-        }
-      ],
-      "polygon": {
-        "type": "Polygon",
-        "coordinates": [
-          [
-            [
-              116.4637,
-              39.88156630261234
-            ],
-            [
-              116.46529675236651,
-              39.88197472695926
-            ],
-            [
-              116.46582900315535,
-              39.8832
-            ],
-            [
-              116.46529675236651,
-              39.88442527304075
-            ],
-            [
-              116.46423225078884,
-              39.88524212173458
-            ],
-            [
-              116.46316774921117,
-              39.88605897042841
-            ],
-            [
-              116.4621032476335,
-              39.88605897042841
-            ],
-            [
-              116.46157099684466,
-              39.88483369738766
-            ],
-            [
-              116.46157099684466,
-              39.8832
-            ],
-            [
-              116.4621032476335,
-              39.88197472695926
-            ],
-            [
-              116.4637,
-              39.88156630261234
-            ]
-          ]
-        ]
-      }
-    }
-  ],
+  "blindspots": [],
   "scores": {
-    "total": 65.3,
+    "total": 65.8,
     "radar": [
       {
         "dimension": "菜市场",
-        "score": 80.3
+        "score": 79.1
       },
       {
         "dimension": "医疗",
-        "score": 91.8
+        "score": 91.6
       },
       {
         "dimension": "教育",
@@ -11087,7 +11533,7 @@
       },
       {
         "dimension": "政务",
-        "score": 84.1
+        "score": 89.7
       }
     ],
     "bars": [
@@ -11135,9 +11581,9 @@
     "triads": [
       {
         "facility": "菜市场",
-        "covered": false,
-        "nearest_name": null,
-        "nearest_minutes": null
+        "covered": true,
+        "nearest_name": "果蔬蔬生鲜大卖场(潘家园小区店)",
+        "nearest_minutes": 13.9
       },
       {
         "facility": "药店",
@@ -11152,6 +11598,44 @@
         "nearest_minutes": 15.5
       }
     ],
-    "note": "确定性评分：覆盖 87.5 / 可达 51.2 / 多样 87.5 / 均衡 0.0"
+    "note": "确定性评分：覆盖 87.5 / 可达 53.0 / 多样 87.5 / 均衡 0.0",
+    "confidence": "limited",
+    "evidence": {
+      "judged_share": 0.2121,
+      "expected_blindspots": 0.0,
+      "penalty_applied": 0.0
+    }
+  },
+  "team": {
+    "expert_ids": [
+      "L3-001",
+      "L3-003",
+      "L2-001",
+      "L2-002",
+      "L2-003",
+      "L2-004",
+      "L2-005",
+      "L2-008",
+      "L1-025",
+      "L1-027",
+      "L1-030",
+      "L1-031",
+      "L1-032"
+    ],
+    "reasons": [
+      "作为社区体检总检，负责统筹劲松15分钟生活圈体检全流程、统一指标口径并终审签发报告，确保体检结论规范可信。",
+      "作为质检总监，负责POI溯源、采样点可达率与盲区复核，对劲松全类别民生设施体检结果进行质量把关和返工闭环。",
+      "作为基层医疗配置顾问，负责评估劲松社区医院、诊所和药店的就医可达性，指导医疗类设施体检标准。",
+      "作为基础教育设施规划师，负责审核劲松中小学和幼儿园的学位供给与就近入学情况，指导教育类设施体检。",
+      "作为养老托育关怀顾问，负责评估劲松养老院、日间照料、社区食堂和托育设施覆盖，指导养老托育类体检。",
+      "作为菜市与商业配套分析师，负责评估劲松菜市场、超市和便利店的菜篮子保障水平，指导商业类设施体检。",
+      "作为慢行可达性分析师，负责评估劲松慢行路网、过街设施和步行友好度，支撑步行方式下的可达性分析。",
+      "作为生活圈标准专家，负责将GB50180和生活圈导则的配建标准落实到劲松全类别设施体检的指标与阈值设定。",
+      "作为空间定位师，负责劲松体检范围的地理编码与中心点定位，确保设施和采样点空间位置准确。",
+      "作为可达性测算师，负责以walking方式批量测算劲松各设施步行耗时场，支撑15分钟步行可达性判定。",
+      "作为POI核验官，负责劲松全类别民生设施POI的检索、去重与可信度核验，保障设施底数真实可靠。",
+      "作为盲区侦测师，负责识别劲松菜市场、药店、小学等设施的1km步行盲区，支撑补短板决策。",
+      "作为评分建模师，负责构建劲松生活圈综合评分模型，计算覆盖度、可达性指数与均衡性，形成体检量化结论。"
+    ]
   }
 }

@@ -13,7 +13,7 @@ import {
   LC_REPORT_ID,
 } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream, LC_STAGES } from '../mocks/livingCircleStream'
-import { dataOriginBadge, heatSamplePoints, isInReachPoint, isTimedPoint, LC_CANVAS, LC_ISO_COLORS, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcSnapshotPoiLayer, lcToPx, LC_CO_LOCATED_M, LC_REACH_FULL_MIN_FALLBACK, planComparisonOverlay, poiConservation, poiConservationNote, poiMetricLabel, poiRenderSet, POI_THIN_THRESHOLD, samplingReach, samplingReachLabel } from '../lib/livingCircle'
+import { dataOriginBadge, heatSamplePoints, isInReachPoint, isTimedPoint, LC_CANVAS, LC_ISO_COLORS, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcSnapshotPoiLayer, lcToPx, LC_CO_LOCATED_M, LC_REACH_FULL_MIN_FALLBACK, planComparisonOverlay, poiConservation, poiConservationNote, poiMetricLabel, poiRenderSet, POI_THIN_THRESHOLD, policyVersionOf, samplingReach, samplingReachLabel, SCOPE_POLICY_VERSION, staleCaliberNotice } from '../lib/livingCircle'
 import { BD_LAT_ABS_MAX, BD_LNG_ABS_MAX, parseBdLngLat } from '../lib/geo'
 
 const reports = [kaili as unknown as LivingCircleReport, jinsong as unknown as LivingCircleReport]
@@ -92,6 +92,80 @@ describe('LivingCircleReport fixture 契约', () => {
       // 实测外接圆不应小于理论下界（更小 ⇒ 测时或圈层提取出了问题）
       expect(cal!.reach_circumradius_m!).toBeGreaterThanOrEqual(cal!.reach_radius_bound_m! * 0.9)
     }
+  })
+
+  // rev2 · 证据相（「实际查到哪儿」）—— 与后端 `report_contract` 的 B5/B10 同一套关系，
+  // 两端各锁一次。判据写成**条件式**而不是「夹具必须有这六个键」：内置快照冻结在口径升级
+  // 之前，硬要求 Presence 会让整组用例在重刷夹具（要花配额）之前恒红，等于没有护栏。
+  it('证据相键：缺键只允许是「升级前的旧快照」，且必须被陈旧提示覆盖', () => {
+    for (const r of reports) {
+      const cal = r.caliber!
+      const v = policyVersionOf(r)
+      if (v === null) {
+        // 旧口径快照 ⇒ 后端不会拿它冒充新答案（reuse_policy 拦复用），
+        // 而前端必须**说出来** —— 不说就是继续按「没有盲区」卖一遍。
+        expect(staleCaliberNotice(r), `${r.scene.name}：旧口径快照必须给陈旧提示`).toBeTruthy()
+        // 旧快照的 D2 形状（余量 0）正是本次缺陷的制度化载体：采集半径 == 外接圆
+        expect(cal.collect_margin_m).toBe(0)
+        expect(cal.cells_unknown!).toBeGreaterThan(0)
+        continue
+      }
+      // 声明了版本 ⇒ 整套证据键必须齐（版本号与键集是同一次发布的两半）
+      expect(v).toBe(SCOPE_POLICY_VERSION)
+      expect(staleCaliberNotice(r)).toBeNull()
+      for (const k of [
+        'evidence_margin_m',
+        'evidence_frontier_m',
+        'evidence_complete',
+        'evidence_bound_source',
+        'judge_radius_m',
+      ] as const) {
+        expect(cal![k], `caliber.${k} 缺失（声明了版本却不举证）`).toBeDefined()
+      }
+      // B5 的关系必须在客户端也复算得动（否则 UI 无法回答「这次实际查到哪儿」）
+      expect(cal.collect_radius_m).toBeCloseTo(cal.reach_circumradius_m! + cal.evidence_margin_m!, 1)
+      expect(cal.evidence_margin_m).toBeGreaterThan(0)
+      const bound = cal.evidence_bound_source === 'measured' ? cal.evidence_radius_m! : cal.collect_radius_m!
+      expect(cal.judge_radius_m).toBeCloseTo(Math.max(0, bound - 1000), 1)
+      // B10 的分账：一格未判 ⇒ 全部都得记未定
+      if (cal.cells_judged === 0) expect(cal.cells_unknown).toBe(cal.cells_inside)
+    }
+
+    // ⚠️ 上面那支在两份内置快照上都只走 `v === null` 分支 ⇒ 新口径那半今天是**空转**的。
+    // 这里用「夹具 + 人工升格」把新分支真跑一遍，等将来重刷夹具后它自动变成真实路径。
+    const K = kaili as unknown as LivingCircleReport
+    const OLD_COLLECT = K.caliber.collect_radius_m! // 旧口径：余量 0 ⇒ 就等于外接圆
+    const upgraded = (over: Record<string, unknown> = {}) =>
+      ({
+        ...kaili,
+        caliber: {
+          ...K.caliber,
+          scope_policy_version: SCOPE_POLICY_VERSION,
+          collect_radius_m: OLD_COLLECT + 1000, // = 外接圆 + 证据余量
+          evidence_margin_m: 1000,
+          evidence_radius_m: OLD_COLLECT + 1000,
+          evidence_frontier_m: { market: 2367, pharmacy: 1800, primary: 2367 },
+          evidence_complete: false,
+          evidence_bound_source: 'measured',
+          judge_radius_m: OLD_COLLECT, // = 实测边界 2367 − 判定半径 1000
+          ...over,
+        },
+      }) as unknown as LivingCircleReport
+
+    const up = upgraded()
+    expect(policyVersionOf(up)).toBe(SCOPE_POLICY_VERSION)
+    expect(staleCaliberNotice(up)).toBeNull()
+    // 复算必须真算得动（不是「键在就行」）：collect = 外接圆 + 余量、judge = 实测边界 − 1km
+    expect(up.caliber!.collect_radius_m).toBeCloseTo(up.caliber!.reach_circumradius_m! + 1000, 1)
+    expect(up.caliber!.judge_radius_m).toBeCloseTo(Math.max(0, up.caliber!.evidence_radius_m! - 1000), 1)
+    // 反证：把余量改回 0（D2 回退）⇒ 上面那条关系必断，本用例的判据有牙
+    const regressed = upgraded({ collect_radius_m: up.caliber!.reach_circumradius_m })
+    expect(regressed.caliber!.collect_radius_m).not.toBeCloseTo(
+      regressed.caliber!.reach_circumradius_m! + regressed.caliber!.evidence_margin_m!,
+      1,
+    )
+    // 版本号写错（如后端升到 ev-2 而前端常量没跟着改）⇒ 陈旧提示必须说话
+    expect(staleCaliberNotice(upgraded({ scope_policy_version: 'ev-2' }))).toContain('ev-2')
   })
 
   it('等时圈族必须覆盖 5/10/15/20 分钟且多边形闭合、面积为正', () => {

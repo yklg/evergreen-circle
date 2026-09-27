@@ -1,0 +1,225 @@
+{
+  "$schema_note": "生活圈设施实体归并判据的黄金样本。期望值来自真实采集数据的人工核对，**不得为了让实现通过而回填**；改判据先改本文件的期望并说明理由。",
+  "schema": "evergreen.facility-golden-pairs/v1",
+  "captured_at": "2026-09-27",
+  "merge_radius_m": 50.0,
+  "provenance": {
+    "note": "官渡区那份报告（截图所示）在取证后已从 lc_cache.db 过期消失，其坐标以本文件为唯一留存凭据。",
+    "sources": [
+      "live:report:e0b586d5f06e69bd（官渡区，已从 lc_cache.db 过期消失）",
+      "live:report:4f53db4a0e5ab91c（凯里老街-M11H）",
+      "live:report:b936fc13f496f9e8（北京劲松）"
+    ]
+  },
+  "pairs": [
+    {
+      "id": "guandong-icbc-guanshang-atm",
+      "src": "live:report:e0b586d5f06e69bd（官渡区，已从 lc_cache.db 过期消失）",
+      "expect": "merge",
+      "pins": "限定语相容：`关上支行` ⊂ `昆明关上支行`（城市名前缀不对称）",
+      "a": {
+        "name": "中国工商银行(昆明关上支行)",
+        "lng": 102.749182,
+        "lat": 25.020152,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国工商银行24小时自助银行(关上支行)",
+        "lng": 102.749037,
+        "lat": 25.020105,
+        "category": "finance"
+      },
+      "distance_m": 15.52
+    },
+    {
+      "id": "guandong-ccb-xingguang-atm",
+      "src": "live:report:e0b586d5f06e69bd（官渡区，已从 lc_cache.db 过期消失）",
+      "expect": "merge",
+      "pins": "限定语相容 + 10m 几何阈值差 0.9m 未命中（本夹具的核心动机案例）",
+      "a": {
+        "name": "中国建设银行(昆明兴关支行)",
+        "lng": 102.753242,
+        "lat": 25.015614,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国建设银行24小时自助银行(兴关支行)",
+        "lng": 102.753287,
+        "lat": 25.015525,
+        "category": "finance"
+      },
+      "distance_m": 10.89
+    },
+    {
+      "id": "guandong-ccb-xingguang-loancenter",
+      "src": "live:report:e0b586d5f06e69bd（官渡区，已从 lc_cache.db 过期消失）",
+      "expect": "merge",
+      "pins": "「个贷中心」必须进子点词表，否则三点只能合到两点",
+      "a": {
+        "name": "中国建设银行24小时自助银行(兴关支行)",
+        "lng": 102.753287,
+        "lat": 25.015525,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国建设银行第五个贷中心(昆明兴关支行)",
+        "lng": 102.753402,
+        "lat": 25.015555,
+        "category": "finance"
+      },
+      "distance_m": 12.06
+    },
+    {
+      "id": "guandong-bocom-vs-ccb-atm",
+      "src": "live:report:e0b586d5f06e69bd（官渡区，已从 lc_cache.db 过期消失）",
+      "expect": "keep",
+      "pins": "回归锁：机构主体不同绝不合并（v1「只看银行关键词」方案在此打脸）",
+      "a": {
+        "name": "交通银行(昆明官渡支行)",
+        "lng": 102.750292,
+        "lat": 25.01853,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国建设银行24小时自助银行(昆明官渡支行)",
+        "lng": 102.75009,
+        "lat": 25.018434,
+        "category": "finance"
+      },
+      "distance_m": 22.98
+    },
+    {
+      "id": "kaili-abcd-atm-vs-ccb",
+      "src": "live:report:4f53db4a0e5ab91c（凯里老街-M11H）",
+      "expect": "keep",
+      "pins": "回归锁：40.8m 处的农行自助与建行支行是两家机构",
+      "a": {
+        "name": "中国农业银行24小时自助银行(贵府佳和拉薇公园支行)",
+        "lng": 107.974217,
+        "lat": 26.569753,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国建设银行(未来城支行)",
+        "lng": 107.974155,
+        "lat": 26.56939,
+        "category": "finance"
+      },
+      "distance_m": 40.83
+    },
+    {
+      "id": "kaili-abcd-yingbin-atm",
+      "src": "live:report:4f53db4a0e5ab91c（凯里老街-M11H）",
+      "expect": "merge",
+      "pins": "限定语相容：`迎宾路支行` ⊂ `凯里迎宾路支行`",
+      "a": {
+        "name": "中国农业银行(凯里迎宾路支行)",
+        "lng": 107.969034,
+        "lat": 26.572966,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国农业银行24小时自助银行(迎宾路支行)",
+        "lng": 107.969009,
+        "lat": 26.573084,
+        "category": "finance"
+      },
+      "distance_m": 13.35
+    },
+    {
+      "id": "jinsong-abcd-panjiayuan-atm",
+      "src": "live:report:b936fc13f496f9e8（北京劲松）",
+      "expect": "merge",
+      "pins": "限定语相容的**反向**样本：`北京潘家园支行` ⊃ `潘家园支行`",
+      "a": {
+        "name": "中国农业银行(潘家园支行)",
+        "lng": 116.457243,
+        "lat": 39.877727,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国农业银行24小时自助银行(北京潘家园支行)",
+        "lng": 116.457252,
+        "lat": 39.8776,
+        "category": "finance"
+      },
+      "distance_m": 14.14
+    },
+    {
+      "id": "jinsong-guangren-clinic",
+      "src": "live:report:b936fc13f496f9e8（北京劲松）",
+      "expect": "merge",
+      "pins": "双附属点、组内无主点也可成组（`-门诊` / `-发热门诊` 均非主点）",
+      "a": {
+        "name": "北京广仁中西医结合医院-门诊",
+        "lng": 116.470212,
+        "lat": 39.888787,
+        "category": "medical"
+      },
+      "b": {
+        "name": "北京广仁中西医结合医院-发热门诊",
+        "lng": 116.47034,
+        "lat": 39.888888,
+        "category": "medical"
+      },
+      "distance_m": 15.67
+    },
+    {
+      "id": "jinsong-panjiayuan-gate-parking",
+      "src": "live:report:b936fc13f496f9e8（北京劲松）",
+      "expect": "merge",
+      "pins": "「门 / 立体停车场」必须进子点词表",
+      "a": {
+        "name": "潘家园旧货市场-立体停车场",
+        "lng": 116.463169,
+        "lat": 39.880881,
+        "category": "shopping"
+      },
+      "b": {
+        "name": "潘家园旧货市场-西2门",
+        "lng": 116.462833,
+        "lat": 39.880556,
+        "category": "shopping"
+      },
+      "distance_m": 46.13
+    },
+    {
+      "id": "synthetic-icbc-two-branches",
+      "src": "构造样本",
+      "expect": "keep",
+      "pins": "v4 第 6 条：同机构但限定语互不包含 ⇒ 拒合（防抹掉真实网点）",
+      "a": {
+        "name": "中国工商银行(关上支行)",
+        "lng": 102.749182,
+        "lat": 25.020152,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国工商银行24小时自助银行(北京路支行)",
+        "lng": 102.74945,
+        "lat": 25.020152,
+        "category": "finance"
+      },
+      "distance_m": 27.0
+    },
+    {
+      "id": "synthetic-ccb-two-real-branches",
+      "src": "构造样本",
+      "expect": "keep",
+      "pins": "同机构两个真实网点（限定语互不包含 + 双方非子点）⇒ 不合；注意此对即便去掉本判据也会被 U7 同名规则处理",
+      "a": {
+        "name": "中国建设银行(城东支行)",
+        "lng": 102.75,
+        "lat": 25.018,
+        "category": "finance"
+      },
+      "b": {
+        "name": "中国建设银行(城西支行)",
+        "lng": 102.75035,
+        "lat": 25.018,
+        "category": "finance"
+      },
+      "distance_m": 35.27
+    }
+  ]
+}

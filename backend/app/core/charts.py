@@ -154,19 +154,34 @@ def platform_bar(title: str, by_platform: Dict[str, Dict[str, int]]) -> Dict[str
     }
 
 
+_WORD_KINDS = ("opinion", "topic")
+_WORD_POLARITIES = ("pos", "neu", "neg")
+
+
 def wordcloud_words(words: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """词云语义载荷归一（E1 契约）：[{word,weight}] → 去脏词条/去空白；空表 → []。
+    """词云语义载荷归一（E1 契约）：去脏词条/去空白；空表 → []。
 
     type=wordcloud 的 spec 不再烘 echarts option——由前端 DOM 词云渲染器直接消费
     spec["words"]；是否产图由调用方裁决（空载荷不产图，不造空词云）。
+
+    `kind` / `polarity` **原样透传，缺席时保持缺席**：绝不给缺省值兜一个 "topic"。
+    存量报告的 keywords 全是地名，一旦被打上显式 topic，前端就会把它们渲染成
+    「只有小灰字没大字」的分层样式 —— 那是把兼容问题伪装成设计。
+    只丢非法值（空串/未知枚举），非法值丢键后同样退化为「缺席 = 单层渲染」。
     """
     out = []
     for w in words or []:
         if not isinstance(w, dict):
             continue
         word = str(w.get("word") or "").strip()
-        if word:
-            out.append({"word": word, "weight": w.get("weight", 0)})
+        if not word:
+            continue
+        item: Dict[str, Any] = {"word": word, "weight": w.get("weight", 0)}
+        if w.get("kind") in _WORD_KINDS:
+            item["kind"] = w["kind"]
+        if w.get("polarity") in _WORD_POLARITIES:
+            item["polarity"] = w["polarity"]
+        out.append(item)
     return out
 
 

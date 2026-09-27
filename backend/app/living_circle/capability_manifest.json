@@ -37,10 +37,27 @@
   },
   
   "poi_search": {
+    "probe_group": "place + frontier (scripts/probe_baidu.py)",
+    "page_size_max": 20,
+    "oversized_page_size_behavior": "silent_downgrade",
+    "total_is_hit_count": true,
+    "total_is_stable": false,
+    "len_alone_decisive": false,
+    "radius_tested": [2000, 2500],
+    "radius_max_m": 9000,
+    "evidence_frontier_kaili": {
+      "药店": {"hits_within_2500m": 60, "page0_farthest_m": 1754.5, "pages_to_exhaust": 3},
+      "菜市场": {"hits_within_2500m": 18, "page0_farthest_m": 2297.6, "pages_to_exhaust": 1},
+      "小学": {"hits_within_2500m": 17, "page0_farthest_m": 2307.5, "pages_to_exhaust": 1}
+    },
+    "notes": "单页硬上限 20；请求 30/50 时 status=0 但只回 20 条（静默降级）。因此「短页=查全」这条判据必须按实测页容量比对，不能按请求值。total 是命中总数但会漂移（同一次翻检 60→63→60），只可作旁证，承重判据是 stop_reason。三要素中仅药店稠密到会被一页截断。"
+  },
+
+  "poi_search_deprecated_2026_09_20": {
     "radius_tested": [2000, 5000, 9000],
     "max_results_per_query": 10,
     "truncation_risk": "low",
-    "notes": "All radius levels return 10 results consistently; no pagination truncation observed in test"
+    "notes": "【已作废·假阴性】旧 poi 组从未传 page_size ⇒ 看到的是百度默认每页 10 条。『All radius levels return 10 results consistently; no pagination truncation observed』实为『没给足发生截断的机会』，而生产代码请求 20 条/页。保留此块仅为记录该结论为何不可信。"
   },
   
   "performance": {

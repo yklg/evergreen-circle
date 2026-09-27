@@ -648,6 +648,28 @@ export function poiMetricLabel(lc: Pick<LivingCircleReport, 'poi'>): string {
   return `${base} · 另有 ${dropped} 处未展示（${detail}${cap != null ? `，每类上限 ${cap}` : ''}）`
 }
 
+/**
+ * POI 清洗规则文案 —— 与后端 `diagnosis_templates.poi_dedupe_rule_label` **逐字同口径**。
+ *
+ * 报告叙述里「做了什么清洗」必须**从报告自己的披露推出来**，不能手写。旧写法把
+ * 「名称归一与 50m 聚簇去重」钉死在模板里，于是设施归并上线后报告仍在描述修复前的
+ * 算法 —— 那是报告文本层造假，比数字错更难被发现（词表闸抓虚构指标，抓不到过期描述）。
+ *
+ * `poi.merged` 缺失 = 归并上线前冻结的快照 ⇒ 退回旧描述，而不是谎报新规则生效过。
+ */
+export function poiDedupeRuleLabel(lc: Pick<LivingCircleReport, 'poi'>): string {
+  const base = '名称归一与 50m 聚簇去重'
+  const mg = lc.poi?.merged
+  if (!mg || !mg.enabled) return base
+  const n = mg.absorbed ?? 0
+  if (n <= 0) return `${base} + 设施实体归并（${mg.rule_version}，本次无同体子点）`
+  const detail = (mg.categories ?? [])
+    .filter((x) => (x.absorbed ?? 0) > 0)
+    .map((x) => `${x.category} ${x.absorbed}`)
+    .join('/')
+  return `${base} + 设施实体归并（${mg.rule_version}，吸收 ${n} 处同体子点：${detail}）`
+}
+
 /* ── 对比页差异表 / 卡片指标行（阶段 5 · R6）───────────────────────────── */
 
 /** 比较方向：`higher` = 数值越大越好；`lower` = 越小越好。 */
@@ -788,6 +810,44 @@ export const COMPARE_ROWS: CompareRowDef[] = [
   },
 ]
 
+/** 差异表的一行（与后端 `_lc_diff()` 返回结构、`LifeCircleCompare['diff']` 同形）。 */
+export interface CompareDiffRow {
+  metric: string
+  a_value: number | string
+  b_value: number | string
+  desc: string
+}
+
+/**
+ * 演示态差异表 —— 把「行定义 + 口径版本守卫」收成**一处**，页面不再自己拼。
+ *
+ * 为什么要抽出来：`ComparePage` 里原先是 `COMPARE_ROWS.map(...compareDesc)` 一句直出，
+ * 于是「判盲口径不同 ⇒ 那两行不可比」这条守卫只能写在页面里 —— 而它必须与后端
+ * `_lc_diff()` 同判据，写在组件里既测不到也守不住（真实态走后端、演示态走页面，
+ * 两条链各写一遍正是本仓反复出事的形态）。
+ */
+export function compareRows(
+  lcA: LivingCircleReport,
+  lcB: LivingCircleReport,
+  nameA: string,
+  nameB: string,
+): CompareDiffRow[] {
+  const gap = caliberPolicyGap(lcA, lcB)
+  return COMPARE_ROWS.map((def) => {
+    const na = def.num(lcA)
+    const nb = def.num(lcB)
+    return {
+      metric: def.key,
+      a_value: na,
+      b_value: nb,
+      desc:
+        gap && (CALIBER_GAP_ROW_KEYS as readonly string[]).includes(def.key)
+          ? CALIBER_GAP_DESC
+          : compareDesc(def, na, nb, nameA, nameB),
+    }
+  })
+}
+
 export interface BlindspotCoverage {
   /** 可达区内的网格格数 */
   inside: number
@@ -848,6 +908,96 @@ export function emptyBlindspotNote(lc: Pick<LivingCircleReport, 'caliber'>): str
     return `已在可判定范围内（${cov.judged} 格）确认三要素齐备，未发现 1km 服务盲区；但仍有 ${cov.unknown} 格无法判定，不能据此判定全圈无障碍。`
   }
   return `网格扫描 ${cov.inside} 格全部完成判定，菜市场/药店/小学三要素齐备，未发现 1km 服务盲区。`
+}
+
+/* ── rev2 · 判盲口径版本 / 证据置信度（D-3 折扣 + D-4 陈旧拦截的可见面）─────── */
+
+/**
+ * 判盲空间口径的当前版本 —— **三方同源**：后端 `scope.SCOPE_POLICY_VERSION`、
+ * 契约夹具 `__tests__/fixtures/compareDiffContract.json` 的
+ * `caliber_incomparable.policy_version_current`，以及这里。
+ *
+ * 为什么要前端也持有一份：前端要判断「我手上这份报告是不是升级前的」，而报告的版本是
+ * **载荷里的一个事实**（不是缓存键、也不是一列状态位）—— 只有拿着当前版本才能比。
+ * 换版本时只改后端 + 夹具，两侧测试各钉一次（后端
+ * `test_caliber_gap_literals_match_contract_fixture` / 前端
+ * `livingCircleContract.test.ts`），不会一边新一边旧。
+ */
+export const SCOPE_POLICY_VERSION = 'ev-1'
+
+/** 口径版本不同 ⇒ 差异表那两行的结论句（与后端 `_DIFF_DESC_CALIBER_GAP` 逐字同源）。 */
+export const CALIBER_GAP_DESC = '不可比 · 判盲口径已升级'
+
+/** 受口径版本影响的两行行名 —— 与 `COMPARE_ROWS` 的 `key`、后端 `_CALIBER_GAP_ROWS` 同源。
+ *  「POI 采集」那类**事实计数**不在其列：换判盲尺子不改变采到多少设施。 */
+export const CALIBER_GAP_ROW_KEYS = ['服务盲区', '综合评分'] as const
+
+/** 判盲口径版本号安全取值：旧快照 / 离线骨架没这个键 ⇒ `null`（不是空串）。 */
+export function policyVersionOf(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = lc?.caliber?.scope_policy_version
+  return typeof v === 'string' && v ? v : null
+}
+
+/** 两份报告用的是不是**同一把判盲尺**（含一侧根本没声明）。 */
+export function caliberPolicyGap(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): boolean {
+  return policyVersionOf(a) !== policyVersionOf(b)
+}
+
+/**
+ * 旧口径报告的「建议重新体检」提示（当前口径 ⇒ null）。
+ *
+ * 为什么提示而不是隐藏：历史报告是用户的数据（D-4「只拦复用、不拦可见性」）。但旧口径
+ * 的证据面只有可达区一角（凯里实测 5/97）—— 盲区天然少报、分数天然偏高，不说明就等于
+ * 继续按「没有盲区」卖一遍。
+ */
+export function staleCaliberNotice(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = policyVersionOf(lc)
+  if (v === SCOPE_POLICY_VERSION) return null
+  return v == null
+    ? '判盲口径已升级（证据域独立），本报告的盲区数与综合评分偏乐观 —— 建议重新体检'
+    : `判盲口径已升级（本报告 ${v}，当前 ${SCOPE_POLICY_VERSION}），盲区数与综合评分偏乐观 —— 建议重新体检`
+}
+
+/** 评分置信度安全取值：旧快照 / 离线骨架缺该键 ⇒ `null`（渲染层不给徽标，不猜成 full）。 */
+export function confidenceOf(lc: Pick<LivingCircleReport, 'scores'>): 'full' | 'limited' | null {
+  const c = lc?.scores?.confidence
+  return c === 'full' || c === 'limited' ? c : null
+}
+
+/**
+ * 对比页的口径提示（两侧都是当前口径 ⇒ null）。
+ *
+ * 两种病要分开说：**版本不同** ⇒ 那两个数不是同一把尺量出来的，直接禁止比较；
+ * **两份都还是旧口径** ⇒ 彼此可比，但都偏乐观 —— 答辩演示拿的正是这两份内置快照，
+ * 只拦「不同」不报「都旧」，观众看到的仍是两个被高估的分数并排。
+ */
+export function compareCaliberNotice(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string | null {
+  const va = policyVersionOf(a)
+  const vb = policyVersionOf(b)
+  const shown = (v: string | null) => v ?? '升级前（未声明）'
+  if (va !== vb) return `两侧判盲口径不同（${shown(va)} vs ${shown(vb)}）⇒ 服务盲区与综合评分不可直接比，建议重新体检较旧的一份`
+  if (va === null && vb === null) return '两份报告都出自判盲口径升级前的版本 ⇒ 盲区数与综合评分偏乐观，建议重新体检'
+  return null
+}
+
+/**
+ * 降档徽标文案（chip）—— 分数的折扣要解释**为什么**低了，不然像算法随机抖动。
+ *
+ * 覆盖率只从 `caliber` 的格数分账取（单一真源）；`scores.evidence.judged_share` 是评分侧
+ * 的自述，两者由契约判据 B11 钉成同一个数 —— UI 不该再「信任」一遍自述来显示它。
+ * 与 `blindspotCoverageBrief`（灰脚注）分工：那句说**判了多少**，这枚说**结论因此偏乐观**
+ * 且**分数已打折**，两者不互相替换（旧口径快照没有 confidence ⇒ 这枚不出现，脚注仍在）。
+ */
+export function confidenceBadgeLabel(lc: Pick<LivingCircleReport, 'scores' | 'caliber'>): string | null {
+  if (confidenceOf(lc) !== 'limited') return null
+  const cov = blindspotCoverage(lc)
+  return cov == null ? '证据面不足' : `证据面不足 · 覆盖率 ${cov.judgedPct}%`
 }
 
 export type OriginTone = 'live' | 'warn' | 'info'

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import math
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.living_circle import data_source, isochrone, scoring
+from app.living_circle import blindspot, data_source, field, isochrone, scoring, scope
 from app.living_circle.caliber import get_caliber
 from app.living_circle.data_source import CheckParams, OfflineDataSource
 from app.living_circle.geo_utils import haversine_m
@@ -79,6 +80,202 @@ def test_caliber_constants_are_the_same_object_across_modules():
     """引用而非复制：`is` 断言，防「data_source 里再写一个 75.0」的口径漂移。"""
     assert data_source.get_caliber("walking") is isochrone.get_caliber("walking")
     assert inspect.signature(hour_to_minutes).parameters["speed"].default == WALK_SPEED_M_PER_MIN
+
+
+# ── I1b · 判盲口径常量单一源 ───────────────────────────────────────
+# 证据域修复带出的同族缺陷。旧状态：`BLIND_RADIUS_M` 在 `blindspot` 与 `field` 各写一份
+# 1000.0，`TRIAD_KEYS` 同样两份。`field.py` 当时的注释给了理由：「`blindspot` 已 import
+# 本模块，反向 import 会成环」。环是真的 —— 但**复制口径不是解环的办法**，把常量一起
+# 下移到最底层的 `scope`（它不 import 任何判盲模块），两边都 import 它，环与单一源同时成立。
+
+_LC_DIR = Path(inspect.getfile(scope)).parent
+_JUDGE_CALIBER_NAMES = ("BLIND_RADIUS_M", "TRIAD_KEYS", "TRIAD_LABEL")
+
+
+def _defining_modules(name: str, root: Path = _LC_DIR) -> list[str]:
+    """`root` 下**以模块级赋值语句定义**了 `name` 的模块名（import 不计）。"""
+    hits: list[str] = []
+    for py in sorted(root.glob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        for node in tree.body:  # 只看模块级：函数内的局部同名变量不是口径
+            if isinstance(node, ast.AnnAssign):
+                targets: list[ast.expr] = [node.target]
+            elif isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            else:
+                continue
+            if any(isinstance(t, ast.Name) and t.id == name for t in targets):
+                hits.append(py.stem)
+    return hits
+
+
+@pytest.mark.parametrize("cname", _JUDGE_CALIBER_NAMES)
+def test_blindspot_caliber_constants_have_single_definition(cname):
+    """判盲口径常量只允许在 `scope.py` 定义一次（B5 原则从速度口径扩到判定半径与必达要素）。"""
+    defs = _defining_modules(cname)
+    assert defs == ["scope"], f"{cname} 必须在且只在 scope.py 定义，实际定义于 {defs}"
+
+
+def test_single_definition_guard_actually_catches_a_copy(tmp_path):
+    """负对照：本守护**不是永真断言** —— 造一份复制品，它必须立刻变红。
+
+    「防复发」用例最常见的失效方式是写成一棵永远绿的树（判据取错了目录、或只匹配
+    `import` 不匹配赋值）。这里直接喂给它一个含两份定义的假目录来证明判据有效。
+    """
+    (tmp_path / "scope.py").write_text("BLIND_RADIUS_M = 1000.0\n", encoding="utf-8")
+    (tmp_path / "field.py").write_text("BLIND_RADIUS_M = 1000.0\n", encoding="utf-8")
+    (tmp_path / "blindspot.py").write_text(
+        "from app.living_circle.scope import BLIND_RADIUS_M\n\n"
+        "def f():\n    BLIND_RADIUS_M = 5.0  # 函数内局部变量，不算口径\n    return BLIND_RADIUS_M\n",
+        encoding="utf-8",
+    )
+    assert _defining_modules("BLIND_RADIUS_M", tmp_path) == ["field", "scope"]
+    # 真实代码库必须仍然只有一处 —— 否则上面那条参数化用例与本条会一起红
+    assert _defining_modules("BLIND_RADIUS_M") == ["scope"]
+
+
+def test_blindspot_and_field_share_the_same_caliber_objects():
+    """消费方拿到的是**同一个对象**，不是等值的第二份 —— 登记表加一类必达要素时无需两处同改。"""
+    assert blindspot.TRIAD_KEYS is field.TRIAD_KEYS is scope.TRIAD_KEYS
+    assert blindspot.TRIAD_LABEL is scope.TRIAD_LABEL
+    assert list(scope.TRIAD_LABEL) == list(scope.TRIAD_KEYS)  # 键集合与登记表同源（test_field 契约）
+    assert blindspot.BLIND_RADIUS_M == field.BLIND_RADIUS_M == scope.BLIND_RADIUS_M == 1000.0
+
+
+def test_judge_radius_is_a_relation_owned_by_scope():
+    """可判定半径必须是 `SpatialScope` 的关系（构造即校验），不得回流到消费方。
+
+    旧实现是 `blindspot.judge_radius_m(scope, ...)` —— 判定公式住在消费方，任何新判定
+    都得自己抄一遍，抄错没有任何一层能发现（`judge_radius_m` 的量级问题因此被「暂缓」了一轮）。
+    """
+    assert not hasattr(blindspot, "judge_radius_m"), "判定半径公式不得退回 blindspot"
+    assert callable(scope.SpatialScope.judge_radius_m)
+    s = scope.SpatialScope(
+        travel_mode="walking", reach_min=20.0, reach_ring=(), reach_circumradius_m=1367.2,
+        collect_radius_m=1367.2, study_radius_m=2500.0,
+    )
+    assert s.judge_radius_m() == pytest.approx(367.2)          # D2 现状：外接圆 − 1km
+    assert s.judge_radius_m(500.0) == pytest.approx(867.2)     # 半径随证据需求走，非硬编码
+
+
+def test_rev2_evidence_keys_are_both_indexed_and_real():
+    """rev2 新口径键必须**两边都落**：进口径索引 + 真在产出里。
+
+    - 不进索引 ⇒ 专家卡无法引用，prose 里提到「实测证据边界半径」会被词表闸判成编造指标
+      （项目记忆「阶段 4：机制就绪但绑定仅 1/48；词表闸捕虚构指标」正是这个坑）；
+    - 只登记不核对 ⇒ ref 名字写错照样「存在」，渲染出空值却无人报警。
+    """
+    from app.living_circle import caliber_index
+
+    rev2_refs = (
+        "scope::EVIDENCE_MARGIN_M", "scope::SCOPE_POLICY_VERSION",
+        "scoring::BLINDSPOT_PENALTY_PER_EXTRA", "scoring::JUDGE_SHARE_FLOOR",
+        "report::cells_inside", "report::cells_judged", "report::cells_unknown",
+        "report::evidence_margin_m", "report::evidence_radius_m",
+        "report::evidence_frontier_m", "report::evidence_complete",
+        "report::judge_radius_m", "report::scope_policy_version",
+        "report::confidence", "report::evidence",
+    )
+    missing = sorted(set(rev2_refs) - set(caliber_index.all_refs()))
+    assert not missing, f"rev2 口径键未登记进 caliber_index：{missing}"
+
+    # ref 的 value 里写的嵌套路径必须真在产出对象里（防「登记了却拼错」）
+    s = scope.SpatialScope(
+        travel_mode="walking", reach_min=20.0,
+        reach_ring=((107.97, 26.57), (107.98, 26.57), (107.98, 26.58), (107.97, 26.58)),
+        reach_circumradius_m=1367.2, collect_radius_m=1367.2 + scope.EVIDENCE_MARGIN_M,
+        study_radius_m=2500.0,
+    ).with_evidence(
+        {"market": 2367.2, "pharmacy": 1800.0, "primary": 2367.2},
+        complete=False, detail={"truncated_terms": ["药店"], "starved_terms": []},
+    )
+    payload = s.payload(WALK_CALIBER, {"cells_inside": 97, "cells_judged": 5,
+                                      "cells_unknown": 92, "cells_blind": 2})
+    produced_scores = scoring.compute_scores([], [], 0, judged_share=5 / 97, evidence_complete=False)
+
+    for ref in rev2_refs:
+        if not ref.startswith("report::"):
+            continue
+        value = caliber_index.view(ref).value
+        key = value.rsplit(".", 1)[1]
+        host = payload if ".caliber." in value else produced_scores
+        assert key in host, f"{ref} 指向 {value!r}，但产出对象里没有 {key!r} —— 登记与实现漂移"
+
+    # 证据余量与判定半径必须是**同一把尺**（余量由证据需求导出，不是第二个旋钮）
+    assert caliber_index.view("scope::EVIDENCE_MARGIN_M").value == str(scope.BLIND_RADIUS_M)
+
+
+def _probe_index_with_missing_symbol():
+    """子进程里删掉已登记符号再重建索引，回传「本来有没有 / 抛了什么错 / 旧索引还在不在」。
+
+    必须走子进程：`caliber_index._INDEX` 是**进程级全局**，在主进程里 delattr + 重建会
+    污染后续用例（本仓「还原全局注册表」的老坑）。
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import app as _app_pkg
+
+    backend = Path(_app_pkg.__file__).parent.parent
+    code = (
+        "import json\n"
+        "from app.living_circle import caliber_index, scope\n"
+        "REF = 'scope::EVIDENCE_MARGIN_M'\n"
+        "had = caliber_index.view(REF) is not None\n"
+        "value_before = getattr(caliber_index.view(REF), 'value', None)\n"
+        "n_before = len(caliber_index.all_refs())\n"
+        "err = None\n"
+        "try:\n"
+        "    del scope.EVIDENCE_MARGIN_M\n"
+        "    caliber_index._build_index()\n"
+        "except Exception as e:\n"
+        "    err = type(e).__name__\n"
+        "view = caliber_index.view(REF)\n"
+        "print(json.dumps({'had': had, 'err': err, 'kept': view is not None,\n"
+        "                  'value_before': value_before,\n"
+        "                  'value_after': getattr(view, 'value', None),\n"
+        "                  'n_before': n_before, 'n_after': len(caliber_index.all_refs())}))\n"
+    )
+    res = subprocess.run(
+        [sys.executable, "-c", code], cwd=str(backend), capture_output=True, text=True
+    )
+    assert res.returncode == 0, f"探针子进程失败：{res.stderr[-400:]}"
+    return json.loads(res.stdout.strip().splitlines()[-1])
+
+
+def test_missing_registered_symbol_raises_on_rebuild():
+    """阶段 0 转正（原 `xfail(strict)` 挂账）：名册登记的符号缺失必须**报错**。
+
+    旧写法 `getattr(mod, name, None)` + 「非 None 才登记」把改名/删除吞成「什么都没发生」。
+    计划 v4 还要往名册里加 `cells_unjudgeable_by_cap`/`evidence_anchors`/`comparable_key`
+    三个键 —— 拼错符号名时拿到的必须是红，不是无声。
+    """
+    probe = _probe_index_with_missing_symbol()
+    assert probe["had"] is True, "前置不成立：ref 本来就不在索引里，本用例会空过"
+    assert probe["err"] == "AttributeError", (
+        f"缺失符号得到的是 {probe['err']!r}，不是 AttributeError ⇒ 静默跳过又回来了"
+    )
+
+
+def test_failed_rebuild_rolls_back_to_the_previous_index():
+    """**现状记录**（阶段 0 新行为的接缝）：构建失败时旧索引整表留着，不留半张。
+
+    堵的是修①时容易顺手引入的修②坑：把 `_build_index` 改成「先 `_INDEX.clear()` 再逐条填」，
+    一旦填充中途抛错，进程里就剩半张甚至空索引 —— 下游 `view()` 全部静默返回 None，
+    比原来的僵尸 ref 更难查。现在的实现是「建到新表、成功才换出、异常回滚」，
+    所以 ref 条数与取值必须逐字不变。本用例转红 = 有人把换出/回滚改成了就地清空。
+    """
+    probe = _probe_index_with_missing_symbol()
+    assert probe["err"] == "AttributeError", "前置不成立：没报错就谈不上回滚"
+    assert probe["n_after"] == probe["n_before"] > 0, (
+        f"失败的重建把索引改成了 {probe['n_after']} 条（原 {probe['n_before']}）"
+        f"⇒ 半张/空索引会让下游 view() 静默返回 None"
+    )
+    assert probe["kept"] is True and probe["value_after"] == probe["value_before"], (
+        "ref 消失或取值变了 ⇒ 不再是整表换出，回到就地清空的写法了"
+    )
 
 
 def test_scoring_reach_threshold_is_tied_to_outermost_iso_ring():

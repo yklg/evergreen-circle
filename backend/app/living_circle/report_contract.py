@@ -38,6 +38,9 @@
 | 送达点位不含 ``in_circle=False`` | Q2：圈外点进了报告 | 151 中 133 圈外 ❌ |
 | live 报告声明 ``caliber.reach_full_min`` / ``collect_radius_m`` | 口径不可举证 | 7/7 份缺失 ❌ |
 | ``collect_radius_m ≥ reach 外接圆`` | 采集区盖不住可达区 | 未声明 ❌ |
+| **B5** 证据域自洽：余量>0、``collect == 外接圆+余量``、实测边界 ≤ 请求、不得带缺口称完整 | 余量被改回 0 / 「没查完」被省略 | 余量 0 ⇒ 判盲面 5% ❌ |
+| **B10** ``judge_radius == 证据边界 − 判定半径``（复算）、``judged==0 ⇒ unknown==inside`` | 判定域与证据脱钩 | 5/97 判却报「0 处盲区」❌ |
+| **B11** 新产物必带 ``scores.confidence``；``share<1`` 或证据不齐 ⇒ 不得 full；``penalty_applied`` 可由公式复算 | 证据越少分越高 | 2 处盲区只扣 4 分 ❌ |
 
 ## 设计纪律：**判不了 ≠ 违规**
 
@@ -59,12 +62,23 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
+from app.living_circle.scope import BLIND_RADIUS_M, SCOPE_POLICY_VERSION
+from app.living_circle.scoring import (
+    BLINDSPOT_PENALTY_CAP,
+    BLINDSPOT_PENALTY_PER_EXTRA,
+    FULL_JUDGE_SHARE_TOL,
+    JUDGE_SHARE_FLOOR,
+)
 
 # ── 阈值：唯一取值处 ─────────────────────────────────────────────
 # 外接圆容差：环是多边形逼近，顶点理论上已在圆上，只留浮点/四舍五入余量
 GEOM_TOL = 1.02
 # Σ盲区面积相对可达区面积的上限倍数
 BLINDSPOT_AREA_RATIO_MAX = 2.0
+# B10 复算容差：`judge_radius_m` 与 `evidence_radius_m` 在 payload 里各保留 1 位小数
+EVIDENCE_RECOMPUTE_TOL_M = 0.15
+# B11 复算容差：`penalty_applied` 保留 1 位、`judged_share` 保留 4 位
+PENALTY_RECOMPUTE_TOL = 0.1
 
 # 盲区严重度合法取值（与 blindspot._severity_of 对齐）
 _VALID_SEVERITY: Tuple[str, ...] = ("heavy", "medium", "light")
@@ -219,6 +233,149 @@ def is_incomplete_live(lc: Dict[str, Any]) -> bool:
     return live_geometry_deficiency(lc) is not None
 
 
+def _num(v: Any) -> Optional[float]:
+    """安全取浮点（缺失/脏值 ⇒ ``None`` = 判不了，而不是违规）。"""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ── Tier B · 证据相三条（B5 / B10 / B11）─────────────────────────
+def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
+    """证据域自洽（B5）、判定域由证据域导出（B10）、扣分与判定面一致（B11）。
+
+    三条**只读 payload 数值**，不需要几何参照系 ⇒ 在 ``center is None`` 早退之前调用，
+    否则「中心点缺失」会把这三条一起跳过，而它们看的是数字之间对不对得上。
+
+    **门禁 = ``caliber.scope_policy_version``**：旧口径产物整套证据键都可能缺席，对它们
+    一律「判不了即跳过」（否则存量报告集体被隐藏，正是本模块反复警告的假阳性）。
+    反过来，声明了本版本的报告**必须**自带这些键 —— 版本号与键集是同一次发布的两半。
+
+    公式在**本函数里重抄一遍**，不 import ``scoring._blindspot_penalty``：两侧同源时
+    「把扣分改回只按条数」会同步漂移、判据形同虚设。只有独立复算才拦得住回退
+    （与本文件「判据只此一处」不矛盾：那条讲的是**同一判据的四处消费**，这里讲的是
+    写侧与其读侧守卫必须是两份实现）。
+    """
+    cal = lc.get("caliber")
+    if not isinstance(cal, dict) or cal.get("scope_policy_version") != SCOPE_POLICY_VERSION:
+        return []
+
+    out: List[str] = []
+    margin = _num(cal.get("evidence_margin_m"))
+    circum = _num(cal.get("reach_circumradius_m"))
+    collect = _num(cal.get("collect_radius_m"))
+    ev_radius = _num(cal.get("evidence_radius_m"))
+    judge = _num(cal.get("judge_radius_m"))
+    source = cal.get("evidence_bound_source")
+    complete = cal.get("evidence_complete")
+    inside, judged, unknown = (_num(cal.get(k)) for k in ("cells_inside", "cells_judged", "cells_unknown"))
+
+    # B5 · 证据相的键必须齐（版本号与键集同批发布，缺一即无从举证）
+    absent = [
+        k
+        for k in ("evidence_margin_m", "evidence_frontier_m", "evidence_complete",
+                  "evidence_bound_source", "judge_radius_m")
+        if k not in cal
+    ]
+    if absent:
+        out.append(
+            f"声明了 scope_policy_version={SCOPE_POLICY_VERSION} 却缺 {absent}"
+            " —— 新产物必须自带证据相举证"
+        )
+
+    # B5 · 余量是导出量，不是可填的名义值（拦 D2「余量 0」回退）
+    if margin is not None and margin <= 0:
+        out.append(
+            f"证据余量 {margin:g}m ≤ 0 —— D2（余量 0）已废止：采集余量由「判盲需要 1km 完整证据」"
+            "导出，取 0 会把可达区外沿全部退化成判不了"
+        )
+    if None not in (circum, collect, margin) and abs(collect - (circum + margin)) > EVIDENCE_RECOMPUTE_TOL_M:
+        out.append(
+            f"采集半径 {collect:.0f}m ≠ 可达区外接圆 {circum:.0f}m + 证据余量 {margin:.0f}m"
+            " —— 采集区不再是证据需求的导出值"
+        )
+
+    # B5 · 「实际查到哪儿」不得大于「请求了哪儿」，也不许带着缺口自称完整
+    if source == "measured" and ev_radius is not None and collect is not None:
+        if ev_radius > collect + EVIDENCE_RECOMPUTE_TOL_M:
+            out.append(
+                f"实测证据边界 {ev_radius:.0f}m > 请求半径 {collect:.0f}m —— 实测不可能大于请求，"
+                "绑定顺序或换算有误"
+            )
+        if complete is True and ev_radius < collect - EVIDENCE_RECOMPUTE_TOL_M:
+            out.append(
+                f"声称证据完整（evidence_complete=true）却只查到 {ev_radius:.0f}m < 请求 "
+                f"{collect:.0f}m —— 有词被截断/饿死/熔断时不得称完整"
+            )
+
+    # B10 · 判定域必须由证据域导出（复算，不接受「名义上判满了」）
+    bound = ev_radius if (source == "measured" and ev_radius is not None) else collect
+    if judge is not None and bound is not None:
+        expected_judge = max(0.0, bound - BLIND_RADIUS_M)
+        if abs(judge - expected_judge) > EVIDENCE_RECOMPUTE_TOL_M:
+            out.append(
+                f"judge_radius_m {judge:.1f}m ≠ 证据边界 {bound:.0f}m − 判定半径 "
+                f"{BLIND_RADIUS_M:.0f}m（复算 {expected_judge:.1f}m）—— 判定域不再由证据域导出"
+            )
+    if None not in (inside, judged, unknown):
+        if judged == 0 and unknown != inside:
+            out.append(
+                f"一格未判（cells_judged=0）却只把 {unknown:g}/{inside:g} 记为未定 —— "
+                "「判不了」被当成「不盲」"
+            )
+        if judged is not None and judge is not None and judge <= 0.0 and judged > 1:
+            out.append(
+                f"判定半径 0m 时最多只有中心一格可判，实测 cells_judged={judged:g} —— "
+                "judged 掩码已退化为只看几何"
+            )
+
+    # B11 · 扣分口径与判定面一致（且新产物必带置信度）
+    scores = lc.get("scores")
+    scores = scores if isinstance(scores, dict) else {}
+    conf = scores.get("confidence")
+    if conf is None:
+        out.append(
+            f"声明 scope_policy_version={SCOPE_POLICY_VERSION} 的报告缺 scores.confidence"
+            " —— 新产物必须自带置信度"
+        )
+    ev_block = scores.get("evidence")
+    ev_block = ev_block if isinstance(ev_block, dict) else {}
+
+    share: Optional[float] = None
+    if inside and judged is not None and inside > 0:
+        share = judged / inside
+    if share is not None and "judged_share" in ev_block:
+        declared_share = _num(ev_block.get("judged_share"))
+        if declared_share is None or abs(declared_share - share) > 1e-3:
+            out.append(
+                f"scores.evidence.judged_share={ev_block.get('judged_share')!r} 与 caliber 分账"
+                f"推出的 {share:.4f} 不符 —— 评分读到的判定面与报告声明的不是同一个"
+            )
+    if share is not None and conf == "full" and share < 1.0 - FULL_JUDGE_SHARE_TOL:
+        out.append(f"判定覆盖率 {share:.1%} < 100% 却自称 confidence=full ——「没判的格」正在冒充「没问题」")
+    if complete is False and conf == "full":
+        out.append("evidence_complete=false（有词被截断/饿死/熔断）却自称 confidence=full")
+
+    blindspots = lc.get("blindspots")
+    if share is not None and isinstance(blindspots, list) and "penalty_applied" in ev_block:
+        got = _num(ev_block.get("penalty_applied"))
+        expected_pen = min(
+            BLINDSPOT_PENALTY_CAP,
+            max(0.0, len(blindspots) / max(min(share, 1.0), JUDGE_SHARE_FLOOR) - 1.0)
+            * BLINDSPOT_PENALTY_PER_EXTRA,
+        )
+        if got is None or abs(got - expected_pen) > PENALTY_RECOMPUTE_TOL:
+            out.append(
+                f"scores.evidence.penalty_applied={ev_block.get('penalty_applied')!r} 无法由公式复算"
+                f"（应为 {expected_pen:.1f}：实测 {len(blindspots)} 处 ÷ 覆盖率 {share:.1%}，"
+                f"下限 {JUDGE_SHARE_FLOOR:g}、封顶 {BLINDSPOT_PENALTY_CAP:g}）—— 扣分口径被改回「只按条数」"
+            )
+    return out
+
+
 # ── Tier A + Tier B：完整几何契约 ───────────────────────────────
 def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     """报告的**完整**几何契约体检 → :class:`GeometryIssues`。
@@ -251,10 +408,12 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
         if "collect_radius_m" not in caliber:
             violations.append("未声明采集半径 caliber.collect_radius_m（采集区关系不可举证）")
 
+    # B5/B10/B11 · 证据相三条（只读 payload 数值，不吃几何参照系 ⇒ 必须在 center 早退之前）
+    violations.extend(_evidence_phase_violations(lc))
+
     if center is None:
         # 中心点不可用 ⇒ 一切「距中心」判据都判不了（不判违规）
         return GeometryIssues(violations=tuple(violations))
-
     reach, reach_err = _reach_zone(lc)
     if reach_err:
         violations.append(reach_err)
@@ -404,6 +563,45 @@ def report_is_presentable(lc: Dict[str, Any]) -> bool:
     return assess_geometry(lc).ok
 
 
+# ── 复用门：口径版本 ────────────────────────────────────────────
+def reuse_policy(lc: Dict[str, Any]) -> Tuple[bool, str]:
+    """该载荷能否作为**本次**体检的答案被复用 → ``(可否复用, 原因)``。
+
+    与 :func:`report_is_presentable` **刻意分开**，两者回答的不是一个问题：
+
+      - presentable ——「这份报告还能不能给用户看」→ 历史列表用；
+      - reuse_policy ——「用户刚点了一次体检，这份旧报告能不能冒充答案」→ 缓存用。
+
+    一份旧口径报告**仍然是用户的历史**（该看得见、不该被隐藏），但它的判定覆盖率
+    与新体检不同（旧：可达区 5% 的格有完整证据；新：证据域独立），拿它当新答案就是
+    把「只看了 5%」的结论重新卖一遍。⇒ **只拦复用，不拦可见性。**
+
+    版本读自载荷（``caliber.scope_policy_version``），**不进缓存键** —— 理由见
+    ``scope.SCOPE_POLICY_VERSION``：那个键同时是 DB 的 ``scene_key`` 列，加版本段会让
+    同一地点裂成两条历史，而邻近复用走键前缀扫 + 值里的 ``scene.center``，换键拦不住。
+
+    非 ``live`` 载荷（演示夹具 / offline 骨架）不受判盲口径版本约束 —— 它们没有实测
+    采集半径可谈，且演示链的可用性由 presentability 那道门负责，这里不越权。
+
+    **几何判据刻意不折进来。** 本函数只回答一个问题：「这份报告的口径是不是本次这一套」。
+    「这份报告能不能给用户看」由 :func:`assess_geometry` 回答，且已在写路径
+    （``pipeline/living_circle.py`` 缓存命中处）与 DB 读路径各就一处 —— 把两者再合成第三道门，
+    等于让同一个谓词有三份实现，正是本模块反复要消灭的形态。
+    """
+    if not isinstance(lc, dict) or not lc:
+        return False, "报告载荷为空（living_circle 节点缺失）"
+    if (lc.get("data_origin") or "") != "live":
+        return True, ""
+
+    declared = (lc.get("caliber") or {}).get("scope_policy_version")
+    if declared != SCOPE_POLICY_VERSION:
+        return False, (
+            f"判盲口径版本不符（报告 {declared or '未声明'} ≠ 当前 {SCOPE_POLICY_VERSION}）"
+            "—— 证据域定义已变更，旧结论的判定覆盖率不可作为本次体检的答案"
+        )
+    return True, ""
+
+
 def staleness_reason(lc: Dict[str, Any]) -> Optional[str]:
     """报告不可展示的原因（可展示则 ``None``）—— 审计/日志用。
 
@@ -422,5 +620,6 @@ __all__ = [
     "is_incomplete_live",
     "live_geometry_deficiency",
     "report_is_presentable",
+    "reuse_policy",
     "staleness_reason",
 ]

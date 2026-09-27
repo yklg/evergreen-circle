@@ -11,9 +11,13 @@
   forces 非数值、timeline 空、products 空 —— 不抛、产出合法结构。
 - 情感键完整：SENTIMENT 恒含 pos/neu/neg 三键。
 - 波特五力：非数值维度被过滤，indicator 与 values 等长。
+- 词云载荷：words 与舆情层词表全等（含新增 kind/polarity 键）；kind 缺席时保持缺席，
+  绝不注入缺省；低样本时比例图（donut/platform_bar）缺位而词云照出。
 运行：backend/ 下 `pytest tests/test_charts_options.py -q`
 """
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +25,22 @@ from app.core import charts
 from app.core import research_types as charts_rt
 
 _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+# 前端无法 import Python 常量，词云极性色是 charts.SENTIMENT 的**手工镜像**（隐式耦合）。
+# 该 fixture 是这条链的中段：本用例守「后端 ↔ fixture」，前端用例守「fixture ↔ 组件」。
+_CHART_COLORS_FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "frontend" / "src" / "__tests__" / "fixtures" / "backendChartColors.json"
+)
+
+
+def test_frontend_color_mirror_is_in_sync():
+    """TC-24 后端半边：镜像 fixture 必须等于当前 charts 常量（后端调色、fixture 不跟即红）。"""
+    assert _CHART_COLORS_FIXTURE.exists(), (
+        "色值镜像 fixture 缺失 —— 前端那条同步守卫会静默失去比较对象")
+    data = json.loads(_CHART_COLORS_FIXTURE.read_text(encoding="utf-8"))
+    assert data["sentiment"] == dict(charts.SENTIMENT), "极性色与 charts.SENTIMENT 漂移"
+    assert data["series"] == list(charts.SERIES), "序列色环与 charts.SERIES 漂移"
 
 
 def _assert_valid_color(c):
@@ -246,10 +266,19 @@ def _full_coverage_analysis(rtype: str) -> dict:
     return analysis
 
 
-_SENTIMENT = {"sample_size": 12, "overall_count": {"pos": 6, "neu": 4, "neg": 2},
+# 语料构成按 r_6dadffee 实测分布取真值（25 条检索结果里 12 条可核验口碑 ≈ 28% 多一点），
+# keywords 用**分层后的形状**：评价词带 polarity，话题词是地名。
+# low_sample=False 是必需的——它是 donut/platform_bar 的出图门，True 时那两张整体缺位，
+# test_every_type_chart_set_generatable 的「声明的图集必须全出」就会假红。
+_SENTIMENT = {"sample_size": 12, "corpus_size": 25,
+              "doc_kind_counts": {"review": 12, "ticket_faq": 6, "flight": 4, "seo": 3},
+              "low_sample": False,
+              "overall_count": {"pos": 6, "neu": 4, "neg": 2},
               "by_platform": {"douyin": {"pos": 3, "neu": 1, "neg": 1},
                               "xiaohongshu": {"pos": 2, "neu": 1, "neg": 0}},
-              "keywords": [{"word": "古城", "weight": 5}, {"word": "洱海", "weight": 3}]}
+              "keywords": [{"word": "清净", "weight": 3, "kind": "opinion", "polarity": "pos"},
+                           {"word": "古城", "weight": 5, "kind": "topic", "polarity": "neu"},
+                           {"word": "洱海", "weight": 3, "kind": "topic", "polarity": "neu"}]}
 
 
 @pytest.mark.parametrize("rtype", list(charts_rt.RESEARCH_TYPES))
@@ -271,7 +300,9 @@ def test_every_type_chart_set_generatable(rtype, dests):
             assert "option" not in s, "wordcloud 不得携带 echarts option"
             assert s["words"], "不得产出空词云"
             for w in s["words"]:
-                assert set(w) == {"word", "weight"} and str(w["word"]).strip()
+                # 分层后 kind/polarity 也是载荷的一部分：既不丢键，也不给缺省兜底
+                assert set(w) == {"word", "weight", "kind", "polarity"}
+                assert str(w["word"]).strip()
             continue
         assert isinstance(s["option"], dict)
         assert s["option"]["title"]["text"] == s["title"]
@@ -301,13 +332,31 @@ def test_wordcloud_empty_words_not_crash():
 
 
 def test_wordcloud_payload_matches_wordfreq_shape():
-    """W-B4（后端侧）：挂图 spec 的 words 与 wordfreq top_words 形状全等（{word,weight}）。"""
+    """W-B4（后端侧）：挂图 spec 的 words 与舆情层词表**全等**（TC-19 升级）。
+
+    这条断言守的是「原样透传，不改名不换算」——分层后新增的 kind/polarity 也在守卫
+    范围内。曾因「改成按 word 比对」被评审判为 P0：那等于把透传闸关掉。
+    """
     from app.core.pipeline.research import engine as orchestrator
 
     specs = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
                                        _SENTIMENT, [], "guide")
     cloud = next(s for s in specs if s["type"] == "wordcloud")
     assert cloud["words"] == _SENTIMENT["keywords"], "语义载荷必须原样透传词频源，不改名不换算"
+
+
+def test_wordcloud_words_keeps_absent_kind_absent():
+    """W-B1 配套：存量报告的裸 {word,weight} 词条，kind 必须**保持缺席**。
+
+    给缺省值兜一个 "topic"，前端就会把老报告的地名词云渲染成「只有小灰字没大字」——
+    那是把兼容问题伪装成设计。非法值（空串/非字符串）只丢该键，不丢整条。
+    """
+    assert charts.wordcloud_words([{"word": "古城", "weight": 5}]) == [{"word": "古城", "weight": 5}]
+    dirty = charts.wordcloud_words([{"word": "清净", "weight": 2, "kind": "", "polarity": 7},
+                                    {"word": "洱海", "weight": 1, "kind": "opinion",
+                                     "polarity": "pos"}])
+    assert dirty == [{"word": "清净", "weight": 2},
+                     {"word": "洱海", "weight": 1, "kind": "opinion", "polarity": "pos"}]
 
 
 def test_build_charts_wordcloud_absent_without_keywords():
@@ -321,25 +370,58 @@ def test_build_charts_wordcloud_absent_without_keywords():
 
 
 def test_build_charts_expert_emits_per_spot_clouds():
-    """expert 档逐景点词云：每张引用冻结实体名；无 keywords 的景点出图整体缺位而非空图。"""
+    """expert 档逐景点词云：每张引用冻结实体名；样本不足或无词的景点整体缺位而非空图。
+
+    两条门是两回事，都必须能单独缺位：
+    - `review_sample` < MIN_SPOT_SENT_SAMPLE → 该景点不出云（不硬凑 3 词空壳）
+    - 有口碑但抽不出词 → 同样不出云
+    判据读常量，不写裸数字（改阈值时这条断言跟着动，而不是静默漂移）。
+    """
     from app.core.pipeline.research import engine as orchestrator
+    from app.core.sentiment import MIN_SPOT_SENT_SAMPLE
 
     sent = dict(_SENTIMENT)
     sent["by_spot"] = [
-        {"spot_id": "大理_spot_1", "spot_name": "大理古城",
-         "keywords": [{"word": "夜景", "weight": 4}]},
-        {"spot_id": "大理_spot_2", "spot_name": "崇圣寺三塔", "keywords": []},
+        {"spot_id": "大理_spot_1", "spot_name": "大理古城", "review_sample": MIN_SPOT_SENT_SAMPLE,
+         "keywords": [{"word": "夜景", "weight": 4, "kind": "opinion", "polarity": "pos"}]},
+        {"spot_id": "大理_spot_2", "spot_name": "崇圣寺三塔", "review_sample": MIN_SPOT_SENT_SAMPLE,
+         "keywords": []},
+        # 口碑不足：即使抽得出词也不出图（旧版用 keywords 判，这条会错误出图）
+        {"spot_id": "大理_spot_3", "spot_name": "洱海", "review_sample": MIN_SPOT_SENT_SAMPLE - 1,
+         "keywords": [{"word": "日落", "weight": 2, "kind": "opinion", "polarity": "pos"}]},
+        # review_sample 缺席（未接线的旧路径）→ 按不足处理，不得默认放行
+        {"spot_id": "大理_spot_4", "spot_name": "苍山",
+         "keywords": [{"word": "索道", "weight": 2, "kind": "topic", "polarity": "neu"}]},
     ]
     specs = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
                                        sent, [], "guide", mode="expert")
     clouds = [s for s in specs if s["type"] == "wordcloud"]
     assert [c["title"] for c in clouds] == ["全网口碑热词词云", "「大理古城」口碑词云"]
-    assert clouds[1]["words"] == [{"word": "夜景", "weight": 4}]
+    assert clouds[1]["words"] == [{"word": "夜景", "weight": 4,
+                                   "kind": "opinion", "polarity": "pos"}]
     assert all("option" not in c for c in clouds), "E1：词云 spec 不得带 echarts option"
     # deep 档只出全局一张
     specs_deep = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
                                             sent, [], "guide", mode="deep")
     assert sum(1 for s in specs_deep if s["type"] == "wordcloud") == 1
+
+
+def test_low_sample_replaces_percent_charts_with_counts():
+    """D3 诚实化的出图门：低样本时比例图缺位，词云照出。
+
+    7 条口碑画成 67%/33% 就是伪精度 ⇒ donut 与 platform_bar 都不出；
+    词云不吃占比，不受该门约束。`overall`/`by_platform` 数字本身不销毁（仍是真值）。
+    """
+    from app.core.pipeline.research import engine as orchestrator
+
+    sent = dict(_SENTIMENT, sample_size=7, low_sample=True)
+    specs = orchestrator._build_charts(["大理"], _full_coverage_analysis("guide"),
+                                       sent, [], "guide")
+    emitted = {s["type"] for s in specs}
+    assert "sentiment_donut" not in emitted and "platform_bar" not in emitted
+    assert "wordcloud" in emitted, "词云不该被样本量门连带砍掉"
+    # 缺位是"不出这张图"，不是"把数字抹成 0"
+    assert sent["overall_count"] == _SENTIMENT["overall_count"]
 
 
 if __name__ == "__main__":
