@@ -148,14 +148,19 @@ def test_subscription_body_keys_are_declared_by_backend():
     assert not undeclared, f"前端发送但模型未声明的键：{sorted(undeclared)}"
 
 
-def test_subscription_with_undeclared_key_is_built_with_zero_destinations():
-    """**记录当前行为（不是期望它）**：畸形载荷今天返回 200，订阅建成零目的地。
+def test_subscription_with_undeclared_key_is_refused():
+    """片 0b 把这一半翻成了正向断言：`brands` 这类未声明键现在在入口就 422。
 
-    危害比报错更大：用户以为在追踪「三亚 亲子游」，实际 destinations 为空，
-    永不复跑。`SubscriptionBody.destinations` 去掉默认值后本用例应翻红并改断言 422。
+    历史：本条曾以"200 + 空目的地"替缺陷背书 —— `SubscriptionBody.destinations` 带默认值
+    ⇒ 键名写错不报错，订阅被建成零目的地，用户以为在追踪「三亚 亲子游」却永不复跑。
+    现在畸形键被拒，那条静默路径不存在了。
+
+    **仍待拍的是另一半**：`{"query": ...}` 单独发（不带畸形键）仍然返回 200 + 空目的地，
+    因为 `destinations` 还带服务端默认值。去掉默认值是独立的契约变更，会同时牵动
+    `test_subscriptions.py::test_api_create_default_empty` ⇒ 不在此擅自翻转。
     """
     resp = client.post("/api/subscriptions", json={"query": "三亚 亲子游攻略",
                                                    "brands": ["三亚"]})
-    assert resp.status_code == 200, resp.text          # 不报错
-    created = resp.json()
-    assert created["destinations"] == [], "未声明的 brands 被丢弃 ⇒ 订阅没有追踪任何目的地"
+    assert resp.status_code == 422, resp.text          # 未声明键在入口就被拒
+    types = {e.get("type") for e in resp.json()["detail"]}
+    assert "extra_forbidden" in types, f"422 不是来自未声明键：{sorted(types)}"

@@ -517,13 +517,24 @@ def test_t6_research_mode_values_are_not_valid_for_living_circle():
 
 
 def test_t6_study_radius_is_not_a_client_parameter():
-    """**记录当前行为 + TODO**（B1）：客户端传 study_radius_m 一律被丢弃，恒为 2500。
+    """**契约变更（片 0b）**：客户端带 `study_radius_m` 现在在入口就被 422 拒。
 
-    「按出行方式分档半径」的前置阻断项就在这行硬编码上——不报错、不可配。
-    TODO（B1）：入口按 travel_mode 取 `caliber.study_radius_m` 并校验。
+    历史：`extra="ignore"` 时代这个键是"被静默丢弃、恒为 2500" —— 本条当时是在替缺陷
+    背书（不报错、不可配）。forbid 之后"客户端改不动口径"这条不变量更强：连请求都进不来。
+
+    正向半仍保留（不带该键时口径由服务端定），因为**拒收客户端键 ≠ 半径已按出行方式分档**。
+    TODO（B1）不变：入口应按 `travel_mode` 取 `caliber.study_radius_m` 并校验。
     """
-    cl = _clarifications(_post_living_circle(study_radius_m=9000))
-    assert cl["study_radius_m"] == 2500.0
+    rejected = client.post("/api/tasks", json={
+        "query": "凯里老街", "type": "living_circle", "study_radius_m": 9000,
+    })
+    assert rejected.status_code == 422, rejected.text
+    assert any(
+        e.get("type") == "extra_forbidden" and "study_radius_m" in (e.get("loc") or ())
+        for e in rejected.json()["detail"]
+    ), f"422 不是因为该键未声明：{rejected.json()['detail']}"
+
+    assert _clarifications(_post_living_circle())["study_radius_m"] == 2500.0
 
 
 def test_t6_sampling_mode_leaks_into_user_visible_text():

@@ -16,7 +16,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.core import db
 from app.core import research_types as rt
@@ -175,6 +175,9 @@ def list_provider_models():
 
 # ── 运行时配置（供「模型配置」页使用）─────────────────────
 class SettingsPatch(BaseModel):
+    # 8 个请求体统一 forbid：未声明键不再被静默丢弃（判据见 tests/test_request_body_contract.py）
+    model_config = ConfigDict(extra="forbid")
+
     patch: Dict[str, Any] = {}
 
 
@@ -218,6 +221,8 @@ def put_settings_api(body: SettingsPatch):
 # 与 /api/settings 的边界：settings 是系统级运行时配置（脱敏、受 CONFIG_SCHEMA 约束）；
 # prefs 是用户级偏好（明文、无密钥、原样返回）。分表分域，见 core/user_prefs.py。
 class PrefsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     patch: Dict[str, Any] = {}
 
 
@@ -305,6 +310,8 @@ def get_expert(eid: str):
 
 # ── 任务 / 澄清 ─────────────────────────────────────────
 class CreateTaskBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str
     mode: str = "deep"  # quick | deep | expert
     # None=客户端未显式指定（旧 bundle 只发 purpose）；归一逻辑在 post_task：
@@ -433,6 +440,8 @@ async def _to_bd09(center: List[float], coord_sys: str) -> List[float]:
     return [parsed[0], parsed[1]]
 
 class ClarifyBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     answers: dict = {}
 
 
@@ -574,6 +583,8 @@ def get_report_trace(report_id: str):
 
 # ── 报告反馈（人工修正率 → 业务闭环指标）──────────────────
 class FeedbackBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     edited_blocks: int = 0
     total_blocks: int = 0
     data: dict = {}
@@ -609,6 +620,8 @@ def post_brief(report_id: str):
 
 # ── 按批注深化章节（人工介入二次调研）────────────────────
 class RefineBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     section_id: str
     annotations: List[str] = []
 
@@ -623,6 +636,8 @@ def post_refine(report_id: str, body: RefineBody):
 
 # ── 基于新证据异步精修报告（kind=refine 后台任务）──────────
 class RefineEvidenceBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     evidence_ids: List[str] = []
     min_cred: float = 70.0
 
@@ -691,6 +706,8 @@ def evidences(
 
 # ── 目的地持续追踪订阅 ──────────────────────────────────
 class SubscriptionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str
     destinations: List[str] = []
     type: str = DEFAULT_RESEARCH_TYPE

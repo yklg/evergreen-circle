@@ -148,15 +148,18 @@ def test_runner_terminal_state_writes_the_side_table():
 
 
 def test_tasks_endpoint_currently_accepts_repeated_spot_launches():
-    """**现状记录**：`CreateTaskBody` 不认识 `scenario/origin` ⇒ 同一景点连发两次会得到两个任务。
+    """**现状记录**：同一景点连发两次会得到两个任务（串行锁要堵的口子）。
 
     这正是串行锁要堵的口子：`baidu_daily_quota` 保持 0 时日预算永不触发（D6），
     账号级配额唯一的硬门就是"同一攻略内一次只允许一个在途地标体检"。
+
+    载荷只用**已声明键**：片 0b 之后 `CreateTaskBody` 开了 `extra="forbid"`，
+    带 `scenario`/`origin` 的载荷会先被 422 挡掉（见下一条），就不再是"两个任务"
+    这个事实的证人。
     """
     payload = {
         "query": "甲秀楼", "type": "living_circle", "city": "贵阳",
         "center": [106.7123, 26.5786], "data_mode": "fixture",
-        "scenario": "visitor", "origin": {"host_report_id": "r-guide-1", "spot_id": "spot-甲秀楼"},
     }
     first = client.post("/api/tasks", json=payload)
     second = client.post("/api/tasks", json=payload)
@@ -164,6 +167,24 @@ def test_tasks_endpoint_currently_accepts_repeated_spot_launches():
         "串行锁已生效 ⇒ 本用例改为正向断言（第二次被拒且**不创建任务**）"
     )
     assert first.json()["taskId"] != second.json()["taskId"], "两次请求必须今天确实产了两个任务（前提事实）"
+
+
+def test_spot_launch_keys_are_refused_until_the_backend_declares_them():
+    """片 0b 的**新前置条件**：地标体检要带的 `scenario`/`origin` 现在会被 422 拒。
+
+    forbid 之前这两个键是"发了也没人收"（静默丢弃）；现在是"发就报错"。
+    ⇒ 片 2 的前端发起动作必须等 `CreateTaskBody` 先声明这两个字段，否则用户点一下
+    就拿到 422。把这条钉在这里，是为了让"加字段"发生在"前端开始发"之前。
+    """
+    for key in ("scenario", "origin"):
+        resp = client.post("/api/tasks", json={
+            "query": "甲秀楼", "type": "living_circle", "city": "贵阳",
+            "center": [106.7123, 26.5786], "data_mode": "fixture",
+            key: "visitor" if key == "scenario" else {"host_report_id": "r-guide-1"},
+        })
+        assert resp.status_code == 422, f"{key} 未被拒绝，forbid 是否失效：{resp.status_code}"
+        types = {e.get("type") for e in resp.json()["detail"]}
+        assert "extra_forbidden" in types, f"{key} 的 422 不是因为未声明：{sorted(types)}"
 
 
 @pytest.mark.xfail(
