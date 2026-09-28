@@ -134,12 +134,16 @@ describe('LivingCircleReport fixture 契约', () => {
     // ⚠️ 上面那支在两份内置快照上都只走 `v === null` 分支 ⇒ 新口径那半今天是**空转**的。
     // 这里用「夹具 + 人工升格」把新分支真跑一遍，等将来重刷夹具后它自动变成真实路径。
     const K = kaili as unknown as LivingCircleReport
-    const OLD_COLLECT = K.caliber.collect_radius_m! // 旧口径：余量 0 ⇒ 就等于外接圆
+    // 夹具前提：即便是旧口径快照也必须带 caliber（举证对象本身不缺）。缺了说明夹具被
+    // 改动过 —— 当场说清楚，别让下面整支在 undefined 上算出个看起来合理的数。
+    if (!K.caliber) throw new Error('夹具前提不成立：kaili.json 没有 caliber')
+    const OLD_CAL = K.caliber
+    const OLD_COLLECT = OLD_CAL.collect_radius_m! // 旧口径：余量 0 ⇒ 就等于外接圆
     const upgraded = (over: Record<string, unknown> = {}) =>
       ({
         ...kaili,
         caliber: {
-          ...K.caliber,
+          ...OLD_CAL,
           scope_policy_version: SCOPE_POLICY_VERSION,
           collect_radius_m: OLD_COLLECT + 1000, // = 外接圆 + 证据余量
           evidence_margin_m: 1000,

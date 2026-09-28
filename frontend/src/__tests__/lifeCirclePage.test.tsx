@@ -12,7 +12,7 @@ import kaili from '../mocks/fixtures/livingCircle/kaili.json'
 import jinsong from '../mocks/fixtures/livingCircle/beijing-jinsong.json'
 import { useDataModeStore } from '../store/dataModeStore'
 import { LC_CANVAS, lcMeters } from '../lib/livingCircle'
-import type { LngLat } from '../types'
+import type { LngLat, LivingCircleReport } from '../types'
 
 afterEach(() => {
   cleanup()
@@ -37,6 +37,11 @@ function renderScene(sceneId: string) {
     </MemoryRouter>,
   )
 }
+
+/* `kaili` 直接 import 自 JSON ⇒ TS 推的是**该文件字面量的精确类型**。下面 D-4 那支要断言
+ * 「夹具确实没有 scope_policy_version / scores.confidence」，而这两个键在契约类型里是可选的、
+ * 在 JSON 字面量类型里根本不存在 ⇒ 从字面量类型读会 TS2339。走契约类型读，运行时取值不变。 */
+const KAILI = kaili as unknown as LivingCircleReport
 
 describe('LifeCirclePage（fixture 态）', () => {
   it('凯里样例：渲染等时圈画布、总评分、三要素与盲区清单', async () => {
@@ -141,11 +146,13 @@ describe('LifeCirclePage（fixture 态）', () => {
   it('判盲口径升级前的快照必须挂「建议重新体检」陈旧提示（D-4 只拦复用，不拦可见性）', async () => {
     renderScene('kaili')
     await screen.getByText(/内置快照/)
-    // 前提守卫：夹具确实是升级前的旧报告（没有 scope_policy_version）
-    expect(kaili.caliber.scope_policy_version ?? null).toBeNull()
+    // 前提守卫：夹具确实是升级前的旧报告（caliber 在，但没有 scope_policy_version）。
+    // 先钉 caliber 存在 —— 否则 `?.` 会让「整块 caliber 没了」也当成通过。
+    expect(KAILI.caliber).toBeDefined()
+    expect(KAILI.caliber!.scope_policy_version ?? null).toBeNull()
     expect(screen.getByText(/判盲口径已升级.*建议重新体检/)).toBeTruthy()
     // 旧快照没有 scores.confidence ⇒ 降档徽标**不应**出现（不猜成 full，也不误报 limited）
-    expect(kaili.scores.confidence ?? undefined).toBeUndefined()
+    expect(KAILI.scores.confidence ?? undefined).toBeUndefined()
     expect(screen.queryByText(/证据面不足/)).toBeNull()
   })
 
