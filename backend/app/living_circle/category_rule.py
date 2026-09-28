@@ -110,13 +110,18 @@ def _tag_hit(tag: str, accept: List[str], reject: List[str]) -> Tuple[bool, bool
     return a_hit, False
 
 
-def evaluate_category(poi: Dict[str, Any]) -> Tuple[str, float]:
+def evaluate_category(
+    poi: Dict[str, Any], table: Dict[str, Dict[str, Any]] = None
+) -> Tuple[str, float]:
     """按 5 条口径原则判定类别与置信度。
 
     输入：百度归一化 POI dict（可含 name/lng/lat/tag/type；缺字段不抛）。
-    返回：(category, confidence)。category 为 `CATEGORY_RULES` 键或 `'other'`。
+    `table` 判表**可注入**（默认 = `CATEGORY_RULES`）：这是"换一张表判类"的唯一入口，
+    探针与测试都走它 —— 判据只允许一份实现，复刻一份同序版就是双写（会漂移）。
+    返回：(category, confidence)。category 为判表键或 `'other'`。
     置信度：标签命中=high(0.9)；名称关键词仅中(0.6)；无信号=low(0.3)。
     """
+    rules = CATEGORY_RULES if table is None else table
     if not isinstance(poi, dict) or not poi.get("name"):
         return "other", CONFIDENCE["low"]
 
@@ -131,7 +136,7 @@ def evaluate_category(poi: Dict[str, Any]) -> Tuple[str, float]:
     # 第一遍：标签裁决（服务属性优先）。reject 命中直接排除该类别。
     best: Tuple[str, float] = ("other", CONFIDENCE["low"])
     best_name_hit: str = ""
-    for key, defn in CATEGORY_RULES.items():
+    for key, defn in rules.items():
         a_hit, r_hit = _tag_hit(tag or typ, defn["accept_tags"], defn["reject_tags"])
         if r_hit:
             continue

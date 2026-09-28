@@ -71,61 +71,36 @@ def _extended_table() -> Dict[str, Any]:
     return table
 
 
-def _classify_with(table: Dict[str, Any], pois: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
-    """在给定判表下逐点判类，返回 (旧类, 新类) 里用到的**新类**序列。
+def _classify_with(table: Dict[str, Any], pois: List[Dict[str, Any]]) -> List[str]:
+    """在给定判表下逐点判类，返回新类序列。
 
-    只 monkeypatch 迭代视图：`evaluate_category` 内部读 `CATEGORY_RULES.items()`，
-    所以这里复刻它的裁决次序而**不碰全局注册表**（改全局表会让同进程的其他用例串味）。
+    判据只有一份：走 `evaluate_category(poi, table=…)` 的注入入口。以前这里手抄过
+    一个"同序本地版"，那是双写 —— 生产判表一改，脚本会悄悄产出一张看起来很干净的
+    假 delta 表，而且要靠额外的自检才拦得住。
     """
-    out: List[str] = []
-    for poi in pois:
-        out.append(_evaluate_against(table, poi))
-    return out
-
-
-def _evaluate_against(table: Dict[str, Any], poi: Dict[str, Any]) -> str:
-    """`category_rule.evaluate_category` 的**同序本地版**，唯一差别是判表由入参给。
-
-    次序必须与生产一致，否则测的就不是同一套口径；两处若有出入，以生产为准。
-    """
-    def norm(s: Any) -> str:
-        return (s or "").strip().lower() if isinstance(s, str) else ""
-
-    if not isinstance(poi, dict) or not poi.get("name"):
-        return "other"
-    tag = norm(poi.get("tag", "") or "")
-    typ = norm(poi.get("type", "") or "")
-    name = norm(poi.get("name", ""))
-    if any(no == tag for no in category_rule._NOISE_TAGS) or tag in category_rule._NOISE_TAGS:
-        return "other"
-    best = "other"
-    for key, defn in table.items():
-        a_hit, r_hit = category_rule._tag_hit(tag or typ, defn["accept_tags"], defn["reject_tags"])
-        if r_hit:
-            continue
-        if a_hit:
-            return key
-        if any(norm(kw) in name for kw in defn["keywords"]):
-            best = key
-    return best
+    return [evaluate_category(poi, table=table)[0] for poi in pois]
 
 
 def _self_check_against_production(pois: List[Dict[str, Any]]) -> None:
-    """本地复刻判类必须与生产 `evaluate_category` **逐点同判**，否则探针数字无意义。
+    """注入默认表必须与不传表**逐点同判** —— 证明探针测的就是生产口径。
 
-    这是探针自己的守卫：复刻裁决次序是本项目最容易悄悄跑偏的一件事（生产判表一改，
-    这里不同步就会产出一张"看起来很干净"的假 delta 表）。不一致 ⇒ 直接拒绝出结果。
+    这条自检守的是注入这条路本身没改变行为：一旦 `table=CATEGORY_RULES` 与隐式默认
+    出现分歧，delta 表就没有意义 ⇒ 直接拒绝出结果。
     """
     mismatches = [
-        (p.get("name", ""), _evaluate_against(CATEGORY_RULES, p), evaluate_category(p)[0])
-        for p in pois
-        if _evaluate_against(CATEGORY_RULES, p) != evaluate_category(p)[0]
+        (
+            poi.get("name", ""),
+            evaluate_category(poi, table=CATEGORY_RULES)[0],
+            evaluate_category(poi)[0],
+        )
+        for poi in pois
+        if evaluate_category(poi, table=CATEGORY_RULES)[0] != evaluate_category(poi)[0]
     ]
     if mismatches:
-        sample = "；".join(f"{n}: 复刻 {a} ≠ 生产 {b}" for n, a, b in mismatches[:5])
+        sample = "；".join(f"{n}: 注入表 {a} ≠ 默认 {b}" for n, a, b in mismatches[:5])
         raise SystemExit(
-            f"探针自检失败：本地复刻与生产判类有 {len(mismatches)} 处分歧 ⇒ 先同步 "
-            f"`_evaluate_against` 与 `category_rule.evaluate_category` 再跑。示例：{sample}"
+            f"探针自检失败：`table=` 注入与生产默认判类有 {len(mismatches)} 处分歧 ⇒ "
+            f"`category_rule.evaluate_category` 的默认表语义已变，先修再跑。示例：{sample}"
         )
 
 
