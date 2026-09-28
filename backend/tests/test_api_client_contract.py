@@ -2,16 +2,19 @@
 
 为什么这条缝值得单独守（与 `test_task_body_contract.py` 同源，另一组端点）：
 
-- FastAPI 对**未知 query 参数静默忽略** —— `/api/evidences` 只声明 `destination`
-  （`app/main.py:653-664`），收到 `?brand=` 不报错、不 4xx，只是**过滤条件整个消失**，
-  用户看到的是「筛了，但没生效」；
-- pydantic 对**未声明 body 键静默丢弃**，而 `SubscriptionBody.destinations` 带默认值
-  （`main.py:670-673`）⇒ POST `{query, brands}` 返回 **200**，订阅被建成**零目的地**。
+- FastAPI 对**未知 query 参数静默忽略** —— 收到 `?brand=` 不报错、不 4xx，只是**过滤条件
+  整个消失**，用户看到的是「筛了，但没生效」；
+- pydantic 对**未声明 body 键静默丢弃**，若字段还带默认值，畸形 body 甚至能换回 200。
 
-两者都不炸，只让功能"看起来在跑"。这就是 `api.ts:316-333` 的 `brand` 与 `:359-369` 的
-`brands` 能潜伏到今天的原因（架构评审 v4 事实 10）：既有测试只钉**路由存在**
-（`test_api_surface_union.py`）与**后端侧参数生效**（`test_dashboard_stats.py:215`），
-没有一条钉「前端实际发出的键 ∈ 后端声明的键」。
+两者都不炸，只让功能"看起来在跑"。这就是 `api.ts` 的 `brand` / `brands` 能潜伏到今天
+的原因（架构评审 v4 事实 10）：既有测试只钉**路由存在**（`test_api_surface_union.py`）与
+**后端侧参数生效**（`test_dashboard_stats.py`），没有一条钉「前端实际发出的键 ∈ 后端声明
+的键」—— 单边正确、两边脱节，正是这类事故的形状。
+
+2026-09-27 波次 A 第 3/5 步已收：`api.ts` 两处键名改对、`/api/evidences` 挂上
+`_reject_unknown_query_params` 闸。**仍欠一条**：`SubscriptionBody.destinations` 的默认值
+`[]` 未去（它会让"键名再次写错"表现为 200 + 零目的地，而不是 422），去默认值属契约变更、
+与既有 `test_subscriptions.py` 的一条已钉绿断言对撞，登记待拍。
 
 写法沿用 `test_task_body_contract.py:33-59`：从 `api.ts` 真实源码取键、
 「解析不出键＝判据已与真实源脱节，宁可红，不空转」。
@@ -90,11 +93,13 @@ def _seed_report(rid: str, destination: str) -> None:
 
 # ── D3-1 键覆盖：query ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason=(
-    "D3-1：api.ts:316-333 的 fetchEvidences 仍发 ?brand=（改造版之前的竞品口径残留），"
-    "后端只认 destination（main.py:653-664）⇒ 过滤静默失效。波次 A 第 3 步改为 "
-    "destination 后摘标。"))
 def test_evidences_query_keys_are_declared_by_backend():
+    """前端 `fetchEvidences` 发出的每个 query 键，都必须是后端声明过的参数。
+
+    历史：2026-09-27 以 `xfail(strict)` 登记为 D3-1（长期发 `?brand=`）。波次 A 第 3 步
+    把 `api.ts` 改成 `destination` 后摘标，转为正向判据长期保留：以后任一侧改名，
+    本条即刻红（先例 `test_task_body_contract.py:9-10`）。
+    """
     sent = _query_keys("fetchEvidences")
     undeclared = sent - _declared_query_params("/api/evidences")
     assert not undeclared, f"前端发送但后端不认、会被静默忽略的键：{sorted(undeclared)}"
@@ -116,25 +121,28 @@ def test_destination_filter_actually_filters_when_key_is_declared():
 
 # ── D3-3 记录当前行为：未知键静默忽略 ─────────────────────────────
 
-def test_unknown_query_param_is_currently_ignored():
-    """**记录当前行为（不是期望它）**：`?brand=` 返回的是**全量**，不是「A 的证据」。
+def test_unknown_query_param_is_rejected():
+    """未知参数 ⇒ 422，不再"静默返回全量"。
 
-    后端补「拒绝未知 query 参数」时，本用例须翻红并改为断言 422 —— 而不是默默放宽
-    （先例 `test_task_body_contract.py:110-117`）。
+    历史：本条曾是「记录当前行为」（`?brand=` 返回全量、过滤条件整个消失）。波次 A 第 5 步
+    给 `/api/evidences` 挂了 `_reject_unknown_query_params` 后翻正为 422（先例
+    `test_task_body_contract.py:110-117`：契约变更后把记录用例改成新判据，而不是留着两套）。
     """
     _seed_report("r-A", "目的地A")
-    _seed_report("r-B", "目的地B")
-    items = client.get("/api/evidences", params={"brand": "目的地A"}).json()["items"]
-    assert len(items) == 2, "未知参数被忽略 ⇒ 过滤条件整个消失，返回全量"
+    resp = client.get("/api/evidences", params={"brand": "目的地A"})
+    assert resp.status_code == 422, resp.text
+    assert "brand" in resp.text, f"422 里要点名是哪个键被拒：{resp.text}"
 
 
 # ── D3-4 键覆盖：body ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason=(
-    "D3-4：api.ts:359-369 的 createSubscription 仍 POST {query, brands}，而后端模型是 "
-    "{query, destinations, type}（main.py:670-673）⇒ brands 被 pydantic 丢弃。"
-    "波次 A 第 3 步改签名后摘标。"))
 def test_subscription_body_keys_are_declared_by_backend():
+    """前端 POST 的每个 body 键都必须在 `SubscriptionBody` 上声明，否则被 pydantic 丢弃。
+
+    历史：2026-09-27 以 `xfail(strict)` 登记为 D3-4（发 `{query, brands}`）。波次 A 第 3 步
+    改签名后摘标。注意：`destinations`/`type` 目前**仍带服务端默认值**，所以"键名写错"
+    会表现为 200 + 空目的地而非 422 —— 去默认值是已登记的独立契约变更（见下一条）。
+    """
     sent = _body_keys("createSubscription")
     undeclared = sent - set(SubscriptionBody.model_fields)
     assert not undeclared, f"前端发送但模型未声明的键：{sorted(undeclared)}"

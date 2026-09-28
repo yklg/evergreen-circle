@@ -17,14 +17,20 @@ import { join } from 'node:path'
 
 const API_TS = join(process.cwd(), 'src', 'lib', 'api.ts')
 
-/** 2026-09-27 实测基线（逐项在源文件中带 `, undefined, [])` 形态）。 */
+/** 2026-09-27 基线。波次 A 第 3 步去掉了 `fetchLifeCircleReports` / `fetchReports` 两项
+ *  （归档列表的失败必须与"没有报告"可分辨，判据见 reportsPageErrorVsEmpty.test.tsx）；
+ *  剩余三项是**已登记的债**：订阅列表与专家负载目前还没有活消费方，情报中心落地（波次 B）
+ *  时要一并处理，届时本清单继续缩短 —— 清单缩短必须是有意的，故两向都钉。 */
 const BASELINE = new Set([
-  'fetchLifeCircleReports', // → /api/life-circle：报告中心与历史页共用，失败即"暂无"
-  'fetchReports',           // → /api/reports
-  'fetchSubscriptions',     // → /api/subscriptions：情报中心订阅列表
-  'fetchWorkload',          // → /api/experts/workload
-  'getTaskStatus',          // → 任务状态列表
+  'fetchSubscriptions', // → /api/subscriptions：情报中心订阅列表（波次 B 处理）
+  'fetchWorkload',      // → /api/experts/workload（波次 B 处理）
+  'getTaskStatus',      // → 任务状态列表
 ])
+
+/** 本守卫的覆盖面边界（写清楚，免得日后把它当成全能闸）：只认
+ *  `safeJson<T>(url, undefined, [])` 这一族**空数组**兜底。`null` / 对象字面量兜底
+ *  （如 `fetchLifeCircleReport(..., null)`）不在本正则内 —— 那是另一类判据，
+ *  要扩就先扩正则并同步基线，不要假装它已覆盖。 */
 
 /** 把 api.ts 按导出函数切块，避免跨函数误判。 */
 function functionBlocks(src: string): Map<string, string> {

@@ -1,166 +1,210 @@
 /**
- * 报告中心（F3）：全部报告列表（生活圈体检 / 目的地调研），按类型过滤后打开阅读器。
+ * 报告中心（唯一归档入口）：生活圈体检 + 目的地调研的记录索引，按域过滤后打开阅读器。
  *
- * F 阶段（VITE_USE_MOCK=1）列出体检报告（fixture）；
- * M 阶段接入真实 /api/reports + /api/life-circle/list 后自动补齐两类数据。
+ * 原「历史」页（DashboardPage）的体检口径统计与来源举证行渲染已迁入本页；
+ * 取数与列表口径的唯一实现在 `lib/recordIndex.ts` + `hooks/useRecordIndex.ts`。
  */
-import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { FileText, MapPin, TriangleAlert, Inbox, GitCompare } from 'lucide-react'
-import { getLifeCircleRecords } from '../mocks/livingCircleReports'
-import { useDataModeStore } from '../store/dataModeStore'
-import { fetchReports, fetchLifeCircleReports } from '../lib/api'
-import type { ReportCard, LifeCircleRecord } from '../types'
+import { useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { AlertTriangle, Inbox, TriangleAlert } from 'lucide-react'
+import RecordRow from '../components/RecordRow'
+import RecordStatsStrip from '../components/RecordStatsStrip'
+import { useRecordIndex } from '../hooks/useRecordIndex'
+import { deleteLifeCircleReport, deleteReport } from '../lib/api'
+import {
+  RECORD_DOMAINS,
+  RECORD_DOMAIN_LABEL,
+  filterRecords,
+  normalizeRecordFilter,
+  recordStats,
+  type RecordFilter,
+  type ReportRecord,
+} from '../lib/recordIndex'
+import { VButton, VModal } from '../components/ui'
 
-type TypeFilter = 'all' | 'living_circle' | 'research'
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
+const FILTERS: { value: RecordFilter; label: string }[] = [
+  { value: 'all', label: '全部' },
+  ...RECORD_DOMAINS.map((d) => ({ value: d as RecordFilter, label: RECORD_DOMAIN_LABEL[d] })),
+]
 
 export default function ReportsPage() {
   const navigate = useNavigate()
-  const isFixture = useDataModeStore((s) => s.mode === 'fixture')
-  const [filter, setFilter] = useState<TypeFilter>('all')
-  const [research, setResearch] = useState<ReportCard[]>([])
-  const [realLcRecords, setRealLcRecords] = useState<LifeCircleRecord[]>([])
+  const [params, setParams] = useSearchParams()
+  const filter = normalizeRecordFilter(params.get('domain'))
+  const { records, loading, failed, partialFailed, isFixture, reload } = useRecordIndex()
 
-  useEffect(() => {
-    if (isFixture) return
-    fetchReports().then((rows) => setResearch(Array.isArray(rows) ? rows : [])).catch(() => {})
-    fetchLifeCircleReports().then(setRealLcRecords).catch(() => {})
-  }, [isFixture])
+  const rows = useMemo(() => filterRecords(records ?? [], filter), [records, filter])
+  const stats = useMemo(() => recordStats(rows), [rows])
 
-  const items = useMemo(() => {
-    const lcRecords = isFixture ? getLifeCircleRecords() : realLcRecords
-    const researchItems = research.map((r) => ({
-      key: `research-${r.report_id}`,
-      type: 'research' as const,
-      title: r.title,
-      scene_name: r.query || r.title,
-      city: '',
-      checked_at: r.created_at,
-      score: 0,
-      blindspots: 0,
-      id: r.report_id,
-    }))
-    const lcItems = lcRecords.map((r) => ({
-      key: `lc-${r.id}`,
-      type: 'living_circle' as const,
-      title: r.title,
-      scene_name: r.scene_name,
-      city: r.city,
-      checked_at: r.checked_at,
-      score: r.total_score,
-      blindspots: r.blindspot_count,
-      id: r.id,
-    }))
-    const all = [...lcItems, ...researchItems].sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1))
-    return filter === 'all' ? all : all.filter((i) => i.type === filter)
-  }, [research, realLcRecords, filter, isFixture])
+  const setFilter = (value: RecordFilter) => {
+    const next = new URLSearchParams(params)
+    if (value === 'all') next.delete('domain')
+    else next.set('domain', value)
+    setParams(next, { replace: true })
+  }
+
+  const [pendingDelete, setPendingDelete] = useState<ReportRecord | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const askDelete = (record: ReportRecord) => {
+    setDeleteError(null)
+    setPendingDelete(record)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      // 删除后以服务端为准重取索引，不在本地伪造"已移除"的列表状态
+      if (pendingDelete.domain === 'living_circle') await deleteLifeCircleReport(pendingDelete.id)
+      else await deleteReport(pendingDelete.id)
+      setPendingDelete(null)
+      reload()
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const deleteWarning = pendingDelete
+    ? pendingDelete.domain === 'living_circle'
+      ? `确定要删除《${pendingDelete.title}》吗？该操作不可撤销，重新体检会再次消耗百度配额。`
+      : `确定要删除《${pendingDelete.title}》吗？该操作不可撤销，关联的 ${pendingDelete.evidence_count ?? 0} 条证据、决策链路与反馈也将一并清除。`
+    : ''
 
   return (
     <div className="mx-auto max-w-content px-8 py-8">
       <header>
         <h1 className="font-serif text-h1 text-ink">报告中心</h1>
         <p className="mt-1 text-aux text-ink-2">
-          全部已生成报告（生活圈体检与目的地调研）—— 按类型过滤，点击打开完整阅读器
+          历次生活圈体检与目的地调研的归档 —— 点击重看完整体检单与阅读器
         </p>
       </header>
 
-      {/* 类型过滤 + 数据源说明 */}
-      <div className="mt-6 flex flex-wrap items-center gap-2">
-        {(
-          [
-            { key: 'all', label: '全部' },
-            { key: 'living_circle', label: '生活圈体检' },
-            { key: 'research', label: '目的地调研' },
-          ] as { key: TypeFilter; label: string }[]
-        ).map((t) => (
+      {failed ? (
+        <div className="mt-6 flex flex-col items-start gap-3 rounded-card border border-risk/60 bg-risk/10 p-5">
+          <span className="inline-flex items-center gap-2 text-aux font-semibold text-ink">
+            <TriangleAlert size={16} className="text-risk" /> 记录加载失败
+          </span>
+          <p className="text-tag text-ink-2">
+            归档列表取数未成功（后端未就绪或无权限）。这里不显示「暂无报告」，因为无法区分是真的没有还是没取到。
+          </p>
           <button
-            key={t.key}
-            onClick={() => setFilter(t.key)}
-            className={`rounded-chip px-3 py-1.5 text-aux transition-colors ${
-              filter === t.key ? 'bg-primary font-medium text-white' : 'bg-bg text-ink-2 hover:bg-primary-tint'
-            }`}
+            onClick={reload}
+            className="inline-flex h-9 items-center rounded-btn bg-primary px-4 text-aux font-medium text-white hover:bg-primary-deep"
           >
-            {t.label}
-          </button>
-        ))}
-        {isFixture && <span className="ml-auto text-tag text-ink-3">演示数据 · 与历史页同源</span>}
-      </div>
-
-      {items.length === 0 ? (
-        <div className="mt-16 flex flex-col items-center gap-3 text-center">
-          <Inbox size={32} className="text-ink-3" />
-          <div className="text-h3 text-ink">暂无该类报告</div>
-          <button
-            onClick={() => navigate('/life-circle/kaili')}
-            className="mt-1 inline-flex items-center gap-2 rounded-btn bg-primary px-6 h-11 font-medium text-white shadow-card hover:bg-primary-deep"
-          >
-            去发起一次体检
+            重试
           </button>
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 gap-3">
-          {items.map((it) => (
-            <div
-              key={it.key}
-              className="group flex items-center gap-4 rounded-card border border-line/60 bg-card p-4 shadow-card transition-all hover:border-primary-soft"
-            >
-              <div
-                className={`grid h-12 w-12 shrink-0 place-items-center rounded-card ${
-                  it.type === 'living_circle' ? 'bg-primary-tint text-primary-deep' : 'bg-bg text-ink-3'
-                }`}
-              >
-                {it.type === 'living_circle' ? <MapPin size={20} /> : <GitCompare size={20} />}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => navigate(`/report/${it.id}`)}
-                    className="truncate text-left text-aux font-semibold text-ink hover:text-primary-deep"
-                    title={it.title}
-                  >
-                    {it.title}
-                  </button>
-                  <span
-                    className={`shrink-0 rounded-chip px-1.5 py-0.5 text-tag font-medium ${
-                      it.type === 'living_circle' ? 'bg-primary-tint text-primary-deep' : 'bg-bg text-ink-3 ring-1 ring-line'
-                    }`}
-                  >
-                    {it.type === 'living_circle' ? '生活圈体检' : '目的地调研'}
-                  </span>
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-tag text-ink-3">
-                  <span>{it.scene_name}{it.city ? ` · ${it.city}` : ''}</span>
-                  <span>{fmtDate(it.checked_at)}</span>
-                  {it.type === 'living_circle' && it.score != null && it.score > 0 && (
-                    <>
-                      <span className="font-medium text-ink">评分 {it.score}</span>
-                      <span className="inline-flex items-center gap-0.5">
-                        <TriangleAlert size={12} className="text-warn" /> 盲区 {it.blindspots} 处
-                      </span>
-                    </>
-                  )}
-                  {it.type === 'living_circle' && it.score == null && (
-                    <span className="rounded-chip border border-warn/60 bg-warn/10 px-1.5 py-0.5 text-tag text-ink-2">离线估算</span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => navigate(`/report/${it.id}`)}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-btn bg-primary-tint px-3 h-9 text-aux font-medium text-primary-deep hover:bg-primary-soft/40"
-              >
-                <FileText size={14} /> 打开
+        <>
+          {partialFailed && (
+            <div className="mt-6 flex items-center gap-2 rounded-card border border-warn/60 bg-warn/10 px-4 py-3 text-tag text-ink-2">
+              <TriangleAlert size={14} className="text-warn" /> 部分记录加载失败：另一数据源未取到，当前列表可能不完整。
+              <button onClick={reload} className="ml-auto font-medium text-primary-deep underline">
+                重试
               </button>
             </div>
-          ))}
-        </div>
+          )}
+
+          {/* 域过滤（值由 taskDomains 注册表派生，深链 ?domain= 与 chip 双向同步） */}
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            {FILTERS.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => setFilter(t.value)}
+                aria-pressed={filter === t.value}
+                className={`rounded-chip px-3 py-1.5 text-aux transition-colors ${
+                  filter === t.value ? 'bg-primary font-medium text-white' : 'bg-bg text-ink-2 hover:bg-primary-tint'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {loading && (
+            <div className="mt-16 text-center text-aux text-ink-3">正在加载归档记录……</div>
+          )}
+
+          {!loading && rows.length === 0 && (
+            <div className="mt-16 flex flex-col items-center gap-3 text-center">
+              <Inbox size={32} className="text-ink-3" />
+              <div className="text-h3 text-ink">暂无该类报告</div>
+              <button
+                onClick={() => navigate('/life-circle/kaili')}
+                className="mt-1 inline-flex items-center gap-2 rounded-btn bg-primary px-6 h-11 font-medium text-white shadow-card hover:bg-primary-deep"
+              >
+                去发起一次体检
+              </button>
+            </div>
+          )}
+
+          {!loading && rows.length > 0 && (
+            <>
+              {stats && (
+                <>
+                  <RecordStatsStrip stats={stats} />
+                  <p className="mt-3 text-tag text-ink-3">
+                    统计仅计生活圈体检的可比评分（{stats.total}/{stats.visibleLcTotal} 份，N 为归档可见条数）；
+                    目的地调研不参与评分。少数不合格几何记录已由后端读路径隐藏，归档条数不等于库内报告数。
+                  </p>
+                </>
+              )}
+
+              <div className="mt-6 flex flex-col gap-3">
+                {rows.map((r) => (
+                  <RecordRow
+                    key={r.key}
+                    record={r}
+                    onOpen={(id) => navigate(`/report/${id}`)}
+                    onDelete={askDelete}
+                  />
+                ))}
+              </div>
+
+              {isFixture && (
+                <p className="mt-5 text-tag text-ink-3">
+                  内置快照：两样区真实百度实跑数据，离线一键复现；真实体检任务自动归档同源。
+                </p>
+              )}
+            </>
+          )}
+        </>
       )}
+      <VModal
+        open={pendingDelete !== null}
+        onClose={() => !deleting && setPendingDelete(null)}
+        title="删除归档记录"
+        width={440}
+        height="min(340px,80vh)"
+      >
+        <div className="flex h-full flex-col p-6">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-risk/10 text-risk">
+              <AlertTriangle size={18} />
+            </span>
+            <p className="text-aux leading-relaxed text-ink-2">{deleteWarning}</p>
+          </div>
+          {deleteError && (
+            <div className="mt-3 flex items-start gap-2 rounded-card border border-warn/40 bg-risk/10 px-3 py-2 text-tag text-ink-2">
+              <TriangleAlert size={14} className="mt-0.5 shrink-0 text-risk" />
+              <span>删除失败：{deleteError}（记录仍在归档里，可重试）</span>
+            </div>
+          )}
+          <div className="mt-auto flex justify-end gap-3">
+            <VButton variant="ghost" onClick={() => setPendingDelete(null)} disabled={deleting}>
+              取消
+            </VButton>
+            <VButton onClick={confirmDelete} disabled={deleting}>
+              {deleting ? '删除中…' : '删除'}
+            </VButton>
+          </div>
+        </div>
+      </VModal>
     </div>
   )
 }

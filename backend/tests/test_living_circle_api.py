@@ -594,3 +594,53 @@ def test_t6_timestamp_formats():
     assert SEC_Z.match(hit["cached_at"]), hit["cached_at"]
     _dt.datetime.strptime(hit["cached_at"], "%Y-%m-%dT%H:%M:%SZ")
     assert MS_Z.match(hit["cached_at"]) is None  # 精度不同源（记录）
+
+
+# ── T7 · 删除端点（报告中心唯一归档 + 记录删除，波次 A 第 1 步）──────────
+# 为什么要专门一组：`DELETE /api/life-circle/{report_id}` 的语义不是"返 200"，
+# 而是三件事同时成立 —— 报告行没了、派生行也没了、别的域不许被牵连。
+# 调研报告侧早有同名能力（main.py:551），生活圈侧此前只有读端点，归档面因此
+# 无法在报告中心完成「删掉一条体检记录」这件用户可观察的事。
+
+
+def _seed_lc_row(rid: str, scene: str = "劲松") -> None:
+    db.save_living_circle_report(
+        {"id": rid, "created_at": "2026-09-27T00:00:00Z",
+         "living_circle": {"scene": {"name": scene}, "scores": {"total": 72},
+                           "blindspots": [], "data_origin": "live"}},
+        scene_key=f"t7-{rid}")
+
+
+def test_t7_delete_removes_report_and_feedback_rows():
+    """删除一份体检报告 ⇒ 列表读不到它，且不分报告类型写来的反馈行也一并清掉。"""
+    _seed_lc_row("t7-1")
+    db.save_report_feedback("t7-1", 2, 5, {"edits": {}})
+    resp = client.delete("/api/life-circle/t7-1")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True, "deleted": True}
+    c = db._connect()
+    assert c.execute("SELECT COUNT(*) n FROM living_circle_reports WHERE report_id='t7-1'").fetchone()["n"] == 0
+    assert c.execute("SELECT COUNT(*) n FROM report_feedback WHERE report_id='t7-1'").fetchone()["n"] == 0
+
+
+def test_t7_delete_of_absent_report_reports_deleted_false():
+    """库里本就没有 ⇒ `deleted:false`（而不是 200 空成功，也不必走 404 异常分支）。
+
+    钉的是可观察区分：UI 靠这个字段把「我删掉了」和「这条已经不在」分开显示。
+    与所摘归档层 `RecordRow` 的消费契约同源，形状一旦分叉本用例即刻红。
+    """
+    resp = client.delete("/api/life-circle/t7-nope")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True, "deleted": False}
+
+
+def test_t7_delete_does_not_touch_research_domain():
+    """跨域隔离：生活圈删除端点不得动调研报告（两张主表、一个 id 空间）。"""
+    _seed_lc_row("t7-shared-id")
+    db.save_report({"id": "t7-shared-id", "title": "调研报告", "query": "q",
+                    "destinations": ["目的地A"], "experts": [], "cover_image": "",
+                    "created_at": "2026-09-27T00:00:00Z",
+                    "evidence": [], "claims": [], "metrics": {}}, task_id="")
+    assert client.delete("/api/life-circle/t7-shared-id").status_code == 200
+    c = db._connect()
+    assert c.execute("SELECT COUNT(*) n FROM reports WHERE report_id='t7-shared-id'").fetchone()["n"] == 1

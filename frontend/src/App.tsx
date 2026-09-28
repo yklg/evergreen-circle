@@ -9,9 +9,7 @@ import GraphPage from './pages/GraphPage'
 import TracePage from './pages/TracePage'
 import ExpertsPage from './pages/ExpertsPage'
 import ExpertDetailPage from './pages/ExpertDetailPage'
-import LibraryPage from './pages/LibraryPage'
 import SlidesPage from './pages/SlidesPage'
-import DashboardPage from './pages/DashboardPage'
 import ReportsPage from './pages/ReportsPage'
 import KnowledgePage from './pages/KnowledgePage'
 import SettingsPage from './pages/SettingsPage'
@@ -49,11 +47,9 @@ export default function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/experts" element={<ExpertsPage />} />
           <Route path="/experts/:id" element={<ExpertDetailPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/settings" element={<SettingsPage />} />
 
           {/* 旧页路由保留（移出主导航，不回归既有测试） */}
-          <Route path="/library" element={<LibraryPage />} />
           <Route path="/knowledge" element={<KnowledgePage />} />
         </Route>
 

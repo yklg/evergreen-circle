@@ -190,9 +190,11 @@ export async function createLivingCircleTask(input: {
   return { taskId: data.taskId }
 }
 
-/** 历史体检记录列表（对齐 LifeCircleRecord，历史页 / 报告中心共用）。 */
+/** 体检记录列表（对齐 LifeCircleRecord，报告中心归档列表消费）。
+ *  失败**显式抛出**，不做空数组兜底：兜底会把「后端挂了」渲染成「还没有任何报告」，
+ *  用户去找记录的地方反而看不到成因（判据见 __tests__/silentFallbackGuard.test.ts）。 */
 export async function fetchLifeCircleReports(): Promise<LifeCircleRecord[]> {
-  return safeJson<LifeCircleRecord[]>('/api/life-circle', undefined, [])
+  return safeJson<LifeCircleRecord[]>('/api/life-circle')
 }
 
 /** 完整体检报告（Report 挂载 living_circle，渲染适配器直接消费）。 */
@@ -283,13 +285,22 @@ export async function refineSection(
   )
 }
 
-/* 我的调研：真实历史报告列表 */
+/* 调研报告列表（失败显式抛出，与 fetchLifeCircleReports 同一套三态契约） */
 export async function fetchReports(): Promise<ReportCard[]> {
-  return safeJson<ReportCard[]>('/api/reports', undefined, [])
+  return safeJson<ReportCard[]>('/api/reports')
 }
 
 export async function deleteReport(reportId: string): Promise<{ ok: boolean }> {
-  return safeJson(`/api/reports/${reportId}`, { method: 'DELETE' }, { ok: true })
+  // 写操作失败必须显式暴露：静默 { ok: true } 会让"没删掉"被读成"删好了"。
+  return safeJson(`/api/reports/${reportId}`, { method: 'DELETE' })
+}
+
+/** 删除一份体检报告。派生行（反馈/任务…）级联清理在服务端与调研报告同源；
+ *  `deleted:false` 表示库里本就没有这条 —— UI 靠它区分两种可观察结果。 */
+export async function deleteLifeCircleReport(
+  reportId: string,
+): Promise<{ ok: boolean; deleted: boolean }> {
+  return safeJson(`/api/life-circle/${reportId}`, { method: 'DELETE' })
 }
 
 /* 一页纸精炼（简报，G7）：创建 kind='brief' 后台任务并返回 taskId。
@@ -314,22 +325,23 @@ export async function fetchDashboard(): Promise<DashboardStats | null> {
 
 /* 全局证据溯源库 */
 export async function fetchEvidences(params?: {
-  brand?: string
+  destination?: string
   source_type?: string
   min_cred?: number
   /** 证据归属过滤：'<rid>' = 仅该报告证据；不传 = 全部证据。 */
   report_id?: string
 }): Promise<EvidenceQueryResp> {
   const qs = new URLSearchParams()
-  if (params?.brand) qs.set('brand', params.brand)
+  // 参数名必须与后端 `evidences(destination=…)`（main.py）逐字一致：
+  // 这里曾长期发 `brand`（竞品口径残留），FastAPI 对未知 query **静默忽略** ⇒ 筛选形同不存在。
+  // 判据：backend/tests/test_api_client_contract.py（从本文件取键比对 OpenAPI）。
+  if (params?.destination) qs.set('destination', params.destination)
   if (params?.source_type) qs.set('source_type', params.source_type)
   if (params?.min_cred != null) qs.set('min_cred', String(params.min_cred))
   if (params?.report_id != null) qs.set('report_id', params.report_id)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  return safeJson<EvidenceQueryResp>(`/api/evidences${suffix}`, undefined, {
-    items: [],
-    facets: { total: 0, by_type: {}, by_destination: {} },
-  })
+  // 失败显式抛出：空证据库与"取不到证据库"是两种可观察结果，不能压成一个。
+  return safeJson<EvidenceQueryResp>(`/api/evidences${suffix}`)
 }
 
 /* 基于新归属的高可信度证据异步精修报告，返回 taskId（订阅 /api/tasks/{taskId}/stream 拿进度）。 */
@@ -351,18 +363,25 @@ export async function refineReportEvidence(
   )
 }
 
-/* 竞品监控订阅 */
+/* 目的地持续追踪订阅 */
 export async function fetchSubscriptions(): Promise<Subscription[]> {
   return safeJson<Subscription[]>('/api/subscriptions', undefined, [])
 }
 
-export async function createSubscription(query: string, brands: string[]): Promise<Subscription | null> {
+/** 键名与后端 `SubscriptionBody{query,destinations,type}` 逐字对齐。
+ *  这里曾长期 POST `{query, brands}`：因两个字段都带默认值，服务端**返 200** 并建成一条
+ *  零目的地订阅 —— 用户以为在追踪某主题，实际永不复跑（比报错更坏）。 */
+export async function createSubscription(
+  query: string,
+  destinations: string[],
+  type: string = 'guide',
+): Promise<Subscription | null> {
   return safeJson<Subscription | null>(
     '/api/subscriptions',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, brands }),
+      body: JSON.stringify({ query, destinations, type }),
     },
     null,
   )

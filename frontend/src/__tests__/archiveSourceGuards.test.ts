@@ -7,12 +7,12 @@
  * 收敛会在下一次改动里静默回退。判据形状直接对齐
  * `wip/domainpack:frontend/src/__tests__/archiveSourceGuards.test.ts:62-78`：
  * 三条都钉，**且必须同时钉 `/library` 半边**（v2 计划只钉了 `/dashboard`，漏掉
- * `App.tsx:56` 的「我的调研」= 第二个归档入口仍在）。
+ * 「我的调研」= 第二个归档入口仍在）。
  *
- * 为什么用 `it.fails` 而不是直接写正向断言：波次 A 尚未落地，`App.tsx:52,56` 两条路由
- * 与两个页面文件都还在。`it.fails` 是本项目里 `xfail(strict)` 的前端对应物
- * （先例 `visitorUnrated.test.tsx:121-122`）——**删除收敛落地后本文件会主动报失败，
- * 逼着摘标记**，而不是留一套永远绿的空守卫。
+ * 波次 A4 落地后本文件已从挂账转为**防回退**：四条判据全部转正（曾经的 `it.fails`
+ * 是 `xfail(strict)` 的前端对应物，落地即报失败逼摘标记，先例
+ * `visitorUnrated.test.tsx:121-122`）。长期保留 —— 只要有人重新注册这两条路由、
+ * 或把页面文件以兼容垫片的名义请回来，这里就会红。
  *
  * 注意：`vsidebarRoutes.test.tsx` 的 B3 只按归档名白名单过滤后断言，新起名「情报中心」
  * 并不触发它 ⇒ 它不防第二归档，不可当本条防线引用（架构评审 v4 事实 1）。
@@ -25,10 +25,11 @@ const SRC = join(process.cwd(), 'src')
 
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
 
-describe('归档入口唯一性（波次 A 落地后摘 it.fails 标记）', () => {
+describe('归档入口唯一性（防回退：报告中心是唯一归档）', () => {
   it('正面对照：本守卫读到的是真实源文件，不是空串或错路径', () => {
-    // 若路径写错，下面的 `not.toMatch` 会在 readFileSync 处直接抛 ⇒ 被 it.fails 吞成"通过"。
-    // 所以先独立钉一条**必须绿**的可达性判据（先例 conftest.py:40「证明门真的有牙」）。
+    // 路径写错时 `not.toMatch` 会在 readFileSync 处直接抛；而"文件已删"类判据以
+    // `toThrow` 为通过条件，一旦 SRC 指错就会**假绿**。所以先独立钉一条可达性判据
+    // （先例 conftest.py:40「证明门真的有牙」）。
     const app = read('App.tsx')
     const sidebar = read('layout/VSidebar.tsx')
     expect(app).toContain('<Route')
@@ -36,22 +37,25 @@ describe('归档入口唯一性（波次 A 落地后摘 it.fails 标记）', () 
     expect(sidebar).toContain('navItems')
   })
 
-  it.fails('App.tsx 不再注册 /dashboard 与 /library 两条归档路由', () => {
+  it('App.tsx 不再注册 /dashboard 与 /library 两条归档路由', () => {
     const text = read('App.tsx')
     expect(text).not.toMatch(/path="\/dashboard"/)
     expect(text).not.toMatch(/path="\/library"/)
   })
 
-  it.fails('App.tsx 源码里不残留 DashboardPage / LibraryPage 字样（不留兼容垫片）', () => {
+  it('App.tsx 源码里不残留 DashboardPage / LibraryPage 字样（不留兼容垫片）', () => {
     expect(read('App.tsx')).not.toMatch(/DashboardPage|LibraryPage/)
   })
 
-  it.fails('两个旧归档页面文件已不存在', () => {
+  it('两个旧归档页面文件已不存在', () => {
     expect(() => read('pages/DashboardPage.tsx')).toThrow()
     expect(() => read('pages/LibraryPage.tsx')).toThrow()
   })
 
-  it.fails('侧栏导航项里不再有「历史」或「体检档案」', () => {
-    expect(read('layout/VSidebar.tsx')).not.toMatch(/label:\s*'(历史|体检档案)'/)
+  it('侧栏导航项里不再有「历史」或「体检档案」', () => {
+    const text = read('layout/VSidebar.tsx')
+    expect(text).not.toMatch(/label:\s*'(历史|体检档案)'/)
+    // 唯一归档入口仍在：否则上一条"没有历史"会因为整条导航被删而空过
+    expect(text).toMatch(/to:\s*'\/reports'/)
   })
 })

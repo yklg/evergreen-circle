@@ -5,7 +5,6 @@ import {
   Map,
   GitCompare,
   Users,
-  History,
   FileText,
   Sprout,
   ChevronDown,
@@ -29,7 +28,6 @@ const navItems = [
   { to: '/reports', label: '报告', icon: FileText },
   { to: '/compare', label: '双样例对比', icon: GitCompare },
   { to: '/experts', label: '专家团', icon: Users },
-  { to: '/dashboard', label: '历史', icon: History },
 ]
 
 export default function VSidebar() {

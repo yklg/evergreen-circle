@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
@@ -650,6 +650,27 @@ def dashboard():
 
 
 # ── 全局证据溯源库 ──────────────────────────────────────
+def _reject_unknown_query_params(request: Request) -> None:
+    """拒收端点签名里没有的 query 参数。
+
+    为什么要这道闸：FastAPI 对未知 query **静默忽略** ⇒ 前端把参数名写成后端不认识的
+    样子时，过滤条件整个消失而接口仍返 200，没有任何异常可抓（`api.ts` 的证据库过滤
+    条件就这么潜伏了很久，见架构评审 v4 事实 10）。
+
+    允许集从端点自己的签名派生（`route.dependant.query_params`），**不再维护第二份白名单**
+    —— 闸自己另列一份清单，就会漂成第二个真相源。
+    """
+    route = request.scope.get("route")
+    dependant = getattr(route, "dependant", None)
+    if dependant is None:
+        # 拿不到元信息就是闸失效。宁可炸，也不静默放行 —— 那正是本闸要消灭的形状。
+        raise HTTPException(status_code=500, detail="无法校验查询参数：路由元信息缺失")
+    allowed = {(getattr(f, "alias", None) or f.name) for f in dependant.query_params}
+    unknown = sorted(set(request.query_params) - allowed)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"未知查询参数：{unknown}")
+
+
 @app.get("/api/evidences")
 def evidences(
     destination: Optional[str] = None,
@@ -657,8 +678,10 @@ def evidences(
     min_cred: float = 0.0,
     limit: int = 200,
     report_id: Optional[str] = None,
+    _: None = Depends(_reject_unknown_query_params),
 ):
     # report_id 过滤：不传 → 全部证据；'<rid>' → 仅该报告证据。
+    # 参数校验闸挂在签名上：新增查询参数时白名单自动跟着走，无需两处同步。
     items = db.query_evidences(
         destination=destination, source_type=source_type, min_cred=min_cred,
         limit=limit, report_id=report_id,
@@ -792,6 +815,18 @@ def get_life_circle_report(report_id: str):
         raise HTTPException(status_code=404, detail="非生活圈体检报告")
     
     return rep
+
+
+@app.delete("/api/life-circle/{report_id}")
+def delete_life_circle_report(report_id: str):
+    """删除一份生活圈体检报告（派生行级联清单与调研报告删除同源，见 db._REPORT_SCOPED_TABLES）。
+
+    为什么返 `200 + deleted:false` 而不是 404：报告中心的删除确认框要把「我删掉了」和
+    「这条已经不在」显示成两种可观察结果，但不必为后者走异常分支；更重要的是这个形状
+    与所摘归档层（`components/RecordRow.tsx` 的消费方）的期望一致 —— 让后端与客户端各说
+    一套契约，正是本波次要消灭的那类分叉。
+    """
+    return {"ok": True, "deleted": db.delete_living_circle_report(report_id)}
 
 
 # 对比差异表的三处固定字面量 —— 与前端/契约夹具**同一份**（见 compareDiffContract.json）。

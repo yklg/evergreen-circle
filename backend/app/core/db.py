@@ -901,6 +901,21 @@ def list_reports() -> List[Dict[str, Any]]:
     return out
 
 
+# 按 report_id 弱关联的派生表：删除任一报告都必须一并清理，否则留孤儿行。
+# 单一真相源 —— 调研报告与生活圈体检报告**共用**这一份清单，两条删除路径不得各写一遍 SQL。
+_REPORT_SCOPED_TABLES = ("evidences", "traces", "report_feedback", "tasks")
+
+
+def _delete_report_scoped_rows(c, report_id: str) -> None:
+    """清掉一份报告的派生数据（证据溯源 / 决策链路 / 人工反馈 / 关联任务）。
+
+    不在此 commit：由调用方与主表删除同处一个 `_LOCK` 临界区、一次提交，保证
+    「级联 + 主表」原子，中途失败不会留下半张表。
+    """
+    for table in _REPORT_SCOPED_TABLES:
+        c.execute(f"DELETE FROM {table} WHERE report_id=?", (report_id,))
+
+
 def delete_report(report_id: str) -> bool:
     """删除报告并级联清理关联数据（单一真相源，避免孤儿行）。
 
@@ -913,10 +928,7 @@ def delete_report(report_id: str) -> bool:
     """
     with _LOCK:
         c = _connect()
-        c.execute("DELETE FROM evidences WHERE report_id=?", (report_id,))
-        c.execute("DELETE FROM traces WHERE report_id=?", (report_id,))
-        c.execute("DELETE FROM report_feedback WHERE report_id=?", (report_id,))
-        c.execute("DELETE FROM tasks WHERE report_id=?", (report_id,))
+        _delete_report_scoped_rows(c, report_id)
         c.execute("DELETE FROM reports WHERE report_id=?", (report_id,))
         c.commit()
         # G5 失效钩子：级联删除改变聚合口径
@@ -1449,12 +1461,21 @@ def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False
 
 
 def delete_living_circle_report(report_id: str) -> bool:
-    """删除体检报告并级联清理关联任务（report_id 弱关联）。"""
+    """删除一份生活圈体检报告，并按 `delete_report` 同一份级联清单清理派生行。
+
+    级联不是"以后才有用"：`POST /api/reports/{id}/feedback`（main.py:582）不按报告类型
+    分流，生活圈报告 id 同样会写出 `report_feedback` 行 —— 今天删报告就会留孤儿。
+    `evidences` / `traces` 目前只有调研流水线写（engine.py:1595、save_report:711-723），
+    但生活圈证据一旦入库（计划 v4 待拍板⑤），缺了这条级联会让 `evidence_total` 与
+    `by_destination` 永久虚高，而"计数随报告单调增长"那类断言照样会绿。
+    """
     with _LOCK:
         c = _connect()
-        c.execute("DELETE FROM tasks WHERE report_id=?", (report_id,))
+        _delete_report_scoped_rows(c, report_id)
         cur = c.execute("DELETE FROM living_circle_reports WHERE report_id=?", (report_id,))
         c.commit()
+        # G5 失效钩子：与 delete_report 对称 —— 级联删的是聚合的输入
+        invalidate_aggregates()
         return cur.rowcount > 0
 
 
@@ -1470,9 +1491,13 @@ def delete_living_circle_reports_for_scene(scene_key: str) -> int:
         rows = c.execute("SELECT report_id FROM living_circle_reports WHERE scene_key=?", (scene_key,)).fetchall()
         ids = [r["report_id"] for r in rows]
         for rid in ids:
-            c.execute("DELETE FROM tasks WHERE report_id=?", (rid,))
+            # 与单份删除同一份级联清单：精报替换粗报每轮都跑这里，
+            # 只清 tasks 会让 feedback（以及将来的证据行）按替换次数线性泄漏。
+            _delete_report_scoped_rows(c, rid)
         cur = c.execute("DELETE FROM living_circle_reports WHERE scene_key=?", (scene_key,))
         c.commit()
+        if ids:
+            invalidate_aggregates()   # 幂等：没删到行就不必惊动缓存
         return cur.rowcount
 
 

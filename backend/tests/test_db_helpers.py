@@ -107,12 +107,14 @@ def test_u29_scene_isolation():
 不对称的事实：`delete_report`（`db.py:904-924`）按 report_id 级联清
 `evidences / traces / report_feedback / tasks / reports` 并在末尾调
 `invalidate_aggregates()`（:923，注释「G5 失效钩子：级联删除改变聚合口径」）；
-而 `delete_living_circle_report`（`db.py:1451-1458`）**只清 `tasks` +
-`living_circle_reports`**，也不失效聚合缓存。
+而 `delete_living_circle_report` 历史上只清 `tasks` + `living_circle_reports`，
+也不失效聚合缓存。**波次 A 第 1 步已把两条路径收敛到同一份级联清单
+（`db._REPORT_SCOPED_TABLES` + `_delete_report_scoped_rows`）**，本族用例即该次收敛的
+判据：既钉"清得干净"，也钉"不许清过头"。
 
-为什么现在必须钉住：计划 v4 波次 B 第 4 步一旦让生活圈证据进 `evidences` 表，
-「删除报告」就会留下永久孤儿行 —— `evidence_total` 与 `by_destination` 虚高，
-且「计数随报告单调增长」那类断言**照样会绿**（假阳性）。
+为什么必须同源而不是各写一遍：`report_feedback` 走的是不分报告类型的
+`POST /api/reports/{id}/feedback`（main.py:582），生活圈报告 id 同样会写行 ——
+两份各写各的级联 SQL，迟早一张表被漏掉（本次就是）。
 """
 
 
@@ -154,35 +156,36 @@ def test_u30_delete_lc_report_removes_report_and_task():
     assert db.get_task("t30-ok") is None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "D2-1：delete_living_circle_report 只清 tasks+living_circle_reports（db.py:1451-1458），"
-    "不像 delete_report 那样级联 evidences/traces/report_feedback（对照 db.py:916-920）。"
-    "计划 v4 波次 A 第 1 步（以 delete_report 为级联真相源）落地后摘标。"))
 def test_u30_delete_lc_report_cascades_evidences_traces_feedback():
-    """级联完备性：删除一份生活圈报告后，四张关联表都不该留孤儿行。"""
+    """级联完备性：删除一份生活圈报告后，四张关联表都不该留孤儿行。
+
+    历史：2026-09-27 以 `xfail(strict)` 登记为 D2-1（只清 tasks+living_circle_reports）。
+    波次 A 第 1 步把两条删除路径收敛到同一份级联清单后摘标，转为正向判据长期保留
+    （先例 `test_task_body_contract.py:9-10`：登记缺口的用例修复后不删，改守现状）。
+    """
     _seed_lc_with_related_rows("r30-cascade")
     assert db.delete_living_circle_report("r30-cascade") is True
     for table in ("evidences", "traces", "report_feedback", "living_circle_reports"):
         assert _count_where(table, "r30-cascade") == 0, f"{table} 残留孤儿行"
 
 
-def test_u30_current_state_leaves_evidences_traces_feedback():
-    """**记录当前行为（不是期望它）**：孤儿行今天确实留着。
+def test_u30_delete_only_targets_the_named_report():
+    """隔离性：级联只认被删的那一个 report_id，别的报告一行都不能少。
 
-    补级联时必须把本用例**重指**为「0 行」断言并删掉这条，而不是留着两套口径互相打脸
-    （先例 `test_task_body_contract.py:110-117`「记录当前行为」）。
+    原 `test_u30_current_state_leaves_evidences_traces_feedback`（记录"孤儿行今天残留"）
+    在波次 A 第 1 步补级联后失效 —— 按 `test_task_body_contract.py:10` 的纪律**重指判据**
+    而不是删掉：今天真正需要守的不再是"有没有清干净"，而是"会不会清过头"。
     """
-    _seed_lc_with_related_rows("r30-now")
-    assert _count_where("evidences", "r30-now") == 1  # 前置：行确实存在
-    assert _count_where("traces", "r30-now") == 1
-    assert db.delete_living_circle_report("r30-now") is True
-    assert _count_where("evidences", "r30-now") == 1, "当前无级联 ⇒ 证据行永久残留"
-    assert _count_where("traces", "r30-now") == 1
+    _seed_lc_with_related_rows("r30-keep")
+    _seed_lc_with_related_rows("r30-gone")
+    before = {t: _count_where(t, "r30-keep") for t in ("evidences", "traces", "report_feedback")}
+    assert before == {"evidences": 1, "traces": 1, "report_feedback": 1}, before
+    assert db.delete_living_circle_report("r30-gone") is True
+    for table, n in before.items():
+        assert _count_where(table, "r30-keep") == n, f"{table} 被误删：级联越界到别的报告"
+    assert _count_where("living_circle_reports", "r30-keep") == 1
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "D2-2：delete_living_circle_report 不调 invalidate_aggregates（db.py:1451-1458 无该钩子），"
-    "而 delete_report 调（db.py:923）⇒ 删除后聚合读数不反映变化。波次 A 第 1 步同批补。"))
 def test_u30_delete_lc_report_invalidates_aggregates(monkeypatch):
     """失效钩子对称性：删除报告后必须淘汰聚合缓存。
 
