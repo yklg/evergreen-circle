@@ -146,12 +146,17 @@ def test_lc_evidence_ids_are_unique_per_kind_across_reports(kind):
     assert not shared, f"「{kind}」类证据 id 跨报告相同：{sorted(shared)}"
 
 
-# ── D1-4 现状缺陷：证据没有 destination，入库即成隐形数据 ─────────
+# ── D1-4 现状缺陷：证据没有 destination，入库即被记成「未归属」 ─────
 
 @pytest.mark.xfail(strict=True, reason=(
-    "D1-4：build_evidence 的记录不含 destination 键 ⇒ save_report 落成空串（db.py:720），"
-    "再被 evidence_facets 的 WHERE destination!=''（db.py:1015）与情报页的 if (!b) continue "
-    "（改造版 DashboardPage.tsx:91-92）双重丢弃 ⇒ 目的地情报图谱恒空。"))
+    "D1-4：`diagnosis_templates.build_evidence()` 的记录不含 destination 键 ⇒ "
+    "`save_report` 落成空串（本次 --runxfail 实测红点即在此：`ev-lc-measure 缺 destination`）。"
+    "后果口径 2026-09-28 已变，摘标前请按现状读：`evidence_facets()` 不再自己写 "
+    "`WHERE destination != ''`，而是从 `destination_graph()` 派生；旧 `DashboardPage.tsx` "
+    "已随双 tab 那波删除，读取面换成 `reports/ResearchIntelView.tsx` ⇒ 空 destination "
+    "不再静默消失，而是进 `destination_graph()['unattributed']` 显式计数（从『隐形』降级为"
+    "『可见但归类错』，缺陷仍在生产者）。摘除条件 = build_evidence 写出 destination，"
+    "与 D1-2/D1-3 的 id/字段作用域化同一批落地。"))
 def test_lc_evidence_rows_carry_a_destination():
     """每条生活圈证据都必须带非空 destination，否则入库了也等于没入库。"""
     for e in build_evidence(_lc("北京劲松", "北京·朝阳")):
