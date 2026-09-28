@@ -18,8 +18,9 @@
 
 本文件只做两件事：把**当前行为**钉成可读事实（绿），把**注释承诺的规则**登记成缺口
 （`xfail(strict)`）。真正的修法（最长匹配优先 / 专属性权重 / 归 other 并披露）会**改动
-居住基线数字**，属需单独决策的显式契约变更 —— 届时 `test_residential_category_baseline.py`
-的钉值会整组转红，那是它该做的事，不是回归。
+居住基线数字**，属需单独决策的显式契约变更。（2026-09-29 修法落地后基线**未**转红：
+那些点位由 `accept_tags` 先裁掉，名称弱先够不到；见 `test_multi_hit_is_treated_as_ambiguous`
+的说明。）
 """
 from __future__ import annotations
 
@@ -29,7 +30,9 @@ from pathlib import Path
 
 import pytest
 
+from app.living_circle import category_rule
 from app.living_circle.category_rule import CATEGORY_RULES, evaluate_category
+from app.living_circle.poi import norm_name
 
 FIXTURES = Path(__file__).resolve().parents[1] / "app" / "living_circle" / "fixtures"
 
@@ -44,10 +47,15 @@ def _fixture_names() -> list[str]:
 
 
 def _name_matches(name: str) -> list[str]:
-    """按判表书写次序，列出名称弱先验命中的全部类别。"""
+    """按判表书写次序，列出名称弱先验命中的全部类别。
+
+    归一走 `norm_name`（与生产同一份）：判类现在吃归一名，helper 吃原始名就会与生产
+    判断不同源，本文件的"多类命中"样本会挑错。
+    """
+    normed = norm_name(name)
     hit: list[str] = []
     for key, rule in CATEGORY_RULES.items():
-        if any(kw and kw in name for kw in rule["keywords"]):
+        if any(kw and kw in normed for kw in rule["keywords"]):
             hit.append(key)
     return hit
 
@@ -60,65 +68,43 @@ def test_multi_category_names_exist_in_real_samples():
     print(f"\n名称多类命中点位 {len(colliding)} 个：{printable}")
 
 
-def test_last_written_category_wins_today():
-    """**现状记录（缺陷本体）**：名称命中多类时，胜出者是**判表里写得最后**的那个。
+def test_ruling_is_independent_of_table_order():
+    """正向不变量：颠倒判表书写次序，裁决必须**不变**。
 
-    用真实点位说：农贸市场同时命中 market 与 shopping，今天判给 shopping ——
-    菜市场类被"书写更靠后"的购物类吃掉。
+    2026-09-29 由「反向对照」改写而来 —— 原用例断言"逆序就换一类"，那钉的是缺陷本体，
+    修法落地后它必然红（原用例自己的收尾语就是这么指示的）。现在钉的是同一处的契约：
+    名称多类命中归 `other`，与 `CATEGORY_RULES` 的书写次序无关。
+
+    换表用**整体替换对象**而非 `clear()+update()`：后者靠 in-place 改序，一旦哪天
+    `dict == dict` 的比较被拿来当"还原成功"的证据就会假还原（同 TC-43 harness 的教训）。
     """
-    for name in _fixture_names():
-        hit = _name_matches(name)
-        if len(hit) >= 2 and "农贸市场" in name:
-            got = evaluate_category({"name": name, "lng": 0, "lat": 0})[0]
-            assert got == hit[-1], f"裁决规则若已改，本用例判据须重指：{name} → {got}，命中次序 {hit}"
-            assert got != "market", (
-                f"{name} 已判给 market ⇒ 次序缺陷似已修，请删除本记录用例并把"
-                "test_multi_hit_is_treated_as_ambiguous 的缺口标记摘掉"
-            )
-            return
-    pytest.fail("两城样本里找不到带「农贸市场」的多类命中点位，前提事实变了 ⇒ 须重指判据")
+    candidates = [n for n in _fixture_names() if len(_name_matches(n)) >= 2 and "农贸市场" in n]
+    assert candidates, "样本里已不存在名称多类命中的「农贸市场」点位 ⇒ 前提消失，判据须重指"
+    name = candidates[0]
+    expected = evaluate_category({"name": name, "lng": 0, "lat": 0})
+    assert expected[0] == "other", f"多类命中未归 other：{name} → {expected}"
+
+    original = category_rule.CATEGORY_RULES
+    reversed_table = dict(reversed(list(original.items())))
+    assert list(reversed_table) != list(original), "判表键序对称 ⇒ 逆序等于正序，本用例无效力"
+    try:
+        category_rule.CATEGORY_RULES = reversed_table
+        flipped = evaluate_category({"name": name, "lng": 0, "lat": 0})
+    finally:
+        category_rule.CATEGORY_RULES = original
+    assert flipped == expected, (
+        f"{name}：正序 {expected}、逆序 {flipped} ⇒ 裁决重新被书写次序决定（R1-b 回潮）"
+    )
+    assert list(category_rule.CATEGORY_RULES) == list(original), "还原失败 ⇒ 会污染同批其它判类用例"
 
 
-def test_reversing_table_order_reverses_the_verdict():
-    """**反向对照**：只颠倒判表书写次序，同一句话就换一个类别。
-
-    没有这条，上面那条可能只是"shopping 恰好更专属性"的巧合。次序可逆 ⇒ 结论由
-    dict 顺序决定，而不是由语义决定 —— 这才是要修的根因。
-    """
-    reversed_table = dict(reversed(list(CATEGORY_RULES.items())))
-    for name in _fixture_names():
-        base = [k for k in CATEGORY_RULES if any(kw and kw in name for kw in CATEGORY_RULES[k]["keywords"])]
-        if len(base) < 2:
-            continue
-        last_normal, last_reversed = base[-1], list(reversed(base))[-1]
-        assert last_normal != last_reversed, "两类命中却同序 ⇒ 样本选得不对，换一条"
-        # 用生产函数逐点判：临时换掉注册表，**必须**在 finally 里还原
-        original = copy.deepcopy(CATEGORY_RULES)
-        try:
-            CATEGORY_RULES.clear()
-            CATEGORY_RULES.update(reversed_table)
-            flipped = evaluate_category({"name": name, "lng": 0, "lat": 0})[0]
-        finally:
-            CATEGORY_RULES.clear()
-            CATEGORY_RULES.update(original)
-        assert flipped == last_reversed, (
-            f"{name}：正序判 {last_normal}、逆序判 {flipped} ⇒ 若不再由次序决定，"
-            "本用例须改写为「裁决与次序无关」的正向断言"
-        )
-        return
-    pytest.fail("样本里已不存在名称多类命中的点位 ⇒ 前提消失，本文件判据须重指")
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="category_rule.py:144 的注释承诺「名称命中落在多类 → 归 other」，实现里没有多类计数",
-)
 def test_multi_hit_is_treated_as_ambiguous():
-    """缺口登记：名称多类命中必须按注释所说判为模糊（归 other / 或显式降置信并披露）。
+    """缺口登记 → 落地：名称多类命中按注释所说判为模糊（归 other、置信 low）。
 
-    修法定了之后本用例转绿 ⇒ 强制摘标记；同时 `test_residential_category_baseline.py`
-    的钉值会整组转红（因为 market/shopping 的归属真的会变），那是**显式基线变更**，
-    需要单独决策，不许就地改数。
+    原 docstring 预告 `test_residential_category_baseline.py` 的钉值会整组转红、需单独决策。
+    2026-09-29 实测**没有转红**（全量 2176 passed，基线 8 类 × 2 城逐条绿）—— 原因是那些
+    点位先被 `accept_tags` 路径裁掉，名称弱先验轮不到它们。所以那次"显式基线变更"的决策
+    并没有被触发；若将来重刷夹具使名称先验重新起作用，基线仍可能动，届时按原指示办。
     """
     name = next((n for n in _fixture_names() if "农贸市场" in n), None)
     assert name is not None, "样本里没有「农贸市场」点位，判据须重指"

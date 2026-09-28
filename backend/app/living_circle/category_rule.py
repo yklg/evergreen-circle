@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+from app.living_circle.facility_rule import norm_name
+
 # 置信度档位（rev3 §四A：evaluate_category 返回可解释置信度）
 CONFIDENCE = {"high": 0.9, "mid": 0.6, "low": 0.3}
 
@@ -127,15 +129,17 @@ def evaluate_category(
 
     tag = _norm(poi.get("tag", "") or "")
     typ = _norm(poi.get("type", "") or "")
-    name = _norm(poi.get("name", ""))
+    # 名称弱先验吃 `norm_name`（剥括号）而非只并空白的 `_norm`：括号里是**分店名/限定语**，
+    # 吃原始名等于让「博南口腔(拉薇公园店)」靠括号里的「公园」判成休闲 —— 跨类关键词注入。
+    # 归一必须是管线共用的那一份，判类自己再造一套就会与显示/实体归并漂移。
+    name = norm_name(poi.get("name", ""))
 
     # 降噪优先：命中杂讯 → 直接 other（低置信），不入类别。
     if any(no == tag for no in _NOISE_TAGS) or tag in _NOISE_TAGS:
         return "other", CONFIDENCE["low"]
 
     # 第一遍：标签裁决（服务属性优先）。reject 命中直接排除该类别。
-    best: Tuple[str, float] = ("other", CONFIDENCE["low"])
-    best_name_hit: str = ""
+    name_hits: List[str] = []
     for key, defn in rules.items():
         a_hit, r_hit = _tag_hit(tag or typ, defn["accept_tags"], defn["reject_tags"])
         if r_hit:
@@ -144,9 +148,12 @@ def evaluate_category(
             return key, CONFIDENCE["high"]
         # 名称弱先验：仅作 mid，不覆盖标签命中。
         if any(_norm(kw) in name for kw in defn["keywords"]):
-            best = (key, CONFIDENCE["mid"])
-            best_name_hit = key
+            name_hits.append(key)
     # 名称命中落在多类（模糊）→ 归 other，避免以名称拍脑袋（口径原则：名称仅弱先验）。
-    if best_name_hit:
-        return best
+    # 这里必须**计数**而不是「留最后一个」：单变量覆盖会让判定随判表的书写次序漂移，
+    # 而次序是文件里的排版细节，不是口径。
+    if len(name_hits) == 1:
+        return name_hits[0], CONFIDENCE["mid"]
+    if len(name_hits) > 1:
+        return "other", CONFIDENCE["low"]
     return "other", CONFIDENCE["low"]

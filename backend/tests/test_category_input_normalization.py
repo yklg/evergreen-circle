@@ -97,18 +97,22 @@ def test_the_unnormalized_input_defect_is_exactly_the_registered_four():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TC-41 / R1-a：判类吃原始 name，norm_name 只作用于显示与实体归并 ⇒ 括号里的分店名向判类注入跨类关键词",
-)
 def test_classification_input_is_normalized_like_the_rest_of_the_pipeline():
-    assert _divergent_names() == set(), f"仍因输入未归一而判类不同：{sorted(_divergent_names())}"
+    """TC-41 / R1-a 落地。
+
+    2026-09-29 重指判据：原来比的是**命中类集差异**（`_divergent_names()`）—— 那说的是
+    "括号里确实含跨类关键词"这一名称层事实，输入归一修好后它依然成立，继续拿它当缺陷判据
+    会把已修读成未修。现在钉契约本身：**喂原始名与喂归一名必须得到同一判定**。
+    """
+    divergent = {
+        name
+        for name in _fixture_names()
+        if evaluate_category({"name": name, "tag": ""})
+        != evaluate_category({"name": norm_name(name), "tag": ""})
+    }
+    assert divergent == set(), f"判类仍随输入是否归一而变：{sorted(divergent)[:5]}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TC-42 / R1-a：`博南口腔(拉薇公园店)` 现判 recreation —— 唯一命中的是括号里的「公园」，「口腔」不是任何类关键词",
-)
 def test_a_dental_clinic_is_not_classified_by_its_branch_name():
     category, confidence = evaluate_category({"name": "博南口腔(拉薇公园店)", "tag": ""})
     assert category != "recreation", f"分店名注入了跨类关键词：{category}/{confidence}"
@@ -137,16 +141,34 @@ def _verdicts_under_shuffles(name: str, rounds: int = 50) -> set:
     return verdicts
 
 
-def test_the_shuffle_harness_actually_flips_a_known_sample():
-    """敏感性对照：harness 翻不动已知样本，就说明下面那条不变性是恒真守卫。
+def test_the_shuffle_harness_still_has_teeth():
+    """对照的有效性自检：TC-43 不得是恒真守卫。
 
-    同时校验 `evaluate_category` 确实读模块全局（若它把表烧进了默认参数，本对照会红）。
+    2026-09-29 重指：R1-b 修好后「乱序下 verdict 会翻」这件事**不再成立**，原对照随之失效。
+    TC-43 要防的仍是同一个坑，所以这里改钉两点前提：
+    ① 样本确实**多类命中**，且命中类集的首末元素不同 —— 若实现退回"最后命中者胜"，
+       正序与逆序判表必然给出两个类别（对照有牙的证明，不靠生产码里留着缺陷来提供牙）；
+    ② 换掉模块全局判表真的能改判定 —— 否则说明 `evaluate_category` 把表烧进了默认参数，
+       harness 的注入路是假的，TC-43 只是在原地打转。
     """
     assert "新发地农贸市场" in ORDER_SENSITIVE_SAMPLES
     assert len(ORDER_SENSITIVE_SAMPLES) >= 3, "样本集被缩减 ⇒ 本对照与 TC-43 同时失去效力"
-    flipped = {n for n in ORDER_SENSITIVE_SAMPLES if len(_verdicts_under_shuffles(n)) > 1}
-    assert "新发地农贸市场" in flipped, (
-        "乱序 harness 无牙：名称弱先验并未随 CATEGORY_RULES 键序变化 ⇒ TC-43 的用例将恒真"
+    ambiguous = {n for n in ORDER_SENSITIVE_SAMPLES if len(_name_hits(CATEGORY_RULES, n)) >= 2}
+    assert "新发地农贸市场" in ambiguous, (
+        f"样本已不再多类命中（{sorted(ambiguous)}）⇒ 换样本，否则 TC-43 恒真"
+    )
+    for name in sorted(ambiguous):
+        hits = _name_hits(CATEGORY_RULES, name)
+        assert hits[0] != hits[-1], f"{name!r} 命中类集首末同为 {hits[0]} ⇒ 次序敏感读不出来，须换样本"
+
+    original = category_rule.CATEGORY_RULES
+    try:
+        category_rule.CATEGORY_RULES = {}
+        burned = evaluate_category({"name": "新发地农贸市场", "tag": ""})
+    finally:
+        category_rule.CATEGORY_RULES = original
+    assert burned[0] == "other", (
+        "清空判表却不改判定 ⇒ evaluate_category 没读模块全局，注入这条路是假的"
     )
 
 
@@ -156,10 +178,6 @@ def test_the_shuffle_harness_restores_the_key_order():
     assert list(CATEGORY_RULES) == before, "重排后未还原键序 —— 会污染同批其它判类用例"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TC-43 / R1-b：名称多类命中是「判表里最后写命中者胜」⇒ 判定随键序漂移，裁决规则未定",
-)
 def test_name_prior_verdicts_are_independent_of_rule_table_order():
     for name in ORDER_SENSITIVE_SAMPLES:
         verdicts = _verdicts_under_shuffles(name)
@@ -172,20 +190,28 @@ def test_the_documented_promise_is_still_in_the_source():
     assert "名称命中落在多类" in source, "category_rule.py 的承诺注释已改动 ⇒ 回到计划 §0 C-10 重指判据"
 
 
-def test_todays_behaviour_is_last_written_hit_wins():
-    """记录现状：实现返回的是判表里**更靠后**的那个命中类（与上一条注释的承诺相反）。
+def test_the_ruling_baseline_after_the_fix():
+    """落地后的裁决基线（由"记录现状"条重指而来）。
 
-    修好 R1-b（显式特异性或归 other）后本条会红，那是要你回来改基线，不是回归失败。
+    两半都要钉住，缺一半就会把修正在往错误方向跑读成绿：
+    ① 多类命中 ⇒ `other/low`（不再由判表书写次序决定）；
+    ② **单类命中仍归该类、仍给 mid** —— 反向对照。把"归 other"做成"名称先验一律不算数"
+       是过度收窄，那样 8 类点位会大面积塌成 other，本条会红。
     """
     order = list(CATEGORY_RULES)
     assert order.index("market") < order.index("shopping"), "判表书写次序已变，本条判据需重指"
-    assert evaluate_category({"name": "新发地农贸市场", "tag": ""})[0] == "shopping"
+    assert evaluate_category({"name": "新发地农贸市场", "tag": ""}) == ("other", CONFIDENCE["low"])
+
+    single = next(
+        (n for n in _fixture_names() if len(_name_hits(CATEGORY_RULES, norm_name(n))) == 1), None
+    )
+    assert single is not None, "样本里没有单类命中点位 ⇒ 无法证明未过度收窄，判据须重指"
+    hit = _name_hits(CATEGORY_RULES, norm_name(single))[0]
+    assert evaluate_category({"name": single, "tag": ""}) == (hit, CONFIDENCE["mid"]), (
+        f"{single!r} 单类命中 {hit} 却没被判给它 ⇒ 名称先验被过度收窄"
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TC-44 / C-10：`category_rule.py:144` 注释承诺「多类命中→归 other」，:141-146 实现是最后命中者胜",
-)
 def test_multi_category_name_hits_follow_the_documented_rule():
     assert evaluate_category({"name": "新发地农贸市场", "tag": ""})[0] == "other"
 

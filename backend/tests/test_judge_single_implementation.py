@@ -184,8 +184,11 @@ def test_the_probe_gets_its_delta_only_through_the_injection_seam():
     assert any(a != b for a, b in zip(before, after)), (
         "候选表一个点位都没改判 ⇒ 注入这条路没接上，delta 表将是假的零变化"
     )
-    index = names.index("博南口腔(拉薇公园店)")
-    assert after[index] == "scenic", (
+    # 2026-09-29 重指样本：原钉的是 `博南口腔(拉薇公园店)` → scenic，而那次改判**完全来自
+    # 括号里的「公园」** —— 正是 TC-41/42 修掉的跨类关键词注入。判类现在吃归一名，该样本
+    # 不再成立。换成命中在括号外的真实点位：`停车场` 属候选键 parking，默认表里没有这一类。
+    index = names.index("北京眼镜城-地上停车场")
+    assert after[index] == "parking", (
         f"已知点位 {names[index]!r} 未经候选表改判（实得 {after[index]}）"
     )
-    assert before[index] != "scenic", "默认表里已存在 scenic ⇒ 候选表并未新增类别"
+    assert before[index] != "parking", "默认表里已存在 parking ⇒ 候选表并未新增类别"
