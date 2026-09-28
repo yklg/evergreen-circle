@@ -4,7 +4,9 @@
 
 - FastAPI 对**未知 query 参数静默忽略** —— 收到 `?brand=` 不报错、不 4xx，只是**过滤条件
   整个消失**，用户看到的是「筛了，但没生效」；
-- pydantic 对**未声明 body 键静默丢弃**，若字段还带默认值，畸形 body 甚至能换回 200。
+- pydantic 对**未声明 body 键静默丢弃**，若字段还带默认值，畸形 body 甚至能换回 200
+  （这一半由阶段 0b 的 `extra="forbid"` 关掉；本文件仍钉键覆盖，因为 forbid 只挡未声明键、
+  挡不住"声明了但前端拼错值形状"）。
 
 两者都不炸，只让功能"看起来在跑"。这就是 `api.ts` 的 `brand` / `brands` 能潜伏到今天
 的原因（架构评审 v4 事实 10）：既有测试只钉**路由存在**（`test_api_surface_union.py`）与
@@ -12,9 +14,11 @@
 的键」—— 单边正确、两边脱节，正是这类事故的形状。
 
 2026-09-27 波次 A 第 3/5 步已收：`api.ts` 两处键名改对、`/api/evidences` 挂上
-`_reject_unknown_query_params` 闸。**仍欠一条**：`SubscriptionBody.destinations` 的默认值
-`[]` 未去（它会让"键名再次写错"表现为 200 + 零目的地，而不是 422），去默认值属契约变更、
-与既有 `test_subscriptions.py` 的一条已钉绿断言对撞，登记待拍。
+`_reject_unknown_query_params` 闸；同日阶段 0b 把 8 个请求体统一 `extra="forbid"`，
+"键名写错"从此在入口就 422。**仍欠一条**：`SubscriptionBody.destinations` 的默认值 `[]`
+未去 —— 只发 `{"query": ...}`（不带畸形键）仍然 200 建成一条零目的地订阅。去默认值属
+契约变更，与 `test_subscriptions.py::test_api_create_default_destinations_empty`
+（今天钉的就是这个默认值）直接对撞，登记待拍。
 
 写法沿用 `test_task_body_contract.py:33-59`：从 `api.ts` 真实源码取键、
 「解析不出键＝判据已与真实源脱节，宁可红，不空转」。
