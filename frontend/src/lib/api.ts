@@ -6,6 +6,7 @@ import type {
   EvidenceQueryResp,
   Expert,
   ExpertWorkload,
+  IntelOverview,
   LifeCircleCompare,
   LifeCircleMode,
   LifeCircleRecord,
@@ -318,9 +319,16 @@ export async function generateReportBrief(reportId: string): Promise<{ taskId: s
   return { taskId: data.taskId }
 }
 
-/* 仪表盘真实统计 */
+/* 仪表盘真实统计（侧栏专用：真分家后只有两个计数） */
 export async function fetchDashboard(): Promise<DashboardStats | null> {
   return safeJson<DashboardStats | null>('/api/dashboard', undefined, null)
+}
+
+/* 情报中心整屏聚合（报告中心「目的地调研」tab 的唯一数据源）。
+   与 fetchDashboard 的区别是刻意的：这里**不带兜底** —— 拿不到就是要显式失败，
+   兜底成空对象会把"后端挂了"渲染成"还没有调研情报"。 */
+export async function fetchIntel(): Promise<IntelOverview> {
+  return safeJson<IntelOverview>('/api/intel')
 }
 
 /* 全局证据溯源库 */
@@ -330,6 +338,8 @@ export async function fetchEvidences(params?: {
   min_cred?: number
   /** 证据归属过滤：'<rid>' = 仅该报告证据；不传 = 全部证据。 */
   report_id?: string
+  /** 分页偏移：与 limit 同用；证据列表的口径与图谱的全库口径是两件事。 */
+  offset?: number
 }): Promise<EvidenceQueryResp> {
   const qs = new URLSearchParams()
   // 参数名必须与后端 `evidences(destination=…)`（main.py）逐字一致：
@@ -339,6 +349,7 @@ export async function fetchEvidences(params?: {
   if (params?.source_type) qs.set('source_type', params.source_type)
   if (params?.min_cred != null) qs.set('min_cred', String(params.min_cred))
   if (params?.report_id != null) qs.set('report_id', params.report_id)
+  if (params?.offset != null) qs.set('offset', String(params.offset))
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
   // 失败显式抛出：空证据库与"取不到证据库"是两种可观察结果，不能压成一个。
   return safeJson<EvidenceQueryResp>(`/api/evidences${suffix}`)
@@ -365,7 +376,8 @@ export async function refineReportEvidence(
 
 /* 目的地持续追踪订阅 */
 export async function fetchSubscriptions(): Promise<Subscription[]> {
-  return safeJson<Subscription[]>('/api/subscriptions', undefined, [])
+  // 兜底成 [] 会把"订阅取不到"渲染成"你还没有订阅"——波次 B 摘掉（见 silentFallbackGuard 基线注记）
+  return safeJson<Subscription[]>('/api/subscriptions')
 }
 
 /** 键名与后端 `SubscriptionBody{query,destinations,type}` 逐字对齐。
@@ -394,7 +406,8 @@ export async function deleteSubscription(subId: string): Promise<{ ok: boolean }
 
 /* 专家工作量看板 */
 export async function fetchWorkload(): Promise<ExpertWorkload[]> {
-  return safeJson<ExpertWorkload[]>('/api/experts/workload', undefined, [])
+  // 同上：空看板与"取不到看板"是两种可观察结果，波次 B 摘掉兜底
+  return safeJson<ExpertWorkload[]>('/api/experts/workload')
 }
 
 /* SSE：监听任务流，返回关闭函数 */

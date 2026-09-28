@@ -80,16 +80,28 @@ def test_first_miss_then_hit_no_recompute(monkeypatch):
 
 
 def test_read_returns_deep_copy_not_cached_object():
-    """读返回深拷贝：修改返回值不污染缓存本体。"""
+    """读返回深拷贝：修改返回值不污染缓存本体。
+
+    本轮 dashboard 瘦到两个标量，这条若继续只钉 `dashboard_stats` 就**没有对象可改**
+    ——会静默空转（表现为绿，实为失去覆盖，评审 T2）。改钉 `intel_overview`：它仍带
+    platform_distribution / cards / destination_graph 三类可变结构。dashboard 侧保留
+    一次标量篡改回归位。
+    """
     _make_report("r_c2", evidence=[_ev("e_c2")])
+    i = db.intel_overview()
+    i["platform_distribution"]["douyin"] = 999
+    i["cards"][0]["title"] = "被改"
+    i["destination_graph"]["nodes"][0]["count"] = 999
+    i["destination_graph"]["nodes"].append({"destination": "伪造节点"})
+    again = db.intel_overview()
+    assert again["platform_distribution"]["douyin"] == 1
+    assert again["cards"][0]["title"].startswith("报告 r_c2")
+    assert again["destination_graph"]["nodes"][0]["count"] == 1
+    assert len(again["destination_graph"]["nodes"]) == 1
+
     s = db.dashboard_stats()
     s["reports"] = 999
-    s["platform_distribution"]["douyin"] = 999
-    s["research_cards"][0]["title"] = "被改"
-    again = db.dashboard_stats()
-    assert again["reports"] == 1
-    assert again["platform_distribution"]["douyin"] == 1
-    assert again["research_cards"][0]["title"].startswith("报告 r_c2")
+    assert db.dashboard_stats()["reports"] == 1
 
 
 # ── B-06-2：写路径失效钩子 ───────────────────────────────

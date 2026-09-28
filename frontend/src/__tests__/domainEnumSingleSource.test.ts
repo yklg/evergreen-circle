@@ -24,14 +24,22 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-const PAGES = join(process.cwd(), 'src', 'pages')
-const RECORD_INDEX = join(process.cwd(), 'src', 'lib', 'recordIndex.ts')
+const SRC = join(process.cwd(), 'src')
+const PAGES = join(SRC, 'pages')
+const RECORD_INDEX = join(SRC, 'lib', 'recordIndex.ts')
+const DOMAIN_VIEWS = join(SRC, 'lib', 'domainViews.ts')
 
 /** 由 DomainFamily 值构成的数组字面量，如 ['travel', 'living_circle'] */
 const DOMAIN_LITERAL_ARRAY = /\[\s*'(travel|living_circle)'(?:\s*,\s*'(?:travel|living_circle)')+\s*\]/
 
-function pageFiles(): string[] {
-  return readdirSync(PAGES).filter((f) => f.endsWith('.tsx')).sort()
+/** 递归收页面：双 tab 后视图住在 `pages/reports/`，只扫一层会让守卫漏掉真正的分叉处。 */
+function pageFiles(dir = PAGES, prefix = ''): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((e) => {
+      if (e.isDirectory()) return pageFiles(join(dir, e.name), join(prefix, e.name))
+      return e.name.endsWith('.tsx') ? [join(prefix, e.name)] : []
+    })
 }
 
 describe('域枚举只能有一个真相源', () => {
@@ -60,5 +68,41 @@ describe('域枚举只能有一个真相源', () => {
     expect(text).toMatch(/from '\.\/taskDomains'/)
     // 集合由注册表求 family 得到，而非抄一份常量（值级等价见 recordIndex.test.ts FE-40）
     expect(text).toMatch(/Object\.values\(TASK_DOMAINS\)\.map\(\(d\) => d\.family\)/)
+  })
+
+  /* ── 双 tab 改造新增：'all' 退场后，域分叉只能活在登记表里 ───────────── */
+
+  it('报告中心系页面（外壳 + pages/reports 各屏）不得再出现 all 过滤值', () => {
+    const files = pageFiles()
+    expect(files.length).toBeGreaterThan(8) // 宁可红，不空转：读不到页面就说明路径失效
+    // 范围只圈报告中心自己：`ExpertsPage.tsx` 的 'all' 是专家等级 tab，另一个维度
+    const domainFiles = files.filter((f) => f === 'ReportsPage.tsx' || f.startsWith('reports'))
+    expect(domainFiles.length).toBeGreaterThanOrEqual(2)
+    expect(domainFiles).toContain(join('reports', 'LivingCircleView.tsx'))
+    for (const f of domainFiles) {
+      const text = readFileSync(join(PAGES, f), 'utf8')
+      expect(
+        /['"]all['"]/.test(text),
+        `${f} 又写了一次"全部"过滤值 —— 混排列表是本轮拆掉的形状`,
+      ).toBe(false)
+    }
+  })
+
+  it('列表层的 normalizeRecordFilter 不可能返回 all', () => {
+    const text = readFileSync(RECORD_INDEX, 'utf8')
+    expect(/return\s+['"]all['"]/.test(text)).toBe(false)
+    expect(/RecordFilter\s*=\s*RecordDomain\s*\|/.test(text)).toBe(false)
+  })
+
+  it('外壳不出现按域 if/switch：视图与删除差异只允许登记在 domainViews', () => {
+    const shell = readFileSync(join(PAGES, 'ReportsPage.tsx'), 'utf8')
+    // 钉的是"与某个具体域字面量比较"；tab 自己的选中态（domain === d）不在此列
+    expect(/domain\s*===\s*['"]/.test(shell), '外壳里又出现了按域分支').toBe(false)
+    expect(/\bswitch\s*\(/.test(shell)).toBe(false)
+    expect(shell).toMatch(/DOMAIN_VIEWS\[/)
+    // 登记表必须真的承载差异（否则这条守卫只是自我确认）
+    const registry = readFileSync(DOMAIN_VIEWS, 'utf8')
+    expect(registry).toMatch(/living_circle:\s*\{[\s\S]*View: LivingCircleView/)
+    expect(registry).toMatch(/travel:\s*\{[\s\S]*View: ResearchIntelView/)
   })
 })

@@ -17,15 +17,18 @@ import { join } from 'node:path'
 
 const API_TS = join(process.cwd(), 'src', 'lib', 'api.ts')
 
-/** 2026-09-27 基线。波次 A 第 3 步去掉了 `fetchLifeCircleReports` / `fetchReports` 两项
- *  （归档列表的失败必须与"没有报告"可分辨，判据见 reportsPageErrorVsEmpty.test.tsx）；
- *  剩余三项是**已登记的债**：订阅列表与专家负载目前还没有活消费方，情报中心落地（波次 B）
- *  时要一并处理，届时本清单继续缩短 —— 清单缩短必须是有意的，故两向都钉。 */
+/** 2026-09-28 基线。波次 A 第 3 步去掉了 `fetchLifeCircleReports` / `fetchReports`；
+ *  波次 B（报告中心调研屏）落地时按此处的预告去掉了 `fetchSubscriptions` / `fetchWorkload`
+ *  —— 它们有了活消费方（调研屏 C6/C7），块级失败态必须能抛到页面上。
+ *  清单缩短是有意的，故两向都钉：本条判据在少一项时也会红。 */
 const BASELINE = new Set([
-  'fetchSubscriptions', // → /api/subscriptions：情报中心订阅列表（波次 B 处理）
-  'fetchWorkload',      // → /api/experts/workload（波次 B 处理）
   'getTaskStatus',      // → 任务状态列表
 ])
+
+/** 本轮新增的消费函数：一律不得带第 3 参兜底（前向判据，见计划 T6）。
+ *  基线只认「空数组兜底」这一族形状，`null`/对象兜底是它的自陈盲区 —— 那 6 条 legacy
+ *  另列独立债务，不与本波绑定；但新写的函数没有历史包袱，直接从零兜底起步。 */
+const NO_FALLBACK_ALLOWED = ['fetchIntel']
 
 /** 本守卫的覆盖面边界（写清楚，免得日后把它当成全能闸）：只认
  *  `safeJson<T>(url, undefined, [])` 这一族**空数组**兜底。`null` / 对象字面量兜底
@@ -62,5 +65,15 @@ describe('静默兜底清单（api.ts 列表类取数）', () => {
     const removed = [...BASELINE].filter((n) => !offenders.has(n))
     expect(added, `新增了静默兜底（失败会被洗成空列表）：${added.join(', ')}`).toEqual([])
     expect(removed, `兜底已被去掉：请同批把 ${removed.join(', ')} 移出基线，别留两套口径`).toEqual([])
+  })
+
+  it('本轮新增的消费函数一律零兜底（任何第 3 参形状都算违规）', () => {
+    const blocks = functionBlocks(readFileSync(API_TS, 'utf8'))
+    for (const name of NO_FALLBACK_ALLOWED) {
+      expect(blocks.has(name), `${name} 不在源里了：判据已与真实接缝脱节`).toBe(true)
+      const body = blocks.get(name) as string
+      const withFallback = body.match(/safeJson[^)]*,\s*undefined\s*,/)
+      expect(withFallback, `${name} 带了兜底：失败会被洗成"没有数据"`).toBeNull()
+    }
   })
 })

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>取证 · 目的地情报中心两屏（现状取证 / 落地形态模拟）</title>
+<style>
+  :root {
+    --bg:#f6f8f7; --card:#fff; --ink:#1d211f; --ink2:#5b6560; --ink3:#98a29d;
+    --line:#e3e8e5; --primary:#2f9d6e; --primary-deep:#1f7a54; --primary-tint:#e9f5ef;
+    --warn:#8a6420; --risk:#c2642e;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { background:var(--bg); font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif; color:var(--ink); line-height:1.6 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px }
+  .wrap { max-width:1180px; margin:0 auto; padding:18px 20px 120px }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; font-size:13px }
+  .box b { color:var(--warn) }
+  code { background:#f1f5f2; border-radius:4px; padding:0 4px; font-size:12px }
+
+  .screen { margin-bottom:34px }
+  .screen-title { font-size:17px; font-weight:700; margin:22px 0 12px; padding-left:11px; border-left:4px solid var(--primary) }
+  .screen-sub { font-size:12px; font-weight:400; color:var(--ink3); margin-left:10px }
+
+  /* 闸口标注规范：彩色描边 + 编号徽标 */
+  .fcp-change { position:relative; outline:3px solid #f59e0b; outline-offset:3px; border-radius:12px; background:rgba(245,158,11,.05); margin:14px 0; padding:4px }
+  .badge { position:absolute; top:-13px; left:10px; min-width:26px; height:24px; padding:0 7px; border-radius:999px; background:#f59e0b; color:#fff; font-size:12px; font-weight:700; display:inline-grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.22); z-index:9 }
+
+  .card-title { font-size:14px; font-weight:600; margin-bottom:10px }
+  .card-hint { font-size:12px; font-weight:400; color:var(--ink3); margin-left:8px }
+  .grid4 { display:grid; grid-template-columns:repeat(4,1fr); gap:14px }
+  .stat-card { padding:2px }
+  .num-line { display:flex; align-items:baseline; gap:3px }
+  .num-line span:first-child { font-size:26px; font-weight:700; font-family:'Songti SC','Noto Serif SC',serif }
+  .num-unit { font-size:12px; color:var(--ink2) }
+  .stat-label { font-size:12px; color:var(--ink2); margin-top:2px }
+
+  .bar-row { display:grid; grid-template-columns:150px 1fr 46px 220px; align-items:center; gap:10px; font-size:12px; margin:5px 0 }
+  .bar-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink) }
+  .bar-track { display:block; height:10px; border-radius:999px; background:#eef2f0; overflow:hidden }
+  .bar-fill { display:block; height:100%; border-radius:999px }
+  .bar-travel .bar-fill { background:var(--primary) }
+  .bar-lc .bar-fill { background:#4a89c8 }
+  .bar-count { text-align:right; font-variant-numeric:tabular-nums; color:var(--ink2) }
+  .bar-meta { color:var(--ink3); font-size:11.5px }
+
+  .stack { display:flex; height:26px; border-radius:8px; overflow:hidden; font-size:11px; color:#fff }
+  .seg { display:grid; place-items:center; white-space:nowrap }
+  .seg-权威一手 { background:#2f9d6e }
+  .seg-媒体报道 { background:#4a89c8 }
+  .seg-社媒口碑 { background:#d9a441 }
+  .insight { font-size:13px; margin-top:10px; color:var(--ink) }
+  .limit { font-size:12px; margin-top:9px; padding:8px 10px; border:1px solid rgba(194,100,46,.35); background:#fdf4ee; border-radius:8px; color:#8f5e56 }
+  .empty { font-size:13px; color:var(--ink2) }
+  .subs { font-size:12px; padding-left:18px }
+
+  /* C6 · 证据溯源库 + 订阅（源页为 2:1 双栏） */
+  .cols3 { display:grid; grid-template-columns:2fr 1fr; gap:16px; align-items:start }
+  .col2 { min-width:0 }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px }
+  .chip { font-size:11.5px; border:1px solid var(--line); background:#fafcfb; border-radius:999px; padding:2px 9px; color:var(--ink2) }
+  .chip-on { background:var(--primary); border-color:var(--primary); color:#fff }
+  .chip-type { background:#f1f5f2 }
+  .chip-sm { font-size:10.5px; padding:1px 7px }
+  .chip-dest { background:#fdf3e0; border-color:#f0dcb4; color:var(--warn) }
+  .chip-nodest { background:#fdf0ea; border-color:#f0d3c4; color:var(--risk) }
+  .feed { margin-top:10px; max-height:340px; overflow:auto; display:flex; flex-direction:column; gap:8px }
+  .ev { border:1px solid var(--line); border-radius:9px; padding:9px 11px; background:#fafcfb }
+  .ev-head { display:flex; gap:8px; align-items:flex-start }
+  .ev-title { font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .ev-ext { margin-left:auto; color:var(--ink3) }
+  .ev-excerpt { font-size:11.5px; color:var(--ink3); margin-top:3px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden }
+  .ev-meta { display:flex; align-items:center; gap:7px; margin-top:7px; font-size:11px; color:var(--ink3) }
+  .ev-domain { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .ev-cred { margin-left:auto; font-variant-numeric:tabular-nums }
+  .sub-hint { font-size:11.5px; color:var(--ink3) }
+  .sub-form { display:flex; gap:8px; margin-top:10px }
+  .sub-input { flex:1; height:36px; line-height:36px; border:1px solid var(--line); border-radius:8px; background:#fafcfb; padding:0 10px; font-size:12px; color:var(--ink3) }
+  .sub-btn { width:36px; height:36px; display:grid; place-items:center; border-radius:8px; background:var(--primary); color:#fff }
+
+  table.cmp { border-collapse:collapse; margin-top:4px; font-size:12px; width:100% }
+  table.cmp th, table.cmp td { border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top }
+  table.cmp th { background:#fafcfb; font-weight:600 }
+  .cell-name { max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .cell-note { color:var(--ink3) }
+  .expert { border:1px solid var(--line); border-radius:9px; padding:9px 10px }
+  .expert-name { font-size:13px; font-weight:600 }
+  .expert-meta { font-size:11.5px; color:var(--ink3); margin-top:2px }
+
+  .seg-legend { display:flex; gap:18px; margin-top:8px; font-size:12px; color:var(--ink2) }
+  .seg-legend b { color:var(--ink) }
+
+  /* 图例面板：随页排版在末尾整宽呈现（固定浮层会在长页截图里压住正文） */
+  .fcp-legend { position:static; z-index:auto; width:auto; max-height:none; overflow:visible; background:#11231c; color:#d9efe4; border-radius:12px; padding:14px 16px; margin:26px 0 0; font-size:11.5px; box-shadow:0 8px 26px rgba(0,0,0,.18) }
+  .fcp-legend ol { padding-left:0; list-style:none; columns:2; column-gap:26px }
+  .fcp-legend li { break-inside:avoid }
+  .legend-title { font-size:12px; font-weight:700; margin-bottom:8px }
+  .fcp-legend ol { padding-left:0; list-style:none }
+  .fcp-legend li { border-top:1px solid rgba(217,239,228,.16); padding:7px 0 }
+  .fcp-legend li:first-child { border-top:none }
+  .fcp-legend b { color:#ffd591 }
+  .fcp-legend div { opacity:.86; margin-top:2px }
+  .legend-foot { margin-top:9px; padding-top:9px; border-top:1px solid rgba(217,239,228,.16); opacity:.75 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>目的地情报中心 · 两屏预览（波次 B 前置取证）</h1>
+    <div class="sub">数据源：真实后端 <code>/api/dashboard</code> · <code>/api/evidences</code> · <code>/api/subscriptions</code> · <code>/api/experts/workload</code> · <code>/api/life-circle</code>；客户端函数取自 <code>src/lib/api.ts</code>（非夹具）。卡片用真实 <code>VCard</code>/<code>VCountUp</code>。</div>
+  </div>
+  <div class="wrap">
+    <div class="box">
+      这屏要拍的两件事：<b>① 生活圈 POI 要不要进 <code>evidences</code> 表</b>（屏 2 给了并排数字），
+      <b>② 这块屏回答"情报厚度"还是"体检覆盖"</b>（选项 2 生活圈口径 / 选项 3 双域切换）。
+      屏 1 的算法逐字复刻源页 <code>改造/frontend/src/pages/DashboardPage.tsx:87-139</code>，
+      所以它显出来的局限，就是这套算法搬到生产码后会带上的局限。
+    </div>
+    <div id="intel-root"></div>
+  </div>
+  <script type="module" src="/src/dev/intelCenterProbe.tsx"></script>
+</body>
+</html>

@@ -664,6 +664,18 @@ def dashboard():
     return db.dashboard_stats()
 
 
+# ── 情报中心（目的地调研域的整屏聚合）────────────────────
+@app.get("/api/intel")
+def intel():
+    """报告中心「目的地调研」tab 的唯一数据源。
+
+    与 `/api/dashboard` 分家的理由：侧栏只要两个计数，情报中心要图谱与概览卡。
+    合成一个端点就等于让每个侧栏轮询都付一次全量报告反序列化 —— 而聚合口径
+    仍只有一份（两者都出自 `db._agg_compute()` 的同一份缓存）。
+    """
+    return db.intel_overview()
+
+
 # ── 全局证据溯源库 ──────────────────────────────────────
 def _reject_unknown_query_params(request: Request) -> None:
     """拒收端点签名里没有的 query 参数。
@@ -693,13 +705,14 @@ def evidences(
     min_cred: float = 0.0,
     limit: int = 200,
     report_id: Optional[str] = None,
+    offset: int = 0,
     _: None = Depends(_reject_unknown_query_params),
 ):
     # report_id 过滤：不传 → 全部证据；'<rid>' → 仅该报告证据。
     # 参数校验闸挂在签名上：新增查询参数时白名单自动跟着走，无需两处同步。
     items = db.query_evidences(
         destination=destination, source_type=source_type, min_cred=min_cred,
-        limit=limit, report_id=report_id,
+        limit=limit, report_id=report_id, offset=offset,
     )
     return {"items": items, "facets": db.evidence_facets()}
 

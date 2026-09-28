@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>取证 · 生活圈 tab 两档形态（A 折叠成组 / B 一份一行加筛选与对比）</title>
+<style>
+  body { background:#f6f8f7 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px; line-height:1.5 }
+  .wrap { max-width:1180px; margin:0 auto; padding:18px 20px 120px }
+  .box { background:#fff; border:1px solid #e3e8e5; border-radius:10px; padding:14px 16px; margin:0 0 14px; font-size:13px; line-height:1.65; color:#1d211f }
+  .box b { color:#8a6420 }
+  code { background:#f1f5f2; border-radius:4px; padding:0 4px; font-size:12px; color:#1d211f }
+  .topbar code { background:rgba(217,239,228,.9); color:#11231c }
+
+  /* 闸口标注：彩色描边 + 编号徽标（与页内图例同源） */
+  .fcp-change { position:relative; outline:3px solid #f59e0b; outline-offset:3px; border-radius:12px; background:rgba(245,158,11,.05); margin:14px 0; padding:4px }
+  .badge { position:absolute; top:-13px; left:10px; min-width:26px; height:24px; padding:0 7px; border-radius:999px; background:#f59e0b; color:#fff; font-size:12px; font-weight:700; display:inline-grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.22); z-index:9 }
+
+  .fcp-legend { position:static; z-index:auto; width:auto; max-height:none; overflow:visible; background:#11231c; color:#d9efe4; border-radius:12px; padding:14px 16px; margin:34px 0 0; font-size:11.5px; line-height:1.6; box-shadow:0 8px 26px rgba(0,0,0,.18) }
+  .fcp-legend ol { padding-left:0; list-style:none; columns:2; column-gap:26px }
+  .fcp-legend li { break-inside:avoid; border-top:1px solid rgba(217,239,228,.16); padding:7px 0 }
+  .fcp-legend li:first-child { border-top:none }
+  .fcp-legend b { color:#ffd591 }
+  .fcp-legend div { opacity:.86; margin-top:2px }
+  .legend-title { font-size:12px; font-weight:700; margin-bottom:8px }
+  .legend-foot { margin-top:9px; padding-top:9px; border-top:1px solid rgba(217,239,228,.16); opacity:.75 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>生活圈 tab · 两档形态对照（步骤 0 取证，不改生产码）</h1>
+    <div class="sub">数据源：真实后端 <code>/api/life-circle</code>（经 Vite 代理），取数函数 <code>src/lib/api.ts · fetchLifeCircleReports</code>；行与统计带直接挂生产件 <code>components/RecordRow</code>、<code>components/RecordStatsStrip</code>，列表口径仍出自 <code>lib/recordIndex.ts</code>。样式 import 了 <code>src/index.css</code>，所以行外观就是线上外观。</div>
+  </div>
+  <div class="wrap">
+    <div class="box">
+      这屏只拍一件事：<b>生活圈 tab 用 A（同一样区折叠成组）还是 B（一份一行 + 城市/时间筛选 + 对比入口）</b>。
+      两档在同一页上下排列，同一批真实记录（15 份生活圈归档）分别渲染，滚动即得对照；
+      末尾 <b>L5</b> 那框是 A 的前置口径问题——分组键选「样区+城市」还是「只用样区名」，
+      两档分组数都算给你看了，差额来自库里的同名不同城，不是编的边界。
+      B 的对比入口有个跨模块前提写在同处：<code>ComparePage</code> 不读 URL 参数。
+    </div>
+    <div id="lc-tab-root"></div>
+  </div>
+  <script type="module" src="/src/dev/lcTabProbe.tsx"></script>
+</body>
+</html>

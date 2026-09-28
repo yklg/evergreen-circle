@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>取证 · 调研屏三处复刻（统计卡 / 概览卡 A·B·C / 专家榜）对照现状</title>
+<style>
+  body { background:#f6f8f7 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px; line-height:1.5 }
+  .wrap { max-width:1280px; margin:0 auto; padding:18px 20px 120px }
+  .box { background:#fff; border:1px solid #e3e8e5; border-radius:10px; padding:14px 16px; margin:0 0 14px; font-size:13px; line-height:1.65; color:#1d211f }
+  .box b { color:#8a6420 }
+  code { background:#f1f5f2; border-radius:4px; padding:0 4px; font-size:12px; color:#1d211f }
+  .topbar code { background:rgba(217,239,228,.9); color:#11231c }
+
+  /* 闸口标注：彩色描边 + 编号徽标（与页内图例同源） */
+  .fcp-change { position:relative; outline:3px solid #f59e0b; outline-offset:3px; border-radius:12px; background:rgba(245,158,11,.05); margin:14px 0; padding:4px }
+  .badge { position:absolute; top:-13px; left:10px; min-width:26px; height:24px; padding:0 7px; border-radius:999px; background:#f59e0b; color:#fff; font-size:12px; font-weight:700; display:inline-grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.22); z-index:9 }
+
+  .fcp-legend { position:static; z-index:auto; width:auto; max-height:none; overflow:visible; background:#11231c; color:#d9efe4; border-radius:12px; padding:14px 16px; margin:34px 0 0; font-size:11.5px; line-height:1.6; box-shadow:0 8px 26px rgba(0,0,0,.18) }
+  .fcp-legend ol { padding-left:0; list-style:none; columns:2; column-gap:26px }
+  .fcp-legend li { break-inside:avoid; border-top:1px solid rgba(217,239,228,.16); padding:7px 0 }
+  .fcp-legend li:first-child { border-top:none }
+  .fcp-legend b { color:#ffd591 }
+  .fcp-legend div { opacity:.86; margin-top:2px }
+  .legend-title { font-size:12px; font-weight:700; margin-bottom:8px }
+  .legend-foot { margin-top:9px; padding-top:9px; border-top:1px solid rgba(217,239,228,.16); opacity:.75 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>调研屏样式复刻 · 五段同宽长图（步骤 0 取证，不改生产码）</h1>
+    <div class="sub">数据源：真实后端 <code>/api/intel</code> 与 <code>/api/experts/workload</code>（经 Vite 代理），取数函数 <code>src/lib/api.ts · fetchIntel / fetchWorkload</code>，不用夹具。样式 import 了 <code>src/index.css</code>，所以卡外观就是线上组件的外观。<b>S1</b> 是现状基线（class 逐条抄自 <code>pages/reports/ResearchIntelView.tsx</code>），<b>S2/S3/S4</b> 照搬参考图源页 <code>52b0199:frontend/src/pages/DashboardPage.tsx</code> 的三处形状；<b>S3</b> 内同宽连排 A 全画 / B 只画 9 张+显式截断说明+展开全部 / C 只画 9 张+容器内滚。截图参数 <code>?view=all|now|stats|cards|experts</code>、<code>?expand=1</code>。</div>
+  </div>
+  <div class="wrap">
+    <div class="box">
+      这屏要拍的是<b>复刻成参考图样式之后的实际形状与代价</b>，不是"要不要好看"：
+      统计卡换面不换口径（目的地数仍是全库图谱节点数）；概览从 7 列表格变 3 列卡片，
+      于是"25 份全画"和"只画 9 份但要让人知道还有 16 份"成了真取舍 ——
+      注意真实 <code>cards_truncated</code> 当前为 <b>false</b>，B/C 两档的「只画 9 张」是本页<b>演示</b>，
+      看的是"若真截断，说明该摆在哪"。专家榜换面时层级徽标用现成 <code>VChip neutral</code>，
+      不新增第三套 L1/L2/L3 配色。本探针不写库、不删记录，删除按钮只占位。
+    </div>
+    <div id="overview-cards-root"></div>
+  </div>
+  <script type="module" src="/src/dev/overviewCardsProbe.tsx"></script>
+</body>
+</html>

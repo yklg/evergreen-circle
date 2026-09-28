@@ -986,6 +986,7 @@ def query_evidences(
     min_cred: float = 0.0,
     limit: int = 200,
     report_id: Optional[str] = None,
+    offset: int = 0,
 ) -> List[Dict[str, Any]]:
     """全局证据溯源库查询。
 
@@ -1005,13 +1006,62 @@ def query_evidences(
     if source_type:
         sql += " AND source_type=?"
         args.append(source_type)
-    sql += " ORDER BY credibility DESC, captured_at DESC LIMIT ?"
-    args.append(limit)
+    sql += " ORDER BY credibility DESC, captured_at DESC LIMIT ? OFFSET ?"
+    args.extend([limit, offset])
     return [dict(r) for r in c.execute(sql, args).fetchall()]
 
 
-def evidence_facets() -> Dict[str, Any]:
-    """证据库聚合：平台分布 / 目的地分布 / 总量。"""
+def destination_graph() -> Dict[str, Any]:
+    """目的地情报图谱：全库按 `destination` 聚合，**无缓存纯 SQL**。
+
+    调用形状是硬约束，不要"顺手"改成走 `_AGG_CACHE` / `intel_overview()`：
+    `/api/evidences` 每个请求都要 facets 的目的地分布，一旦这里去取整包聚合，
+    等于每次查证据都反序列化 ≤60 份报告 JSON（`_agg_compute` 的 cards 段）。
+    反向复用由调用方传参完成 —— `evidence_facets(graph=...)`。
+
+    `unattributed` 显式报数：证据行没有目的地归属时，过去是两处各自 `continue`
+    把它隐式抹掉（facets 的 SQL 排除空 + 情报页跳过空键），于是"63% 证据无目的地"
+    这件事在 UI 上根本不存在。图谱把它算成一个字段，消费方再也藏不住。
+    """
+    c = _connect()
+    rows = c.execute(
+        "SELECT destination, COUNT(*) AS n, GROUP_CONCAT(DISTINCT source_type) AS st,"
+        " AVG(credibility) AS avg_cred, MAX(captured_at) AS last_at"
+        " FROM evidences GROUP BY destination"
+    ).fetchall()
+    nodes: List[Dict[str, Any]] = []
+    scanned = 0
+    unattributed = 0
+    for r in rows:
+        scanned += r["n"]
+        if not r["destination"]:
+            unattributed = r["n"]
+            continue
+        nodes.append(
+            {
+                "destination": r["destination"],
+                # domain/source 是给「生活圈 POI 要不要进 evidences」留的形状：
+                # 换输入源时节点形状与消费方都不动，不必二次重构。
+                "domain": "travel",
+                "source": "evidences",
+                "count": r["n"],
+                "source_types": sorted((r["st"] or "").split(",")),
+                "avg_credibility": round(float(r["avg_cred"] or 0.0), 1),
+                "last_at": r["last_at"],
+            }
+        )
+    # 确定性名次：并列计数按目的地名升序，截断结果不随实现换血
+    nodes.sort(key=lambda n: (-n["count"], n["destination"]))
+    return {"nodes": nodes, "unattributed": unattributed, "scanned": scanned}
+
+
+def evidence_facets(graph: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """证据库聚合：平台分布 / 目的地分布 / 总量。
+
+    目的地分布**从 `destination_graph()` 派生**，不再自己写第二条 GROUP BY ——
+    同一事实两份 SQL 会漂成两个口径（评审 R1）。`graph` 由 `_agg_compute()` 传入
+    以复用整包已算好的那份；独立调用时自算一次（一条 GROUP BY 的成本，不触缓存）。
+    """
     c = _connect()
     total = c.execute("SELECT COUNT(*) n FROM evidences").fetchone()["n"]
     by_type = {
@@ -1020,13 +1070,8 @@ def evidence_facets() -> Dict[str, Any]:
             "SELECT source_type, COUNT(*) n FROM evidences GROUP BY source_type"
         ).fetchall()
     }
-    by_destination = {
-        r["destination"]: r["n"]
-        for r in c.execute(
-            "SELECT destination, COUNT(*) n FROM evidences"
-            " WHERE destination!='' GROUP BY destination ORDER BY n DESC LIMIT 12"
-        ).fetchall()
-    }
+    g = graph if graph is not None else destination_graph()
+    by_destination = {n["destination"]: n["count"] for n in g["nodes"][:12]}
     return {"total": total, "by_type": by_type, "by_destination": by_destination}
 
 
@@ -1052,16 +1097,19 @@ def invalidate_aggregates() -> None:
 
 
 def _agg_compute() -> Dict[str, Any]:
-    """一次算齐 dashboard + intel 聚合（缓存缺失时重建；返回新结构，不耦合缓存本体）。"""
+    """一次算齐 intel 聚合（缓存缺失时重建；返回新结构，不耦合缓存本体）。
+
+    dashboard 段自本轮起只剩侧栏真正消费的两个数（`layout/VSidebar.tsx` 读
+    `reports` + `evidence_total`）：其余 11 个键此前没有任何生产消费者，却每次都
+    拖着全量报告反序列化 —— 真分家就是把"仪表盘"和"情报中心"两份口径拆开。
+    """
     c = _connect()
     reports = c.execute("SELECT COUNT(*) n FROM reports").fetchone()["n"]
     ev_total = c.execute("SELECT COUNT(*) n FROM evidences").fetchone()["n"]
     claim_total = c.execute("SELECT COALESCE(SUM(claim_count),0) n FROM reports").fetchone()["n"]
     high_total = c.execute("SELECT COALESCE(SUM(high_conf_count),0) n FROM reports").fetchone()["n"]
-    avg_ev = round(ev_total / reports, 1) if reports else 0
-    # 真实事实准确率 = 高置信结论占比
-    fact_rate = round(high_total / claim_total * 100) if claim_total else 0
-    facets = evidence_facets()
+    graph = destination_graph()
+    facets = evidence_facets(graph=graph)
 
     # intel_overview：跨报告聚合真实业务指标 + 每次调研的概览卡（供情报中心）
     rows = c.execute(
@@ -1107,27 +1155,28 @@ def _agg_compute() -> Dict[str, Any]:
             "tokens_used": eff.get("tokens_used"),
         })
     intel = {
+        "report_total": reports,
+        "evidence_total": ev_total,
+        "claim_total": claim_total,
+        "high_conf_total": high_total,
+        "avg_evidence_per_report": round(ev_total / reports, 1) if reports else 0,
+        # 真实事实准确率 = 高置信结论占比
+        "fact_accuracy": round(high_total / claim_total * 100) if claim_total else 0,
         "minutes_saved": round(minutes_saved, 1),
         "avg_efficiency": round(sum(eff_list) / len(eff_list), 1) if eff_list else 0,
         "avg_coverage": round(sum(cov_list) / len(cov_list), 1) if cov_list else 0,
         "total_tokens": total_tokens,
         "cards": cards,
+        # 概览卡受 LIMIT 60 约束：总数与卡片数同源报出，截断必须对用户可见，
+        # 否则"共 26 份 / 表只 60 行"这类自相矛盾会重演本轮要消灭的截断样本形状。
+        "cards_truncated": len(cards) < reports,
+        "destination_graph": graph,
+        "platform_distribution": facets["by_type"],
     }
     return {
         "dashboard": {
             "reports": reports,
             "evidence_total": ev_total,
-            "claim_total": claim_total,
-            "high_conf_total": high_total,
-            "avg_evidence_per_report": avg_ev,
-            "fact_accuracy": fact_rate,
-            "platform_distribution": facets["by_type"],
-            "destination_distribution": facets["by_destination"],
-            "minutes_saved": intel["minutes_saved"],
-            "avg_efficiency": intel["avg_efficiency"],
-            "avg_coverage": intel["avg_coverage"],
-            "total_tokens": intel["total_tokens"],
-            "research_cards": intel["cards"],
         },
         "intel": intel,
     }

@@ -2,6 +2,7 @@ import type {
   ReactNode,
   ButtonHTMLAttributes,
   HTMLAttributes,
+  ComponentType,
   KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion'
@@ -440,6 +441,94 @@ export function VCombobox({
         ▾
       </button>
       {panel}
+    </div>
+  )
+}
+
+/* ── 统计卡 VStatCard（全仓唯一一份「数字 + 标签 + 口径说明」的卡面） ──
+ *
+ * 为什么要有它：同一形状的统计卡原先有**两份私有实现** —— `RecordStatsStrip.tsx`
+ * 的 `StatBlock`（生活圈统计带）与 `pages/reports/ResearchIntelView.tsx` 的 `Stat`
+ * （调研屏八块）。照参考图再抄一遍就是第三份 ⇒ "把数字字号调一档"要改三处。
+ *
+ * `surface` 三值不是审美枚举，是**现存三种面的清单**：`vcard`=源页 StatCard 面
+ * （VCard，p-6 带阴影）· `tile`=仓内既有面（p-4 带阴影）· `flat`=源页 ImpactCard 面
+ * （p-4 无阴影）。少一个值，收敛时就会被动改掉某一屏的像素。
+ *
+ * 口径说明的摆法跟着面走、不另开开关：`vcard` 摊在卡面上，`tile`/`flat` 留在 `title`
+ * —— 换面就是换"要不要占卡高"，这两条路径各自都有屏在用。
+ *
+ * ⚠️ `countUp` 会**取整**（`VCountUp` 内部 `Math.round`）⇒ 带小数的口径
+ * （11.1 小时、29.8×）必须关掉，否则数字被动画洗成整数。jsdom 里它首帧还是 0，
+ * 所以数值判据也只允许落在 `countUp={false}` 这一支上。
+ */
+const STAT_FACE = {
+  vcard: {
+    icon: 'grid h-9 w-9 place-items-center rounded-btn bg-primary-tint',
+    numRow: 'mt-3 flex items-end gap-0.5',
+    num: 'font-serif text-[32px] leading-none text-ink',
+    unit: 'mb-1 text-h3 text-ink-2',
+    label: 'mt-1 text-aux font-medium text-ink',
+  },
+  tile: {
+    icon: 'grid h-8 w-8 place-items-center rounded-btn bg-primary-tint',
+    numRow: 'mt-2.5 flex items-end gap-0.5',
+    num: 'font-serif text-[26px] leading-none text-ink',
+    unit: 'mb-0.5 text-aux text-ink-2',
+    label: 'mt-1 text-tag font-medium text-ink-2',
+  },
+  flat: {
+    icon: 'grid h-8 w-8 place-items-center rounded-btn bg-primary-tint',
+    numRow: 'mt-2.5 flex items-end gap-0.5',
+    num: 'font-serif text-[26px] leading-none text-ink',
+    unit: 'mb-0.5 text-aux text-ink-2',
+    label: 'mt-1 text-tag font-medium text-ink-2',
+  },
+} as const
+
+export function VStatCard({
+  icon: Icon,
+  value,
+  label,
+  tip,
+  unit,
+  color = 'text-primary',
+  surface = 'tile',
+  countUp = false,
+}: {
+  icon?: ComponentType<{ size?: number }>
+  value: number
+  label: string
+  tip: string
+  unit?: string
+  color?: string
+  surface?: keyof typeof STAT_FACE
+  countUp?: boolean
+}) {
+  const face = STAT_FACE[surface]
+  const body = (
+    <>
+      {Icon && (
+        <span className={`${face.icon} ${color}`}>
+          <Icon size={surface === 'vcard' ? 18 : 16} />
+        </span>
+      )}
+      <div className={Icon ? face.numRow : 'flex items-end gap-0.5'}>
+        <span className={face.num}>{countUp ? <VCountUp value={value} /> : value}</span>
+        {unit && <span className={face.unit}>{unit}</span>}
+      </div>
+      <div className={face.label}>{label}</div>
+      {surface === 'vcard' && <p className="mt-1 text-tag leading-relaxed text-ink-3">{tip}</p>}
+    </>
+  )
+  if (surface === 'vcard') return <VCard hover={false}>{body}</VCard>
+  const wrap =
+    surface === 'tile'
+      ? 'rounded-card border border-line/60 bg-card p-4 shadow-card'
+      : 'rounded-card border border-line/60 bg-bg p-4'
+  return (
+    <div className={wrap} title={tip}>
+      {body}
     </div>
   )
 }

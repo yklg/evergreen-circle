@@ -53,6 +53,9 @@ REQUIRED_ROUTES: set[tuple[str, str]] = {
     ("PUT", "/api/prefs"),
     # 仪表盘 / 订阅 / 搜索
     ("GET", "/api/dashboard"),
+    # 报告中心双 tab 改造：情报中心整屏聚合独立成端点（dashboard 已瘦到两键，
+    # 两者不再共用一份重载荷）。注册进本清单，防后续树合并选边时静默丢掉。
+    ("GET", "/api/intel"),
     ("GET", "/api/subscriptions"),
     ("POST", "/api/subscriptions"),
     ("DELETE", "/api/subscriptions/{sub_id}"),

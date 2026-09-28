@@ -407,21 +407,51 @@ export interface ResearchCard {
   tokens_used?: number | null
 }
 
+/** 侧栏仪表盘：真分家后只剩这两个计数（其余口径全部搬进 `IntelOverview`）。
+ *  多一个键就意味着侧栏轮询要付一次全量报告反序列化，判据见后端 `test_dashboard_stats.py`。 */
 export interface DashboardStats {
   reports: number
+  evidence_total: number
+}
+
+/** 目的地情报图谱节点（后端 `db.destination_graph()`，全库口径、非样本）。 */
+export interface DestinationGraphNode {
+  destination: string
+  /** 换源形状：生活圈 POI 若进 evidences，只换输入源，节点与消费方不动 */
+  domain: string
+  source: string
+  count: number
+  source_types: string[]
+  /** 0–100 直读，任何一层都不得再乘 100 */
+  avg_credibility: number
+  last_at: string | null
+}
+
+export interface DestinationGraph {
+  nodes: DestinationGraphNode[]
+  /** 没有目的地归属的证据行数：显式报数，不再被两层 continue 隐式抹掉 */
+  unattributed: number
+  scanned: number
+}
+
+/** 报告中心「目的地调研」tab 的整屏数据源（`GET /api/intel`）。 */
+export interface IntelOverview {
+  report_total: number
   evidence_total: number
   claim_total: number
   high_conf_total: number
   avg_evidence_per_report: number
   fact_accuracy: number
   platform_distribution: Record<string, number>
-  destination_distribution: Record<string, number>
-  // 业务闭环聚合（真实，来自各报告 metrics）
-  minutes_saved?: number
-  avg_efficiency?: number
-  avg_coverage?: number
-  total_tokens?: number
-  research_cards?: ResearchCard[]
+  destination_graph: DestinationGraph
+  // 业务闭环聚合（后端 _agg_compute 恒发，故为必填：可选化只会让消费方各自兜底）
+  minutes_saved: number
+  avg_efficiency: number
+  avg_coverage: number
+  total_tokens: number
+  cards: ResearchCard[]
+  /** 概览卡受后端 LIMIT 约束时，卡上必须写明"仅列最近 N 份（库内共 M 份）" */
+  cards_truncated: boolean
 }
 
 /* 全局证据溯源库 */
