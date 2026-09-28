@@ -6,8 +6,12 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # 分支名白名单 = 名单外的整条分支从不被看守。实测：`merge/travel-upgrade` 上连着
+    # 若干个提交没跑过 typecheck/build，其中 4 个提交的 `npm run build` 其实是红的
+    # （TS2339/TS18048 卡住构建）却无人发现。故改为对所有分支生效。
+    branches: ['**']
   pull_request:
+  workflow_dispatch: # 允许在 Actions 页面对任意分支手动触发一次
 
 jobs:
   backend:

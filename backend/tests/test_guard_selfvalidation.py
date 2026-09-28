@@ -92,3 +92,30 @@ def test_gv_ci_api_runtime_check_step_declares_its_subject():
             f"引用 ../api 却没有存在性判据的 step（会静默导入 backend 自己）：\n{block}"
         )
     assert checked, "CI 里已不存在引用 ../api 的 step —— 本用例可随该 step 一起删除"
+
+
+def test_gv_ci_push_trigger_is_not_a_branch_name_whitelist():
+    """CI 的 push 触发若靠**手维护的分支名白名单**，名单外的分支就从不被看守。
+
+    实测代价：`merge/travel-upgrade` 上连续多个提交从未跑过 `npm run typecheck` / `build`，
+    其中 4 个提交的构建其实早已红（TS2339/TS18048 卡死 `tsc && vite build`），
+    直到有人手动跑了一次才发现 —— "没人报警"与"没有东西在报"是两件事。
+    所以这里既查触发面（不再枚举分支名），也查被看守的东西还在（否则改触发面是空动作）。
+    """
+    yml = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    push = re.search(r"^on:\n(?:.*\n)*?  push:\n((?:    .*\n)+)", yml, re.MULTILINE)
+    assert push, "ci.yml 里找不到 `on.push` 块 —— 触发面无法核对，本用例必须变红而不是跳过"
+    block = push.group(1)
+    assert "branches: ['**']" in block or 'branches: ["**"]' in block, (
+        f"`on.push.branches` 又回到分支名白名单 ⇒ 名单外的分支不被 CI 看守：\n{block}"
+    )
+    assert "workflow_dispatch" in yml, "缺少手动触发入口 ⇒ 历史分支只能靠重新 push 才能验一次"
+    # 被看守的东西必须真在：前端 job 里 typecheck 与 build 两步都不可少
+    for step in ("npm run typecheck", "npm run build"):
+        assert step in yml, f"CI 不再执行 `{step}` —— 上面那条触发面断言就失去意义了"
+    # 反向：真判据用的配置必须是**做检查的那份**（`tsconfig.json` 是 files:[] 的 solution 文件，
+    # 对它跑 tsc 一个文件都不检查、永远绿）
+    pkg = (_ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+    assert "tsconfig.app.json" in pkg and "tsc --noEmit -p tsconfig.json" not in pkg, (
+        "`typecheck`/`build` 脚本若指向 tsconfig.json，CI 会拿到恒真的绿"
+    )

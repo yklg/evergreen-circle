@@ -2,6 +2,10 @@
 # ⚠️ 本文件是它的**子集**，不是等价镜像：只有 backend + frontend 两个 job，
 # 不含真源里的 `api/` 运行时校验 step 与 docker 构建 job（2026-09-26 实测确认）。
 # 旧注释写「保持一致的镜像」是假的 —— 改真源时若有意不跟到这里，请在本行补一句说明差异与理由。
+# 2026-09-29 差异：真源把 push 触发改成 `branches: ['**']` + `workflow_dispatch`（分支名白名单
+#   会让名单外的分支从不被看守）；本侧仍留 master/main 白名单 —— 理由：仓库当前**没有 Gitee 远端**
+#   （`git remote -v` 只有 github），此文件实为惰性配置，且 Gitee Go 的通配符支持在本机无法验证，
+#   不拿未验证的语法冒充防线。接 Gitee 时再一并改。
 # 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
 # 配置入口：Gitee 仓库 → 流水线（Gitee Go）→ 新建流水线 → 选择本文件。
 version: '1.0'
