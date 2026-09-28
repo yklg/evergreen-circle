@@ -5,7 +5,7 @@
  * 内容源仍是 chapterMapLeaves（② 精简要点档）—— 只换皮、不换内容规则。
  *
  * 纯 SVG：无依赖、换行按 CJK/ASCII 分别估宽、打印分页安全。
- * 颜色走 CSS 变量（--verda-*），跟随主题。
+ * 颜色走 CSS 变量（--c-*），跟随主题。
  */
 import { useState } from 'react'
 import type { MapBranch } from '../lib/chapterMap'
@@ -23,11 +23,11 @@ const LINE_UNIT = Math.floor((LEAF_W - 20) / FT) // 每行可容纳的宽度单�
 const MAX_LINES = 2
 
 const BRANCH_COLOR: Record<string, string> = {
-  takeaway: '--verda-primary-deep',
-  highlights: '--verda-warn',
-  claims: '--verda-ok',
-  data: '--verda-primary',
-  fallback: '--verda-ink-3',
+  takeaway: '--c-primary-deep',
+  highlights: '--c-warn',
+  claims: '--c-ok',
+  data: '--c-primary',
+  fallback: '--c-ink-3',
 }
 
 /** 宽度估行：CJK/全角算 1 单位，ASCII 算 0.56；超出 maxLines 时末行尾加省略号 */
@@ -135,8 +135,8 @@ export function ChapterMindmapSvg({
           width={ROOT_W}
           height={rH}
           rx={9}
-          fill={v('--verda-card')}
-          stroke={v('--verda-primary')}
+          fill={v('--c-card')}
+          stroke={v('--c-primary')}
           strokeWidth={1.2}
         />
         {rootLines.map((l, i, a) => (
@@ -147,7 +147,7 @@ export function ChapterMindmapSvg({
             textAnchor="middle"
             fontSize={10.5}
             fontWeight={600}
-            fill={v('--verda-ink')}
+            fill={v('--c-ink')}
           >
             {l}
           </text>
@@ -182,7 +182,7 @@ export function ChapterMindmapSvg({
               width={BR_W}
               height={nodeH}
               rx={6}
-              fill={v('--verda-card')}
+              fill={v('--c-card')}
               stroke={color}
               strokeWidth={1.1}
             />
@@ -199,14 +199,14 @@ export function ChapterMindmapSvg({
               textAnchor="end"
               fontSize={9.5}
               fontFamily="ui-monospace, Menlo, monospace"
-              fill={v('--verda-ink-3')}
+              fill={v('--c-ink-3')}
             >
               {b.leaves.length}
             </text>
           )
           if (b.note) {
             els.push(
-              <text key={`bn-${bi}`} x={xBr + 8} y={nodeTop + 24} fontSize={9} fill={v('--verda-ink-3')}>
+              <text key={`bn-${bi}`} x={xBr + 8} y={nodeTop + 24} fontSize={9} fill={v('--c-ink-3')}>
                 {b.note.length > 11 ? b.note.slice(0, 10) + '…' : b.note}
               </text>
             )
@@ -233,8 +233,8 @@ export function ChapterMindmapSvg({
                 width={LEAF_W}
                 height={p.h}
                 rx={6}
-                fill={v('--verda-bg')}
-                stroke={v('--verda-line')}
+                fill={v('--c-bg')}
+                stroke={v('--c-line')}
                 strokeWidth={1}
               />,
               <rect
@@ -255,7 +255,7 @@ export function ChapterMindmapSvg({
                   x={xLeaf + 10}
                   y={ly + LEAF_PAD + (i2 + 1) * LEAF_LH - 4}
                   fontSize={FT}
-                  fill={v('--verda-ink-2')}
+                  fill={v('--c-ink-2')}
                 >
                   {ln}
                   {i2 === 0 && leaf.raw && leaf.raw.length > leaf.text.length && (
@@ -271,7 +271,7 @@ export function ChapterMindmapSvg({
                   x={xLeaf + 10}
                   y={ly + p.h - 5}
                   fontSize={9}
-                  fill={v('--verda-ok')}
+                  fill={v('--c-ok')}
                 >
                   ✓ {leaf.badge}
                 </text>
@@ -288,7 +288,7 @@ export function ChapterMindmapSvg({
                 x={xLeaf + 10}
                 y={ly + 4 + 10}
                 fontSize={10}
-                fill={v('--verda-primary-deep')}
+                fill={v('--c-primary-deep')}
                 style={{ cursor: 'pointer' }}
                 onClick={() => toggle(b.key)}
               >

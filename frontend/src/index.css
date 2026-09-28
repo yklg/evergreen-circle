@@ -4,28 +4,28 @@
 
 :root {
   /* 主色 —— 莫兰迪鼠尾草绿 */
-  --verda-primary: #7c9885;
-  --verda-primary-soft: #a8c0a8;
-  --verda-primary-tint: #eaf1ea;
-  --verda-primary-deep: #5e7a66;
+  --c-primary: #7c9885;
+  --c-primary-soft: #a8c0a8;
+  --c-primary-tint: #eaf1ea;
+  --c-primary-deep: #5e7a66;
 
   /* 春日暖阳 */
-  --verda-sun: #f4e2b8;
-  --verda-sun-soft: #fbf6e9;
+  --c-sun: #f4e2b8;
+  --c-sun-soft: #fbf6e9;
 
   /* 墨色文字（禁纯黑白） */
-  --verda-ink: #3a413c;
-  --verda-ink-2: #6b746c;
-  --verda-ink-3: #9aa39c;
-  --verda-line: #e3e8e3;
-  --verda-bg: #fafbf9;
-  --verda-card: #ffffff;
+  --c-ink: #3a413c;
+  --c-ink-2: #6b746c;
+  --c-ink-3: #9aa39c;
+  --c-line: #e3e8e3;
+  --c-bg: #fafbf9;
+  --c-card: #ffffff;
 
   /* 语义色 */
-  --verda-ok: #8ab58a;
-  --verda-warn: #e0b775;
-  --verda-risk: #ce9a92;
-  --verda-info: #8fa8c0;
+  --c-ok: #8ab58a;
+  --c-warn: #e0b775;
+  --c-risk: #ce9a92;
+  --c-info: #8fa8c0;
 
   /* 圆角 */
   --r-card: 16px;
@@ -55,8 +55,8 @@
 
   body {
     margin: 0;
-    background: var(--verda-bg);
-    color: var(--verda-ink);
+    background: var(--c-bg);
+    color: var(--c-ink);
     font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
     font-size: 15px;
     line-height: 1.7;
@@ -67,11 +67,11 @@
   h1, h2, h3 {
     font-weight: 600;
     letter-spacing: -0.01em;
-    color: var(--verda-ink);
+    color: var(--c-ink);
   }
 
   ::selection {
-    background: var(--verda-primary-tint);
+    background: var(--c-primary-tint);
   }
 
   /* 全站统一缓动 */
@@ -84,11 +84,11 @@
     height: 8px;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--verda-line);
+    background: var(--c-line);
     border-radius: 999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--verda-primary-soft);
+    background: var(--c-primary-soft);
   }
 }
 
@@ -102,15 +102,15 @@
 
   /* 通用卡片 */
   .v-card {
-    background: var(--verda-card);
+    background: var(--c-card);
     border-radius: var(--r-card);
     box-shadow: var(--shadow-card);
-    border: 1px solid var(--verda-line);
+    border: 1px solid var(--c-line);
   }
 
   /* 主按钮（保留兼容旧调用） */
   .v-btn-primary {
-    background: var(--verda-primary);
+    background: var(--c-primary);
     color: #fff;
     border-radius: var(--r-btn);
     transition: all 0.2s var(--ease);
@@ -118,7 +118,7 @@
   .v-btn-primary:hover {
     transform: translateY(-1px);
     box-shadow: var(--shadow-float);
-    background: var(--verda-primary-deep);
+    background: var(--c-primary-deep);
   }
 
   /* 骨架屏 */

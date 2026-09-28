@@ -238,6 +238,10 @@ src/
 
 品牌称谓唯一真源 `src/lib/brand.ts`，`index.html` 的 `<title>` 由 `brand.test.ts` 钉住不漂移。
 
+设计令牌（`src/index.css` 的 `:root`，`--c-*` / `--r-*` / `--ease` / `--shadow-*`）命名刻意
+**不含产品名**：令牌里一旦编进品牌名，每次改名都要重命名一遍整个 CSS 面，而漏改的那一处
+不报错、不警告，只是静默丢色（2026-09-28 由 `--verda-*` 迁到 `--c-*`，见 §12 的 CSS 变量守卫）。
+
 ---
 
 ## 11. 专家团与域包
@@ -266,6 +270,10 @@ src/
 外加词表闸（`test_expert_caliber_refs.py`）、注册表单一真相源（`test_registry_single_source.py`）、
 前后端夹具契约（`test_fixture_mirror.py`）、前端样式与色 token 完整性
 （`tailwindClassIntegrity.test.ts`、`bmapStyle.test.tsx`、`roadContrast.test.ts`）。
+`tailwindClassIntegrity.test.ts` 是**两段**判据：① 源码里的 Tailwind 颜色工具类必须来自调色板；
+② 被消费的 CSS 自定义属性必须在 `index.css` 有定义 —— 扫描同时覆盖 `var(--x)` 与
+`v('--c-x')` 这类"把令牌名当字符串传"的调用点，因为悬空 `var()` 与悬空工具类是**同一种**
+静默失效（不报错、只掉色）。
 
 判别力机器：`backend/scripts/mutation_check.py` —— 往生产代码注入变异，断言目标用例**转红**，
 再按 sha256 校验还原。全绿只说明"当前代码让测试满意"，不说明"测试真的在检查东西"。

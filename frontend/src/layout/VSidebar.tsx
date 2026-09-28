@@ -98,7 +98,7 @@ export default function VSidebar() {
             end={item.end}
             className={({ isActive }) =>
               [
-                'flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-verda',
+                'flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-smooth',
                 isActive
                   ? 'bg-primary-tint font-medium text-primary-deep'
                   : 'text-ink-2 hover:bg-primary-tint/50',
@@ -117,7 +117,7 @@ export default function VSidebar() {
             end={false}
             className={({ isActive }) =>
               [
-                'relative flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-verda',
+                'relative flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-smooth',
                 isActive
                   ? 'bg-primary-tint font-medium text-primary-deep'
                   : 'text-primary hover:bg-primary-tint/50',
@@ -169,7 +169,7 @@ export default function VSidebar() {
           to="/settings"
           className={({ isActive }) =>
             [
-              'flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-verda',
+              'flex h-11 items-center gap-3 rounded-btn px-3.5 text-[15px] transition-all ease-smooth',
               isActive
                 ? 'bg-primary-tint font-medium text-primary-deep'
                 : 'text-ink-2 hover:bg-primary-tint/50',
@@ -204,7 +204,7 @@ export default function VSidebar() {
           }
         }}
         title="点击修改昵称与公司"
-        className="flex cursor-pointer items-center gap-3 border-t border-line px-4 py-3.5 transition-colors duration-200 ease-verda hover:bg-primary-tint/40"
+        className="flex cursor-pointer items-center gap-3 border-t border-line px-4 py-3.5 transition-colors duration-200 ease-smooth hover:bg-primary-tint/40"
       >
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sun text-[13px] font-semibold text-ink">
           {avatarInitial}
@@ -234,7 +234,7 @@ export default function VSidebar() {
                   saveProfile()
                 }
               }}
-              className="mb-4 w-full rounded-btn border border-line bg-card px-3 py-2 text-[14px] text-ink outline-none transition-colors duration-150 ease-verda focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mb-4 w-full rounded-btn border border-line bg-card px-3 py-2 text-[14px] text-ink outline-none transition-colors duration-150 ease-smooth focus:border-primary focus:ring-2 focus:ring-primary/20"
               placeholder="如：李工 / 王研究员"
             />
             <label className="mb-1.5 block text-tag font-medium text-ink-2">公司</label>
@@ -247,7 +247,7 @@ export default function VSidebar() {
                   saveProfile()
                 }
               }}
-              className="w-full rounded-btn border border-line bg-card px-3 py-2 text-[14px] text-ink outline-none transition-colors duration-150 ease-verda focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="w-full rounded-btn border border-line bg-card px-3 py-2 text-[14px] text-ink outline-none transition-colors duration-150 ease-smooth focus:border-primary focus:ring-2 focus:ring-primary/20"
               placeholder="如：常青圈"
             />
           </div>

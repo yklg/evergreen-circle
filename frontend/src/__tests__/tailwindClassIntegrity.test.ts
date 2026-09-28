@@ -11,7 +11,7 @@
  *   4. `from-tint`（`ChapterContentMap.tsx` 1 处）⇒ 渐变起点透明。
  *
  * **判据**：出现的每个颜色工具类，其色值部分必须属于
- * ① 项目调色板（`theme.extend.colors`，含 `verda-*` 命名空间）· ② Tailwind 默认工具类.
+ * ① 项目调色板（`theme.extend.colors` 的扁平 token）· ② Tailwind 默认工具类.
  * 任意值写法（`text-[#8A6420]`）不检查 —— 它自带色值，不需要 token 存在。
  */
 import { describe, it, expect } from 'vitest'
@@ -131,7 +131,7 @@ const suspects = collectSuspects()
 describe('Tailwind 颜色工具类完整性', () => {
   it('守卫自己的前置：调色板解析成功且形状符合预期（空表会让下面所有断言空转）', () => {
     expect(COLOR_TOKENS.size).toBeGreaterThan(10)
-    for (const t of ['primary', 'primary-deep', 'warn', 'risk', 'ink-3', 'line', 'verda-warn']) {
+    for (const t of ['primary', 'primary-deep', 'warn', 'risk', 'ink-3', 'line', 'primary-tint', 'sun-soft']) {
       expect(COLOR_TOKENS.has(t)).toBe(true)
     }
     // 这两条**必须**是 false —— 它们正是本守卫要拦的东西
@@ -162,5 +162,89 @@ describe('Tailwind 颜色工具类完整性', () => {
     expect(suspects.some((s) => s.includes('border-b'))).toBe(false)
     expect(suspects.some((s) => s.includes('bg-white'))).toBe(false)
     expect(suspects.some((s) => s.includes('bg-warn/10'))).toBe(false)
+  })
+})
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 第二段守卫：CSS 自定义属性（设计令牌）的消费面。
+ *
+ * 与上面**同一类失效模式**：`var(--未定义的名字)` 不报错、不警告，只是取不到值
+ * ⇒ 颜色静默变成继承色/透明。2026-09-28 把令牌去品牌化（`--verda-*` → `--c-*`）时，
+ * 只要有一处消费点漏改，全量测试照样绿 —— 所以这条必须机器可校验。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 定义面：设计令牌目前唯一真值源是 `src/index.css` 的 `:root`；新增定义点须登记到这里。 */
+const CSS_DEF_FILES = ['src/index.css']
+const TW_INTERNAL = /^--tw-/ // Tailwind 自己注入的中间变量，不由本项目定义
+
+function cssVarDefs(): Set<string> {
+  const out = new Set<string>()
+  for (const rel of CSS_DEF_FILES) {
+    const text = readFileSync(join(process.cwd(), rel), 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '') // 注释里的示例 `--x:` 不算定义
+    for (const m of text.matchAll(/(?:^|[\s{;])(--[A-Za-z0-9-]+)\s*:/gm)) out.add(m[1])
+  }
+  return out
+}
+
+/**
+ * 消费面：两种写法都算 —— ① `var(--x)`；② 把令牌名当字符串传的调用点
+ * （`ChapterMindmapSvg.tsx` 的 `v('--c-warn')` 助手，展开后才是 `var(...)`，
+ *  只搜 `var(--` 会漏掉该文件全部 17 处）。
+ *
+ * 扫描前先剥掉注释：文档里的示例令牌（含下面那个"已改名"的负对照）不是消费点。
+ */
+function collectCssVarRefs(): { refs: string[]; dangling: string[] } {
+  const defs = cssVarDefs()
+  const files = [
+    ...walk(SRC),
+    ...CSS_DEF_FILES.map((rel) => join(process.cwd(), rel)),
+    join(process.cwd(), 'index.html'),
+  ]
+  const refs: string[] = []
+  const dangling: string[] = []
+  for (const file of files) {
+    if (!/\.(ts|tsx|css|html)$/.test(file)) continue
+    const text = readFileSync(file, 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    text.split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(/(?:var\(\s*|['"`])(--[A-Za-z0-9-]+)/g)) {
+        const name = m[1]
+        if (TW_INTERNAL.test(name)) continue
+        refs.push(name)
+        if (!defs.has(name)) dangling.push(`${relative(process.cwd(), file)}:${i + 1} → ${name}`)
+      }
+    })
+  }
+  return { refs, dangling }
+}
+
+/**
+ * 负对照用的"必然不存在"令牌名。前缀走运行时拼接 —— 直接把 `'--verda…'` 写进字面量
+ * 会被上面的扫描当成一处真实消费点，守卫就永远红在自己的哨兵上。
+ */
+const VAR_PREFIX = '-'.repeat(2)
+const RENAMED_AWAY_TOKEN = `${VAR_PREFIX}verda-primary`
+const NEVER_DEFINED_TOKEN = `${VAR_PREFIX}c-nonexistent-token`
+
+const cssVars = collectCssVarRefs()
+
+describe('CSS 自定义属性完整性（悬空 var() 会静默丢色）', () => {
+  it('守卫自己的前置：定义面与消费面都非空（任一侧塌成空集本守卫就恒绿）', () => {
+    const defs = cssVarDefs()
+    expect(defs.size).toBeGreaterThan(15)
+    for (const t of ['--c-primary', '--c-ink-3', '--c-line', '--ease', '--r-card']) {
+      expect(defs.has(t)).toBe(true)
+    }
+    expect(cssVars.refs.length).toBeGreaterThanOrEqual(30) // 基线实测 38（2026-09-28），留下调余量
+    // 反向：未定义的名字**必须**不在定义面里 —— 它们正是本守卫要拦的形状
+    expect(defs.has(RENAMED_AWAY_TOKEN)).toBe(false)
+    expect(defs.has(NEVER_DEFINED_TOKEN)).toBe(false)
+  })
+
+  it('每个被消费的设计令牌都有定义', () => {
+    // 失败信息即修复清单：每行 `<文件>:<行> → --令牌名`
+    expect(cssVars.dangling).toEqual([])
   })
 })

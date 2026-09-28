@@ -29,7 +29,7 @@ export const BRAND = {
   tagline: '输入中心点，基于真实路网计算 15 分钟步行等时圈，体检设施覆盖、识别服务盲区',
   /** 报告封面品牌行兜底（无竞品名时使用） */
   coverByline: 'EvergreenCircle AI',
-  /** 移动端地址栏 / 主题色（与 index.css 的 --verda-primary 同源） */
+  /** 移动端地址栏 / 主题色（与 index.css 的 --c-primary 同源） */
   themeColor: '#7c9885',
 } as const
 

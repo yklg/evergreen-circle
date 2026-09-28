@@ -17,7 +17,7 @@ const PALETTE = ['#7C9885', '#E0B775', '#8FA8C0', '#CE9A92', '#A8C0A8', '#C2B59B
  */
 const SENTIMENT_COLOR: Record<Polarity, string> = { pos: '#8AB58A', neu: '#C9CFC9', neg: '#CE9A92' }
 
-/** 话题层灰 = 既有 token `ink-3`（`--verda-ink-3`），不新造色值。 */
+/** 话题层灰 = 既有 token `ink-3`（`--c-ink-3`），不新造色值。 */
 const TOPIC_COLOR = '#9AA39C'
 const TOPIC_OPACITY = 0.55
 

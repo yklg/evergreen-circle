@@ -18,7 +18,7 @@ export function VCard({
 }: { children: ReactNode; className?: string; hover?: boolean } & HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={`bg-card rounded-card shadow-card p-6 border border-line/60 transition-all duration-300 ease-verda ${
+      className={`bg-card rounded-card shadow-card p-6 border border-line/60 transition-all duration-300 ease-smooth ${
         hover ? 'hover:shadow-float hover:-translate-y-0.5' : ''
       } ${className}`}
       {...rest}
@@ -39,7 +39,7 @@ export function VButton({
   variant?: 'primary' | 'ghost' | 'soft'
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
   const base =
-    'inline-flex items-center justify-center gap-2 px-5 h-11 rounded-btn font-medium text-sm transition-all duration-200 ease-verda active:scale-95 disabled:opacity-50 disabled:pointer-events-none'
+    'inline-flex items-center justify-center gap-2 px-5 h-11 rounded-btn font-medium text-sm transition-all duration-200 ease-smooth active:scale-95 disabled:opacity-50 disabled:pointer-events-none'
   const styles =
     variant === 'primary'
       ? 'bg-primary text-white hover:bg-primary-deep shadow-card hover:shadow-float'
@@ -170,7 +170,7 @@ export function VModal({
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-btn text-xl leading-none text-ink-2 transition-colors duration-200 ease-verda hover:bg-primary-tint hover:text-primary-deep"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-btn text-xl leading-none text-ink-2 transition-colors duration-200 ease-smooth hover:bg-primary-tint hover:text-primary-deep"
           >
             ×
           </button>
@@ -354,7 +354,7 @@ export function VCombobox({
                   type="button"
                   disabled={refreshing}
                   onClick={onRefresh}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-btn border border-dashed border-primary/60 px-2 py-0.5 text-tag text-primary-deep transition-colors duration-200 ease-verda hover:bg-primary-tint/60 disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-btn border border-dashed border-primary/60 px-2 py-0.5 text-tag text-primary-deep transition-colors duration-200 ease-smooth hover:bg-primary-tint/60 disabled:opacity-50"
                 >
                   <span className={refreshing ? 'inline-block animate-spin' : 'inline-block'}>↻</span>
                   {refreshing ? '刷新中…' : '刷新实时列表'}

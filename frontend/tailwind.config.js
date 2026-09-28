@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 
-// Verda 莫兰迪设计 token —— 同时提供「扁平命名」(handbook 可粘贴) 与 `verda-` 命名空间
+// 莫兰迪设计 token —— 只注册一份扁平命名（handbook 可直接粘贴）。
+// 命名刻意不含产品名：令牌里编进品牌名 ⇒ 每次改名都要重命名一遍 CSS 面（见 docs/ARCHITECTURE.md）。
+// 曾另挂 `verda: palette` 命名空间，实测 `*-verda-*` 工具类零消费 ⇒ 同色双真相，已删。
 const palette = {
   primary: '#7C9885',
   'primary-soft': '#A8C0A8',
@@ -26,7 +28,6 @@ export default {
     extend: {
       colors: {
         ...palette,
-        verda: palette,
       },
       borderRadius: {
         card: '16px',
@@ -59,7 +60,7 @@ export default {
         read: '760px',
       },
       transitionTimingFunction: {
-        verda: 'cubic-bezier(.4,0,.2,1)',
+        smooth: 'cubic-bezier(.4,0,.2,1)',
       },
       keyframes: {
         breath: { '0%,100%': { opacity: '1' }, '50%': { opacity: '.55' } },
