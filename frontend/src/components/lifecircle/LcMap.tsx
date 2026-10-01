@@ -33,6 +33,7 @@ import {
   cellsLedgerOf,
   lcMeters,
   judgeRulerM,
+  judgeRulerLabel,
   affectedOf,
   blindCanRaw,
   blindHeatFill,
@@ -1205,6 +1206,17 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     const secondary = compareReport
     // 与 live 路径同一份点集（阶段 2.2：原 `cap=60` 与 live 的 120 口径不一，两图点数会打架）
     const poiSet = poiRenderSet(report.poi.points)
+    // 判定尺半径：**只从 `judgeRulerM` 取**，与 BMap 分支（`:1076`）同一把尺。
+    // 取不到 ⇒ 空数组 ⇒ 整层不画 —— 这就是工作台那颗开关 `{rulerLabel && …}` 同一条纪律
+    // （缺席即未发生，摆一个勾了没反应的复选框等于摆假入口）。
+    const scaleRulerM = judgeRulerM(report)
+    const scaleRings =
+      showJudgeScale && !secondary && scaleRulerM !== null
+        ? (report.blindspots ?? []).map((b) => ({
+            id: b.id,
+            pts: lcPolyPts(center, lcRing(b.center, scaleRulerM)),
+          }))
+        : []
     const onCanvasClick = (e: ReactMouseEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect()
       // ⚠️ rect 为 0×0 时（尚未布局 / 被 display:none 隐藏 / 无布局引擎的环境），
@@ -1278,6 +1290,28 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
                 <title>{evidenceDiscTitle(d)}</title>
               </polygon>
             ))}
+
+          {/* C5：判定尺图层（降级画布分支）。三条口径与 BMap 分支逐条对齐：
+              ① 半径只从 `judgeRulerM` 取（`:1068` 的教训：写死 1000 会画出 800m 的圆却标 1km）；
+              ② 说法只从 `judgeRulerLabel` 取（`livingCircle.ts:1160`：图例与画布不许各写一份半径）；
+              ③ 只描边、`fill="none"`、不参与命中 —— 填充会压掉五级等时圈色阶，而可点面会吃掉
+                 圈内采样点 tooltip（`:587-592` 的真机 spike 早已否证后者）。
+              形状仍走 `lcRing` 逆投影成 polygon 而不是 SVG 正圆：画布横纵比例本就不同，
+              正圆与 live 那枚地理圆不可比（同证据盘，见 `:1264` 那条注释）。
+              线宽/透明度/虚线与 `:1079-1086` 的 live 参数同值，两档才是"同一把尺同一个色"。 */}
+          {scaleRings.map((s) => (
+            <polygon
+              key={`scale-${s.id}`}
+              points={s.pts}
+              fill="none"
+              stroke={LC_JUDGE_SCALE_COLOR}
+              strokeWidth={1.6}
+              strokeOpacity={0.85}
+              strokeDasharray="6 4"
+            >
+              <title>{judgeRulerLabel(report)}</title>
+            </polygon>
+          ))}
 
           {!secondary &&
             report.blindspots.map((b, bi) => {
