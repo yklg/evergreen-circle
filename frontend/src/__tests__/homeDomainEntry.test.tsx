@@ -97,7 +97,9 @@ function ready() {
 
 const submitBtn = () => screen.getByRole('button', { name: /开始调研|前往生活圈地图/ })
 const typeQuery = (text: string) =>
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: text } })
+  // 首页现有两个 textbox（调研需求 + 用户指定信源），必须按可及名取第一个，
+  // 否则 `getByRole('textbox')` 会因多命中直接抛错。
+  fireEvent.change(screen.getByRole('textbox', { name: '调研需求' }), { target: { value: text } })
 
 beforeEach(() => {
   mocks.createTask.mockReset()
@@ -139,7 +141,8 @@ describe('FE-22/23/24 · 旅游域提交落地方向', () => {
     typeQuery('大理 5 天亲子游')
     fireEvent.click(submitBtn())
     await waitFor(() => expect(mocks.createTask).toHaveBeenCalledTimes(1))
-    expect(mocks.createTask).toHaveBeenCalledWith('大理 5 天亲子游', 'deep', undefined, 'guide')
+    // 第 5 参是用户指定信源清单：真实态首页未填时交出去空数组，api 层据此**不发** `source_urls` 键
+    expect(mocks.createTask).toHaveBeenCalledWith('大理 5 天亲子游', 'deep', undefined, 'guide', [])
     await waitFor(() => expect(lastPath()?.getAttribute('data-path')).toBe('/clarify/t_guide'))
     expect(lastPath()?.textContent).toContain('大理 5 天亲子游')
     // 旧弹窗向导必须彻底消失

@@ -67,11 +67,75 @@ def _query_keys(fn_name: str) -> set:
     return keys
 
 
+def _object_body(text: str, open_idx: int) -> str:
+    """从 `open_idx` 处的 `{` 起做花括号配对，返回括号**内**内容（支持嵌套）。"""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i]
+    raise AssertionError("JSON.stringify 载荷的花括号不配对，判据已与 api.ts 脱节")
+
+
+def _split_top_commas(inner: str) -> list:
+    """只在**深度 0** 上按逗号切分（条件展开里的对象不能被切散）。"""
+    parts, buf, depth = [], "", 0
+    for ch in inner:
+        if ch in "{[(":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    parts.append(buf)
+    return parts
+
+
+_IDENT = re.compile(r"^[A-Za-z_$][\w$]*$")
+
+
+def _keys_of_object(inner: str) -> set:
+    """一个对象字面量体内的键：简写 `query`、显式 `type: domain` 都认。"""
+    keys = set()
+    for part in _split_top_commas(inner):
+        token = part.strip()
+        if not token or token.startswith("..."):
+            continue
+        name = token.split(":", 1)[0].strip()
+        if _IDENT.match(name):
+            keys.add(name)
+    return keys
+
+
 def _body_keys(fn_name: str) -> set:
+    """前端实际发出的 body 键。
+
+    认两种写法：直接列出的键，以及**条件展开**（`...(x?.length ? { k: x } : {})`）——
+    后者是"用户没填就不发这个键"的标准形状（计划 v3 §二 B1/B8）。旧解析把它当成一个
+    名叫 `...(sourceUrls?.length ? { source_urls` 的键，于是守缝测试自己先红了；
+    条件展开里的键同样是**真实会发出去的键**，必须进判据集合。
+    """
     block = _fn_slice(fn_name)
-    m = re.search(r"JSON\.stringify\(\s*\{([^}]*)\}", block)
+    m = re.search(r"JSON\.stringify\(\s*\{", block)
     assert m, f"{fn_name} 里没解析出 JSON.stringify({{...}}) 载荷"
-    keys = {p.split(":", 1)[0].strip() for p in m.group(1).split(",") if p.strip()}
+    inner = _object_body(block, m.end() - 1)
+
+    keys = _keys_of_object(inner)
+    # 条件展开 `...(cond ? { k: v } : {})` 里的对象字面量：内层每个 `{` 都扫一遍，
+    # 因为"用户没填就不发这个键"意味着这些键同样是**真会发出去的键**，漏了就是判据失真。
+    i = 0
+    while True:
+        j = inner.find("{", i)
+        if j == -1:
+            break
+        keys |= _keys_of_object(_object_body(inner, j))
+        i = j + 1
     assert len(keys) >= 2, f"仅解析出 {sorted(keys)}，判据已与 api.ts 脱节"
     return keys
 

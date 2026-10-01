@@ -9,6 +9,7 @@
  * 按 body.type 落库，purpose 不再作为建任务依据。
  */
 import { createTask } from './api'
+import type { UserSourceEcho } from '../types'
 import { useTaskRegistry } from '../store/taskRegistry'
 import { resolveTypeOr, demoPurposeOf, type DomainType } from './taskDomains'
 
@@ -27,16 +28,22 @@ export function buildResearchQuery(input: string, type: string = 'guide'): strin
 }
 
 /**
- * 建任务 + registry 落 running。成功后返回 { taskId, kind }，
+ * 建任务 + registry 落 running。成功后返回 { taskId, kind, sourceUrls }，
  * 调用方负责按 submitLanding(type, dataMode) 导航（真实→clarify / 演示→workspace）。
+ *
+ * `sourceUrls`（计划 v3 §二 B1/F1）原样透传给用户填的网址；后端做归一/去重/截断，
+ * 返回的 `sourceUrls` 回执（accepted/truncated/rejected）必须回到调用方去显示 ——
+ * 界面若只看到"任务建成了"，用户就不知道自己填的第 11 条被砍了、哪条被拒了。
  */
 export async function launchResearch(
   query: string,
   depth = 'deep',
   type: string = 'guide',
-): Promise<{ taskId: string; kind: string }> {
+  sourceUrls?: string[] | null,
+): Promise<{ taskId: string; kind: string; sourceUrls?: UserSourceEcho }> {
   const domain = resolveTypeOr(type, 'guide')
-  const { taskId, kind = 'research' } = await createTask(query, depth, undefined, domain)
+  const { taskId, kind = 'research', sourceUrls: echo } =
+    await createTask(query, depth, undefined, domain, sourceUrls ?? null)
   useTaskRegistry.getState().upsert({
     taskId,
     kind,
@@ -47,5 +54,5 @@ export async function launchResearch(
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   })
-  return { taskId, kind }
+  return { taskId, kind, sourceUrls: echo }
 }

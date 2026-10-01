@@ -37,10 +37,13 @@ describe('buildResearchQuery', () => {
 })
 
 describe('launchResearch', () => {
-  it('攻略：createTask(query, depth, undefined, guide) 并在 registry 落 running', async () => {
+  // 第 5 参是用户指定信源清单（计划 v3 §二 B1/F1）：未填时交出去的是 null，
+  // api.createTask 只在**非空**时才把 `source_urls` 拼进请求体 ⇒ 不带清单的任务，
+  // 线上形状与改前逐键一致。
+  it('攻略：createTask(query, depth, undefined, guide, null) 并在 registry 落 running', async () => {
     mockedCreateTask.mockResolvedValue({ taskId: 't1', kind: 'travel_guide', purpose: 'guide' })
     const r = await launchResearch('大理 5 天亲子游', 'deep', 'guide')
-    expect(mockedCreateTask).toHaveBeenCalledWith('大理 5 天亲子游', 'deep', undefined, 'guide')
+    expect(mockedCreateTask).toHaveBeenCalledWith('大理 5 天亲子游', 'deep', undefined, 'guide', null)
     expect(r).toEqual({ taskId: 't1', kind: 'travel_guide' })
     const rec = useTaskRegistry.getState().tasks['t1']
     expect(rec?.status).toBe('running')
@@ -51,7 +54,7 @@ describe('launchResearch', () => {
   it('FE-9 · 演示态评估双写桥：registry kind=travel_assess 且 purpose=assess（喂回放器）', async () => {
     mockedCreateTask.mockResolvedValue({ taskId: 't2', kind: 'travel_assess', purpose: 'assess' })
     const r = await launchResearch('评估成都和杭州', 'deep', 'assessment')
-    expect(mockedCreateTask).toHaveBeenCalledWith('评估成都和杭州', 'deep', undefined, 'assessment')
+    expect(mockedCreateTask).toHaveBeenCalledWith('评估成都和杭州', 'deep', undefined, 'assessment', null)
     expect(r.kind).toBe('travel_assess')
     const rec = useTaskRegistry.getState().tasks['t2']
     expect(rec?.kind).toBe('travel_assess')
@@ -62,6 +65,6 @@ describe('launchResearch', () => {
   it('默认参数：depth=deep、type=guide', async () => {
     mockedCreateTask.mockResolvedValue({ taskId: 't3', kind: 'travel_guide', purpose: 'guide' })
     await launchResearch('大理')
-    expect(mockedCreateTask).toHaveBeenCalledWith('大理', 'deep', undefined, 'guide')
+    expect(mockedCreateTask).toHaveBeenCalledWith('大理', 'deep', undefined, 'guide', null)
   })
 })

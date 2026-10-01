@@ -1,0 +1,92 @@
+{
+  "_generated_by": "scripts/gen-source-kinds-fixture.mjs",
+  "_source": "GET /api/source-kinds（真相源 backend/app/core/source_type.py；勿手改）",
+  "_generated_at": "2026-09-28T14:42:32.556Z",
+  "kinds": [
+    {
+      "id": "financial_report",
+      "label": "财报/投关",
+      "in_stats": true
+    },
+    {
+      "id": "official",
+      "label": "机构官网",
+      "in_stats": true
+    },
+    {
+      "id": "news",
+      "label": "新闻媒体",
+      "in_stats": true
+    },
+    {
+      "id": "user_supplied",
+      "label": "用户指定",
+      "in_stats": true
+    },
+    {
+      "id": "ctrip",
+      "label": "携程",
+      "in_stats": true
+    },
+    {
+      "id": "mafengwo",
+      "label": "马蜂窝",
+      "in_stats": true
+    },
+    {
+      "id": "zhihu",
+      "label": "知乎",
+      "in_stats": true
+    },
+    {
+      "id": "dianping",
+      "label": "大众点评",
+      "in_stats": true
+    },
+    {
+      "id": "qunar",
+      "label": "去哪儿",
+      "in_stats": true
+    },
+    {
+      "id": "fliggy",
+      "label": "飞猪",
+      "in_stats": true
+    },
+    {
+      "id": "bilibili",
+      "label": "B站",
+      "in_stats": true
+    },
+    {
+      "id": "weibo",
+      "label": "微博",
+      "in_stats": true
+    },
+    {
+      "id": "xiaohongshu",
+      "label": "小红书",
+      "in_stats": true
+    },
+    {
+      "id": "douyin",
+      "label": "抖音",
+      "in_stats": true
+    },
+    {
+      "id": "review",
+      "label": "点评聚合",
+      "in_stats": true
+    },
+    {
+      "id": "unknown",
+      "label": "未归类",
+      "in_stats": true
+    },
+    {
+      "id": "web",
+      "label": "普通网页",
+      "in_stats": true
+    }
+  ]
+}

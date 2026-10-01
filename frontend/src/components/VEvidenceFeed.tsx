@@ -1,16 +1,11 @@
 import { motion } from 'framer-motion'
 import { ExternalLink, FileText } from 'lucide-react'
 import type { Evidence } from '../types'
+import { kindLabel } from '../lib/sourceKindsClient'
 
-const SOURCE_LABEL: Record<string, string> = {
-  douyin: '抖音',
-  xiaohongshu: '小红书',
-  bilibili: 'B站',
-  weibo: '微博',
-  zhihu: '知乎',
-  official: '官方',
-  review: '评测',
-}
+/* 标签的唯一真相源是后端信源类别注册表（app/core/source_type.py）：
+   这里曾手抄一张 7 项 `SOURCE_LABEL`，于是新类别 `user_supplied` 上屏显示成裸 key，
+   而且没有任何东西会变红（计划 v3 §二 G0 的展示面）。颜色仍归前端（表现，不是口径）。 */
 
 const SOURCE_CLS: Record<string, string> = {
   douyin: 'bg-ink/10 text-ink',
@@ -20,11 +15,12 @@ const SOURCE_CLS: Record<string, string> = {
   zhihu: 'bg-primary-tint text-primary-deep',
   official: 'bg-ok/15 text-ok',
   review: 'bg-sun-soft text-warn',
+  user_supplied: 'bg-primary text-white',
 }
 
 /** 单条证据卡。credibility 为 0-100 整数。 */
 export function VEvidenceCard({ ev, index, highlighted }: { ev: Evidence; index?: number; highlighted?: boolean }) {
-  const label = SOURCE_LABEL[ev.source_type] ?? ev.source_type
+  const label = kindLabel(ev.source_type)
   const cls = SOURCE_CLS[ev.source_type] ?? 'bg-primary-tint text-primary-deep'
   // 兼容旧数据：>1 视为 0-100 整数，<=1 视为 0-1 小数
   const credPct = ev.credibility > 1 ? Math.round(ev.credibility) : Math.round(ev.credibility * 100)

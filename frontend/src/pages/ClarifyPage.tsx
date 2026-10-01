@@ -2,15 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Sprout, ArrowRight, SkipForward, Loader2, AlertTriangle, RefreshCw, Clock } from 'lucide-react'
-import type { ClarifyQuestion } from '../types'
+import type { ClarifyQuestion, UserSourceEcho } from '../types'
 import { submitClarify, openClarifyStream } from '../lib/api'
 import { VSunGlow } from '../components/ui'
 import { fadeUp } from '../lib/motion'
 import { DEST_FALLBACK_HINT_CANDIDATES, DEST_FALLBACK_HINT_NONE } from '../lib/destinationFallbackCopy'
+import { splitListItems } from '../lib/listInput'
 import QuestionField from '../components/QuestionField'
 
 interface NavState {
   query?: string
+  /** 首页建任务时的入口卫生回执（计划 v3 §二 B1/F1）：哪几条被截断、哪几条被拒。 */
+  sourceEcho?: UserSourceEcho
 }
 
 export default function ClarifyPage() {
@@ -236,8 +239,8 @@ export default function ClarifyPage() {
   function addCustom(qid: string): string[] | null {
     const raw = (customInputs[qid] ?? '').trim()
     if (!raw) return null
-    // 支持一次输入多个，用逗号/顿号/空格分隔
-    const items = raw.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean)
+    // 支持一次输入多个：分隔与去重口径收敛到 lib/listInput（首页用户指定信源同源）
+    const items = splitListItems(raw)
     const cur = (answers[qid] as string[]) ?? []
     const merged = [...cur]
     for (const it of items) if (!merged.includes(it)) merged.push(it)
@@ -501,6 +504,22 @@ export default function ClarifyPage() {
                 </div>
               ))}
             </motion.div>
+
+            {/* 用户指定信源的入口回执（计划 v3 §二 B1）：被截断/被拒必须在这里说一次。
+                任务已经建成，此刻不阻断前进，但"你填的第 11 条没被收"不能等到报告页才发现。 */}
+            {state?.sourceEcho && (state.sourceEcho.truncated > 0 || state.sourceEcho.rejected.length > 0) && (
+              <div
+                role="alert"
+                className="mt-4 rounded-card border border-warn/50 bg-warn/10 px-4 py-2.5 text-aux text-[#8A6420]"
+              >
+                {state.sourceEcho.truncated > 0 && (
+                  <p>超出条数上限，未收录 {state.sourceEcho.truncated} 条。</p>
+                )}
+                {state.sourceEcho.rejected.map((r) => (
+                  <p key={r.url}>{r.url}：{r.reason}</p>
+                ))}
+              </div>
+            )}
 
             {submitErr && (
               <div

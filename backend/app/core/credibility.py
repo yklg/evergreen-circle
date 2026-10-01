@@ -15,30 +15,14 @@ import re
 from typing import Optional
 from urllib.parse import urlparse
 
-from app.core.platforms import PLATFORMS
+from app.core.source_type import BASE_BY_TYPE as _BASE_BY_TYPE
 
 
-# 来源类型基础分（与 orchestrator._source_type 的输出一致）
-_BASE_BY_TYPE = {
-    "official": 70,
-    "financial_report": 75,
-    "news": 60,
-    "zhihu": 50,
-    # OTA / 旅行社区：结构化信息（票价/班次/开放时间）与真实入住游玩点评，
-    # 可信度介于资讯媒体与泛社媒之间；平台 key 由 platforms 注册表统一派生
-    "ctrip": 52,
-    "mafengwo": 50,
-    "qunar": 48,
-    "dianping": 48,
-    "fliggy": 46,
-    "bilibili": 45,
-    "weibo": 40,
-    "xiaohongshu": 38,
-    "douyin": 35,
-    "review": 32,
-    "web": 30,
-    "unknown": 30,
-}
+# 来源类型基础分 = 信源类别注册表的派生值（app/core/source_type.py 为唯一真相源）。
+# 这里不再维护字面量表：分数与类别的对应关系一旦有两份，改类别就得改两处，
+# 而漏改不会报错，只会让某类证据的可信度悄悄漂走。
+# 全域修正项（_AUTHORITY_HINTS / _LOW_QUALITY_HINTS）留在本模块：
+# 它们**跨类别**作用于域名，属于"修正"而非"类别定义"。
 
 
 # 高权威域名/后缀（命中加分）

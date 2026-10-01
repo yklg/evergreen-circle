@@ -191,6 +191,28 @@ describe('SlidesPage', () => {
     await screen.findByTestId('report-landing')
   })
 
+  it('「证据与信源」页的类别名取自注册表（幻灯片是答辩产物，屏上不得有裸 key）', async () => {
+    const base = makeReport()
+    const withUser = makeReport({
+      evidence: [
+        ...base.evidence,
+        { evidence_id: 'e3', source_url: 'https://www.gov.cn/a', source_type: 'user_supplied',
+          title: 'E3', excerpt: '', credibility: 62, collected_by: '', destination: '', captured_at: '' },
+      ],
+    })
+    mockedFetchReport.mockResolvedValue(withUser)
+    const { container } = renderSlides('r1')
+    await screen.findByText('测试报告')
+    fireEvent.keyDown(window, { key: 'End' })
+    await screen.findByText('证据与信源')
+    expect(screen.getByText('用户指定')).toBeTruthy()
+    // 「机构官网」是注册表里 official 的 label（`src/mocks/sourceKinds.json`），
+    // 不是历史上某张手抄映射表里的「官网」。
+    expect(screen.getByText('机构官网')).toBeTruthy()
+    // 反证形状：改前这里三根条的标签是 `official / news / user_supplied`
+    expect(container.textContent ?? '').not.toMatch(/user_supplied|\bofficial\b/)
+  })
+
   it('XSS 防护：标题/亮点含注入串时按纯文本渲染（不产生 img/script 标签）', async () => {
     const evilTitle = '<img src=x onerror=alert(1)>标题<script>alert(2)</script>'
     const evilHigh = '<img src=y onerror=alert(3)>亮点'

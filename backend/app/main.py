@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.core import db
 from app.core import research_types as rt
+from app.core import source_type
 from app.core.llm import LLMModelUnavailable, LLMNotConfigured, chat
 from app.core.research_types import DEFAULT_RESEARCH_TYPE
 import logging
@@ -38,6 +39,7 @@ from app.core.runtime_config import (
     migrate_model_values,
 )
 from app.core.search import search
+from app.core.fetcher import normalize_user_url_list
 from app.core.user_prefs import (
     PrefsValidationError,
     apply_prefs,
@@ -241,13 +243,20 @@ def put_prefs_api(body: PrefsPatch):
     """保存用户偏好：校验 → 落库（单事务）→ 回全量。
 
     - 未知键被忽略（跨版本兼容）。
-    - 类型错误 / 超长：整包 422，附字段级错误，任何键都不落库（不做半写）。
+    - 标量键类型错误 / 超长：整包 422，附字段级错误，任何键都不落库（不做半写）。
+    - `list[str]` 键（默认引用清单）：**整键隔离** —— 该键被拒不连坐其它键，其余照常落库，
+      拒因走 `key_errors` 回给前端（必须可见地拒掉，不能静默收下，也不能 422 掉整包；
+      理由见 `user_prefs.apply_prefs` docstring）。
     """
+    key_errors: dict = {}
     try:
-        values = apply_prefs(body.patch or {})
+        values = apply_prefs(body.patch or {}, key_errors_out=key_errors)
     except PrefsValidationError as e:
         raise HTTPException(status_code=422, detail={"errors": e.errors})
-    return {"ok": True, "values": values, "stored": sorted(values.keys())}
+    out: dict = {"ok": True, "values": values, "stored": sorted(values.keys())}
+    if key_errors:
+        out["key_errors"] = key_errors
+    return out
 
 
 @app.get("/api/search")
@@ -331,6 +340,10 @@ class CreateTaskBody(BaseModel):
     # 只声明 `mode` ⇒ pydantic 把它**静默丢弃**，任何档位请求都恒按 standard 跑完，
     # 全程无提示。缝在这儿，D1/D2 的 `scenario` 走的也是这条缝 —— 先把缝缝上。
     sample_profile: Optional[str] = None  # quick | standard | precise
+    # 用户指定信源（计划 v3 §二 B1）：手填网址，流水线检索时**直抓**这些地址。
+    # 必须显式声明：`extra="forbid"` 下未声明的键会被 pydantic 静默丢弃，
+    # 而这条键一丢，用户填的网址就只是"看起来提交了"。
+    source_urls: Optional[List[str]] = None
 
     @field_validator("center", mode="before")
     @classmethod
@@ -351,6 +364,17 @@ class CreateTaskBody(BaseModel):
 def research_types():
     """调研类型选择器数据源（首页卡片），与后端注册表单一真相源。"""
     return rt.research_type_options()
+
+
+@app.get("/api/source-kinds")
+def source_kinds():
+    """信源类别的展示视图（id + 中文名 + 是否入统计），唯一真相源＝`app.core.source_type` 注册表。
+
+    前端证据链/情报中心的中文标签从这里取，不再手写 `SOURCE_LABEL` 映射表：
+    新增一类信源时若前端各抄一份，新类别会显示成裸 key（"user_supplied" 直接上屏），
+    而且没有任何东西会变红。
+    """
+    return {"kinds": source_type.kind_view()}
 
 
 # 生活圈采样档位取值域（与 research 的 quick|deep|expert **是两套词表**，同名不同义）。
@@ -381,6 +405,13 @@ async def post_task(body: CreateTaskBody):
         from app.core.pipeline.living_circle import create_living_circle_task
         from app.living_circle.caliber import get_caliber
 
+        # 显式拒，不在这里静默丢：生活圈体检不联网抓网页，"填了却什么都没发生"
+        # 与 R0 那条被 pydantic 静默丢弃的 sample_profile 是同一个形状。
+        if body.source_urls:
+            raise HTTPException(
+                status_code=422,
+                detail="用户指定信源只在调研流水线生效；生活圈体检按 POI 数据作答，不读网页。")
+
         travel_mode = body.travel_mode if body.travel_mode in ("walking", "riding", "driving") else "walking"
         caliber = get_caliber(travel_mode)
         center = await _to_bd09(body.center, body.coord_sys) if body.center else None
@@ -403,7 +434,8 @@ async def post_task(body: CreateTaskBody):
         rtype = purpose_aliases[body.purpose.strip().lower()]
     else:
         rtype = DEFAULT_RESEARCH_TYPE
-    return create_task(body.query, mode=body.mode, model=body.model, research_type=rtype)
+    return create_task(body.query, mode=body.mode, model=body.model, research_type=rtype,
+                       source_urls=body.source_urls)
 
 
 async def _to_bd09(center: List[float], coord_sys: str) -> List[float]:
@@ -724,6 +756,9 @@ class SubscriptionBody(BaseModel):
     query: str
     destinations: List[str] = []
     type: str = DEFAULT_RESEARCH_TYPE
+    # 这条订阅的用户指定信源清单（计划 v3 §二 B8）：复跑必须带同一份，
+    # 否则第二次跑出来的报告不含用户钉的文档，两次口径不可比而界面看不出差别。
+    source_urls: Optional[List[str]] = None
 
 
 @app.get("/api/subscriptions")
@@ -735,7 +770,19 @@ def list_subscriptions():
 def create_subscription(body: SubscriptionBody):
     import uuid
     sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-    return db.create_subscription(sub_id, body.query, body.destinations, body.type)
+    cleaned = normalize_user_url_list(body.source_urls or [])
+    sub = db.create_subscription(sub_id, body.query, body.destinations, body.type,
+                                 source_urls=cleaned["urls"])
+    if body.source_urls:
+        # 与 POST /api/tasks 同一份卫生口径（同键同形状）：超限截断、非法条目被拒都必须
+        # 回报，否则订阅记录里"看起来存了 10 条"、用户却以为自己钉了 11 条 —— 静默少一条
+        # 正是这一步要消灭的形状。未填清单时响应形状与改前逐键一致。
+        sub["sourceUrls"] = {
+            "accepted": cleaned["urls"],
+            "truncated": cleaned["truncated"],
+            "rejected": cleaned["rejected"],
+        }
+    return sub
 
 
 @app.delete("/api/subscriptions/{sub_id}")

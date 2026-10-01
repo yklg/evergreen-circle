@@ -3,6 +3,8 @@ import { ArrowUpRight, BellPlus, Rss } from 'lucide-react'
 import { VCard } from '../../components/ui'
 import { useResource, type Resource } from '../../hooks/useResource'
 import { createSubscription, fetchEvidences, fetchSubscriptions } from '../../lib/api'
+import { kindLabel } from '../../lib/sourceKindsClient'
+import { useSourcePrefs } from '../../store/sourcePrefsStore'
 import type { DestinationGraphNode, Subscription } from '../../types'
 
 /**
@@ -50,7 +52,7 @@ export default function EvidenceAndTracking({
           <span className="text-tag text-ink-3">
             当前 {items.length} 条 · 库内共 {evidenceTotal} 条
             {destination ? ` · 目的地「${destination}」` : ''}
-            {sourceType ? ` · 信源 ${sourceType}` : ''}
+            {sourceType ? ` · 信源 ${kindLabel(sourceType)}` : ''}
           </span>
         </div>
 
@@ -79,7 +81,9 @@ export default function EvidenceAndTracking({
                 <FilterChip
                   key={t}
                   on={sourceType === t}
-                  label={`${t} ${n}`}
+                  // 标签取注册表（`user_supplied` 上屏必须是「用户指定」），
+                  // 筛选值仍是后端 key —— 查询参数与 `source_type` 列逐字一致。
+                  label={`${kindLabel(t)} ${n}`}
                   tone="type"
                   onClick={() => setSourceType(sourceType === t ? null : t)}
                 />
@@ -109,7 +113,7 @@ export default function EvidenceAndTracking({
                   </div>
                   <p className="mt-1 line-clamp-2 text-tag text-ink-3">{it.excerpt}</p>
                   <div className="mt-2 flex items-center gap-2 text-tag text-ink-3">
-                    <span className="rounded-chip bg-card px-1.5 py-0.5">{it.source_type}</span>
+                    <span className="rounded-chip bg-card px-1.5 py-0.5">{kindLabel(it.source_type)}</span>
                     <span className="truncate">{it.domain}</span>
                     {it.destination ? (
                       <span className="rounded-chip bg-card px-1.5 py-0.5">{it.destination}</span>
@@ -181,6 +185,9 @@ function SubscriptionPanel({
   const [destinations, setDestinations] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  // 订阅必须把「默认引用清单」一起存下（计划 v3 §二 B8）：复跑靠它带上同一批用户信源，
+  // 否则同一主题第二次跑出来的报告不含用户钉的文档，两次口径不可比而界面看不出差别。
+  const defaultSources = useSourcePrefs((s) => s.defaultSources)
 
   const list: Subscription[] = resource.data ?? []
 
@@ -196,7 +203,7 @@ function SubscriptionPanel({
     setError(null)
     setSaving(true)
     try {
-      await createSubscription(query.trim(), destinations)
+      await createSubscription(query.trim(), destinations, 'guide', defaultSources)
       setQuery('')
       setDestinations([])
       onCreated()
@@ -271,6 +278,13 @@ function SubscriptionPanel({
             </span>
             <span className="mt-1 block truncate text-tag text-ink-3">
               目的地：{s.destinations.length ? s.destinations.join(' / ') : '（空 · 不会复跑）'}
+            </span>
+            {/* 复跑带不带用户指定信源，是两次报告可不可比的口径差；必须在卡上看得见，
+                而不是等用户发现"第二次跑出来的报告怎么没有我钉的那几篇"。 */}
+            <span className="mt-1 block text-tag text-ink-3">
+              {s.source_urls?.length
+                ? `含用户指定信源 ${s.source_urls.length} 条 · 复跑一并读取`
+                : '未带用户指定信源'}
             </span>
           </li>
         ))}

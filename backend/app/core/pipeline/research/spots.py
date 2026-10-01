@@ -21,10 +21,11 @@ from app.core.platforms import PLATFORMS
 from app.core.schemas import _filter_eids
 from app.core.search import SearchProviderError
 from app.core.sentiment import PLATFORM_LABEL
+from app.core.source_type import source_type as classify_source
 from app.services import baidu as baidu_client
 
 from ._util import _name_hit, _now, _sid
-from .collect import _evidence_digest, _source_type
+from .collect import _evidence_digest
 from .planning import _days_from_text
 
 
@@ -280,7 +281,7 @@ def _probe_spot_perspective_one(dest: str, spot_name: str, tpls: Tuple[str, ...]
             if not url or not snippet or url in existing_urls:
                 continue
             existing_urls.add(url)
-            stype = _source_type(url)
+            stype = classify_source(url)
             pub = r.get("captured_at", "")
             cred = score_evidence(url, stype, captured_at=pub or _now(),
                                   has_publish_date=bool(pub), ok_fetch=False,
@@ -598,7 +599,7 @@ async def _collect_spot_comments(spot_entities: List[Dict[str, Any]], platforms:
             text = (r.get("snippet") or title or "").strip()
             if not url or not text or not _name_hit(spot_name, f"{title} {text}"):
                 continue
-            detected = _source_type(url)
+            detected = classify_source(url)
             doc_kind, _reasons = classify_doc(url, title, text)
             picked.append({
                 "text": text[:280], "url": url, "title": title,

@@ -6,6 +6,7 @@ import MetricsStrip from '../components/MetricsStrip'
 import { VChart } from '../components/VChart'
 import { BRAND } from '../lib/brand'
 import { pickSlideChart } from '../lib/slideChart'
+import { kindLabel } from '../lib/sourceKindsClient'
 import type { Report } from '../types'
 
 /**
@@ -375,7 +376,7 @@ function SourceBars({ byType }: { byType: Record<string, number> }) {
     <div className="space-y-1.5">
       {items.map((it, i) => (
         <div key={it.type} className="flex items-center gap-2 text-xs text-[#5b6560]">
-          <span className="w-24 shrink-0 truncate">{it.type}</span>
+          <span className="w-24 shrink-0 truncate">{kindLabel(it.type)}</span>
           <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#eef1ef]">
             <div
               className={`h-full rounded-full ${palette[i % palette.length]}`}

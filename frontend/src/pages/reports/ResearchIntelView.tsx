@@ -13,6 +13,7 @@ import { VCard, VStatCard } from '../../components/ui'
 import { useIntelOverview } from '../../hooks/useIntelOverview'
 import { useResource } from '../../hooks/useResource'
 import { fetchWorkload } from '../../lib/api'
+import { kindLabel } from '../../lib/sourceKindsClient'
 import { useDataModeStore } from '../../store/dataModeStore'
 import type { IntelOverview } from '../../types'
 import type { DomainViewProps } from '../../lib/domainViews'
@@ -22,8 +23,12 @@ import EvidenceAndTracking from './EvidenceAndTracking'
 import LoadFailure from './LoadFailure'
 import ResearchOverviewCards from './ResearchOverviewCards'
 
-/** 信源三类归并：计数出自后端 `platform_distribution`（全库），这里只做展示层归类 */
-const SOURCE_CATEGORY: Record<string, '权威一手' | '媒体报道' | '社媒口碑'> = {
+/** 信源四类归并：计数出自后端 `platform_distribution`（全库），这里只做展示层归类。
+ *
+ *  「用户指定」单列成第四类，**不并进「权威一手」**：用户钉的文档可能是政府公报，也可能
+ *  是一篇自媒体，并进权威桶会让"一手权威信源占 X%"这句研判被系统性夸大（计划 v3 §二 B6
+ *  要求的是口径可见，不是口径美化）。 */
+const SOURCE_CATEGORY: Record<string, '权威一手' | '媒体报道' | '社媒口碑' | '用户指定'> = {
   official: '权威一手',
   financial_report: '权威一手',
   news: '媒体报道',
@@ -34,11 +39,13 @@ const SOURCE_CATEGORY: Record<string, '权威一手' | '媒体报道' | '社媒�
   bilibili: '社媒口碑',
   weibo: '社媒口碑',
   zhihu: '社媒口碑',
+  user_supplied: '用户指定',
 }
 const CATEGORY_CLASS = {
   权威一手: 'bg-primary',
   媒体报道: 'bg-[#4a89c8]',
   社媒口碑: 'bg-[#d9a441]',
+  用户指定: 'bg-[#5f7d8c]',
 } as const
 
 /**
@@ -205,10 +212,11 @@ export default function ResearchIntelView({ onDelete, refreshToken }: DomainView
 }
 
 function SourceStructure({ intel }: { intel: IntelOverview }) {
-  const cat: Record<'权威一手' | '媒体报道' | '社媒口碑', number> = {
+  const cat: Record<'权威一手' | '媒体报道' | '社媒口碑' | '用户指定', number> = {
     权威一手: 0,
     媒体报道: 0,
     社媒口碑: 0,
+    用户指定: 0,
   }
   const unmapped: string[] = []
   for (const [type, n] of Object.entries(intel.platform_distribution)) {
@@ -217,7 +225,7 @@ function SourceStructure({ intel }: { intel: IntelOverview }) {
     cat[c ?? '媒体报道'] += n
   }
   const total = Object.values(intel.platform_distribution).reduce((a, b) => a + b, 0) || 1
-  const segs = (['权威一手', '媒体报道', '社媒口碑'] as const).map((k) => ({
+  const segs = (['权威一手', '媒体报道', '社媒口碑', '用户指定'] as const).map((k) => ({
     label: k,
     n: cat[k],
     pct: Math.round((cat[k] / total) * 100),
@@ -248,9 +256,16 @@ function SourceStructure({ intel }: { intel: IntelOverview }) {
           ))}
       </div>
       <p className="mt-2 text-aux text-ink">{insight}</p>
+      {/* 口径变动必须可见（计划 v3 §二 B6）：新类别一进库就改变整张饼图（全表实时聚合、
+          不重算历史），说明行只在后端确认分布里真含用户指定信源时才出现。 */}
+      {intel.distribution_note && (
+        <p className="mt-2 rounded-btn bg-bg px-3 py-1.5 text-tag leading-relaxed text-ink-2">
+          {intel.distribution_note}
+        </p>
+      )}
       {unmapped.length > 0 && (
         <p className="mt-2 text-tag text-warn">
-          未归类信源：{unmapped.join(' / ')}（计入「媒体报道」段，需要补进三类映射时在这里点名，而不是静默归类）
+          未归类信源：{unmapped.map((k) => kindLabel(k)).join(' / ')}（计入「媒体报道」段，需要补进类别映射时在这里点名，而不是静默归类）
         </p>
       )}
     </VCard>

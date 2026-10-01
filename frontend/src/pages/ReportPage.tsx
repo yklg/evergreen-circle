@@ -43,6 +43,7 @@ import { VSkeleton } from '../components/ui'
 import MetricsStrip from '../components/MetricsStrip'
 import ReportBriefView from '../components/ReportBriefView'
 import MethodologyNote from '../components/MethodologyNote'
+import { userSourceCoverageLabel, userSourceStateLabel } from '../lib/userSourceStates'
 import LifeCircleReportView from '../components/lifecircle/LifeCircleReportView'
 
 const HL_DOT: Record<HighlightColor, string> = {
@@ -765,6 +766,44 @@ export default function ReportPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* 用户指定信源举证块（计划 v3 §二 B5/F1）：读没读到、用没用上逐条可见。
+              数字来自服务端 `report["user_sources"]`（覆盖率按信源组核，归并不重复计数），
+              前端一行都不自己算 —— 否则这里会变成第三个口径。 */}
+          {r.user_sources && (
+            <div className="mb-3 rounded-card border border-line/70 bg-bg/50 p-3">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-tag">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-ink">
+                  <Link2 size={13} className="text-primary-deep" />
+                  {r.user_sources.label}：共 {r.user_sources.summary.total} 条
+                </span>
+                <span className="text-ink-2">
+                  已引用 {r.user_sources.summary.cited} · 未引用 {r.user_sources.summary.uncited} ·
+                  未读取 {r.user_sources.summary.unread} · 闸门拒绝 {r.user_sources.summary.blocked} ·
+                  跑题诊断 {r.user_sources.summary.gated_off_query} · 归并 {r.user_sources.summary.merged}
+                </span>
+              </div>
+              <ul className="mt-2 flex flex-col gap-1 text-tag">
+                {r.user_sources.items.map((it) => (
+                  <li key={it.uid} className="flex items-baseline gap-2">
+                    <span className="shrink-0 text-ink-2">{userSourceCoverageLabel(it.coverage)}</span>
+                    <a
+                      href={it.url_canonical}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={it.url_canonical}
+                      className="min-w-0 flex-1 truncate text-primary-deep underline-offset-2 hover:underline"
+                    >
+                      {it.url_canonical}
+                    </a>
+                    <span className="shrink-0 text-ink-3">{userSourceStateLabel(it.state)}</span>
+                    {it.reason && <span className="shrink-0 text-warn">{it.reason}</span>}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-tag leading-relaxed text-ink-3">{r.user_sources.note}</p>
             </div>
           )}
 

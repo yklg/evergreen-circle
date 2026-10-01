@@ -15,7 +15,7 @@ from app.core.schemas import _filter_eids, coerce_structured
 
 from . import runtime
 from ._util import _clamp_int, _num_or_none, _row_dest_ok, _row_name, _sid
-from .collect import _evidence_digest
+from .collect import _evidence_digest, digest_limit_for
 
 
 # 分析产出各键的 JSON 片段：提示词按 spec["analysis_keys"] 动态拼装，
@@ -199,7 +199,7 @@ def _analyze(query, destinations, focus, evidences: List[Evidence], members: Lis
     cost_line = (f"成本/花费数组放在 {cb['key']} 键，金额字段用 {cb['value_field']}"
                  f"（单位 {cb['unit']}）。" if cb else "")
     share_line = "share_estimate 各项之和不得超过 100；" if "share_estimate" in keys else ""
-    digest = _evidence_digest(evidences)
+    digest = _evidence_digest(evidences, limit=digest_limit_for(evidences, 28))
     ev_ids = [e.evidence_id for e in evidences]
     valid_ids = set(ev_ids)
     # v2.1 客观性：独立信源以「信源组」计（同质转载归并为一组，杜绝冒充多源）
@@ -336,7 +336,7 @@ def _analyze_structured(query, destinations, focus, evidences: List[Evidence],
         if trunc_report is not None:
             trunc_report.append(False)
         return {k: [] for k in spec["structured_keys"]}
-    digest = _evidence_digest(evidences, limit=24)
+    digest = _evidence_digest(evidences, limit=digest_limit_for(evidences, 24))
     valid_eids = {e.evidence_id for e in evidences}
     out: Dict[str, Any] = {k: [] for k in spec["structured_keys"]}
     entity_block = (f"\n已冻结景点实体表（spot_id 与景点名必须原样引用，禁止改名或新增景点）：\n{entity_hint}"

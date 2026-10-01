@@ -34,7 +34,7 @@ from app.core.audit import decide_rework, llm_quality_review
 from app.core.runtime_config import get_effective_settings
 from app.core.credibility import score_evidence, assess_viral
 from app.core.doc_kind import classify_doc, kind_counts
-from app.core.fetcher import domain_of
+from app.core.fetcher import domain_of, normalize_user_url_list
 from app.core.platforms import PLATFORMS
 from app.core import llm
 from app.core.llm import LLMNotConfigured, TOKEN_USAGE
@@ -47,6 +47,11 @@ from app.core.schemas import coerce_spot_ranking
 from app.core import search
 from app.core.search import SearchProviderError
 from app.core.sentiment import analyze_sentiment, PLATFORM_LABEL
+from app.core.source_type import (
+    is_must_read_kind as source_is_must_read,
+    kind_label as source_kind_label,
+    source_type as classify_source,
+)
 from app.data import expert_by_id
 
 # M3 提取：规模旋钮与总装（保持命名空间兼容；MODE_CONFIG 测试经 engine 读取）
@@ -111,15 +116,15 @@ from app.core.pipeline.research.dispatch import (  # noqa: E402,F401
     _dispatch_experts,
 )
 from app.core.pipeline.research.collect import (  # noqa: E402,F401
-    _NON_OFFICIAL_HINTS,
     DAG_NODES,
     _ev,
-    _source_type,
-    _looks_official,
     _region_keywords,
     _sentiment_relevant,
     _collect_destination,
     _evidence_digest,
+    collect_user_sources,
+    evidence_source_type,
+    must_read_first,
 )
 from app.core.pipeline.research.analyze import (  # noqa: E402,F401
     _ANALYSIS_KEY_SCHEMA,
@@ -182,11 +187,16 @@ from app.core.pipeline.research.writer import (  # noqa: E402,F401
 
 # ── 任务创建 / 澄清（落库）─────────────────────────────────
 def create_task(query: str, mode: str = "deep", model: Optional[str] = None,
-                research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
-    """快路径：只落库 task_id + meta，不调 LLM，毫秒级返回。
+                research_type: str = DEFAULT_RESEARCH_TYPE,
+                source_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    """快路径：只落库 task_id + meta（含用户指定信源清单），不调 LLM，毫秒级返回。
 
     澄清问卷改为 ClarifyPage 挂载后通过 SSE 懒生成（见 async generate_clarify），
     从而把 LLM 推理移出 HTTP 关键路径——这是根治「提交后等好久」的架构根因。
+
+    `source_urls` 走入口卫生（去空/归一/去重/截断，`fetcher.normalize_user_url_list`）后
+    **逐条登记成 `user_sources` 实例行**。落库点是唯一的：任务记录此后就是这条清单的
+    唯一可复现凭据 —— 复跑、精炼、简报都从这张表重放，而不是回头看请求体。
     """
     task_id = _sid("t")
     # 用户指定的分析模型仅在非空且非 'Auto' 时记录覆盖（跟随 _mode/_type 写入 task meta，
@@ -195,7 +205,20 @@ def create_task(query: str, mode: str = "deep", model: Optional[str] = None,
     if model and model != "Auto":
         meta["_model_override"] = model
     db.save_task(task_id, query, meta)
-    return {"taskId": task_id, "researchType": meta["_type"]}
+
+    cleaned = normalize_user_url_list(source_urls or [])
+    for seq, url in enumerate(cleaned["urls"]):
+        db.add_user_source(task_id, url, url, seq)
+    out: Dict[str, Any] = {"taskId": task_id, "researchType": meta["_type"]}
+    if source_urls:
+        # 只有用户真的填过才回这段：不带清单的任务，响应形状必须与改前逐键一致
+        # （计划 §四.2「零回归基线」，`evidence_total` 一类口径不能被顺带动）。
+        out["sourceUrls"] = {
+            "accepted": cleaned["urls"],
+            "truncated": cleaned["truncated"],
+            "rejected": cleaned["rejected"],
+        }
+    return out
 
 
 def _answer_destinations(answers: Dict[str, Any]) -> List[str]:
@@ -592,7 +615,9 @@ def refine_section(report_id: str, section_id: str, annotations: List[str]) -> D
 
     query = rep.get("query", "")
     destinations = rep.get("destinations") or rep.get("brands") or []
-    evidence = rep.get("evidence", [])
+    # 派生路径不丢清单（计划 v3 §二 B8）：批注精修同样按 `[:24]` 截断，必读条目必须先排位，
+    # 否则正文里引用着的用户文档会在这一步被挤出上下文，改完稿就变成"引用悬空"。
+    evidence = must_read_first(rep.get("evidence", []))
     digest_lines = []
     for e in evidence[:24]:
         digest_lines.append(f"[{e.get('evidence_id')}|{e.get('domain','')}] {e.get('title','')}：{e.get('excerpt','')}")
@@ -713,10 +738,22 @@ async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]
         return
 
     evs = rep.get("evidence", []) or []
-    new_evs = [
+    # 派生路径不丢清单（计划 v3 §二 B8）：**必读条目不受 min_cred 门槛筛掉**。
+    # 正文里已经引用了用户指定信源，精修时若因可信度分数低于门槛把它们滤出池外，
+    # 就会出现"改写后的段落仍在引用、上下文却看不见"的悬空引用 —— 那是改稿环节静默丢信源。
+    # 但用户显式勾选的 `evidence_ids` 仍然生效（那是他主动缩小的范围，不是阈值副作用）。
+    id_set = set(evidence_ids or ())
+
+    def _selected(e: Dict[str, Any]) -> bool:
+        return not id_set or e.get("evidence_id") in id_set
+
+    must_read_evs = [e for e in evs
+                     if source_is_must_read(evidence_source_type(e)) and _selected(e)]
+    new_evs = must_read_evs + [
         e for e in evs
-        if (e.get("credibility") or 0) >= min_cred
-        and (not evidence_ids or e.get("evidence_id") in set(evidence_ids))
+        if not source_is_must_read(evidence_source_type(e))
+        and (e.get("credibility") or 0) >= min_cred
+        and _selected(e)
     ]
     if not new_evs:
         yield _ev("error", {"message": "没有可吸收的高可信度证据"})
@@ -729,6 +766,7 @@ async def refine_report_pipeline(task_id: str) -> "AsyncIterator[Dict[str, Any]]
         digest_lines.append(
             f"[{e.get('evidence_id')}|{e.get('domain','')}] {e.get('title','')}：{e.get('excerpt','')}"
         )
+    # 必读条目排在最前，`[:3000]` 截断才不会把它们挤出精修上下文
     digest = "\n".join(digest_lines)[:3000]
     system_prompt = (
         "你是资深旅游调研分析师。报告已归属了一批新的高可信度证据，请基于这些证据把章节重写得更深、更厚、"
@@ -888,7 +926,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     seen_urls: set = set()
     # v2.1 客观性：信源组池（内容级去重唯一生产点）与客观性统计
     groups: List[Dict] = []  # [{"id","fingerprint","urls":[...]}]，主线程独占维护
-    stats = {"dup_skipped": 0, "viral_count": 0, "viral_checked": 0}
+    stats = {"dup_skipped": 0, "viral_count": 0, "viral_checked": 0, "ssrf_rejected": 0}
 
     def _to_int(v) -> int:
         try:
@@ -910,6 +948,13 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
             provider_err = str(e)
             break
         stats["dup_skipped"] += res.get("dup_skipped", 0)
+        rejected_here = res.get("rejected") or []
+        if rejected_here:
+            stats["ssrf_rejected"] += len(rejected_here)
+            collect_notes.append(
+                f"「{destination}」有 {len(rejected_here)} 条检索结果指向非公网地址，已拒绝抓取："
+                + "；".join(str(x.get("url", "")) for x in rejected_here[:3]) + "。"
+            )
         for e in _drain_trace():
             yield e
         if not res["evidences"]:
@@ -958,6 +1003,59 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
             yield e
         yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": collector,
                               "text": f"「{destination}」累计证据库 {len(evidences)} 条。", "ts": _now()})
+
+    # ---- 3b. 用户指定信源直抓（计划 v3 §二 B2）----
+    # 与搜索通道并列的**第二条真实出网口**：用户手填的网址当必读文档直接读，不经过搜索引擎。
+    # 逐条串行 + 逐条记终态，是为了让界面能显示「正在读取第 k/N 条」，也让每一条的
+    # 失败种类（内网拒绝 / 读不到 / 同质归并 / 跑题诊断）都可见 —— 不接受"没报错即通过"。
+    pending_rows = [r for r in db.list_user_sources(task_id) if r.get("fetch_state") == "pending"]
+    if pending_rows:
+        user_stats = {"fetched": 0, "unread": 0, "blocked": 0, "merged": 0, "gated_off_query": 0}
+        yield _ev("thought", {"id": _sid("th"), "kind": "action", "expert": collector,
+                              "text": f"读取用户指定的 {len(pending_rows)} 条网址（服务端直抓，不经搜索引擎）。",
+                              "ts": _now()})
+        for k, row in enumerate(pending_rows, 1):
+            yield _ev("user_source", {"id": row["uid"], "url": row["url_canonical"],
+                                      "index": k, "total": len(pending_rows),
+                                      "state": "reading", "ts": _now()})
+            ures = await asyncio.to_thread(
+                collect_user_sources, task_id, query, collector, groups, seen_urls, row["uid"],
+                # 同址回落索引：把已经取过证、但没进内容组的通道（舆情/景点）也连上，
+                # 让 `merged` 行仍持有 evidence_id/group_id（覆盖率按组核的前提）。
+                {e.source_url: e for e in evidences})
+            for rec in ures["records"]:
+                user_stats[rec["state"]] = user_stats.get(rec["state"], 0) + 1
+                yield _ev("user_source", {"id": rec["uid"], "url": rec["url"],
+                                          "index": k, "total": len(pending_rows),
+                                          "state": rec["state"], "reason": rec.get("reason", ""),
+                                          "evidence_id": rec.get("evidence_id", ""),
+                                          "bytes": rec.get("bytes", 0), "ms": rec.get("ms", 0),
+                                          "ts": _now()})
+            for ev in ures["evidences"]:
+                evidences.append(ev)
+                ev_by_collector[collector] += 1
+                d = ev.to_dict()
+                d["domain"] = domain_of(ev.source_url)
+                d["destination"] = ev.destination
+                d["full_text"] = getattr(ev, "_full_text", "")
+                yield _ev("evidence", {**d})
+            for fig in ures["images"]:
+                images.append(fig)
+                yield _ev("image", fig)
+            for e in _drain_trace():
+                yield e
+            await asyncio.sleep(0.02)
+        collect_notes.append(
+            f"用户指定信源 {len(pending_rows)} 条：读取入链 {user_stats['fetched']} · "
+            f"跑题诊断 {user_stats['gated_off_query']} · 同质归并 {user_stats['merged']} · "
+            f"未读到 {user_stats['unread']} · 内网/非法地址拒绝 {user_stats['blocked']}。"
+        )
+        stats["user_sources"] = user_stats
+        yield _ev("thought", {"id": _sid("th"), "kind": "finding", "expert": collector,
+                              "text": f"用户指定网址读取完毕：入链 {user_stats['fetched']} 条、"
+                                      f"归并 {user_stats['merged']} 条、未读到 {user_stats['unread']} 条、"
+                                      f"闸门拒绝 {user_stats['blocked']} 条（逐条状态见证据链与决策链路）。",
+                              "ts": _now()})
 
     # 真实舆情采集（多目的地 × 类型白名单平台 × 多角度，大幅提升样本量与平台多样性）
     sentiment_platforms = [p for p in spec["sentiment_platforms"] if p in PLATFORMS]
@@ -1026,7 +1124,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                     continue
                 seen_urls.add(url)
                 # 平台归属：站内搜索用 plat；回退搜索按真实域名判定，判不出则归到当前平台
-                detected = _source_type(url)
+                detected = classify_source(url)
                 plat_final = plat if detected in ("web", "official", "news") else detected
                 # 文档类型打标（此刻只记录不消费：统计与词云行为零变化）。
                 # 舆情语料实为搜索引擎摘要，逐条人工定标只有约 28% 是用户口碑，
@@ -1303,9 +1401,13 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     yield _ev("node_update", {"node": "audit", "status": "working", "expert": auditor})
     yield _ev("thought", {"id": _sid("th"), "kind": "reflect", "expert": auditor,
                           "text": "质检官评估证据覆盖度、维度完整性与置信度，决定是否打回返工。", "ts": _now()})
+    # 用户指定信源实例行（§二 U0）：覆盖率与 cited_by 的唯一数据源；空清单 ⇒ 传 [] ⇒
+    # evaluate_quality 不计算该维度，QualityReport 逐值等改前。
+    user_source_rows = db.list_user_sources(task_id)
     quality_before = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
                                       research_type=rtype, perspective_section_id=persp_denom_sid,
-                                      persp_llm_outcome=persp_diag.get("llm_outcome", ""))
+                                      persp_llm_outcome=persp_diag.get("llm_outcome", ""),
+                                      user_source_rows=user_source_rows)
     # 质检官 LLM 真实审阅（逐维度打分 + 问题 + 改进建议）——让质检有对比、有审阅、可观测
     trace.set_context(task_id, auditor, "audit", "质检官审阅：逐维度打分+问题+改进建议")
     review_before = await asyncio.to_thread(
@@ -1355,6 +1457,9 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                                                       collector, cfg["fetch_per_destination"], cfg["freshness"],
                                                       seen_urls, groups)
                         stats["dup_skipped"] += res.get("dup_skipped", 0)
+                        rejected_here = res.get("rejected") or []
+                        if rejected_here:
+                            stats["ssrf_rejected"] += len(rejected_here)
                         for e in _drain_trace():
                             yield e
                         for ev in res["evidences"]:
@@ -1410,12 +1515,14 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
             quality_after_round = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
                                                    research_type=rtype,
                                                    perspective_section_id=persp_denom_sid,
-                                                   persp_llm_outcome=persp_diag.get("llm_outcome", ""))
+                                                   persp_llm_outcome=persp_diag.get("llm_outcome", ""),
+                                                   user_source_rows=user_source_rows)
             issues_resolved = max(0, len(quality_before.issues) - len(quality_after_round.issues))
             envelopes = decide_rework(quality_after_round, evidences)
         quality_after = audit.evaluate_quality(destinations, focus, claims, evidences, structured,
                                          research_type=rtype, perspective_section_id=persp_denom_sid,
-                                         persp_llm_outcome=persp_diag.get("llm_outcome", ""))
+                                         persp_llm_outcome=persp_diag.get("llm_outcome", ""),
+                                         user_source_rows=user_source_rows)
     else:
         quality_after = quality_before
 
@@ -1591,6 +1698,34 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
     report["audit_review"] = {"before": review_before, "after": review_after,
                               "rework_rounds": rework_rounds_done,
                               "issues_resolved": issues_resolved}
+    # 用户指定信源举证块（计划 v3 §二 B5）：与 audit_review 同级，进 caliber 举证链。
+    # `cited_by` 的**唯一写点**在这里 —— collect 只写读取态；覆盖率是这两者派生的指标，
+    # 不是第三种存储态（两个写者抢一根 fetch_state 列会在返工轮/复跑时漂出不一致）。
+    if user_source_rows:
+        coverage = quality_after.user_source_coverage or audit.compute_user_source_coverage(
+            user_source_rows, claims, evidences)
+        for row in coverage["rows"]:
+            db.update_user_source(row["uid"],
+                                  cited_by=json.dumps(row["cited_by_claims"], ensure_ascii=False))
+        report["user_sources"] = {
+            "label": source_kind_label("user_supplied"),
+            "summary": {k: coverage[k] for k in (
+                "total", "cited", "uncited", "unread", "blocked",
+                "gated_off_query", "merged", "pending", "denominator", "rate")},
+            "items": [{
+                "uid": r["uid"], "url": r.get("url") or "", "url_canonical": r["url_canonical"],
+                "state": r["fetch_state"], "coverage": r["coverage"],
+                "reason": r.get("attempt_reason") or "", "evidence_id": r.get("evidence_id") or "",
+                "group_id": r.get("group_id") or "", "bytes": r.get("bytes"),
+                "ms": r.get("ms"), "cited_by": r["cited_by_claims"],
+            } for r in coverage["rows"]],
+            # 口径变动必须可见（§二 B5 / 前端 degradeDisclosure 同源）：
+            # 这些条目会同时出现在证据链、信源分布与「客观性与多源互证」分里。
+            "note": (f"本报告含用户指定信源 {coverage['total']} 条（已引用 {coverage['cited']} · "
+                     f"未引用 {coverage['uncited']} · 未读取 {coverage['unread']} · "
+                     f"闸门拒绝 {coverage['blocked']} · 跑题诊断 {coverage['gated_off_query']} · "
+                     f"归并 {coverage['merged']}），已计入信源分布与多源互证口径。"),
+        }
     db.save_report(report, task_id=task_id)
     db.save_traces(task_id, report["id"], trace_spans)
     db.mark_task_done(task_id, report["id"])

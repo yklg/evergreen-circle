@@ -18,7 +18,7 @@ from app.core.sentiment import PLATFORM_LABEL
 
 from . import runtime
 from .analyze import _ENTITY_STAGE_KEYS, _diag, _diag_of
-from .collect import _evidence_digest
+from .collect import _evidence_digest, digest_limit_for
 
 
 # ── 撰写：LLM 逐章产出正文（行研/咨询级深度）─────────────
@@ -77,7 +77,8 @@ def _write_single_section(sid: str, title: str, query, destinations, focus,
     spec = RT.type_spec(research_type)
     fields, chart_types = RT.section_fields(sid)
     rel_claims = [c for c in claims if c.get("field") in set(fields)]
-    digest = _evidence_digest(evidences, limit=20)
+    # 必读条目（用户指定信源）加槽而非挤位：base 20 在无必读时逐字等改动前。
+    digest = _evidence_digest(evidences, limit=digest_limit_for(evidences, 20))
     claim_text = "\n".join(
         f"- [{','.join(c.get('evidence_ids', [])) or '无'}] {c['text']}（{c['confidence']}）"
         for c in rel_claims[:8]

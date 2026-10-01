@@ -82,6 +82,9 @@ describe('T-HP1 HomePage 真实态发起目的地调研（域卡 → /clarify/:t
       'deep',
       undefined,
       'guide',
+      // 第 5 参 = 用户指定信源清单（首页真实态交出去的是空数组）：api.createTask 只在
+      // **非空**时才把 `source_urls` 拼进请求体 ⇒ 不带清单的任务，线上形状与改前逐键一致
+      [],
     )
     await waitFor(() => expect(navigateFn).toHaveBeenCalled())
     expect(navigateFn).toHaveBeenCalledWith(

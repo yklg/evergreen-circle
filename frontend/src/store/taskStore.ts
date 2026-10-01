@@ -8,6 +8,7 @@ import type {
   SSEEventType,
   ThoughtItem,
   TraceSpan,
+  UserSourceEvent,
 } from '../types'
 
 export interface ImageItem {
@@ -64,6 +65,8 @@ interface TaskState {
   charts: ChartSpec[]
   claims: Claim[]
   traces: TraceSpan[]
+  /** 用户指定网址的逐条读取态（按 uid upsert，`reading` 会被同 uid 的终态覆盖）。 */
+  userSources: UserSourceEvent[]
   progress: ProgressInfo
   teamMembers: string[]
   error: string | null
@@ -154,6 +157,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
   charts: [],
   claims: [],
   traces: [],
+  userSources: [],
   progress: { ...initProgress },
   teamMembers: [],
   error: null,
@@ -178,6 +182,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       charts: [],
       claims: [],
       traces: [],
+      userSources: [],
       progress: { ...initProgress },
       teamMembers: [],
       error: null,
@@ -226,6 +231,19 @@ export const useTaskStore = create<TaskState>((set, get) => {
       }
       case 'evidence': {
         set({ evidences: [...s.evidences, d as unknown as Evidence] })
+        return
+      }
+      case 'user_source': {
+        // 按 uid upsert 而不是 append：同一条网址先 'reading' 后终态，两帧是同一个实例的
+        // 两个时刻。append 会让「正在读取第 k/N 条」的列表随返工轮越滚越长（假进度）。
+        const ev = d as unknown as UserSourceEvent
+        const idx = s.userSources.findIndex((x) => x.id === ev.id)
+        if (idx < 0) set({ userSources: [...s.userSources, ev] })
+        else {
+          const next = [...s.userSources]
+          next[idx] = ev
+          set({ userSources: next })
+        }
         return
       }
       case 'image': {

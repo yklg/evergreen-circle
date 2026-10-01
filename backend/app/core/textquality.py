@@ -69,3 +69,36 @@ def is_relevant_content(text: str, destinations, query: str = "") -> bool:
     kws = _keywords(query, destinations)
     hits = sum(1 for k in kws if k in low)
     return hits >= 1 if kws else True
+
+
+def _query_terms(query: str) -> set:
+    """任务级 query 的可匹配词元：拉丁词 + CJK 片段（长片段再切 2-gram）。
+
+    `_keywords` 用 `[\u4e00-\u9fff]{2,}` 取**极大**连续段，"大理亲子游攻略" 会整串成一个词元，
+    正文里几乎不可能原样出现 ⇒ 用它判"跑题"会把绝大多数合法信源误判成跑题。
+    目的地判定不受此影响（目的地本来就短），所以这里单独一条路，不改动 `_keywords`。
+    """
+    terms: set = set()
+    for w in re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", (query or "").lower()):
+        terms.add(w)
+    for run in re.findall(r"[\u4e00-\u9fff]{2,}", query or ""):
+        terms.add(run)
+        if len(run) > 4:
+            terms.update(run[i:i + 2] for i in range(len(run) - 1))
+    return terms
+
+
+def is_relevant_to_query(text: str, query: str) -> bool:
+    """用户指定信源的跑题判据（计划 v3 §一 A-2）：只按**任务级 query** 判，不按目的地判。
+
+    为什么必须另开一条判据：用户钉的常常是一份全省/全国公报，它天然不含某个目的地名，
+    用 `is_relevant_content(text, [destination], destination)` 去判必然误杀。
+    与 `is_relevant_content` 一致：正文过短（多为 snippet 兜底）直接放行，交由可信度降级处理。
+    """
+    if not text or len(text) < 80:
+        return True
+    terms = _query_terms(query)
+    if not terms:
+        return True
+    low = text.lower()
+    return any(t in low for t in terms)

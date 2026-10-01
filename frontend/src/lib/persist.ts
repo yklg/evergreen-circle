@@ -36,7 +36,11 @@
 import { fetchPrefs, savePrefs, getPrefsApiCapability, PrefsUnsupportedError } from './api'
 import type { PrefValue } from '../types'
 
-/** 可持久化的原子值类型（禁止存对象/数组 —— 那属于 blob 场景，不走本层）。 */
+/** 可持久化的值类型：原子值 + **受控的字符串数组**（后端有真类型的清单键，如 `intel.defaultSources`）。
+ *
+ *  数组这一支不是"把对象塞进偏好层"：后端 `user_prefs.PREF_SCHEMA` 对 `list[str]` 键
+ *  有条数与单条长度双重校验（计划 v3 §二 B7），它和标量键一样是**参与业务计算的结构化数据**。
+ *  仍然禁止的是无 schema 的任意对象/blob —— 那类数据属于业务表，不属于偏好。 */
 export type PrefShape = Record<string, PrefValue>
 
 export interface PersistSpec<L extends PrefShape> {
@@ -107,7 +111,7 @@ function clearPendingIfUnchanged(sent: Record<string, PrefValue>): void {
   const cur = readPending()
   let changed = false
   for (const [k, v] of Object.entries(sent)) {
-    if (k in cur && cur[k] === v) {
+    if (k in cur && sameValue(cur[k], v)) {
       delete cur[k]
       changed = true
     }
@@ -121,6 +125,20 @@ export function clearAllPending(): void {
 
 /* ── 类型归一 ─────────────────────────────────────────── */
 
+/** 值比较：数组按**逐项**相等判，其余用 `===`。
+ *
+ *  pending 账本与「水合后是否变化」两处原本都是 `===`。对数组而言引用相等恒不成立，
+ *  后果是：① `clearPendingIfUnchanged` 永远清不掉标记 ⇒ 该键每次启动都被判为"本地有未
+ *  送达的改动"、永远本地为准 ⇒ 服务端真相源在这一个键上失效；② 每次水合都触发一次
+ *  `onRemote` 回调（无谓重渲染）。这两条都不是理论问题，是数组上真会发生的失效。 */
+export function sameValue(a: PrefValue | undefined, b: PrefValue | undefined): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((x, i) => x === b[i])
+  }
+  if (Array.isArray(a) || Array.isArray(b)) return false
+  return a === b
+}
+
 /**
  * 按默认值的类型归一化外来值（远端 JSON / 本地脏数据）。
  * 无法归一 → 返回 undefined（调用方回退默认值）。
@@ -129,6 +147,18 @@ export function clearAllPending(): void {
  */
 export function coerceLike(defaultValue: PrefValue | undefined, raw: unknown): PrefValue | undefined {
   if (raw === undefined || raw === null) return undefined
+  if (Array.isArray(defaultValue)) {
+    // 清单键：只收字符串数组，逐项 trim 后丢空/去重（与后端 normalize 同口径，
+    // 避免"本地存了空串/重复项、远端没有"这种两边形状不一致的漂移）。
+    if (!Array.isArray(raw)) return undefined
+    const out: string[] = []
+    for (const item of raw) {
+      if (typeof item !== 'string') return undefined
+      const v = item.trim()
+      if (v && !out.includes(v)) out.push(v)
+    }
+    return out
+  }
   if (typeof defaultValue === 'boolean') {
     if (typeof raw === 'boolean') return raw
     const s = String(raw).trim().toLowerCase()
@@ -308,7 +338,7 @@ export function createPersister<L extends PrefShape>(spec: PersistSpec<L>): Pers
     // 仅回调真正变化的字段，避免无谓的整树重渲染
     const changed: Record<string, PrefValue> = {}
     for (const field of Object.keys(s.prefs)) {
-      if (normalized[field] !== localRec[field]) {
+      if (!sameValue(normalized[field], localRec[field])) {
         changed[field] = normalized[field]
       }
     }

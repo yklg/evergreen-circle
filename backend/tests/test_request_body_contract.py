@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import get_type_hints
 
 from fastapi.testclient import TestClient
@@ -134,15 +135,27 @@ def test_declared_fields_have_no_undocumented_senders():
     "字段存在"不等于"功能生效"：`sample_profile` 当年就是前端在发、后端没声明（R0）。
     反过来更隐蔽 —— 后端声明了却没人发，那条默认值路径永远不会被真实流量触达。
     这里只钉 `CreateTaskBody`（体检发起的入口），把无发送方的键列成显式清单。
+
+    `CreateTaskBody` 是**两个前端发起口共用**的模型（`api.ts` 的 `createTask` 走 research、
+    `createLivingCircleTask` 走 living_circle），所以发送方清单必须取两边的并集 ——
+    只取一边的话，另一边的键会被误判成"没人发"（`source_urls` 第一次落地就是这种形状）。
+    并集里的每个键都另外用 `key in api.ts` 验一遍存在性：硬清单会漂移，存在性不会。
     """
     from app.main import CreateTaskBody
 
-    declared = set(CreateTaskBody.model_fields)
-    # 前端体检载荷实际发送的键（取自 lib/api.ts 的唯一写入口，非记忆）
-    launched = {"query", "sample_profile", "type", "center", "coord_sys", "city", "address",
-                "data_mode"}
-    unsent = declared - launched
-    assert unsent == {"mode", "model", "purpose", "travel_mode"}, (
+    api_ts = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "api.ts")
+    assert api_ts.exists(), f"前端源不可达（{api_ts}）—— 须修路径而非跳过本守卫"
+    src = api_ts.read_text(encoding="utf-8")
+
+    lc_launched = {"query", "sample_profile", "type", "center", "coord_sys", "city", "address",
+                   "data_mode"}
+    research_launched = {"query", "mode", "model", "type", "source_urls"}
+    launched = lc_launched | research_launched
+    for key in launched:
+        assert key in src, f"发送方清单里的 {key} 在 api.ts 里已找不到 ⇒ 清单漂移，判据在空转"
+
+    unsent = set(CreateTaskBody.model_fields) - launched
+    assert unsent == {"purpose", "travel_mode"}, (
         f"`CreateTaskBody` 的无发送方字段清单变了，须回计划 §0 登记：{sorted(unsent)}"
     )
     for field in sorted(unsent):

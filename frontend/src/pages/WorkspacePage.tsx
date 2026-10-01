@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ClipboardList,
   ChevronRight,
+  Link2,
 } from 'lucide-react'
 import { useTaskStream } from '../hooks/useTaskStream'
 import { useTaskStore } from '../store/taskStore'
@@ -24,6 +25,7 @@ import { VEvidenceFeed } from '../components/VEvidenceFeed'
 import { VTracePanel } from '../components/VTracePanel'
 import { VCountUp } from '../components/ui'
 import { PLAN_FALLBACK_HINT } from '../lib/destinationFallbackCopy'
+import { userSourceStateLabel } from '../lib/userSourceStates'
 
 export default function WorkspacePage() {
   const { taskId } = useParams()
@@ -52,6 +54,7 @@ export default function WorkspacePage() {
     progress,
     teamMembers,
     traces,
+    userSources,
     reportId,
     finished,
     error,
@@ -230,6 +233,28 @@ export default function WorkspacePage() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* 用户指定信源逐条读取态（计划 v3 §二 F1/B2）：第二条真实出网口必须逐条可见，
+                不接受"没报错即通过" —— 内网被拒 / 404 / 归并 / 跑题是四种不同结论。 */}
+            {userSources.length > 0 && (
+              <div className="mt-4 rounded-card border border-line/70 bg-bg/60 p-4">
+                <div className="flex items-center gap-1.5 text-aux font-semibold text-ink">
+                  <Link2 size={14} className="text-primary" />
+                  用户指定信源读取（{userSources.filter((u) => u.state !== 'reading').length}/{userSources.length} 已有结论）
+                </div>
+                <ul className="mt-2 flex flex-col gap-1.5 text-tag">
+                  {userSources.map((u) => (
+                    <li key={u.id} className="flex items-baseline gap-2">
+                      <span className={u.state === 'reading' ? 'text-primary-deep' : 'text-ink-2'}>
+                        {u.state === 'reading' ? `正在读取第 ${u.index}/${u.total} 条` : userSourceStateLabel(u.state)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-ink-3" title={u.url}>{u.url}</span>
+                      {u.reason && <span className="shrink-0 text-warn">{u.reason}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* 完成横幅 */}
             <AnimatePresence>

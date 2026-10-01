@@ -124,6 +124,8 @@ export async function pingLLM(): Promise<PingLLMResp> {
 /**
  * 建旅游调研任务。type 为**权威**类型（guide/assessment，默认 guide）；
  * 真实态 POST body 只发 type（后端按 type 落 task meta；旧 purpose 方言后端已读宽容归一）。
+ * `sourceUrls` 是用户手填网址（计划 v3 §二 B1）：后端会归一/去重/截断后逐条登记成
+ * `user_sources` 实例行，并在响应的 `sourceUrls` 里回传 accepted/truncated/rejected。
  * 返回附带 kind/demoPurpose，供 taskRegistry 与 fixture 回放桥接。
  */
 export async function createTask(
@@ -131,6 +133,7 @@ export async function createTask(
   mode: string = 'deep',
   model?: string | null,
   type: string = 'guide',
+  sourceUrls?: string[] | null,
 ): Promise<CreateTaskResp> {
   const domain = resolveTypeOr(type, 'guide')
   const kind = kindOfType(domain)
@@ -143,7 +146,11 @@ export async function createTask(
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode, model: model ?? null, type: domain }),
+      body: JSON.stringify({
+        query, mode, model: model ?? null, type: domain,
+        // 键名与后端 CreateTaskBody.source_urls 逐字一致（跨端契约由后端守卫钉）
+        ...(sourceUrls?.length ? { source_urls: sourceUrls } : {}),
+      }),
     },
     // 真实态网络/离线兜底：仍回传 kind/purpose，前端据此走 taskViewProvider + fixture 流
     { taskId: `demo-${Date.now()}`, kind, purpose: demoPurpose },
@@ -380,20 +387,26 @@ export async function fetchSubscriptions(): Promise<Subscription[]> {
   return safeJson<Subscription[]>('/api/subscriptions')
 }
 
-/** 键名与后端 `SubscriptionBody{query,destinations,type}` 逐字对齐。
+/** 键名与后端 `SubscriptionBody{query,destinations,type,source_urls}` 逐字对齐。
  *  这里曾长期 POST `{query, brands}`：因两个字段都带默认值，服务端**返 200** 并建成一条
- *  零目的地订阅 —— 用户以为在追踪某主题，实际永不复跑（比报错更坏）。 */
+ *  零目的地订阅 —— 用户以为在追踪某主题，实际永不复跑（比报错更坏）。
+ *  `sourceUrls`（计划 v3 §二 B8）：订阅必须把用户指定信源清单一起存下，复跑才带得动；
+ *  不传即不发这个键，后端按空清单落库，行为与改前一致。 */
 export async function createSubscription(
   query: string,
   destinations: string[],
   type: string = 'guide',
+  sourceUrls?: string[] | null,
 ): Promise<Subscription | null> {
   return safeJson<Subscription | null>(
     '/api/subscriptions',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, destinations, type }),
+      body: JSON.stringify({
+        query, destinations, type,
+        ...(sourceUrls?.length ? { source_urls: sourceUrls } : {}),
+      }),
     },
     null,
   )
@@ -437,19 +450,29 @@ export function openTaskStream(
   }
   const url = `${API_BASE}/api/tasks/${taskId}/stream`
   const es = new EventSource(url)
-  const types: SSEEventType[] = [
-    'node_update',
-    'thought',
-    'message',
-    'evidence',
-    'chart',
-    'image',
-    'progress',
-    'trace',
-    'report_ready',
-    'done',
-    'error',
-  ]
+  /**
+   * 订阅的事件名清单**按 SSEEventType 穷举**（Record 强制）：
+   * 原先这里是一份手写的字符串数组，后端新发一类事件时，`es.addEventListener` 没登记
+   * 就等于在传输层静默丢掉 —— 界面少一块内容而全局零报错（`user_source` 逐条读取态
+   * 就是这么消失过一次：后端发了、store 会处理、中间没人订阅）。
+   * 现在给 `SSEEventType` 加一个成员而忘了订阅，tsc 直接报缺键。
+   */
+  const SSE_SUBSCRIPTIONS: Record<SSEEventType, true> = {
+    node_update: true,
+    thought: true,
+    message: true,
+    evidence: true,
+    chart: true,
+    image: true,
+    user_source: true,
+    progress: true,
+    trace: true,
+    round: true,
+    report_ready: true,
+    done: true,
+    error: true,
+  }
+  const types = Object.keys(SSE_SUBSCRIPTIONS) as SSEEventType[]
   // 传输层连接语义与域级任务终态分离——
   //  - addEventListener 的 'done'/'error' 是服务端推送的**域级终态消息**；
   //  - es.onerror 是 EventSource 内建**传输事件**（连接被关闭/断网），两者同名不同义，勿混淆。

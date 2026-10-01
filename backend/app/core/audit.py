@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.fetcher import domain_of
 from app.core.models import Envelope
@@ -35,6 +35,9 @@ class QualityReport:
     # ∈ ok / truncated / error / skipped / ""（未装配）。**不可**从 structured 反推：
     # LLM 抛错、返回空、真无证据、反造数守卫全拒 —— 四者在载荷里长得一模一样。
     persp_llm_outcome: str = ""
+    # 用户指定信源覆盖率（计划 v3 §二 B5）。缺省 {} = 本次任务没填清单，
+    # 与"填了但一条都没被引用"是两件事，不能都塌成 0。
+    user_source_coverage: Dict[str, Any] = field(default_factory=dict)
     issues: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -54,6 +57,7 @@ class QualityReport:
             "persp_verified_ratio": self.persp_verified_ratio,
             "persp_probed_spots": self.persp_probed_spots,
             "persp_llm_outcome": self.persp_llm_outcome,
+            "user_source_coverage": self.user_source_coverage,
             "issues": self.issues,
         }
 
@@ -76,6 +80,114 @@ class QualityReport:
 SINGLE_SOURCE_REWORK_RATIO = 0.5
 
 
+# ── 用户指定信源覆盖率（计划 v3 §二 B4/B5）─────────────────────────
+# 语义分工（这是本维度唯一的设计难点，写清楚免得日后被"顺手合并成一根"）：
+#   · `user_sources.fetch_state` = **读取生命周期**，唯一写点是 collect
+#     （fetched / unread / blocked / gated_off_query / merged / pending）；
+#   · `user_sources.cited_by`    = **引用事实**，唯一写点是本函数（结论 id 列表）；
+#   · 覆盖率 = 由上面两者**派生**的指标，不是第三个存储状态。
+#   把 cited/uncited 也存成 fetch_state 会造出两个写者抢一根列：collect 与 audit 的
+#   时序一变（返工轮、复跑）就会出现"已引用却仍是 fetched"的漂移，而没人会报错。
+USER_SOURCE_COVERAGE_BUCKETS = ("cited", "uncited", "unread", "blocked", "gated_off_query", "merged")
+
+
+def compute_user_source_coverage(rows: List[Dict[str, Any]],
+                                 claims: List[Dict[str, Any]],
+                                 evidences: List[Any]) -> Dict[str, Any]:
+    """按**信源组**核的用户指定信源覆盖率。
+
+    为什么按组核（§一 A-3）：用户钉的三个站若转载同一篇通稿，会被去重机制归并成一组
+    （`fetch_state=merged`），只有代表证据独立成行。按"这一条网址自己有没有被引用"核，
+    会把归并掉的三条一律判成"未引用"——那是这套归并机制本要消灭的判据形状。
+    判据改成：**它所在组被任何结论引用 ⇒ 该条算已引用**。
+
+    分母口径（§四.3 + 待确认 2）：
+      · `unread` / `blocked` 是"没读到"，不进分母 —— 一个 404 不该卡住报告签发；
+      · `merged` / `gated_off_query` / `fetched` 都是"读到了"，进分母，按引用情况分 cited/uncited；
+      · 分母恒等：cited + uncited + unread + blocked + pending == total（TC-25 守这条）。
+    """
+    # 被任何结论引用的证据 id（Claim.evidence_ids 是唯一判据来源）
+    cited_eids = {eid for c in claims for eid in (c.get("evidence_ids") or []) if eid}
+    # 证据 id → 所在信源组：归并条与代表证据靠这一层连起来
+    group_of = {getattr(e, "evidence_id", ""): (getattr(e, "source_group", "")
+                                                or getattr(e, "evidence_id", ""))
+                for e in evidences}
+    hit_groups = {group_of.get(eid, eid) for eid in cited_eids if group_of.get(eid, eid)}
+
+    buckets = {k: 0 for k in USER_SOURCE_COVERAGE_BUCKETS}
+    pending = 0
+    details: List[Dict[str, Any]] = []
+    for row in rows:
+        state = str(row.get("fetch_state") or "")
+        group = str(row.get("group_id") or "")
+        evidence_id = str(row.get("evidence_id") or "")
+        # 一条网址"被用上"的三种等价形态：自己独立成行被引 / 所在组被引 / 地址即代表证据
+        cited = (evidence_id in cited_eids) or (group and group in hit_groups)
+        if state == "pending":
+            pending += 1
+            outcome = "pending"
+        elif state in ("unread", "blocked"):
+            buckets["unread" if state == "unread" else "blocked"] += 1
+            outcome = state
+        else:
+            outcome = "cited" if cited else "uncited"
+            buckets[outcome] += 1
+        if state == "gated_off_query":
+            buckets["gated_off_query"] += 1
+        elif state == "merged":
+            buckets["merged"] += 1
+        details.append({**row, "coverage": outcome, "cited_by_claims": sorted(
+            {str(c.get("claim_id") or c.get("id") or "")
+             for c in claims if evidence_id and evidence_id in (c.get("evidence_ids") or [])})})
+
+    denominator = buckets["cited"] + buckets["uncited"]
+    return {
+        "total": len(rows),
+        "cited": buckets["cited"],
+        "uncited": buckets["uncited"],
+        "unread": buckets["unread"],
+        "blocked": buckets["blocked"],
+        "gated_off_query": buckets["gated_off_query"],
+        "merged": buckets["merged"],
+        "pending": pending,
+        "denominator": denominator,
+        "rate": round(buckets["cited"] / denominator, 3) if denominator else None,
+        "rows": details,
+    }
+
+
+def user_source_issues(coverage: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """把"读到了却没引用"与"没读到"都摊成可见 issue。
+
+    target 前缀**只用 `user_source:`**（§二 B5 硬约束）：`decide_rework` 按
+    `destination:` / `dimension:` / `schema` 三种前缀分流，沿用它们会让一条用户网址
+    变成"补采某个目的地"的 REWORK —— 空转烧预算、流水线变长，且没有现存测试会因此变红。
+    该隔离由 `tests/test_audit_user_source_envelope.py` 冻结。
+    """
+    out: List[Dict[str, Any]] = []
+    for row in coverage.get("rows") or []:
+        outcome = row.get("coverage")
+        if outcome == "uncited":
+            out.append({
+                "issue_id": "is_" + uuid.uuid4().hex[:8],
+                "target": f"user_source:{row.get('uid', '')}",
+                "severity": "low",
+                "reason": f"用户指定信源「{row.get('url_canonical') or row.get('url', '')}」"
+                          f"已读取进证据链，但本次报告的结论未引用它（不阻断签发，如实披露）。",
+                "raised_by": "L3-003",
+            })
+        elif outcome in ("unread", "blocked"):
+            out.append({
+                "issue_id": "is_" + uuid.uuid4().hex[:8],
+                "target": f"user_source:{row.get('uid', '')}",
+                "severity": "low",
+                "reason": f"用户指定信源「{row.get('url_canonical') or row.get('url', '')}」"
+                          f"未读取成功：{row.get('attempt_reason') or '原因未记录'}（不计入覆盖率分母）。",
+                "raised_by": "L3-003",
+            })
+    return out
+
+
 def evaluate_quality(
     destinations: List[str],
     focus: List[str],
@@ -87,6 +199,7 @@ def evaluate_quality(
     research_type: str = DEFAULT_RESEARCH_TYPE,
     perspective_section_id: str = "",
     persp_llm_outcome: str = "",
+    user_source_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> QualityReport:
     qr = QualityReport()
 
@@ -192,6 +305,14 @@ def evaluate_quality(
 
     op_n = sum(1 for c in claims if c.get("claim_type", "mixed") in ("opinion", "mixed"))
     qr.opinion_ratio = round(op_n / (len(claims) or 1), 3)
+
+    # 7. 用户指定信源覆盖率（计划 v3 §二 B5）：只有**本次真填过清单**才计算。
+    #    不带清单的任务在这里保持 `{}` 且一条 issue 都不追加 —— 这是 §四.2 零回归基线
+    #    要求的形状（QualityReport 全字段逐值等改前），不是"顺手兼容旧数据"。
+    if user_source_rows:
+        qr.user_source_coverage = compute_user_source_coverage(
+            user_source_rows, claims, evidences)
+        qr.issues.extend(user_source_issues(qr.user_source_coverage))
 
     return qr
 
