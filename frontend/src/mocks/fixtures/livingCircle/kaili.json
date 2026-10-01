@@ -32,7 +32,8 @@
     "cells_inside": 72,
     "cells_judged": 9,
     "cells_unknown": 63,
-    "sample_profile": "standard"
+    "sample_profile": "standard",
+    "coverage_caliber_version": "cov-1"
   },
   "isochrones": [
     {
@@ -9673,7 +9674,10 @@
         "in_circle": 7,
         "coverage": 1.0,
         "min_minutes": 7.4,
-        "nearest_name": "私宴"
+        "nearest_name": "私宴",
+        "required_in_circle": null,
+        "scored_as": null,
+        "unscored_as": null
       },
       {
         "category": "medical",
@@ -9682,16 +9686,34 @@
         "in_circle": 25,
         "coverage": 1.0,
         "min_minutes": 4.7,
-        "nearest_name": "伍氏中医诊所"
+        "nearest_name": "伍氏中医诊所",
+        "required_in_circle": 5,
+        "scored_as": [
+          "社区卫生服务中心",
+          "社区卫生服务站",
+          "药店"
+        ],
+        "unscored_as": [
+          "诊所",
+          "医院"
+        ]
       },
       {
         "category": "education",
         "label": "教育",
         "total": 34,
         "in_circle": 15,
-        "coverage": 1.0,
+        "coverage": 0.3333,
         "min_minutes": 7.6,
-        "nearest_name": "童欣宏源幼儿园"
+        "nearest_name": "童欣宏源幼儿园",
+        "required_in_circle": 1,
+        "scored_as": [
+          "小学"
+        ],
+        "unscored_as": [
+          "幼儿园",
+          "中学"
+        ]
       },
       {
         "category": "shopping",
@@ -9700,7 +9722,10 @@
         "in_circle": 25,
         "coverage": 1.0,
         "min_minutes": 2.0,
-        "nearest_name": "凯尚生活超市(丰球尚品店)"
+        "nearest_name": "凯尚生活超市(丰球尚品店)",
+        "required_in_circle": null,
+        "scored_as": null,
+        "unscored_as": null
       },
       {
         "category": "elderly",
@@ -9709,7 +9734,10 @@
         "in_circle": 0,
         "coverage": 0.0,
         "min_minutes": null,
-        "nearest_name": null
+        "nearest_name": null,
+        "required_in_circle": null,
+        "scored_as": null,
+        "unscored_as": null
       },
       {
         "category": "finance",
@@ -9718,7 +9746,10 @@
         "in_circle": 12,
         "coverage": 1.0,
         "min_minutes": 6.2,
-        "nearest_name": "中国邮政储蓄银行24小时自助银行(迎宾支行)"
+        "nearest_name": "中国邮政储蓄银行24小时自助银行(迎宾支行)",
+        "required_in_circle": null,
+        "scored_as": null,
+        "unscored_as": null
       },
       {
         "category": "recreation",
@@ -9727,7 +9758,10 @@
         "in_circle": 10,
         "coverage": 1.0,
         "min_minutes": 7.1,
-        "nearest_name": "怡佳人瑜伽"
+        "nearest_name": "怡佳人瑜伽",
+        "required_in_circle": null,
+        "scored_as": null,
+        "unscored_as": null
       },
       {
         "category": "service",
@@ -9736,7 +9770,10 @@
         "in_circle": 4,
         "coverage": 1.0,
         "min_minutes": 14.1,
-        "nearest_name": "凯里市和谐社区居家养老服务站"
+        "nearest_name": "凯里市和谐社区居家养老服务站",
+        "required_in_circle": null,
+        "scored_as": null,
+        "unscored_as": null
       }
     ],
     "total": 217,
@@ -9751,7 +9788,8 @@
           26.572207
         ],
         "minutes": 7.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-market-1",
@@ -9762,7 +9800,8 @@
           26.57165
         ],
         "minutes": 10.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-market-7",
@@ -9773,7 +9812,8 @@
           26.575024
         ],
         "minutes": 9.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-market-9",
@@ -9784,7 +9824,8 @@
           26.572141
         ],
         "minutes": 12.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-market-10",
@@ -9795,7 +9836,8 @@
           26.567477
         ],
         "minutes": 13.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-market-2",
@@ -9806,7 +9848,8 @@
           26.577328
         ],
         "minutes": 15.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-market-3",
@@ -9817,7 +9860,8 @@
           26.572027
         ],
         "minutes": 18.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-medical-8",
@@ -9828,7 +9872,8 @@
           26.573319
         ],
         "minutes": 4.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-9",
@@ -9839,7 +9884,8 @@
           26.574264
         ],
         "minutes": 6.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-10",
@@ -9850,7 +9896,8 @@
           26.57245
         ],
         "minutes": 8.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-0",
@@ -9861,7 +9908,8 @@
           26.575795
         ],
         "minutes": 14.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "community_health_center"
       },
       {
         "id": "poi-medical-11",
@@ -9872,7 +9920,8 @@
           26.573659
         ],
         "minutes": 8.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-12",
@@ -9883,7 +9932,8 @@
           26.573353
         ],
         "minutes": 6.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "other"
       },
       {
         "id": "poi-medical-13",
@@ -9894,7 +9944,8 @@
           26.57464
         ],
         "minutes": 8.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-14",
@@ -9905,7 +9956,8 @@
           26.569409
         ],
         "minutes": 10.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "other"
       },
       {
         "id": "poi-medical-16",
@@ -9916,7 +9968,8 @@
           26.573204
         ],
         "minutes": 9.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-15",
@@ -9927,7 +9980,8 @@
           26.573655
         ],
         "minutes": 9.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-17",
@@ -9938,7 +9992,8 @@
           26.575287
         ],
         "minutes": 10.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-1",
@@ -9949,7 +10004,8 @@
           26.571453
         ],
         "minutes": 12.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "health_service_station"
       },
       {
         "id": "poi-medical-18",
@@ -9960,7 +10016,8 @@
           26.567732
         ],
         "minutes": 11.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "other"
       },
       {
         "id": "poi-medical-19",
@@ -9971,7 +10028,8 @@
           26.577797
         ],
         "minutes": 19.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-37",
@@ -9982,7 +10040,8 @@
           26.576582
         ],
         "minutes": 13.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "community_health_center"
       },
       {
         "id": "poi-medical-21",
@@ -9993,7 +10052,8 @@
           26.567534
         ],
         "minutes": 11.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-3",
@@ -10004,7 +10064,8 @@
           26.574418
         ],
         "minutes": 13.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "health_service_station"
       },
       {
         "id": "poi-medical-24",
@@ -10015,7 +10076,8 @@
           26.572743
         ],
         "minutes": 13.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-25",
@@ -10026,7 +10088,8 @@
           26.569757
         ],
         "minutes": 18.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-26",
@@ -10037,7 +10100,8 @@
           26.565889
         ],
         "minutes": 15.2,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-27",
@@ -10048,7 +10112,8 @@
           26.56919
         ],
         "minutes": 18.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-28",
@@ -10059,7 +10124,8 @@
           26.577942
         ],
         "minutes": 14.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "other"
       },
       {
         "id": "poi-medical-30",
@@ -10070,7 +10136,8 @@
           26.572549
         ],
         "minutes": 13.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-32",
@@ -10081,7 +10148,8 @@
           26.579502
         ],
         "minutes": 19.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "clinic"
       },
       {
         "id": "poi-medical-5",
@@ -10092,7 +10160,8 @@
           26.578454
         ],
         "minutes": 16.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "health_service_station"
       },
       {
         "id": "poi-education-11",
@@ -10103,7 +10172,8 @@
           26.57218
         ],
         "minutes": 7.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-5",
@@ -10114,7 +10184,8 @@
           26.569651
         ],
         "minutes": 10.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "secondary"
       },
       {
         "id": "poi-education-12",
@@ -10125,7 +10196,8 @@
           26.569041
         ],
         "minutes": 10.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-0",
@@ -10136,7 +10208,8 @@
           26.574535
         ],
         "minutes": 9.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "primary"
       },
       {
         "id": "poi-education-13",
@@ -10147,7 +10220,8 @@
           26.568734
         ],
         "minutes": 10.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "other"
       },
       {
         "id": "poi-education-15",
@@ -10158,7 +10232,8 @@
           26.574521
         ],
         "minutes": 9.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-18",
@@ -10169,7 +10244,8 @@
           26.568159
         ],
         "minutes": 12.2,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-19",
@@ -10180,7 +10256,8 @@
           26.568863
         ],
         "minutes": 17.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-20",
@@ -10191,7 +10268,8 @@
           26.569925
         ],
         "minutes": 16.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-21",
@@ -10202,7 +10280,8 @@
           26.577581
         ],
         "minutes": 13.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-22",
@@ -10213,7 +10292,8 @@
           26.567802
         ],
         "minutes": 16.2,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-24",
@@ -10224,7 +10304,8 @@
           26.577484
         ],
         "minutes": 14.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-25",
@@ -10235,7 +10316,8 @@
           26.57584
         ],
         "minutes": 17.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-26",
@@ -10246,7 +10328,8 @@
           26.574782
         ],
         "minutes": 19.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-education-27",
@@ -10257,7 +10340,8 @@
           26.579282
         ],
         "minutes": 18.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": "kindergarten"
       },
       {
         "id": "poi-shopping-0",
@@ -10268,7 +10352,8 @@
           26.573432
         ],
         "minutes": 2.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-1",
@@ -10279,7 +10364,8 @@
           26.573251
         ],
         "minutes": 6.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-31",
@@ -10290,7 +10376,8 @@
           26.575305
         ],
         "minutes": 12.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-2",
@@ -10301,7 +10388,8 @@
           26.573393
         ],
         "minutes": 6.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-3",
@@ -10312,7 +10400,8 @@
           26.571048
         ],
         "minutes": 8.2,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-4",
@@ -10323,7 +10412,8 @@
           26.575896
         ],
         "minutes": 14.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-32",
@@ -10334,7 +10424,8 @@
           26.576825
         ],
         "minutes": 12.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-33",
@@ -10345,7 +10436,8 @@
           26.57096
         ],
         "minutes": 9.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-34",
@@ -10356,7 +10448,8 @@
           26.5692
         ],
         "minutes": 10.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-5",
@@ -10367,7 +10460,8 @@
           26.568983
         ],
         "minutes": 8.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-35",
@@ -10378,7 +10472,8 @@
           26.568811
         ],
         "minutes": 9.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-6",
@@ -10389,7 +10484,8 @@
           26.575024
         ],
         "minutes": 9.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-36",
@@ -10400,7 +10496,8 @@
           26.573505
         ],
         "minutes": 9.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-9",
@@ -10411,7 +10508,8 @@
           26.575411
         ],
         "minutes": 11.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-38",
@@ -10422,7 +10520,8 @@
           26.567675
         ],
         "minutes": 11.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-10",
@@ -10433,7 +10532,8 @@
           26.572141
         ],
         "minutes": 12.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-39",
@@ -10444,7 +10544,8 @@
           26.578157
         ],
         "minutes": 20.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-40",
@@ -10455,7 +10556,8 @@
           26.567209
         ],
         "minutes": 13.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-41",
@@ -10466,7 +10568,8 @@
           26.574526
         ],
         "minutes": 13.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-13",
@@ -10477,7 +10580,8 @@
           26.567477
         ],
         "minutes": 13.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-44",
@@ -10488,7 +10592,8 @@
           26.570813
         ],
         "minutes": 16.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-14",
@@ -10499,7 +10604,8 @@
           26.57673
         ],
         "minutes": 13.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-45",
@@ -10510,7 +10616,8 @@
           26.565769
         ],
         "minutes": 14.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-74",
@@ -10521,7 +10628,8 @@
           26.579413
         ],
         "minutes": 18.2,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-shopping-48",
@@ -10532,7 +10640,8 @@
           26.572036
         ],
         "minutes": 15.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-0",
@@ -10543,7 +10652,8 @@
           26.571481
         ],
         "minutes": 7.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-1",
@@ -10554,7 +10664,8 @@
           26.573454
         ],
         "minutes": 6.2,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-2",
@@ -10565,7 +10676,8 @@
           26.569753
         ],
         "minutes": 7.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-6",
@@ -10576,7 +10688,8 @@
           26.571868
         ],
         "minutes": 12.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-7",
@@ -10587,7 +10700,8 @@
           26.572966
         ],
         "minutes": 11.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-15",
@@ -10598,7 +10712,8 @@
           26.573601
         ],
         "minutes": 15.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-8",
@@ -10609,7 +10724,8 @@
           26.575858
         ],
         "minutes": 12.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-9",
@@ -10620,7 +10736,8 @@
           26.578865
         ],
         "minutes": 17.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-10",
@@ -10631,7 +10748,8 @@
           26.576524
         ],
         "minutes": 14.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-11",
@@ -10642,7 +10760,8 @@
           26.579079
         ],
         "minutes": 18.0,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-14",
@@ -10653,7 +10772,8 @@
           26.578624
         ],
         "minutes": 18.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-finance-17",
@@ -10664,7 +10784,8 @@
           26.572063
         ],
         "minutes": 18.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-1",
@@ -10675,7 +10796,8 @@
           26.572237
         ],
         "minutes": 7.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-2",
@@ -10686,7 +10808,8 @@
           26.570544
         ],
         "minutes": 7.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-5",
@@ -10697,7 +10820,8 @@
           26.574513
         ],
         "minutes": 14.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-6",
@@ -10708,7 +10832,8 @@
           26.570616
         ],
         "minutes": 16.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-7",
@@ -10719,7 +10844,8 @@
           26.569869
         ],
         "minutes": 17.7,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-8",
@@ -10730,7 +10856,8 @@
           26.572575
         ],
         "minutes": 18.4,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-9",
@@ -10741,7 +10868,8 @@
           26.576943
         ],
         "minutes": 14.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-10",
@@ -10752,7 +10880,8 @@
           26.574272
         ],
         "minutes": 19.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-11",
@@ -10763,7 +10892,8 @@
           26.57816
         ],
         "minutes": 16.5,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-recreation-12",
@@ -10774,7 +10904,8 @@
           26.572389
         ],
         "minutes": 19.3,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-service-0",
@@ -10785,7 +10916,8 @@
           26.576615
         ],
         "minutes": 14.1,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-service-1",
@@ -10796,7 +10928,8 @@
           26.578936
         ],
         "minutes": 16.6,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-service-2",
@@ -10807,7 +10940,8 @@
           26.570781
         ],
         "minutes": 17.8,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       },
       {
         "id": "poi-service-3",
@@ -10818,7 +10952,8 @@
           26.579417
         ],
         "minutes": 19.9,
-        "in_circle": true
+        "in_circle": true,
+        "sub_kind": null
       }
     ],
     "truncated": {
@@ -10834,7 +10969,7 @@
   },
   "blindspots": [],
   "scores": {
-    "total": 68.7,
+    "total": 65.4,
     "radar": [
       {
         "dimension": "菜市场",
@@ -10846,7 +10981,7 @@
       },
       {
         "dimension": "教育",
-        "score": 88.6
+        "score": 41.9
       },
       {
         "dimension": "购物",
@@ -10883,7 +11018,7 @@
       {
         "category": "education",
         "label": "教育",
-        "value": 100
+        "value": 33
       },
       {
         "category": "shopping",
@@ -10931,6 +11066,6 @@
         "nearest_minutes": 9.3
       }
     ],
-    "note": "确定性评分：覆盖 87.5 / 可达 64.9 / 多样 87.5 / 均衡 0.0"
+    "note": "确定性评分：覆盖 79.2 / 可达 64.9 / 多样 87.5 / 均衡 0.0；1 类圈内无可达设施（养老）不计入可达维度 ⇒ 可达维度偏高"
   }
 }

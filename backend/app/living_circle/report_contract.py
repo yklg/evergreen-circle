@@ -62,6 +62,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
 # 台账的三个字符 `1/0/.` 一旦有两份定义，读侧守卫就会在写侧改字母表的那天开始说谎。
@@ -937,6 +938,16 @@ def reuse_policy(
         # 半径按数值归一后再比：payload 落的是 `int(...)` 而请求侧是 float ⇒ 逐字串比会把
         # 2500 与 2500.0 判成两个档（自家产物拦自家，每次体检都白跑一遍取证）。
         ("研究半径", _radius_key, scene.get("study_radius_m"), wanted["study_radius_m"]),
+        # **第二把版本键**（评分口径 `cov-*`）。它的 `want` 与前三行**不同源**：前三行比的是
+        # 「本次请求要什么档」，这一行比的是「当前代码是哪一档分子」—— 用户没有"要哪一档分子"
+        # 这个选项，请求侧也就带不来它。⇒ 比较对象必须是模块常量，**不许**从 `wanted` 里取
+        # （10-01 全量实测：从 `wanted` 取会让所有自带三元组的调用方当场 KeyError，
+        #  包括 `tests/test_caching_datasource.py::test_reuse_gate_requires_the_request_caliber_triple`，
+        #  并逼着 `data_source.wanted_caliber` 长出一个"假装用户请求了 cov-1"的假键）。
+        # 不写这条会怎样：改造后第一次体检产出的新分数落库，第二次体检从库里捞出**改造前**
+        # 那份 88.6/68.7 当作本次答案上屏，而页面上没有任何一处能看出它是旧分子算的。
+        ("评分口径", str, cal.get("coverage_caliber_version"),
+         COVERAGE_CALIBER_VERSION),
     )
     for label, coerce, got, want in checks:
         if got is None:

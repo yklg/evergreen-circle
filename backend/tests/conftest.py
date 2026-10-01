@@ -20,18 +20,20 @@ import pytest  # noqa: E402
 import app.core.db as db  # noqa: E402
 import app.core.runtime_config as rc  # noqa: E402
 import app.living_circle.request_guard as request_guard  # noqa: E402
+from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.scope import SCOPE_POLICY_VERSION  # noqa: E402
 
 
 def live_payload(payload: dict) -> dict:
     """给一份 **要过复用门** 的 live 桩载荷盖上当前判盲口径版本（就地返回同一对象）。
 
-    复用门 ``report_contract.reuse_policy``（生产调用点仅两处：``data_source.py:145``
-    ``LiveDataSource.compute`` 的缓存读、``:301`` ``CachingDataSource._reusable``
-    （经 ``peek``/``compute``））只认带 ``caliber.scope_policy_version`` 的 live 载荷 ——
-    旧口径/无口径的报告不许冒充本次体检的答案。因此**凡测试里手工落 live 缓存、
-    再指望 ``peek``/``compute`` 命中**的桩，都必须过这个门，否则会静默变成"未命中"，
-    用例照样绿但测的已经不是它以为的那件事。
+    复用门 ``report_contract.reuse_policy``（生产调用点仅两处：``data_source.py:217``
+    ``LiveDataSource.compute`` 的缓存读、``:352`` ``CachingDataSource._reusable``
+    （经 ``peek``/``compute``））只认**两把版本键都带**的 live 载荷 ——
+    判盲口径 ``caliber.scope_policy_version``（`ev-*`）与评分口径 ``caliber.coverage_caliber_version``
+    （`cov-*`，v7.2 起）缺一即拒。旧口径/无口径的报告不许冒充本次体检的答案。
+    因此**凡测试里手工落 live 缓存、再指望 ``peek``/``compute`` 命中**的桩，都必须过这个门，
+    否则会静默变成"未命中"，用例照样绿但测的已经不是它以为的那件事。
 
     **不要**在这些地方套它：
 
@@ -44,6 +46,9 @@ def live_payload(payload: dict) -> dict:
     """
     cal = payload.setdefault("caliber", {})
     cal.setdefault("scope_policy_version", SCOPE_POLICY_VERSION)
+    # **第二根轴也在这里盖**（10-01 片 1d）：复用门现在比两把版本键（判盲 `ev-*` + 评分 `cov-*`）。
+    # 少盖一把的后果不是"红"，而是**静默未命中** —— 正是上面那段警告的那个形态。
+    cal.setdefault("coverage_caliber_version", COVERAGE_CALIBER_VERSION)
     # 批 A③：复用门现在还要比**本次请求的口径三元组**（出行方式/采样档/研究半径）。
     # 这里盖的是 `CheckParams` 的默认档（walking / standard / 2500m），与 `test_caching_datasource`
     # 的 `_shanghai()`/`_kaili()` 两个场景逐字一致 —— 它们是"机制测试"，测的是键与命中，

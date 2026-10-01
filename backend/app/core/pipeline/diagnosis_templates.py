@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.data import expert_by_id
+from app.living_circle.category_rule import CATEGORY_RULES
 from app.living_circle.isochrone import reach_flags
 
 
@@ -186,6 +187,59 @@ def _cov_score(c: Optional[dict]) -> float:
     return float((c or {}).get("coverage", 0.0))
 
 
+def _ideal(cat: str) -> int:
+    """覆盖度**满分线**（拿到 100% 要几个分子）。后端读 `CATEGORY_RULES` 拿得到，
+    报告 payload 里**没有**这个数 ⇒ 前端那几句（`mocks/livingCircleReports.ts`）不写分母，
+    分母只许出现在这里（否则就是第二份尺，见 §十九）。"""
+    return int((CATEGORY_RULES.get(cat) or {}).get("ideal_circle") or 1)
+
+
+def _med_cov_sentence(m: Optional[dict]) -> str:
+    """医疗节那句「达标 / 存在缺口」必须自证它判的是哪把尺（第 21 轮 P1-2 + §十九 措辞义务）。
+
+    用户 10-01 拍板"维持按分数 75%" ⇒ 判据代码不动，但换来两条文字义务：
+    ①"达标"= 覆盖度 ≥75%，`cov-1` 下等价于**基层医疗门槛项 ≥⌈0.75×满分线⌉ 家**，
+      不许说成"医疗不缺了"；②"存在缺口"只指门槛项未计满，**不许**说成"圈内没有医疗设施"。
+    两个分支各说各的真话，不共用一句。名单与分子都取 payload（`scored_as`/`required_in_circle`），
+    缺键（换代前冻结的存量快照）⇒ 照点数说，不挂门槛项文案。
+    """
+    cov = _cov_score(m)
+    req = (m or {}).get("required_in_circle")
+    in_circle = int((m or {}).get("in_circle") or 0)
+    if req is None:
+        return f"覆盖度 {_pct(cov)} 按圈内点数计（这份快照出自门槛项口径之前）。"
+    labels = (m or {}).get("scored_as") or []
+    named = f"（{' / '.join(str(x) for x in labels)}）" if labels else ""
+    need = -((-3 * _ideal("medical")) // 4)          # = ceil(0.75 × 满分线)
+    head = (f"其中计入覆盖度分子的是基层医疗门槛项 {req} 处{named}，"
+            f"另有 {in_circle - req} 处不计入分子（含诊所等不计分形状与判不准的存疑项）。")
+    tail = (f"覆盖度 {_pct(cov)} ⇒ 本节写「达标」—— 这只指该覆盖度 ≥75%，在此分子口径下"
+            f"相当于圈内基层医疗 ≥{need} 家；不等于「医疗不缺了」。"
+            if cov >= 0.75 else
+            f"覆盖度 {_pct(cov)} ⇒ 本节写「存在缺口」—— 这只指基层医疗门槛项不足 {need} 家"
+            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。")
+    return head + tail
+
+
+def _edu_cov_sentence(e: Optional[dict]) -> str:
+    """教育节把「圈内 N 处」与「覆盖度 X%」拆成两个口径各自的数。
+
+    旧写法两句并排（凯里：圈内 15 处 + 覆盖度 33.3%），读者按点数复算 15÷3=100% ⇒ 只能认定
+    数据对不上。⚠️ 本节的「覆盖达标」判的是**小学 1km 三要素事实**、置信度判的是**这个覆盖度
+    是否 ≥75%** —— 两把尺不同，所以"达标 + 置信度 medium"是合法组合，必须当场说圆。
+    """
+    cov = _cov_score(e)
+    req = (e or {}).get("required_in_circle")
+    in_circle = int((e or {}).get("in_circle") or 0)
+    if req is None:
+        return f"覆盖度 {_pct(cov)} 按圈内点数计（这份快照出自门槛项口径之前）。"
+    labels = (e or {}).get("scored_as") or []
+    named = f"「{' / '.join(str(x) for x in labels)}」" if labels else "门槛项"
+    return (f"但覆盖度的分子只取{named} {req} 处 ÷ 满分线 {_ideal('education')} ⇒ {_pct(cov)} —— "
+            f"「圈内 {in_circle} 处」与「覆盖度 {_pct(cov)}」是两个口径各自的数，"
+            f"不是同一个数的两次说法。")
+
+
 def _chart_radar(lc: dict) -> dict:
     dims = (lc.get("scores") or {}).get("radar", [])
     return {
@@ -259,17 +313,22 @@ def _sec_medical(lc: dict) -> dict:
     m = _cat(lc, "medical")
     triad = _triad(lc, "药店")
     cov = _cov_score(m)
+    req = (m or {}).get("required_in_circle")
+    in_circle = int((m or {}).get("in_circle") or 0)
     return {
         "id": "medical",
         "title": "医疗配置",
         "level": 2,
-        "key_takeaway": f"圈内医疗设施 {(m or {}).get('in_circle', 0)}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{'可达' if (triad or {}).get('covered') else '1km 内缺失'}",
+        "key_takeaway": f"圈内医疗设施 {in_circle}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{'可达' if (triad or {}).get('covered') else '1km 内缺失'}",
         "paragraphs": [
-            f"医疗类 POI（社区医院/诊所/药店）检索 {(m or {}).get('total', 0)} 处，15 分钟圈内 {(m or {}).get('in_circle', 0)} 处，覆盖度 {_pct(cov)}。",
+            f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，15 分钟圈内 {in_circle} 处；{_med_cov_sentence(m)}",
             f"最近设施「{(m or {}).get('nearest_name') or '—'}」步行约 {_fmt_min((m or {}).get('min_minutes'))}。",
         ],
         "claims": [{
-            "claim_id": f"c-lc-medical-1", "text": f"医疗配置{('达标' if cov >= 0.75 else '存在缺口')}：圈内 {cov and round(cov * 100)}% 覆盖",
+            "claim_id": f"c-lc-medical-1",
+            "text": (f"医疗配置{('达标' if cov >= 0.75 else '存在缺口')}"
+                     + (f"：圈内 {in_circle} 处中基层医疗门槛项 {req} 处 ⇒ 覆盖度 {_pct(cov)}"
+                        if req is not None else f"：圈内覆盖度 {_pct(cov)}")),
             "field": "coverage", "evidence_ids": [f"ev-lc-poi-medical"],
             "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-001"),
         }],
@@ -281,18 +340,25 @@ def _sec_education(lc: dict) -> dict:
     e = _cat(lc, "education")
     triad = _triad(lc, "小学")
     covered = bool((triad or {}).get("covered"))
+    cov = _cov_score(e)
+    req = (e or {}).get("required_in_circle")
     return {
         "id": "education", "title": "教育设施", "level": 2,
         "key_takeaway": f"教育类圈内 {(e or {}).get('in_circle', 0)}/{(e or {}).get('total', 0)} 处；小学三要素{('可达（最近 ' + _fmt_min((triad or {}).get('nearest_minutes')) + '）') if covered else '1km 内缺失'}",
         "paragraphs": [
-            f"小学/中学/幼儿园共检索 {(e or {}).get('total', 0)} 处，圈内 {(e or {}).get('in_circle', 0)} 处，覆盖度 {_pct(_cov_score(e))}。",
+            f"小学/中学/幼儿园共检索 {(e or {}).get('total', 0)} 处，圈内 {(e or {}).get('in_circle', 0)} 处（三类都在这一类的检索范围内）；{_edu_cov_sentence(e)}",
             "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区" + ("最近小学步行在可接受范围" if covered else "1km 内无小学，需关注跨区就学问题") + "。",
         ],
         "claims": [{
             "claim_id": "c-lc-education-1",
-            "text": f"教育设施{'覆盖达标' if covered else '覆盖不足'}：小学{'1km 内缺失' if not covered else '可达'}",
+            # 「达标」与「置信度」两半各挂各的判据 —— 凯里教育今天就是"达标 + medium"同屏
+            # （达标来自小学 1km 事实，medium 来自覆盖度 0.333），不说圆就像两套数字在打架。
+            "text": (f"教育设施{'覆盖达标' if covered else '覆盖不足'}（这一句判的是小学 1km 三要素事实）"
+                     f"：小学{'1km 内缺失' if not covered else '可达'}"
+                     + (f"；覆盖度 {_pct(cov)}（分子取门槛项 {req} 处）" if req is not None else f"；覆盖度 {_pct(cov)}")
+                     + f" ⇒ 置信度 {'high' if cov >= 0.75 else 'medium'}（判据是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）"),
             "field": "coverage", "evidence_ids": ["ev-lc-poi-education"],
-            "confidence": "high" if _cov_score(e) >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-002"),
+            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-002"),
         }],
         "source_evidence_ids": ["ev-lc-poi-education"],
     }

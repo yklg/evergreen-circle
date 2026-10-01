@@ -183,6 +183,11 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         "report::evidence_margin_m", "report::evidence_radius_m",
         "report::evidence_frontier_m", "report::evidence_complete",
         "report::judge_radius_m", "report::scope_policy_version",
+        # 第二十一轮评审 **P0-1**：评分口径那把键登记进了名册，却没进这份白名单 ⇒
+        # 下面那段"ref 指向的键必须真在产出对象里"的核对**只遍历白名单**，于是"登记了没人验"。
+        # 放进来的效果：拿 `s.payload(...)` 这份**生产产出**去验 `coverage_caliber_version` 确实在里面
+        # —— 删掉 `scope.py` 那行发射会当场红，而不是"2296 条全绿、每份新报告被自家门拒"。
+        "report::coverage_caliber_version",
         "report::confidence", "report::evidence",
         # 片 4：取证回合账目。放进这份名单才有意义 —— 名册登记与产出核对是两条腿，
         # 少前者是"引用不到"，少后者是"登记了个不存在的键"。

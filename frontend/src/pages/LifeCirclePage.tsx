@@ -54,7 +54,7 @@ import {
   blindspotCoverageBrief,
   blindspotCoverageNote,
   confidenceBadgeLabel,
-  staleCaliberNotice,
+  staleCaliberNotices,
   emptyBlindspotNote,
   poiConservationNote,
   poiMetricLabel,
@@ -69,6 +69,7 @@ import {
 import { asBdLngLat } from '../lib/geo'
 import type { CoordSys } from '../lib/geo'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
+import { CategoryCaliberNotes } from '../components/lifecircle/CategoryCaliberNotes'
 
 /** 待提交的中心点：坐标**与坐标系标签必须同行**，否则 600m 偏差会静默进入体检。 */
 interface PendingCenter {
@@ -832,6 +833,8 @@ export default function LifeCirclePage() {
               ) : (
                 <MiniRadar report={report} />
               )}
+              {/* 片 1c-β C1：与报告页同一处渲染（措辞判据在 `lib/livingCircle`，两页不各写一遍） */}
+              <CategoryCaliberNotes lc={report} />
             </div>
           </div>
 
@@ -879,10 +882,12 @@ export default function LifeCirclePage() {
                 )}
               </p>
             )}
-            {/* D-4：判盲口径升级前的历史报告仍是用户的数据（不隐藏），但必须说明它偏乐观 */}
-            {staleCaliberNotice(report) && (
-              <p className="mt-1 text-tag font-medium text-warn">{staleCaliberNotice(report)}</p>
-            )}
+            {/* D-4：口径升级前的历史报告仍是用户的数据（不隐藏），但必须说明它偏乐观。
+                两轴各一句（判盲 `ev-*` / 评分 `cov-*`）——「哪句该出现」收在 `staleCaliberNotices`，
+                这里只渲清单：两页各写一遍判据就是两页文案漂移的起点。 */}
+            {staleCaliberNotices(report).map((n) => (
+              <p key={n} className="mt-1 text-tag font-medium text-warn">{n}</p>
+            ))}
             
             {/* R2/R6：口径举证对象 */}
             {report.caliber && (

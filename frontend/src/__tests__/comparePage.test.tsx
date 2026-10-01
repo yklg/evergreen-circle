@@ -336,9 +336,14 @@ describe('ComparePage（真实联调 · 手动选择 + 跨城呈现）', () => {
       </MemoryRouter>,
     )
     await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'j1']))
-    // A 胜：POI 采集 217>206 · 综合评分 68.7>65.8
+    // A 胜：POI 采集 217 > 206。
+    // ⚠️ 综合评分这一行的方向**在 10-01 反了**：`cov-1` 把凯里教育 coverage 从 1.0 打成 0.3333
+    //    ⇒ 凯里总分 68.7 → **65.4** < 劲松 65.8 ⇒ 这句只能判「B更成熟」。
+    //    （`rec()` 取的是 `SAMPLE_COMMUNITIES` 里那两份**真演示夹具**，不是手搓载荷，
+    //    所以这一格确实是随口径翻的 —— 上一版注释写"compare 由 mock 提供、不依赖演示夹具"是
+    //    我没核就写的假话，已按实测改掉。）两个方向的覆盖仍然成立：A 向由「采集面更广」守。
     await waitFor(() => expect(screen.getAllByText('A采集面更广').length).toBeGreaterThan(0))
-    expect(screen.getAllByText('A更成熟').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('B更成熟').length).toBeGreaterThan(0)
     // B 胜：面积 1.56<1.76 · 可达采样点 126<162 · 圈内 POI 98<150
     expect(screen.getAllByText('B可达范围更大').length).toBeGreaterThan(0)
     expect(screen.getAllByText('B可达采样点更多').length).toBeGreaterThan(0)

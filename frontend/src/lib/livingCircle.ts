@@ -8,6 +8,7 @@
 import type {
   CellsLedgerRaw,
   EvidenceDisc,
+  FacilityCategoryStat,
   ForensicAccount,
   ForensicRoundRow,
   LifeCircleDegraded,
@@ -877,7 +878,7 @@ export function compareRows(
   nameA: string,
   nameB: string,
 ): CompareDiffRow[] {
-  const gap = caliberPolicyGap(lcA, lcB)
+  const gapDesc = caliberGapDesc(lcA, lcB)
   return COMPARE_ROWS.map((def) => {
     const na = def.num(lcA)
     const nb = def.num(lcB)
@@ -886,8 +887,8 @@ export function compareRows(
       a_value: na,
       b_value: nb,
       desc:
-        gap && (CALIBER_GAP_ROW_KEYS as readonly string[]).includes(def.key)
-          ? CALIBER_GAP_DESC
+        gapDesc && (CALIBER_GAP_ROW_KEYS as readonly string[]).includes(def.key)
+          ? gapDesc
           : compareDesc(def, na, nb, nameA, nameB),
     }
   })
@@ -977,6 +978,27 @@ export const SCOPE_POLICY_VERSION = 'ev-2'
 /** 口径版本不同 ⇒ 差异表那两行的结论句（与后端 `_DIFF_DESC_CALIBER_GAP` 逐字同源）。 */
 export const CALIBER_GAP_DESC = '不可比 · 判盲口径已升级'
 
+/** 只有**评分口径**那根轴不同 ⇒ 同一格换这句（与后端 `_DIFF_DESC_COVERAGE_GAP` 逐字同源）。
+ *  ⚠️ 不许复用上面那句：判盲轴解释不了"65.4 与 68.4 之间那 3 分是分子换代产生的"。 */
+export const COVERAGE_GAP_DESC = '不可比 · 评分口径已升级（点数 → 门槛项）'
+
+/** **两根轴都**不同 ⇒ 第三句（与后端 `_DIFF_DESC_BOTH_GAP` 逐字同源）。
+ *  为什么要有第三句而不是"判盲优先"：两轴都换时只报判盲那半，读者仍会把分差归给一把尺。 */
+export const BOTH_GAP_DESC = '不可比 · 判盲与评分口径都已升级'
+
+/** 两轴对照出的结论句（null = 两轴都同 ⇒ 可比）。差异表与横幅**共用这一处判据**。 */
+export function caliberGapDesc(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string | null {
+  const evGap = caliberPolicyGap(a, b)
+  const covGap = coverageCaliberGap(a, b)
+  if (evGap && covGap) return BOTH_GAP_DESC
+  if (evGap) return CALIBER_GAP_DESC
+  if (covGap) return COVERAGE_GAP_DESC
+  return null
+}
+
 /** 受口径版本影响的两行行名 —— 与 `COMPARE_ROWS` 的 `key`、后端 `_CALIBER_GAP_ROWS` 同源。
  *  「POI 采集」那类**事实计数**不在其列：换判盲尺子不改变采到多少设施。 */
 export const CALIBER_GAP_ROW_KEYS = ['服务盲区', '综合评分'] as const
@@ -1008,6 +1030,86 @@ export function staleCaliberNotice(lc: Pick<LivingCircleReport, 'caliber'>): str
   return v == null
     ? '判盲口径已升级（证据域独立），本报告的盲区数与综合评分偏乐观 —— 建议重新体检'
     : `判盲口径已升级（本报告 ${v}，当前 ${SCOPE_POLICY_VERSION}），盲区数与综合评分偏乐观 —— 建议重新体检`
+}
+
+/* ── 第二根轴：评分口径（覆盖度分子）────────────────────────────────────────
+ *
+ * `cov-1` 把覆盖度的**分子**从「圈内点数」换成「门槛项数」，与判盲那把尺（`ev-*`）是
+ * **两件独立的事**：换分子不改证据域，扩证据域也不改分子。所以这根轴必须**自己说一句** ——
+ * 复用上面那句「判盲口径已升级」就是把评分账记到判盲头上（计划 §六 明令禁止的"两把键
+ * 互相顶替"，第 21 轮 P1-3 抓到的正是这半边）。
+ *
+ * 版本常量**三方同源**：后端 `category_rule.COVERAGE_CALIBER_VERSION`、契约夹具
+ * `caliber_incomparable.coverage_version_current`、这里。与 `SCOPE_POLICY_VERSION` 同一套
+ * 换版流程：只改后端 + 夹具，两侧测试各钉一次。
+ *
+ * ⚠️ 这根键**不进** `caliber_payload_key`（缓存键）也**不进**契约门禁 B 系列 —— 前者会让
+ * 每条缓存静默 miss 再烧一遍外呼配额，后者会让 B 系列变成双键门（§六 拍板）。它只走
+ * 「复用门 + 名册 + 读侧披露」三条路。
+ */
+export const COVERAGE_CALIBER_VERSION = 'cov-1'
+
+/** 评分口径版本号安全取值：`cov` 键上线前冻结的快照（存量 29 份）没这个键 ⇒ `null`。 */
+export function coverageCaliberVersionOf(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = lc?.caliber?.coverage_caliber_version
+  return typeof v === 'string' && v ? v : null
+}
+
+/** 两份报告用的是不是**同一把评分尺**（含一侧根本没声明）。 */
+export function coverageCaliberGap(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): boolean {
+  return coverageCaliberVersionOf(a) !== coverageCaliberVersionOf(b)
+}
+
+/**
+ * 评分口径换代后的陈旧提示（当前口径 ⇒ null）。
+ *
+ * 「缺键」与「键值不同」说的是两件事，必须分开：缺键 = 这份快照冻结在分子换代**之前**，
+ * 它的分数是**按点数**算的；值不同 = 换代之后又调过分子口径。把前者写成后者会谎报
+ * "这份是 cov-0"（那份载荷里从来没有过任何评分口径声明）。
+ */
+export function staleCoverageCaliberNotice(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = coverageCaliberVersionOf(lc)
+  if (v === COVERAGE_CALIBER_VERSION) return null
+  return v == null
+    ? '评分口径已升级（本报告按圈内点数计分，当前按门槛项数计分），类别覆盖度与综合评分不可与新报告直接比 —— 建议重新体检'
+    : `评分口径已升级（本报告 ${v}，当前 ${COVERAGE_CALIBER_VERSION}），类别覆盖度与综合评分不可与新报告直接比 —— 建议重新体检`
+}
+
+/**
+ * 陈旧提示清单（**渲染层只调这一个**）：判盲句在前、评分句在后，各自独立出现。
+ *
+ * 为什么不合并成一句：两轴同时陈旧时合并只能报一半（"判盲口径已升级"里塞不进"分子换代"，
+ * 反过来也一样），而每少报一半就少拦一种误读。两页（报告页 `caliberNote` / 体检台右栏）
+ * 各写一遍"哪句该出现"正是漂移的形态 ⇒ 判断收在这里，页面只管渲。
+ */
+export function staleCaliberNotices(lc: Pick<LivingCircleReport, 'caliber'>): string[] {
+  return [staleCaliberNotice(lc), staleCoverageCaliberNotice(lc)].filter((s): s is string => !!s)
+}
+
+/**
+ * 类别旁那句门槛项口径说明（片 1c-β C1 甲档）。
+ *
+ * 要拦的误读：凯里教育柱 33 与正文「圈内 15 处」同屏，按点数复算 15÷3=100% ⇒ 读者只能认定
+ * 数据对不上。这句把"分子换了"当场说出来，且**名字与数字全部来自 payload**。
+ *
+ * ⚠️ 三件事约束它的形状：
+ *  ① 前端**不许**按点位名字重判子类（判类全仓只有后端 `evaluate_category` 一处）⇒ 名单读
+ *     `scored_as`/`unscored_as`，缺键就**不印**（不猜、不退回硬编码名单）；
+ *  ② `required_in_circle` 为 `null`（未建表 / 旧载荷）⇒ 返回 null，**不得**印成"0 处计入"；
+ *  ③ 满分线（`ideal_circle`）**不在 payload 里** ⇒ 这句只报"圈内 N 处中 M 处"，不写「÷ 3」。
+ *     要写分母得先把满分线交出来，那是另一次契约变更（计划 §十九 与片 1c-β C1 硬约束那条）。
+ */
+export function lcCategoryCaliberNote(c: FacilityCategoryStat): string | null {
+  const req = c.required_in_circle
+  const hit = c.scored_as
+  if (req == null || !hit || hit.length === 0) return null
+  const miss = c.unscored_as && c.unscored_as.length
+    ? `（${c.unscored_as.join('、')}不计入分子）`
+    : ''
+  return `${c.label} · 覆盖度只数「${hit.join(' / ')}」：圈内 ${c.in_circle} 处中 ${req} 处 ⇒ ${Math.round(c.coverage * 100)}%${miss}`
 }
 
 /* ── 逐格台账（契约 B13 · 计划 cells-ledger-judge-scale §6）───────────────────
@@ -1184,11 +1286,18 @@ export function confidenceOf(lc: Pick<LivingCircleReport, 'scores'>): 'full' | '
 }
 
 /**
- * 对比页的口径提示（两侧都是当前口径 ⇒ null）。
+ * 对比页横幅的**判盲轴**那一句（判盲轴两侧都是当前口径 ⇒ null）。
+ *
+ * ⚠️ 页面不要直接调它，要调 `compareCaliberNotices` —— 只调这一颗会让"两轴都不同"那一屏
+ * 横幅只报判盲、表格那格却写着两把尺都换了（同屏两处披露各说一半）。
  *
  * 两种病要分开说：**版本不同** ⇒ 那两个数不是同一把尺量出来的，直接禁止比较；
  * **两份都还是旧口径** ⇒ 彼此可比，但都偏乐观 —— 答辩演示拿的正是这两份内置快照，
  * 只拦「不同」不报「都旧」，观众看到的仍是两个被高估的分数并排。
+ *
+ * 第 21 轮 P1-3：这句原先是横幅**唯一**那句，于是"两份都 `ev-2`、但一份没有 `cov` 键"
+ * 在对比页被判**可比** —— 而它的分差恰恰全部来自分子换代。评分轴那半见
+ * `compareCoverageCaliberNotice`。
  */
 export function compareCaliberNotice(
   a: Pick<LivingCircleReport, 'caliber'>,
@@ -1200,6 +1309,34 @@ export function compareCaliberNotice(
   if (va !== vb) return `两侧判盲口径不同（${shown(va)} vs ${shown(vb)}）⇒ 服务盲区与综合评分不可直接比，建议重新体检较旧的一份`
   if (va === null && vb === null) return '两份报告都出自判盲口径升级前的版本 ⇒ 盲区数与综合评分偏乐观，建议重新体检'
   return null
+}
+
+/** 对比页横幅的**评分轴**那一句（判盲轴由上面那颗管，两句各说各的事）。 */
+export function compareCoverageCaliberNotice(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string | null {
+  const ca = coverageCaliberVersionOf(a)
+  const cb = coverageCaliberVersionOf(b)
+  const shown = (v: string | null) => (v === null ? '换代前（按点数计分）' : v)
+  if (ca !== cb) return `两侧评分口径不同（${shown(ca)} vs ${shown(cb)}）⇒ 类别覆盖度与综合评分不可直接比，建议重新体检较旧的一份`
+  if (ca === null && cb === null) return '两份报告都出自评分口径换代前的版本 ⇒ 覆盖度与综合评分按圈内点数计，与新报告不可直接比'
+  return null
+}
+
+/**
+ * 横幅清单（**页面只调这一个**）：两轴各一句，各出现各的。
+ *
+ * 为什么不是合成一句：只调 `compareCaliberNotice` 时，"两轴都不同"那一屏会出现**横幅只报判盲、
+ * 表格里那格却写着"两把尺都换了"**的自相矛盾（10-01 落地后重渲预览当场看到的）—— 同屏两处披露
+ * 各说一半，正是本批一直在堵的形状。
+ */
+export function compareCaliberNotices(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string[] {
+  return [compareCaliberNotice(a, b), compareCoverageCaliberNotice(a, b)]
+    .filter((s): s is string => !!s)
 }
 
 /**

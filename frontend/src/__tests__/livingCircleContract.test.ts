@@ -13,7 +13,7 @@ import {
   LC_REPORT_ID,
 } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream, LC_STAGES } from '../mocks/livingCircleStream'
-import { dataOriginBadge, heatSamplePoints, isInReachPoint, isTimedPoint, LC_CANVAS, LC_ISO_COLORS, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcSnapshotPoiLayer, lcToPx, LC_CO_LOCATED_M, LC_REACH_FULL_MIN_FALLBACK, planComparisonOverlay, poiConservation, poiConservationNote, poiMetricLabel, poiRenderSet, POI_THIN_THRESHOLD, policyVersionOf, samplingReach, samplingReachLabel, SCOPE_POLICY_VERSION, staleCaliberNotice } from '../lib/livingCircle'
+import { dataOriginBadge, heatSamplePoints, isInReachPoint, isTimedPoint, LC_CANVAS, LC_ISO_COLORS, lcCategoryCaliberNote, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcSnapshotPoiLayer, lcToPx, LC_CO_LOCATED_M, LC_REACH_FULL_MIN_FALLBACK, planComparisonOverlay, poiConservation, poiConservationNote, poiMetricLabel, poiRenderSet, POI_THIN_THRESHOLD, policyVersionOf, coverageCaliberVersionOf, COVERAGE_CALIBER_VERSION, staleCoverageCaliberNotice, samplingReach, samplingReachLabel, SCOPE_POLICY_VERSION, staleCaliberNotice } from '../lib/livingCircle'
 import { BD_LAT_ABS_MAX, BD_LNG_ABS_MAX, parseBdLngLat } from '../lib/geo'
 
 const reports = [kaili as unknown as LivingCircleReport, jinsong as unknown as LivingCircleReport]
@@ -381,6 +381,27 @@ describe('T-FE-02b · 历史快照（无 timed / 无汇总数）读侧兼容', (
         expect(c.coverage).toBeLessThanOrEqual(1)
       }
       expect(r.poi.total).toBeGreaterThanOrEqual(r.poi.in_circle)
+    }
+  })
+
+  it('两份演示夹具都已带 `cov-1` 与门槛项名单 ⇒ 评分轴陈旧句必须收起', () => {
+    // 这一条守的是"出厂件是新一代产物"这件事本身：`cov` 键在、名单在、陈旧句不在。
+    // 任一夹具被换成回填前的产物（或手工删键），这里当场红 —— 而不是等到屏上看不到那句才发现。
+    for (const r of reports) {
+      expect(coverageCaliberVersionOf(r), `${r.scene.name}：没有评分口径声明`).toBe(COVERAGE_CALIBER_VERSION)
+      expect(staleCoverageCaliberNotice(r), `${r.scene.name}：当前口径却报陈旧`).toBeNull()
+      for (const c of r.poi.categories) {
+        const tabled = c.scored_as != null
+        // 名单与分子同生同灭：有名单没分子（或有分子没名单）都是两条链分叉
+        expect(tabled, `${r.scene.name}/${c.category}：名单与分子键集不一致`)
+          .toBe(c.required_in_circle != null)
+        if (tabled) {
+          expect(c.scored_as!.length).toBeGreaterThan(0)
+          expect(lcCategoryCaliberNote(c)).toContain(String(c.required_in_circle))
+        } else {
+          expect(lcCategoryCaliberNote(c)).toBeNull()
+        }
+      }
     }
   })
 

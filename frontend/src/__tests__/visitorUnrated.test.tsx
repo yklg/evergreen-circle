@@ -13,6 +13,8 @@
  * 本文件三件事：
  *  ① 把**消费点全集**扫出来钉成基线（D9 说"五处消费点是本计划最大回归面"，
  *     先把"五处"变成机器可数的清单，而不是口头数）；
+ *     ⚠️ 10-01 片 1c-β 起，扫描面**按文件名形状排除 `*.test.ts(x)`**：测试文件读分数只是钉夹具
+ *     读数，没有「未评」分支可处理；豁免的自证见新加的那条用例（负半=真命中过、正半=6 个生产点没少）。
  *  ② 记录 `types.ts` 现状（必填非空 ⇒ 缺口），落地后转红并提示重指；
  *  ③ 用 `it.fails` 登记「scores=null 渲染未评」——转绿时不摘标记会主动报失败，
  *     等价于后端的 `xfail(strict=True)`。
@@ -52,15 +54,25 @@ vi.mock('../components/VChart', () => ({
   VChart: ({ spec }: { spec: { title?: string } }) => <div data-testid="mock-chart">{spec?.title ?? 'chart'}</div>,
 }))
 
-function walk(dir: string): string[] {
+function walk(dir: string, includeTests = false): string[] {
   const out: string[] = []
   for (const name of readdirSync(dir)) {
     if (name === 'node_modules' || name === '__tests__') continue
     const p = join(dir, name)
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (/\.(ts|tsx)$/.test(name)) out.push(p)
+    if (statSync(p).isDirectory()) out.push(...walk(p, includeTests))
+    else if (/\.(ts|tsx)$/.test(name) && (includeTests || !isTestFile(name))) out.push(p)
   }
   return out
+}
+
+/**
+ * 测试文件不是**发布面上的**消费点：它读 `scores.total` 只是钉夹具读数，没有「未评」分支要处理。
+ * 10-01 片 1c-β 由棘轮当场拦出（`src/lib/lcSubKindCaliber.contract.test.ts` 被算成新增消费点），
+ * 用户拍板改守卫边界而不是往 BASELINE 加条目、也不是把文件搬进 `__tests__`（那条等于用摆放位置收窄）。
+ * 只按**文件名形状**豁免：`src/dev/` 探针照旧计入（09-30 那次它就是真消费点，走的是委托 `lib/livingCircle`）。
+ */
+function isTestFile(name: string): boolean {
+  return /\.test\.tsx?$/.test(name)
 }
 
 /** 读 `scores.total` 的消费点（`scores.total` / `scores?.total` / `scores!.total`）。 */
@@ -101,6 +113,38 @@ describe('未评状态的消费点清单（回归面棘轮）', () => {
       `分数消费点变了：新增 ${extra.join(', ') || '无'}；消失 ${gone.join(', ') || '无'}。` +
         '新增 ⇒ 该处必须一并处理"未评"分支；消失 ⇒ 基线须收紧（不得放宽成"随它去"）。',
     ).toEqual({ extra: [], gone: [] })
+  })
+
+  /**
+   * 豁免**必须自证**（记忆「自写守卫脚本要先自证」/「改判据本身要补两条证据」）：
+   * 光看上面那条转绿分不清"边界修对了"和"我把那条断言顺手放宽了"。
+   * 所以这里同时钉两面 —— 负半（测试文件真被挡，且它原本确实命中）+ 正半（6 个生产消费点一个没少）。
+   * ⚠️ 不做写盘变异：造临时文件落进 `src/` 万一崩在半路会留残留被提交，改拿真夹具文件做正半对照。
+   */
+  it('测试文件豁免是按文件名形状生效的，不是那批文件本来就没读分数', () => {
+    const OUTLIER = 'lib/lcSubKindCaliber.contract.test.ts'
+    const SCORES_RE = /scores\??!?\.(radar|bars|triads|total)/
+
+    // 负半之第一行：这个测试文件**真的**在读分数 ⇒ 下面的"不在清单里"不是恒真
+    const raw = readFileSync(join(SRC, OUTLIER), 'utf-8')
+    expect(SCORES_RE.test(raw), `${OUTLIER} 已不读 scores ⇒ 豁免是否还生效无人验`).toBe(true)
+    expect(isTestFile(OUTLIER)).toBe(true)
+    expect(scoresConsumers(), '测试文件仍被算进消费点 ⇒ 豁免没落地').not.toContain(OUTLIER)
+
+    // 负半之规模自报：扫描面外那批测试文件里，本次豁免的净作用面到底有几个
+    const testFiles = walk(SRC, true).filter((f) => isTestFile(f.slice(SRC.length + 1)))
+    const testHits = testFiles
+      .filter((f) => SCORES_RE.test(readFileSync(f, 'utf-8')))
+      .map((f) => f.slice(SRC.length + 1))
+      .sort()
+    expect(testHits, `豁免挡掉的不止一个已知文件（${testHits.join(', ')}）⇒ 作用面变了，须重数`).toEqual([OUTLIER])
+
+    // 正半：6 个生产消费点**不得**被 isTestFile 挡掉，且它们仍在扫描面上、仍命中
+    const found = scoresConsumers()
+    for (const f of BASELINE) {
+      expect(isTestFile(f), `${f} 被当成测试文件豁免 ⇒ 生产面漏防`).toBe(false)
+      expect(found, `${f} 不再被扫到 ⇒ 边界一收窄把真消费点也吞了`).toContain(f)
+    }
   })
 })
 

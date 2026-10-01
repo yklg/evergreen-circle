@@ -19,7 +19,9 @@
 而是让统计字段向**唯一真身 `points`** 收敛：
 
 - `categories[].in_circle` ← 该类别在 `points` 里的实际条数；
-- `categories[].coverage` ← `min(1, in_circle / ideal_circle)` 重算（与 `poi.to_stats` 同式）；
+- `categories[].coverage` ← **调生产的 `poi.coverage_from_points`**（全仓唯一一份算式，
+  计划 §三 第 1/4 条）—— 本脚本一度是自己除一遍再夹 1.0 的**第三处实现**，
+  改生产口径而不改这里就会按旧口径回填夹具（判据：`test_migration_formula_matches_production_derivation`）；
 - `poi.in_circle` ← `sum(categories[].in_circle)`；
 - `poi.total` ← **不动**（采集口径，含圈外）；
 - 新增 `poi.truncated` 与 `poi.conservation`：与 `build_poi_block` 产出的形状一致，
@@ -47,8 +49,13 @@ from typing import Any, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.living_circle.category_rule import CATEGORY_RULES  # noqa: E402
-from app.living_circle.poi import POI_CAP_PER_CAT, check_poi_conservation  # noqa: E402
+from app.living_circle.category_rule import CATEGORY_RULES, sub_kind_rule_labels  # noqa: E402
+from app.living_circle.poi import (  # noqa: E402
+    POI_CAP_PER_CAT,
+    check_poi_conservation,
+    coverage_from_points,
+    required_count_from_points,
+)
 
 SCENES = ["kaili", "beijing-jinsong"]
 BACKEND_DIR = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
@@ -61,18 +68,21 @@ FRONTEND_DIR = (
 def _migrate_poi(poi: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """就地收敛一个 `poi` 块；返回 (poi, 人读差异行)。"""
     lines: List[str] = []
-    counts: Dict[str, int] = {}
+    # 按类别**分桶留点**而不是只数条数：分桶后的那份点位，正是 `derive_stats_from_points`
+    # 喂给 `coverage_from_points` 的那一份 ⇒ 两边同调一颗函数。夹具的点若已带 `sub_kind`
+    # 就按门槛项算，整批缺键则在那颗函数里退回点数支 —— 两支共用同一个 `min`，脚本不另起口径。
+    by_cat: Dict[str, List[Dict[str, Any]]] = {}
     for p in poi.get("points") or []:
-        key = str(p.get("category"))
-        counts[key] = counts.get(key, 0) + 1
+        by_cat.setdefault(str(p.get("category")), []).append(p)
 
     old_in = int(poi.get("in_circle") or 0)
     for c in poi.get("categories") or []:
         cat = str(c.get("category"))
-        n = counts.get(cat, 0)
+        pts = by_cat.get(cat, [])
+        n = len(pts)
         old = int(c.get("in_circle") or 0)
         ideal = int((CATEGORY_RULES.get(cat) or {}).get("ideal_circle") or 1)
-        new_cov = round(min(1.0, n / ideal), 4)
+        new_cov = round(coverage_from_points(pts, ideal, cat), 4)
         if old != n or c.get("coverage") != new_cov:
             lines.append(
                 f"    {cat:<11} in_circle {old} → {n}"
@@ -80,6 +90,14 @@ def _migrate_poi(poi: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             )
         c["in_circle"] = n
         c["coverage"] = new_cov
+        # `cov-1` 的分子跟着一起更：只改 `coverage` 会把 `required_in_circle` 留在旧点集上，
+        # 于是"分子"与"图上点数"两条链分叉（同一颗 helper，不另起判类）。
+        c["required_in_circle"] = required_count_from_points(pts, cat)
+        # 门槛项名单与分子一起更（第三个生产者 ⇒ 与 `to_stats`/`derive_stats_from_points` 同形，
+        # 少写这两键就是"三个出口三种键集"，展示侧那句会在这份报告上静默消失）。
+        _labels = sub_kind_rule_labels(cat)
+        c["scored_as"] = _labels[0] if _labels else None
+        c["unscored_as"] = _labels[1] if _labels else None
 
     poi["in_circle"] = sum(int(c.get("in_circle") or 0) for c in poi.get("categories") or [])
     # `total` 是采集口径（含圈外），**不动**。

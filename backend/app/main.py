@@ -869,6 +869,12 @@ _DIFF_EQUAL_WORD = "持平"
 # 分数天然偏高。把 88.4 与折扣后的 80.4 并排放在一起，读者会读成「两个社区不同」，
 # 而不是「同一套判据换了定义」—— 这正是答辩演示路径（双样例对比）上最贵的一次误读。
 _DIFF_DESC_CALIBER_GAP = "不可比 · 判盲口径已升级"
+# 第二根轴：`cov-1` 把覆盖度的**分子**从圈内点数换成门槛项数。它与判盲那把尺互相独立
+# （换分子不改证据域），所以必须**各说一句** —— 只报判盲那半，读者仍会把"凯里 65.4 / 北京
+# 65.8"这种分差归给一把尺（第 21 轮 P1-3）。三句都是与前端 `lib/livingCircle.ts` 逐字同源、
+# 由契约夹具钉住的常量。
+_DIFF_DESC_COVERAGE_GAP = "不可比 · 评分口径已升级（点数 → 门槛项）"
+_DIFF_DESC_BOTH_GAP = "不可比 · 判盲与评分口径都已升级"
 _CALIBER_GAP_ROWS: Tuple[str, ...] = ("服务盲区", "综合评分")
 
 
@@ -913,6 +919,10 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     没被改），只有结论句被拦 —— 旧口径的证据面只有可达区一角（凯里实测 5/97），盲区少报、
     分数偏高，分差会被读成「社区不同」而不是「尺子换了」。双样例对比是答辩演示路径。
 
+    第 21 轮 P1-3：同一对行还要看**第二根轴** `caliber.coverage_caliber_version`（覆盖度分子
+    从圈内点数换成门槛项数）。两根轴独立 ⇒ 三句结论句各说各的事：只判盲不同 / 只评分不同 /
+    两轴都不同。"判盲相同但评分轴一边缺键"这一支以前被判**可比**，而它的分差全部来自分子换代。
+
     实现形态：**一张行规格表 + 一个循环**。加一行只改这张表一处 —— 而不是在返回值里
     手工拼一行（那样行名/行序/句式会分散，与前端分叉时无人发现）。
     """
@@ -931,7 +941,21 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     # 判盲口径版本对照：两侧不同（含一侧根本没声明）⇒ 那两个数不是同一把尺量出来的。
     a_pol = (a.get("caliber") or {}).get("scope_policy_version")
     b_pol = (b.get("caliber") or {}).get("scope_policy_version")
-    caliber_gap = a_pol != b_pol
+    # 评分口径版本对照（第二根轴）：两侧不同 ⇒ 连"覆盖度是多少"这件事都换了算分子的方法。
+    # ⚠️ 这里**只比载荷自带的两个声明**，不 import `COVERAGE_CALIBER_VERSION` 当对照值 ——
+    # 把代码常量塞进请求侧那支会当场 KeyError（本批刚犯过），而且"两份都缺键"必须算可比。
+    a_cov = (a.get("caliber") or {}).get("coverage_caliber_version")
+    b_cov = (b.get("caliber") or {}).get("coverage_caliber_version")
+    ev_gap = a_pol != b_pol
+    cov_gap = a_cov != b_cov
+    if ev_gap and cov_gap:
+        gap_desc = _DIFF_DESC_BOTH_GAP
+    elif ev_gap:
+        gap_desc = _DIFF_DESC_CALIBER_GAP
+    elif cov_gap:
+        gap_desc = _DIFF_DESC_COVERAGE_GAP
+    else:
+        gap_desc = None
     sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
     ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
     # 「可达采样点数」走 sampling_counts()（叙述文案的**唯一取值口径**）：汇总数缺失的历史快照
@@ -970,8 +994,8 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
         # 口径版本这档比的是「同一指标换了一把尺」，数值本身没坏，但差值没有意义。
         if off and off_desc:
             desc = off_desc
-        elif caliber_gap and metric in _CALIBER_GAP_ROWS:
-            desc = _DIFF_DESC_CALIBER_GAP
+        elif gap_desc and metric in _CALIBER_GAP_ROWS:
+            desc = gap_desc
         else:
             desc = _diff_desc(better, template, na, nb)
         rows.append({"metric": metric, "a_value": va, "b_value": vb, "desc": desc})

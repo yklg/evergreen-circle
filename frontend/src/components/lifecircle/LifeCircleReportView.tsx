@@ -48,7 +48,7 @@ import {
   dataOriginBadge,
   blindspotCoverageNote,
   confidenceBadgeLabel,
-  staleCaliberNotice,
+  staleCaliberNotices,
   emptyBlindspotNote,
   samplingReach,
   poiConservationNote,
@@ -63,6 +63,7 @@ import {
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
+import { CategoryCaliberNotes } from './CategoryCaliberNotes'
 import ShareModal from './ShareModal'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
@@ -315,13 +316,22 @@ function coverageNote(lc: LivingCircleReport) {
   )
 }
 
-/** 口径陈旧提示（D-4）：判盲口径升级前冻结的报告仍是用户的历史（不隐藏），但必须说明
- *  「盲区数与综合评分偏乐观」。与 `coverageNote` 分开的理由：后者只在存在未判定格时出现，
- *  而「尺子换过了」这件事与当次覆盖率无关。 */
+/** 口径陈旧提示（D-4）：口径升级前冻结的报告仍是用户的历史（不隐藏），但必须说明它偏乐观。
+ *  与 `coverageNote` 分开的理由：后者只在存在未判定格时出现，而「尺子换过了」与当次覆盖率无关。
+ *  ⚠️ 两轴各一句（判盲 `ev-*` / 评分 `cov-*`）：**哪句该出现**由 `staleCaliberNotices` 判，
+ *  这里只渲清单 —— 页面各写一遍判据正是两页文案漂移的形态（旧版报告页写了、体检台没写）。 */
 function caliberNote(lc: LivingCircleReport) {
-  const note = staleCaliberNotice(lc)
-  if (!note) return null
-  return <p className="mt-2 text-tag font-medium text-warn">{note}</p>
+  const notes = staleCaliberNotices(lc)
+  if (!notes.length) return null
+  return (
+    <>
+      {notes.map((n) => (
+        <p key={n} className="mt-2 text-tag font-medium text-warn">
+          {n}
+        </p>
+      ))}
+    </>
+  )
 }
 
 export default function LifeCircleReportView({ report }: { report: Report }) {
@@ -561,6 +571,8 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   ) : (
                     <MiniRadar report={lc} />
                   )}
+                  {/* 片 1c-β C1：维度旁那句门槛项口径说明（数字与名单都来自 payload） */}
+                  <CategoryCaliberNotes lc={lc} />
                 </div>
               </div>
 

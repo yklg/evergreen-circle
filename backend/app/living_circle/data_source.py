@@ -67,7 +67,12 @@ def wanted_caliber(params: CheckParams) -> Dict[str, Any]:
     return {
         "travel_mode": params.travel_mode,
         "sample_profile": params.sample_profile,
+        # 请求侧那次体检的半径（**不是**档位半径）：`reuse_policy` 拿它比 `scene.study_radius_m`。
         "study_radius_m": params.study_radius_m,
+        # ⚠️ 这里**不放**第二把版本键（评分口径 `cov-*`）。10-01 曾经放过，代价是全量 9 红：
+        # 它不是"本次请求"的参数（用户没有"要哪一档分子"这个选项），塞进三元组就等于伪造一个
+        # 用户从没做过的请求，还让所有自带三元组调 `reuse_policy` 的调用方 KeyError。
+        # 门那一边直接比模块常量（`report_contract.reuse_policy` 的「评分口径」那一行）。
     }
 
 

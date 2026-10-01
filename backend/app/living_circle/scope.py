@@ -52,6 +52,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from app.living_circle.baidu_client import STOP_SERVER_CAP, is_exhausted, is_server_cap
 from app.living_circle.caliber import ReachCaliber, get_caliber
+from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import (
     LngLat,
     ensure_closed,
@@ -886,6 +887,13 @@ class SpatialScope:
             # 口径版本：复用门（`report_contract.reuse_policy`）与契约判据据此判别
             # 「这份报告是不是本次这一套口径的产物」。写侧只有这一处发射点。
             "scope_policy_version": SCOPE_POLICY_VERSION,
+            # **第二把键**：评分口径（覆盖度分子的定义）。它和上面那把管的是两根轴 ——
+            # 上面那把管"证据域/判盲怎么算"，这把管"同样的点位算出什么分"。
+            # 借上面那把来表达评分变化等于在版本记录上撒谎（计划 §六），所以独立命名、独立取值。
+            # ⚠️ 刻意**不**并进 `caliber_payload_key`（缓存键）：那把键的变化会让现存缓存整体
+            #    miss、并在用户打开页面时静默烧掉重采配额；复用门拦得住同一件事（旧 payload 缺这把
+            #    键 ⇒ `got is None` ⇒ 拒），成本却是零。见计划 §六 的"跳步理由"。
+            "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
         }
         # 逐锚点举证（计划 v4 阶段 2a · **追加**发射，无人绑定 region 时不出这个键）：
         # 报告要能回答「这片的证据是哪几个点撑起来的」，否则多锚点与单锚点在读数上无从

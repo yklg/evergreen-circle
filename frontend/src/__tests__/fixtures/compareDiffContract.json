@@ -176,6 +176,11 @@
     "applies_to": [
       "服务盲区",
       "综合评分"
-    ]
+    ],
+    "_coverage_note": "第二根轴（10-01 `cov-1`，第 21 轮 P1-3 补齐的半边）：`caliber.coverage_caliber_version` 不同 ⇒ 覆盖度的**分子**换了定义（圈内点数 → 门槛项数），与证据域那把尺互相独立 —— 换分子不改证据域，扩证据域也不改分子。所以同一对行要能说出**三种**结论：只判盲不同（上面那句）/ 只评分不同（`coverage_desc`）/ 两轴都不同（`both_desc`）。为什么不能按「判盲优先」只报一句：两轴都换时少报一半，读者仍会把 65.4 与 68.4 之间那 3 分归给一把尺。`coverage_version_current` 同时是前端 `COVERAGE_CALIBER_VERSION` 与后端 `category_rule.COVERAGE_CALIBER_VERSION` 的对照值；`coverage_stale_notice` 只钉前端（读侧那句与后端无关，同 `stale_notice` 的处置）。⚠️ 这根键**不进** `caliber_payload_key`（缓存键）也**不进**契约门禁 B 系列 —— 前者会让每条缓存静默 miss 再烧一遍外呼配额。",
+    "coverage_version_current": "cov-1",
+    "coverage_desc": "不可比 · 评分口径已升级（点数 → 门槛项）",
+    "both_desc": "不可比 · 判盲与评分口径都已升级",
+    "coverage_stale_notice": "评分口径已升级（本报告按圈内点数计分，当前按门槛项数计分），类别覆盖度与综合评分不可与新报告直接比 —— 建议重新体检"
   }
 }

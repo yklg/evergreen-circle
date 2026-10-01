@@ -53,6 +53,43 @@ function cat(report: LivingCircleReport, key: string): FacilityCategoryStat | un
   return report.poi.categories.find((c) => c.category === key)
 }
 
+/** `cov-1`：覆盖度那句必须自己交代**分子是什么** —— 只许读 payload 的 `required_in_circle`。
+ *  键缺席 = 这份快照冻结在分子换代前 ⇒ 返回空串（照点数说），**不得**挂门槛项文案。
+ *  ⚠️ 满分线（`ideal_circle`）不在 payload 里 ⇒ 前端这几句**不写「≥3 家」**；那个数只有后端
+ *  `diagnosis_templates.py`（直接读 `CATEGORY_RULES`）有权印出来。写在这里就是第二份尺。 */
+function covBasisText(c: FacilityCategoryStat | undefined): string {
+  const req = c?.required_in_circle
+  return req == null ? '' : `（其中计入覆盖度分子的是门槛项 ${req} 处）`
+}
+
+/** 医疗节那句「达标 / 存在缺口」必须自证它判的是哪把尺（§十九 用户拍板"维持按分数 75%"换来的
+ *  措辞义务）：达标 = 覆盖度 ≥75%，**不等于**"医疗不缺了"；存在缺口 = 门槛项未计满，
+ *  **不等于**"圈内没有医疗设施"。两个分支各说各的真话，不许共用一句。
+ *  名单走 payload 的 `scored_as`（后端 `sub_kind_rule_labels` 发的规则名单）。 */
+function medCoverageSentence(m: FacilityCategoryStat | undefined): string {
+  const cov = pct(m?.coverage ?? 0)
+  const req = m?.required_in_circle
+  if (req == null) return `覆盖度 ${cov} 按圈内点数计（这份快照出自门槛项口径之前）。`
+  const named = m?.scored_as?.length ? `（${m.scored_as.join(' / ')}）` : ''
+  const rest = (m?.in_circle ?? 0) - req
+  const ok = (m?.coverage ?? 0) >= 0.75
+  return `其中计入覆盖度分子的是基层医疗门槛项 ${req} 处${named}，另有 ${rest} 处不计入分子（含诊所等不计分形状与判不准的存疑项）。覆盖度 ${cov} ⇒ 本节${
+    ok
+      ? '写「达标」—— 这只指该覆盖度 ≥75%（门槛项已计满），不等于「医疗不缺了」。'
+      : `写「存在缺口」—— 这只指基层医疗门槛项未计满（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 ${m?.in_circle ?? 0} 处）。`
+  }`
+}
+
+/** 教育节那句：把「圈内 15 处」与「覆盖度 33%」拆成两个口径各自的数 —— 旧写法把两句并排，
+ *  读者按点数复算得 15÷3=100%，只能认定数据对不上（第 21 轮 P1-2 的现场形态）。 */
+function eduCoverageSentence(e: FacilityCategoryStat | undefined): string {
+  const cov = pct(e?.coverage ?? 0)
+  const req = e?.required_in_circle
+  if (req == null) return `覆盖度 ${cov} 按圈内点数计（这份快照出自门槛项口径之前）；`
+  const named = e?.scored_as?.length ? `「${e.scored_as.join(' / ')}」` : '门槛项'
+  return `但覆盖度的分子只取${named} ${req} 处，故为 ${cov} —— 「圈内 ${e?.in_circle ?? 0} 处」与「覆盖度 ${cov}」是两个口径各自的数，不是同一个数的两次说法；`
+}
+
 function fmtMin(m: number | null): string {
   return m == null ? '—' : `${m}min`
 }
@@ -90,7 +127,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
   const claims: Claim[] = [
     {
       claim_id: `c-${r.scene.name}-medical-1`,
-      text: `医疗设施圈内覆盖 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近药房 ${fmtMin(triad?.nearest_minutes ?? ph?.min_minutes ?? null)}，${m && m.coverage >= 0.75 ? '基本满足 15 分钟就医购药需求' : '存在明显配置缺口'}`,
+      text: `医疗设施圈内 ${m ? `${m.in_circle}/${m.total}` : '—'} 处${covBasisText(m)}，最近药房 ${fmtMin(triad?.nearest_minutes ?? ph?.min_minutes ?? null)}，${m && m.coverage >= 0.75 ? '基本满足 15 分钟就医购药需求' : '存在明显配置缺口'}`,
       field: 'coverage',
       evidence_ids: [`ev-${r.scene.name}-poi-medical`],
       confidence: m && m.coverage >= 0.75 ? 'high' : 'medium',
@@ -104,7 +141,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `圈内医疗设施 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近 ${fmtMin(m?.min_minutes ?? null)}；社区医院/诊所/药店三类中${(ph?.nearest_name || m?.nearest_name) ? `最近为「${ph?.nearest_name ?? m?.nearest_name}」` : '尚无近端设施'}`,
     paragraphs: [
-      `对研究范围内医疗类 POI（社区医院/诊所/药店）按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，15 分钟步行圈内保留 ${m?.in_circle ?? 0} 处，覆盖度 ${pct(m?.coverage ?? 0)}。`,
+      `对研究范围内医疗类 POI 按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，15 分钟步行圈内 ${m?.in_circle ?? 0} 处；${medCoverageSentence(m)}`,
       `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一，圈内可达性为「${triad?.covered ? '可达' : '不可达'}」${triad?.nearest_minutes != null ? `（最近 ${triad.nearest_minutes}min）` : ''}。`,
     ],
     claims,
@@ -129,13 +166,13 @@ function secEducation(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `教育类圈内 ${e ? `${e.in_circle}/${e.total}` : '—'} 处；小学为盲区三要素之一，${triad?.covered ? `圈内可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'} `,
     paragraphs: [
-      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，15 分钟圈内 ${e?.in_circle ?? 0} 处，覆盖度 ${pct(e?.coverage ?? 0)}，最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
+      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，15 分钟圈内 ${e?.in_circle ?? 0} 处；${eduCoverageSentence(e)}最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
       `就学通勤视角：小学接送是生活圈体检的高频痛点，本样区${triad?.covered ? `最近小学步行 ${triad.nearest_minutes}min，处于可接受范围` : '1km 内无小学，需重点关注跨区就学问题'}。`,
     ],
     claims: [
       {
         claim_id: `c-${r.scene.name}-education-1`,
-        text: `教育设施${triad?.covered ? '覆盖达标' : '覆盖不足'}：小学${triad?.covered ? `最快 ${fmtMin(triad.nearest_minutes)} 可达` : '1km 内缺失'}，幼儿园/中学密度 ${e?.coverage ? pct(e.coverage) : '—'}`,
+        text: `教育设施${triad?.covered ? '覆盖达标' : '覆盖不足'}（这一句判的是小学 1km 三要素事实）：小学${triad?.covered ? `最快 ${fmtMin(triad.nearest_minutes)} 可达` : '1km 内缺失'}；覆盖度 ${e?.coverage != null ? pct(e.coverage) : '—'}${e?.required_in_circle != null ? `（按门槛项 ${e.required_in_circle} 处 ÷ 满分线，圈内共 ${e.in_circle} 处）` : ''} ⇒ 置信度 ${(e?.coverage ?? 0) >= 0.75 ? 'high' : 'medium'}（这一句判的是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）`,
         field: 'coverage',
         evidence_ids: [`ev-${r.scene.name}-poi-education`],
         confidence: (e?.coverage ?? 0) >= 0.75 ? 'high' : 'medium',

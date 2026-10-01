@@ -1,6 +1,7 @@
 """M1 · 数据源：Fixture 就近匹配 / Live 全链路（stub client） / 缓存生效。"""
 import asyncio
 
+from app.living_circle.category_rule import SUB_KIND_TABLE
 from app.living_circle.data_source import CheckParams, FixtureDataSource, LiveDataSource
 from app.living_circle.geo_utils import haversine_m, xy_to_lnglat
 from app.living_circle.isochrone import IsochroneEngine
@@ -102,7 +103,11 @@ def test_live_source_full_pipeline_contract():
     pts = r["poi"]["points"]
     assert len(pts) > 0
     for p in pts:
-        assert set(p.keys()) == {"id", "name", "category", "lnglat", "minutes", "in_circle"}
+        # v7.2 §5.1 行 6 同批重指：live 管线产出的点位带上新契约字段 `sub_kind`。
+        # 全等式保留（少一键/多一键都红）；建表类别必给字符串、没建表的必为 None。
+        assert set(p.keys()) == {"id", "name", "category", "lnglat", "minutes", "in_circle",
+                                 "sub_kind"}
+        assert (p["sub_kind"] is None) == (p["category"] not in SUB_KIND_TABLE), p
         assert p["id"].startswith("poi-")
         assert len(p["lnglat"]) == 2
         assert isinstance(p["lnglat"][0], float)

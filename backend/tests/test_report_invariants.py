@@ -478,16 +478,33 @@ def test_assemble_poi_conservation_holds_end_to_end():
 def test_assemble_scoring_sees_derived_in_circle():
     """派生收敛必须发生在 `compute_scores` **之前**（否则评分仍按截断前的覆盖度算）。
 
-    判据：每个类别的 ``coverage`` 与其**派生后**的 ``in_circle`` 自洽 ——
-    ``coverage == min(1, in_circle / ideal_circle)``。若时序颠倒，
-    ``in_circle`` 会被覆盖而 ``coverage`` 保持旧值，二者立刻对不上。
+    判据：每个类别的 ``coverage`` 与其**派生后**的点集自洽 ——
+    等式右端由生产那颗 `poi.coverage_from_points(该类点集, ideal, 该类)` 现算。
+    若时序颠倒，`in_circle` 会被覆盖而 `coverage` 保持旧值，二者立刻对不上。
+
+    ⚠️ 10-01 重指（`cov-1` 落地，计划 §5.1 行 10）：原右端是 `min(1, in_circle / ideal)` 这个
+    **点数公式**，它同时写死了一份口径（全 8 类循环 ⇒ 覆盖面最大的一处）。新右端吃同一颗生产
+    函数 ⇒ 本条不再钉口径版本，只钉**时序**；但"只钉时序"有一个退化形状要拦：
+    如果这份合成报告里**没有任何一类**真的走门槛项分子，本条就悄悄等价于旧公式、
+    谁把 `coverage_from_points` 改坏也测不出 ⇒ 故末尾加 `exercised` 规模判据（A5/R7 同型）。
     """
     from app.living_circle.category_rule import CATEGORY_RULES
+    from app.living_circle.poi import coverage_from_points
 
     lc = _build_report(triads_near_center=False)
+    points = lc["poi"]["points"]
+    exercised = 0
     for c in lc["poi"]["categories"]:
-        ideal = int(CATEGORY_RULES[c["category"]]["ideal_circle"])
-        assert c["coverage"] == pytest.approx(min(1.0, c["in_circle"] / ideal), abs=1e-4), c
+        cat = c["category"]
+        ideal = int(CATEGORY_RULES[cat]["ideal_circle"])
+        pts = [p for p in points if p.get("category") == cat]
+        want = coverage_from_points(pts, ideal, cat)
+        assert c["coverage"] == pytest.approx(want, abs=1e-4), c
+        if round(want, 4) != round(min(1.0, c["in_circle"] / ideal), 4):
+            exercised += 1
+    assert exercised >= 1, (
+        "本条退化成旧的点数公式（没有任何一类走门槛项分子）⇒ 覆盖度口径漂移在这里测不出来，"
+        "要么合成报告的建表类别变了，要么 `coverage_from_points` 的门槛项支没生效")
 
 
 def test_assemble_thin_evidence_discounts_the_score():

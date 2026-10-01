@@ -22,7 +22,19 @@ SHOPPING_INCLUDE_CONVENIENCE = True
 
 # 8 类民生判表。键集合 = `poi.CATEGORY_DEFS` 严格一致（不再双写两套表）。
 # keywords：百度 place 检索锚点（S1 语义词）；accept/reject_tags：S2/S8 标签裁决来源。
-# ideal_circle：圈内理想阈值（评分基准）。
+# ideal_circle：覆盖度的**满分线**（拿到 100% 需要几处），**不是及格线**。
+# ⚠️ 这同一个数兼任三件事，改它会**同时**改掉另外两件（10-01 差点在这里翻车）：
+#   ① 评分分母（`poi.coverage_from_points`：分子 ÷ 它，封顶 1.0）；
+#   ② 采集扩词的**收手条件**（`poi_collector.under_target`：圈内够了就不再扩词 ⇒ 外呼次数、图上点位数、
+#      以及盲区判定的输入都会跟着变）；
+#   ③ 报告正文那句「相当于圈内基层医疗 ≥3 家」里的 3（`diagnosis_templates.py` 直接读它）。
+#      ⚠️ 满分线**不在报告 payload 里**（`poi.py:74` 那句是喂内部 `CATEGORY_DEFS` 的，不是交出去
+#      的字段；类别统计只有 `total/in_circle/required_in_circle/coverage`）⇒ 前端组件印不出「÷ 3」，
+#      要印就得先加字段（10-01 片 1c-β 已核过，别照着这条注释去 payload 里找）。
+# ⚠️ "圈里有 1 所小学就算及格"这类诉求属**及格线**，不许就地改这个数：系统里"缺口/盲区"是**网格级**的
+#   （`blindspot.py` 按 1km 内有无设施硬判），**没有任何地方按数量宣判某类缺失** ⇒ 改成 1 不会让谁
+#   "不再是缺口"，只会让教育**查到 1 颗就停止扩词**（少采）并把旧载荷的教育覆盖度重读成"1 颗即满分"。
+#   要加及格线就新加一根只给文案与达标判据用的线，见计划 §十九。
 CATEGORY_RULES: Dict[str, Dict[str, Any]] = {
     "market": {
         "label": "菜市场",
@@ -94,8 +106,118 @@ TRIAD_RULES: Dict[str, Any] = {
     "_triad_keywords": {"market": "菜市场", "pharmacy": "药店", "primary": "小学"},
 }
 
+# 子类表（计划 §二 W1；10-01 拍板档）。**键 = 8 类里建了表的类别**，未列出的类别本批不建表
+# ⇒ 覆盖度分子对它们退回点数（`poi.coverage_from_points` 那一支，判据 T17 半边乙）。
+# 形状与 `CATEGORY_RULES` 同构，因此子类判定**复用同一个 `evaluate_category(table=…)` 注入口**，
+# 零新实现（`test_judge_single_implementation.py:85` 守这条）。
+#
+# `required` = 门槛项（进覆盖度分子）。出处逐行注明（§二 两层档位 + §11.4 新核到的国标原文）：
+#   · 教育 `primary`：本项目自定口径（"缺失即构成配置缺口"），国标 TD/T 1062 表 A.1 小学
+#     服务半径 500m、应独立占地 —— **注意同一张表把幼儿园也列进"基础保障型"**，故 `required`
+#     不能写成"依国标基础保障型推定"，只能自定（§11.4 结论 2）。
+#   · 医疗 `community_health_center` / `health_service_station`：TD/T 1062 表 A.1「卫生服务中心
+#     （社区医院）… 各街道（镇）设一处」+ 表 A.3「卫生服务站 500m 设置一处，不小于 120 ㎡」
+#     ⇒ 10-01 据此把"站"从存疑改算门槛（推翻 09-30 甲档的一半）。
+#   · 医疗 `pharmacy`：商务部〔2021〕247 号「基本保障类业态」清单里**确有"药店"** ⇒ 可引。
+#   · `clinic` **不算**：TD/T 1062 全篇"诊所"出现 **0 次**，国标从未把它列为配置要素。
+#   · 存疑形状（口腔/中医馆/医美/视光/名医工作室…）**不建行** ⇒ 落 `evaluate_category` 的
+#     `other`（第三档＝待定），照 §二「禁止把存疑项并进已定档行冒充」。
+#
+# 纪律：每个类别内各行的 `accept_tags` **必须两两不相交**（标签通道取第一个命中 ⇒ 相交就让
+# 字典顺序参与裁决）；判据 = `test_subkind_caliber.py` 的 J14a（故意相交表当场翻判）+ J14b。
+SUB_KIND_TABLE: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "education": {
+        "primary": {
+            "label": "小学", "required": True, "weight": 500.0,
+            "keywords": ["小学"], "accept_tags": ["小学", "小学部"],
+            "reject_tags": ["家长学校", "中学", "高中", "大学", "职业"],
+        },
+        "kindergarten": {
+            "label": "幼儿园", "required": False, "weight": 300.0,
+            "keywords": ["幼儿园", "托儿所", "学前"], "accept_tags": ["幼儿园", "托儿所"],
+            "reject_tags": ["集团", "总园", "分校", "家长学校"],
+        },
+        "secondary": {
+            "label": "中学", "required": False, "weight": 1000.0,
+            "keywords": ["中学", "初中", "高中", "九年一贯制"],
+            "accept_tags": ["中学", "初中", "高中", "九年一贯制"],
+            "reject_tags": ["职业", "技校", "家长学校"],
+        },
+    },
+    "medical": {
+        "community_health_center": {
+            "label": "社区卫生服务中心", "required": True, "weight": 1000.0,
+            "keywords": ["社区卫生服务中心"], "accept_tags": ["社区卫生服务中心"],
+            "reject_tags": ["服务站"],
+        },
+        "health_service_station": {
+            "label": "社区卫生服务站", "required": True, "weight": 300.0,
+            "keywords": ["社区卫生服务站", "卫生服务站"],
+            "accept_tags": ["社区卫生服务站", "卫生服务站"], "reject_tags": [],
+        },
+        "pharmacy": {
+            "label": "药店", "required": True, "weight": 300.0,
+            "keywords": ["药店", "药房", "大药房"], "accept_tags": ["药店", "药房"],
+            "reject_tags": ["医院"],
+        },
+        "clinic": {
+            "label": "诊所", "required": False, "weight": 300.0,
+            "keywords": ["诊所"], "accept_tags": ["诊所"],
+            "reject_tags": ["宠物医院", "牙科诊所", "医美"],
+        },
+        "hospital": {
+            "label": "医院", "required": False, "weight": 1000.0,
+            "keywords": ["医院", "卫生院"], "accept_tags": ["综合医院", "专科医院", "卫生院"],
+            "reject_tags": ["宠物医院", "社区卫生服务中心"],
+        },
+    },
+}
+
+
+def sub_kind_rule_labels(category: str) -> Optional[Tuple[List[str], List[str]]]:
+    """门槛项**名单**（计分组 / 不计分组）—— 只读 `SUB_KIND_TABLE`，**一个点位都不看**。
+
+    给展示侧那一句用：「医疗 · 覆盖度只数「社区卫生服务中心 / 服务站 / 药店」…（诊所、医院不计入分子）」。
+    它与 `required_count_from_points` 读同一张表，但**不是第二份判类实现** —— 判类（这颗点算哪个子类）
+    全仓只有 `evaluate_category` 一处，本函数连点位都不接。
+
+    返回 ``None`` = 这一类没建子类表 ⇒ 没有门槛项名单可言（展示侧**不得**印成空名单，
+    与 `required_in_circle` 的 `None` 同一套三档语义）。
+
+    ⚠️ 名单是**规则名单**，不是"这批圈内采到了哪些"：凯里圈内 25 处医疗点的实测分账是
+    诊所 16 / 中心 2 / 站 3 / 存疑 4 ⇒ `pharmacy` 圈内 **0 颗**。若改成 present-only，
+    "药店"会从披露里消失（而药店正是盲区三要素之一）—— 那是为了措辞好看而说假话。
+    """
+    table = SUB_KIND_TABLE.get(category)
+    if table is None:
+        return None
+    hit = [str(d["label"]) for d in table.values() if d.get("required")]
+    miss = [str(d["label"]) for d in table.values() if not d.get("required")]
+    return hit, miss
+
+# 覆盖度口径版本键（§六 四步先例的第一步：常量 → 缓存键 → 载荷 → 口径索引）。
+# **独立命名、不顺着 `ev-*` 排** —— 证据域那把键没变，变的是分子定义。
+COVERAGE_CALIBER_VERSION = "cov-1"
+
+
 # 降噪杂讯：命中即判 other，不进入任何类别统计（rev3 §四E）。
 _NOISE_TAGS = ("烧烤", "夜市", "五金", "建材", "物流", "快递网点", "宠物医院")
+
+
+def sub_kind_of(poi: Dict[str, Any], category: str) -> Optional[str]:
+    """该点位的子类键；类别没建表 ⇒ None（覆盖度那一支据此退回点数口径）。
+
+    ⚠️ 这不是第二份判类实现 —— 内部只有 `evaluate_category(poi, table=SUB_KIND_TABLE[cat])`
+    一行，判据仍走唯一那一份（`test_judge_single_implementation.py:85`）。
+    ⚠️ 传进来的 `poi["name"]` **必须是 `annotate_name` 加工之前的原始名**（§二 规范句）：
+    被吸收子点拼进父名的「· 含大药房」一类后缀一旦参与，父点子类会被子点决定。
+    """
+    table = SUB_KIND_TABLE.get(category)
+    if not table:
+        return None
+    return evaluate_category(poi, table=table)[0]
+
+
 
 
 def _norm(s: str) -> str:

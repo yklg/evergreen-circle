@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>片 1c-β · 评分口径上屏四改动区（类别旁说明 / 陈旧提示第二根轴 / 对比页那一行 / 正文四句）</title>
+<style>
+  body { background:#f6f8f7 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px; line-height:1.5 }
+  .wrap { max-width:1460px; margin:0 auto; padding:18px 20px 120px }
+  .box { background:#fff; border:1px solid #e3e8e5; border-radius:10px; padding:14px 16px; margin:0 0 14px; font-size:13px; line-height:1.65; color:#1d211f }
+  .box b { color:#8a6420 }
+  .box code, .topbar code { background:#f1f5f2; border-radius:4px; padding:0 4px; font-size:12px; color:#1d211f }
+  .topbar code { background:rgba(217,239,228,.9); color:#11231c }
+  .fcp-change { position:relative; outline:3px solid #f59e0b; outline-offset:3px; border-radius:12px; background:rgba(245,158,11,.05); margin:14px 0; padding:4px }
+  .badge { position:absolute; top:-13px; left:10px; min-width:26px; height:24px; padding:0 7px; border-radius:999px; background:#f59e0b; color:#fff; font-size:12px; font-weight:700; display:inline-grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.22); z-index:9 }
+  .fcp-legend { position:static; z-index:auto; width:auto; max-height:none; overflow:visible; background:#11231c; color:#d9efe4; border-radius:12px; padding:14px 16px; margin:34px 0 0; font-size:11.5px; line-height:1.6; box-shadow:0 8px 26px rgba(0,0,0,.18) }
+  .fcp-legend ol { padding-left:0; list-style:none; columns:2; column-gap:26px }
+  .fcp-legend li { break-inside:avoid; border-top:1px solid rgba(217,239,228,.16); padding:7px 0 }
+  .fcp-legend li:first-child { border-top:none }
+  .fcp-legend b { color:#ffd591 }
+  .fcp-legend div { opacity:.86; margin-top:2px }
+  .fcp-legend code { background:rgba(217,239,228,.16); color:#eaf6ee; border-radius:3px; padding:0 3px }
+  .legend-title { font-size:12px; font-weight:700; margin-bottom:8px }
+  .legend-foot { margin-top:9px; padding-top:9px; border-top:1px solid rgba(217,239,228,.16); opacity:.75 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>片 1c-β · 四个改动区对照预览（步骤 1 预览，不改生产组件）</h1>
+    <div class="sub">要拍的四件事：<b>C1</b> 类别旁一句口径说明（甲/乙两档）· <b>C2</b> 旧报告陈旧提示接第二根轴 <code>coverage_caliber_version</code> · <b>C3</b> 对比页「综合评分可比性」那句（三句并列 vs 判盲优先）· <b>C4</b> 报告正文那四处仍按点数解释 coverage 的句子。数据 = <code>cov-1</code> 回填后的<b>真夹具</b>（凯里 65.4 / 北京劲松 65.8），<b>现状栏</b>的字符串一律由生产出口现产（<code>staleCaliberNotice</code> / <code>compareCaliberNotice</code> / <code>compareRows</code> / <code>buildLivingCircleReport()</code>），<b>目标栏</b>与甲档措辞是探针本地拟稿。参数：<code>?region=c1|c2|c3|c4|all</code>。</div>
+  </div>
+  <div class="wrap">
+    <div class="box">
+      为什么非要这一屏：<code>cov-1</code> 把覆盖度的分子从<b>圈内点数</b>换成了<b>门槛项数</b>，凯里教育因此从 100 掉到 33 分——但<b>屏上没有一处说这句话</b>。今天的两处披露都在把账记到<b>另一把尺</b>（判盲口径 <code>ev-2</code>）头上：报告页那行陈旧提示说"盲区数与综合评分偏乐观"，对比页那一格说"不可比 · 判盲口径已升级"。而正文里「圈内 15 处、覆盖度 33.3%」两句并排，按点数复算是 500%，读者只能认定数据对不上。<br>
+      四区各自的<b>读法</b>：C1 看<b>那一行要不要出现</b>（甲档要多一个后端字段才印得出"小学"）；C2 看<b>两轴各印各的</b>还是合并成一句；C3 看<b>两轴同时不同</b>那一格宁可写全还是只写判盲；C4 看<b>"达标"这两个字要不要在句子里自证它判的是哪把尺</b>。
+    </div>
+    <div id="lc-cov-root"></div>
+  </div>
+  <script type="module" src="/src/dev/lcCovCaliberProbe.tsx"></script>
+</body>
+</html>

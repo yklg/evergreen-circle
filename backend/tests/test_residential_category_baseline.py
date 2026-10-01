@@ -8,12 +8,19 @@
    「这个 POI 属于哪一类」的分辨率，居住档取哪些类算覆盖一个字都不改（D7）。
    任何一格变化都说明改动越界了，而不是"基线该更新"。
 
-   ⚠️ 只有一类变更允许重钉：**采集口径本身升版**（`scope_policy_version` 变了）。
-   那时光标从「可达圈内」挪到「按证据需求逐类外扩」，计数必变，且是**计划爆炸半径表
-   预先登记**的变。判据：先看 `caliber.scope_policy_version` 是否换代 —— 换代 ⇒ 随快照
-   重钉并在注释里写清是哪一版；未换代而数字动了 ⇒ 越界，按原意处理。
-   当前代际：`kaili.json` 仍是升级前的旧快照（未声明版本），`beijing-jinsong.json`
-   是 `ev-1` 实测快照（2026-09-27 重刷）。
+   ⚠️ 只有一类变更允许重钉：**口径本身升版**，而口径有**两根轴**（10-01 补写第二根）：
+   · **采集口径** `scope_policy_version`（`ev-*`）变了 ⇒ 光标从「可达圈内」挪到「按证据需求逐类外扩」，
+     计数必变，且是**计划爆炸半径表预先登记**的变；
+   · **评分口径** `cov-*`（v7.2 `cov-1`：覆盖度分子由点数改成门槛项数）变了 ⇒ 只有**总分/维度分**会动，
+     `total / in_circle / points / min_minutes` 必须一字不动；动了就是越界（"只换分子不动点数"那条红线）。
+   判据：先看这两把键有没有换代 —— 换代 ⇒ 随快照重钉并在注释里写清是哪一版；
+   未换代而数字动了 ⇒ 越界，按原意处理。
+   ⚠️ 两根轴现在**都机器可读**了（10-01 §六 补齐第二根）：`caliber.scope_policy_version`（`ev-*`）
+   与 `caliber.coverage_caliber_version`（`cov-*`，常量在 `category_rule.COVERAGE_CALIBER_VERSION`）
+   同处发射（`scope.py` 唯一写点）、同处登记（`caliber_index`）、一起进本夹具。
+   ⇒ 按本条判据"看键换代"对第二根轴**有下手处**了；缺 `cov` 键的产物一律按旧评分口径解释。
+   当前代际：`kaili.json` = 升级前旧快照经 `cov-1` 回填（10-01，采集口径仍未声明版本），
+   `beijing-jinsong.json` 是 `ev-1` 实测快照（2026-09-27 重刷）+ `cov-1` 回填（读数无变化）。
 
 2. **探针可行性核查**：加键前要先实测真实改判面，但**fixture 存的是判类之后的结果**
    （点位只留 `name/category/minutes/lnglat`，没有百度原始 `tag`）。⇒ 只拿 fixture
@@ -32,7 +39,14 @@ FIXTURES = Path(__file__).resolve().parents[1] / "app" / "living_circle" / "fixt
 BASELINE = {
     "kaili.json": {
         "totals": {"total": 217, "in_circle": 98, "points": 98},
-        "scores_total": 68.7,
+        # 10-01 随快照重钉：`cov-1`（评分口径）回填 ⇒ 教育 coverage 1.0 → 0.3333
+        # ⇒ 总分 68.7 → **65.4**。下面 8 类 `(total, in_circle, min_minutes)` **一条没动**
+        # （采集口径与点数都没改），这正是"只换分子、不动点数"那条红线的存量面证据。
+        # ⚠️ 本文件头第 1 条原本只认 `scope_policy_version`（采集口径）换代这一个触发条件；
+        #    评分口径是第二根轴，已在文件头补写，且 **10-01 已补齐成机器可读**（§六 拍板 (a) 档：
+        #    `caliber.coverage_caliber_version` 进载荷、进复用门、进口径名册，四份夹具已声明）
+        #    ⇒ 这条重钉从此有判据：先看两根轴换没换代，而不是靠人记。
+        "scores_total": 65.4,
         "blindspots": 0,
         "categories": {
             "market": (15, 7, 7.4),

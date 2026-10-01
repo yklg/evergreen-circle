@@ -446,7 +446,13 @@ def test_caliber_gap_literals_match_contract_fixture():
     `policy_version_current` 与前端 `SCOPE_POLICY_VERSION` 各自钉向同一份夹具 ⇒ 换版本
     只改 `scope.SCOPE_POLICY_VERSION` + 夹具，两侧测试同时报警（不会一边新一边旧）。
     """
-    from app.main import _DIFF_DESC_CALIBER_GAP, _CALIBER_GAP_ROWS
+    from app.main import (
+        _DIFF_DESC_BOTH_GAP,
+        _DIFF_DESC_CALIBER_GAP,
+        _DIFF_DESC_COVERAGE_GAP,
+        _CALIBER_GAP_ROWS,
+    )
+    from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
     from app.living_circle.scope import SCOPE_POLICY_VERSION
 
     gap = CONTRACT["caliber_incomparable"]
@@ -454,6 +460,89 @@ def test_caliber_gap_literals_match_contract_fixture():
     assert list(_CALIBER_GAP_ROWS) == gap["applies_to"]
     assert SCOPE_POLICY_VERSION == gap["policy_version_current"], (
         "判盲口径版本换了却没改契约夹具 ⇒ 前端的「建议重新体检」提示会静默失灵")
+    # 第二根轴（片 1c-β C3）：三句 + 版本各钉一次
+    assert _DIFF_DESC_COVERAGE_GAP == gap["coverage_desc"]
+    assert _DIFF_DESC_BOTH_GAP == gap["both_desc"]
+    assert COVERAGE_CALIBER_VERSION == gap["coverage_version_current"], (
+        "评分口径版本换了却没改契约夹具 ⇒ 前端那句「这份是点数口径算的分」会静默失灵")
+    # 三句必须互不相同：写成同一句 = 只有一根轴在守（两把键互相顶替的机器形态）
+    assert len({gap["desc"], gap["coverage_desc"], gap["both_desc"]}) == 3
+    assert "判盲" not in gap["coverage_desc"]
+    assert "评分口径" not in gap["desc"]
+
+
+def test_coverage_gap_blocks_only_the_verdict_rows():
+    """第二根轴：只有 `coverage_caliber_version` 不同 ⇒ 同样只拦那两行的**结论**。
+
+    第 21 轮 P1-3 抓到的洞：判盲轴相同、评分轴一边缺键 ⇒ 旧实现判**可比**，而凯里那 3 分
+    落差全部来自分子换代（圈内点数 → 门槛项数）。两根轴独立 ⇒ 三句结论句各说各的事。
+    """
+    import copy
+
+    from app.main import (
+        _DIFF_DESC_BOTH_GAP,
+        _DIFF_DESC_COVERAGE_GAP,
+        _lc_diff,
+    )
+    from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
+    from app.living_circle.scope import SCOPE_POLICY_VERSION
+
+    gap_rows = CONTRACT["caliber_incomparable"]["applies_to"]
+    plain_rows = ("15min 等时圈面积 (km²)", "可达采样点数", "POI 采集", "圈内 POI")
+
+    def stamp(fx: dict, ev, cov) -> dict:
+        f = copy.deepcopy(fx)
+        cal = f.setdefault("caliber", {})
+        for key, val in (("scope_policy_version", ev), ("coverage_caliber_version", cov)):
+            if val is None:
+                cal.pop(key, None)
+            else:
+                cal[key] = val
+        return f
+
+    def by_metric(rows):
+        return {r["metric"]: r for r in rows}
+
+    # ① 判盲轴两边相同、评分轴不同（两种形态：另一侧根本没声明 / 另一侧是别的号）
+    for legacy_cov in (None, "cov-0"):
+        a = stamp(KAILI_FX, SCOPE_POLICY_VERSION, COVERAGE_CALIBER_VERSION)
+        b = stamp(JINSONG_FX, SCOPE_POLICY_VERSION, legacy_cov)
+        rows = by_metric(_lc_diff(a, b))
+        for metric in gap_rows:
+            assert rows[metric]["desc"] == _DIFF_DESC_COVERAGE_GAP, f"{legacy_cov}/{metric}"
+            assert isinstance(rows[metric]["a_value"], (int, float)), (
+                f"{metric} 数值必须原样给出（拦结论不拦事实）")
+        for metric in plain_rows:
+            assert rows[metric]["desc"] != _DIFF_DESC_COVERAGE_GAP, metric
+
+    # ② 两份都缺 cov 键 ⇒ 彼此可比，不得谎报不可比（否则存量报告两两对比全部失明）
+    a = stamp(KAILI_FX, SCOPE_POLICY_VERSION, None)
+    b = stamp(JINSONG_FX, SCOPE_POLICY_VERSION, None)
+    rows = by_metric(_lc_diff(a, b))
+    for metric in gap_rows:
+        assert rows[metric]["desc"] not in (_DIFF_DESC_COVERAGE_GAP, _DIFF_DESC_BOTH_GAP), metric
+
+    # ③ 两根轴同时不同 ⇒ 第三句（只报一半就是把评分账记到判盲头上）
+    a = stamp(KAILI_FX, SCOPE_POLICY_VERSION, COVERAGE_CALIBER_VERSION)
+    b = stamp(JINSONG_FX, "ev-0-legacy", None)
+    rows = by_metric(_lc_diff(a, b))
+    for metric in gap_rows:
+        assert rows[metric]["desc"] == _DIFF_DESC_BOTH_GAP, metric
+
+    # ④ 真数据自检（不合成）：出厂两份快照的评分轴关系决定第二句该不该亮
+    shipped = by_metric(_lc_diff(copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)))
+    same_cov = (KAILI_FX["caliber"].get("coverage_caliber_version")
+                == JINSONG_FX["caliber"].get("coverage_caliber_version"))
+    for metric in gap_rows:
+        if same_cov:
+            assert shipped[metric]["desc"] != _DIFF_DESC_COVERAGE_GAP, (
+                f"两份出厂快照评分轴相同（都是 "
+                f"{KAILI_FX['caliber'].get('coverage_caliber_version')}）却亮了评分句 ⇒ "
+                "守卫把「声明过」当成了「版本不同」")
+        else:
+            assert shipped[metric]["desc"] in (_DIFF_DESC_COVERAGE_GAP, _DIFF_DESC_BOTH_GAP), (
+                f"两份出厂快照评分轴不同（{KAILI_FX['caliber'].get('coverage_caliber_version')}"
+                f" vs {JINSONG_FX['caliber'].get('coverage_caliber_version')}）却没拦结论")
 
 
 def test_offline_diff_literals_match_contract_fixture():

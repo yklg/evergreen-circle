@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from app.living_circle.caliber import facility_merge_enabled
+from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.data_source import CheckParams, CachingDataSource, LiveDataSource
 from app.living_circle.facility_rule import FACILITY_RULE_VERSION
 from app.living_circle.repository import MemoryCache, Repository
@@ -69,8 +70,11 @@ class CountingSource:
             "scores": {"total": 88.0, "triads": [], "radar": [], "note": ""},
             # 批 A③：复用门现在比**本次请求的口径三元组**，替身必须把它替的那一面补齐
             # （真实组装层就是从这里落的，见 `assemble_living_circle` 与 `scope.payload`）。
+            # v7.2 片 1d：门上还有**第二把版本键**（评分口径 `cov-*`，比较对象是代码常量、
+            # 不来自请求）⇒ 替身同样要带，缺它就是"静默未命中"（u3_1/u3_2/u3_4/u23/u32 首轮全量实测）。
             "caliber": {
                 "scope_policy_version": self.policy_version,
+                "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
                 "travel_mode": params.travel_mode,
                 "sample_profile": params.sample_profile,
             },
@@ -78,11 +82,13 @@ class CountingSource:
 
 
 def _live(payload: dict) -> dict:
-    """给手工落缓存的 live 载荷盖上**当前判盲口径版本**（唯一实现见 `conftest.live_payload`）。
+    """给手工落缓存的 live 载荷盖上**当前两把口径版本**（唯一实现见 `conftest.live_payload`）。
 
-    复用门 `report_contract.reuse_policy` 只认带 `caliber.scope_policy_version` 的 live 报告
+    复用门 `report_contract.reuse_policy` 只认**同时**带 `caliber.scope_policy_version`（判盲 `ev-*`）
+    与 `caliber.coverage_caliber_version`（评分 `cov-*`）的 live 报告
     —— 旧口径报告不许冒充本次体检的答案。本文件的 U3/T2 用例测的是**键与命中机制**，
-    所以必须喂当前版本才谈得上「命中」；版本门自身由文件末尾 `test_stale_policy_*` 专测。
+    所以必须喂当前版本才谈得上「命中」；两把版本门自身由文件末尾 `test_stale_policy_*`
+    与 `test_stale_coverage_caliber_*` 专测（那里逐条只缺一把）。
     （不经 `peek`/`compute` 的纯 repository 用例不套此壳 —— 它们压根不过这道门。）
     """
     return live_payload(payload)
@@ -388,6 +394,31 @@ def test_stale_policy_version_forces_recompute():
     assert got["scene"]["name"] == p.scene_name  # 拿的是新结果，不是「旧口径」
 
 
+def test_stale_coverage_caliber_forces_recompute():
+    """判盲口径是当前的、**只有评分口径那把缺** ⇒ 照样不许复用（v7.2 片 1d 第二把键）。
+
+    与上一条成对：那条拦「证据域变了」，这条拦「同样的点位算出来的分变了」。
+    缺这条会怎样：改造后第一次体检的新分数落库，第二次体检从库里捞出**改造前**那份
+    （演示数据上就是教育 88.6 / 总分 68.7 那一组）当本次答案上屏，页面看不出它是旧分子算的。
+    形状刻意取「缺键」而不是「值不同」：存量 30 份报告全是缺键那一形（计划 §六 的主路径），
+    而"值不同"那一形由 `test_subkind_caliber.py` 的 T8 逐理由钉着。
+    """
+    repo = Repository()
+    src = CountingSource()
+    ds = _ds(repo, src)
+    p = _shanghai()
+    stale = live_payload({
+        "scene": {"name": "旧评分口径", "center": list(p.center)},
+        "data_origin": "live",
+    })
+    stale["caliber"].pop("coverage_caliber_version")   # 判盲那把留着 ⇒ 只有第二根轴缺
+    repo.cache_report("live", CachingDataSource._payload(p), stale)
+    assert ds.peek(p) is None
+    got = asyncio.run(ds.compute(p))
+    assert src.calls == 1, "缺评分口径声明的报告被直接吐给用户了 —— 第二把门没牙"
+    assert got["scene"]["name"] == p.scene_name  # 拿的是新结果，不是「旧评分口径」那份
+
+
 def test_live_report_without_any_caliber_is_not_reused():
     """存量报告（连 `caliber` 都没有）同样被拦 —— D-4 的「拦复用」拦的正是它们。"""
     repo = Repository()
@@ -450,8 +481,11 @@ def test_reuse_gate_requires_the_request_caliber_triple():
         "data_origin": "live",
         "scene": {"name": "凯里老街", "center": [107.9758, 26.5734], "study_radius_m": 2500},
         "caliber": {"scope_policy_version": SCOPE_POLICY_VERSION,
+                    "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
                     "travel_mode": "walking", "sample_profile": "standard"},
     }
+    # `wanted` **刻意只有三把**（本次请求的三元组）：评分口径那把不来自请求、由门自己拿代码常量比。
+    # 10-01 全量实测：曾经把它塞进 `wanted` 并要求读 `wanted[...]` ⇒ 这种手写三元组的调用方当场 KeyError。
     wanted = {"travel_mode": "walking", "sample_profile": "standard", "study_radius_m": 2500.0}
     assert reuse_policy(base, wanted) == (True, "")
     assert reuse_policy(

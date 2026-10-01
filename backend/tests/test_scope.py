@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 import pytest
 
 from app.living_circle.caliber import get_caliber
+from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import haversine_m, xy_to_lnglat
 from app.living_circle.scope import (
     SCOPE_POLICY_VERSION,
@@ -227,6 +228,9 @@ def test_payload_declares_three_concepts_and_unknown_count():
         "collect_radius_m",
         "collect_margin_m",
         "scope_policy_version",
+        # 第二十一轮评审 P0-1：第二把版本键（评分口径）也必须有**产出级**判据 ——
+        # 名册登记、复用门读它、夹具带它，都没有验过"生产 payload 里真的有它"。
+        "coverage_caliber_version",
         "cells_inside",
         "cells_judged",
         "cells_unknown",
@@ -237,6 +241,12 @@ def test_payload_declares_three_concepts_and_unknown_count():
     # 版本由 payload **唯一发射**（读侧 `report_contract.reuse_policy` 与契约判据都读它，
     # 不进缓存键 —— 见 scope.SCOPE_POLICY_VERSION 的理由）
     assert payload["scope_policy_version"] == SCOPE_POLICY_VERSION
+    # **第二根轴同样由 payload 唯一发射**（读侧只有 `reuse_policy` 那一拦吃它，不进缓存键）。
+    # 常量从 `category_rule` 取而不是从 `scope` 取：`scope` 里那个名字是 import 来的，
+    # 就算发射行被删它照样存在 ⇒ 拿 `vars(scope)` 当判据是近似恒真（第二十一轮 P0-1 抓的原形）。
+    assert payload["coverage_caliber_version"] == COVERAGE_CALIBER_VERSION, (
+        "生产 payload 没带评分口径键 ⇒ 每份新报告都会被自家复用门拒（静默重采、烧配额），"
+        "而名册/夹具/门那些判据一条都不会红")
     # 原有字段不得丢（前端/评分依赖）
     for key in ("travel_mode", "speed_m_per_min", "detour_k", "study_radius_m", "iso_minutes", "basis", "measured"):
         assert key in payload

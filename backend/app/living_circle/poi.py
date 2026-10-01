@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from app.living_circle.category_rule import CATEGORY_RULES, TRIAD_RULES, evaluate_category
+from app.living_circle.category_rule import (
+    CATEGORY_RULES,
+    SUB_KIND_TABLE,
+    TRIAD_RULES,
+    evaluate_category,
+    sub_kind_of,
+    sub_kind_rule_labels,
+)
 from app.living_circle.facility_rule import (
     annotate_name,
     facility_core,
@@ -250,6 +257,49 @@ def clean(items: List[Dict[str, Any]], dedupe_radius_m: float = 50.0) -> List[Di
     return dedupe_pois(out, dedupe_radius_m)
 
 
+def required_count_from_points(points: List[Dict[str, Any]],
+                               category: str) -> Optional[int]:
+    """门槛项数 = `cov-1` 的**分子**；返回 ``None`` = 这一批点位**没有门槛项口径可言**（走点数）。
+
+    两种 ``None``：① 该类别没建子类表；② 建了表但这批点位**不是每颗都带 `sub_kind` 键**
+    （= 旧口径载荷：存量 30 份与回填前的夹具都是这一形态，§六「读侧按旧口径解释、不回填」）。
+    ⚠️ ② 用 `all` 而不是 `any`（第二十一轮评审 P2-b）：**半迁移批次**（有的点带键、有的不带）在
+    `any` 下会被当成新口径，没带键的那几颗直接不进分子 —— 那是**少算**，而本批的原则是"读不准就按旧的、保守解释"。
+    生产两处写点（`to_points` / `to_stats`）都是**全量盖章**，所以 `all` 不会把自家新产物误判成旧载荷；
+    而"点里有字段但判成非门槛（`other`/诊所）"仍不会被当成旧载荷 —— 那是**带着值**的。
+    ⚠️ 但**空批次不算②**：建了表而该类一颗点都没有 ⇒ 返回 0 而不是 None —— 两种读法在这里给出
+    同一个 0，而"门槛项 0 ⇒ 真缺口"恰恰是最需要上屏的那一句（`elderly` 这类没表的类别仍返回 None，
+    它没有门槛口径可言）。
+    """
+    table = SUB_KIND_TABLE.get(category)
+    if table is None:
+        return None
+    if not points:
+        return 0
+    if not all("sub_kind" in p for p in points):
+        return None
+    return sum(1 for p in points
+               if (table.get(p.get("sub_kind")) or {}).get("required"))
+
+
+def coverage_from_points(points: List[Dict[str, Any]], ideal: int, category: str) -> float:
+    """覆盖度 = ``min(1.0, 分子 / ideal)`` —— **全仓唯一一份算式**（计划 §三 第 1 条）。
+
+    两口径的差别**只写在分子上**（分子的唯一出处是 `required_count_from_points`，
+    连"这一类到底按哪个口径"这件事也只在那里判一次），函数体里只许出现这一个 `min`：
+    写成两个分支各带一个 `min` 就违反"单一算式"，也会被
+    `test_coverage_formula_has_single_implementation`(T2) 的正向半边抓住。
+
+    ⚠️ 代价必须知道：新口径落地后，凡是**没经过 `to_points`** 就喂进来的点位（手搓载荷、旧回放）
+       都会静默按点数算 ⇒ 落点只有 `to_points` 会写 `sub_kind`（§三 第 3 条的硬前提），
+       判据是 T1 的第二半（`derive_stats_from_points` 必须给出门槛项口径的 1/3）。
+    """
+    numerator = required_count_from_points(points, category)
+    if numerator is None:
+        numerator = len(points)
+    return min(1.0, numerator / ideal)
+
+
 def to_stats(
     per_category: Dict[str, List[Dict[str, Any]]],
     triads: Dict[str, List[Dict[str, Any]]],
@@ -258,8 +308,11 @@ def to_stats(
 ) -> List[Dict[str, Any]]:
     """类别统计：圈内数 / 覆盖度 / 最近设施（步行耗时由调用方注入则用，否则用距离换算提示）。
 
-    coverage = min(1, in_circle / ideal_circle)；min_minutes 由调用方在测时后填充（此处填 None 占位，
+    coverage = min(1, **门槛项数** / ideal_circle)（`cov-1` 的分子；出处只有
+    `required_count_from_points` 一处）；min_minutes 由调用方在测时后填充（此处填 None 占位，
     live 管线在 poi+isochrone 后统一回填 nearest_minutes）。
+    ⚠️ 第二十一轮评审 P2-a：这句原本写的是 `min(1, in_circle / ideal_circle)` —— 分子换代后**注释还在说点数**，
+    而 `in_circle` 今天仍然如实报点数（它是"图上画了几颗"，不进覆盖度）。
 
     「圈内」= **可达区**（``scope.reach_ring``）。形参从 ``iso15_ring`` 改为 ``scope``：
     旧形参名承诺 15min 圈、实收 20min 圈、文档又写 15min，**三处不一致且没有任何一层能发现**；
@@ -271,7 +324,13 @@ def to_stats(
         defn = CATEGORY_DEFS[cat]
         in_circle = [it for it in items if point_in_ring((it["lng"], it["lat"]), reach_ring)]
         ideal = defn["ideal_circle"]
-        coverage = min(1.0, len(in_circle) / ideal)
+        # `to_stats` 吃的是**采集侧原始点位**（尚未被 `annotate_name` 拼过后缀）⇒ 在这里就地派生
+        # `sub_kind` 是安全的，也正是 §二 规范句要的"原始名那一侧"。没建表的类别不派生（省一次遍历，
+        # 且让 `coverage_from_points` 走它自己的"无表 ⇒ 点数"支，两支不在此重复)。
+        scored = ([{**it, "sub_kind": sub_kind_of(it, cat)} for it in in_circle]
+                  if cat in SUB_KIND_TABLE else in_circle)
+        coverage = coverage_from_points(scored, ideal, cat)
+        labels = sub_kind_rule_labels(cat)
         nearest = None
         nearest_d = float("inf")
         # 兜底「最近」只在**圈内**点里取 —— 与下方 `in_circle`/`coverage` 同一个域。
@@ -288,6 +347,15 @@ def to_stats(
             "total": len(items),
             "in_circle": len(in_circle),
             "coverage": round(coverage, 4),
+            # 门槛项数（`cov-1` 的分子）随覆盖度一起落盘 ⇒ 前端只许读这一个数，
+            # 绝不在展示侧重判子类（那会是第二份判类实现）。`None` = 这一类没有门槛项口径可言。
+            "required_in_circle": required_count_from_points(scored, cat),
+            # 门槛项**名单**（`scored_as` 计分 / `unscored_as` 不计分）：与分子读同一张
+            # `SUB_KIND_TABLE`，但**不吃点位**（`sub_kind_rule_labels`）⇒ 展示侧那句
+            # 「覆盖度只数「小学」」里的名字与数字都来自 payload，前端一个字都不自己判（片 1c-β C1 甲档）。
+            # 没建表的类别 ⇒ 两个都是 `None`（不是 `[]`：空名单会说"这一类没有不计分的形状"，那是假话）。
+            "scored_as": labels[0] if labels else None,
+            "unscored_as": labels[1] if labels else None,
             "min_minutes": None,  # 测时后回填
             "nearest_name": nearest.get("name") if nearest else None,
         })
@@ -367,11 +435,17 @@ def to_points(
             if not in_reach:
                 continue  # 圈外点：不展示、不进报告、不计分
             conf = _point_confidence(it)
+            raw_name = it.get("name") or ""
             entries.append({
                 "id": f"poi-{cat}-{idx}",
-                "name": annotate_name(it.get("name") or (CATEGORY_DEFS.get(cat, {}).get("label", cat)),
+                "name": annotate_name(raw_name or (CATEGORY_DEFS.get(cat, {}).get("label", cat)),
                                       it.get("sub_roles") or ()),
                 "category": cat,
+                # ⚠️ 子类**吃 `raw_name`（`annotate_name` 之前）**，绝不吃上面那个 `name`：
+                # 归并会把被吸收方的职能拼成「· 含大药房」一类后缀，让子点替父点决定子类
+                # （§二 规范句；判据 T18）。没建表的类别 ⇒ None，覆盖度那一支自动退回点数口径。
+                "sub_kind": sub_kind_of({"name": raw_name, "tag": it.get("tag") or "",
+                                         "type": it.get("type") or ""}, cat),
                 "lnglat": [round(it["lng"], 6), round(it["lat"], 6)],
                 "minutes": round(t, 1) if t is not None else None,
                 "in_circle": True,
@@ -401,24 +475,36 @@ def derive_stats_from_points(
     （`points`），面板数字由它派生 ⇒ 二者不可能再对不上。
 
     - ``in_circle`` = 该类别在 `points` 里的条数（可达口径 = 图上实际画了几个）；
-    - ``coverage`` = ``min(1, in_circle / ideal_circle)`` **重算** —— 不重算的话
-      `coverage` 与 `in_circle` 又成两条链（截断后 coverage 仍按截断前算）；
+    - ``coverage`` = ``min(1, 门槛项数 / ideal_circle)`` **重算**（`cov-1` 分子，出处同 `to_stats`）
+      —— 不重算的话 `coverage` 与 `in_circle` 又成两条链（截断后 coverage 仍按截断前算）；
+      ⚠️ 喂进来的 `points` **不带 `sub_kind`**（= 存量 30 份那种旧载荷）⇒ 分子退回点数，
+      这条回退是本函数的**主路径**，判据见 `test_subkind_caliber.py` 的 T1/T21；
     - ``total`` **不动**：它是**采集口径**（含圈外的 `per_category` 计数）。
       审查 R1 修正 —— 若也从 points 反算，「采集 217」会塌成 98，信息永久丢失。
     - ``min_minutes`` / ``nearest_name`` **不动**：由 IDW 耗时场回填，与点数无关。
 
     就地更新并入参 `stats`（调用方已持有该 list），返回同一对象便于链式使用。
     """
-    counts: Dict[str, int] = {}
+    by_cat: Dict[str, List[Dict[str, Any]]] = {}
     for p in points:
-        key = str(p.get("category"))
-        counts[key] = counts.get(key, 0) + 1
+        by_cat.setdefault(str(p.get("category")), []).append(p)
     for s in stats:
         cat = str(s.get("category"))
-        n = counts.get(cat, 0)
+        pts = by_cat.get(cat, [])
+        n = len(pts)
         s["in_circle"] = n
         ideal = (CATEGORY_DEFS.get(cat) or {}).get("ideal_circle") or 1
-        s["coverage"] = round(min(1.0, n / ideal), 4)
+        # 与 `to_stats` **同调同一颗** `coverage_from_points`（计划 §三 第 2 条）：这条链会就地
+        # 覆盖 `to_stats` 的结果，两处若各写一遍算式，改一处就等于没改（第十七/十八轮的 P0-1）。
+        # `required_in_circle` 也必须在这里一起覆盖 —— 只更 `coverage` 会让"分子到底是几"
+        # 这条链停在 `to_stats` 的旧点集上，与截断/在圈过滤后的 `in_circle` 分叉。
+        s["coverage"] = round(coverage_from_points(pts, ideal, cat), 4)
+        s["required_in_circle"] = required_count_from_points(pts, cat)
+        # 名单与分子同批覆盖（理由同上：这条链会就地盖掉 `to_stats` 的结果，只更一个数
+        # 就会让"名字"停在截断前那份上）。名单不吃点位 ⇒ 与 `pts` 是否带 `sub_kind` 无关。
+        labels = sub_kind_rule_labels(cat)
+        s["scored_as"] = labels[0] if labels else None
+        s["unscored_as"] = labels[1] if labels else None
     return stats
 
 

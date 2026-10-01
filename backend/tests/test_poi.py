@@ -13,6 +13,7 @@ import math
 import pytest
 
 from app.living_circle.caliber import get_caliber
+from app.living_circle.category_rule import SUB_KIND_TABLE
 from app.living_circle.geo_utils import xy_to_lnglat
 from app.living_circle.poi import (
     POI_CAP_PER_CAT,
@@ -129,8 +130,14 @@ def test_to_points_contract_sort_and_cap():
     pts = out.points
     # 契约字段
     for p in pts:
-        assert set(p.keys()) == {"id", "name", "category", "lnglat", "minutes", "in_circle"}
+        # v7.2 §5.1 行 6 同批重指：点位契约新增一颗 `sub_kind`。仍用**严格全等** ——
+        # `==` 本身就是反向对照：漏写与多写都当场红，禁改成子集/`>=`。
+        assert set(p.keys()) == {"id", "name", "category", "lnglat", "minutes", "in_circle",
+                                 "sub_kind"}
         assert p["in_circle"] is True
+        # 建了子类表的类别**必给**子类键（判不出 ⇒ `other`，仍是字符串）；没建表的必为 `None`
+        # —— 覆盖度那一支据此整批退回点数口径（`poi.coverage_from_points` 第 1/3 支）。
+        assert (p["sub_kind"] is None) == (p["category"] not in SUB_KIND_TABLE), p
     # 圈外被丢弃；圈内按耗时升序
     market = [p for p in pts if p["category"] == "market"]
     assert [p["name"] for p in market] == ["圈内A", "圈内B"]
@@ -670,8 +677,41 @@ def test_u25_annotation_appears_once_and_only_at_report_exit():
     assert pts[0]["name"].count("含") == 1
     assert pts[0]["name"] == "中国工商银行(昆明关上支行) · 含24小时自助银行"
     # 内部元数据不得漏进报告契约
-    assert set(pts[0]) == {"id", "name", "category", "lnglat", "minutes", "in_circle"}
+    # （v7.2 §5.1 行 6 同批重指：`sub_kind` 是新契约字段；`finance` 没建子类表 ⇒ 必为 None，
+    #   这正是 `coverage_from_points` 第 1 支「无表 ⇒ 分子退回点数」的载荷面证据）
+    assert set(pts[0]) == {"id", "name", "category", "lnglat", "minutes", "in_circle", "sub_kind"}
+    assert pts[0]["sub_kind"] is None
 
+
+def test_sub_kind_is_judged_on_raw_name_not_annotated_name():
+    """T19 · §二 规范句的执行面：被吸收子点的后缀**不得**决定父点子类。
+
+    `annotate_name`（`facility_rule.py:241`）把被吸收方职能拼进 `name`（「· 含大药房」），
+    而 `pharmacy` 与 `community_health_center` 都是 `medical` 子类表里的**门槛项**：
+    名称通道多命中归 `other`（`category_rule.py:252-253`）⇒ 一家**社区卫生服务中心**吸收了一家
+    大药房之后，若子类判定吃上面那颗 `name`，它就从"门槛项"掉成"非门槛" ⇒ 覆盖度 1/3 → 0.0。
+    方向是**掉分**而不是"白加一分"（第十八轮 P0-5 的原表述在这里被实测纠正）。
+
+    对照点：这条钉**落盘形状**（`to_points` 写出的那颗 `sub_kind` 与走完整条链的覆盖度），
+    `test_absorbed_sub_point_suffix_does_not_decide_sub_kind`(T18) 钉**判类入口**（`sub_kind_of`
+    必须被传原始名）—— 两半各拦一种实现：只改入参不改落盘、或只改落盘不改入参，都会红一条。
+    """
+    item = {**_ll(200.0, 0), "name": "凯里市华联社区卫生服务中心", "tag": "", "type": "",
+            "sub_roles": ["大药房"]}
+    pts = to_points({"medical": [item]}, {}, SCOPE, CENTER).points
+    assert len(pts) == 1
+    assert pts[0]["name"] == "凯里市华联社区卫生服务中心 · 含大药房", \
+        "样本失效：后缀没拼出来 ⇒ 本条没有判别力"
+    assert pts[0]["sub_kind"] == "community_health_center", (
+        f"父点子类被判成 `{pts[0]['sub_kind']}` ⇒ 子类判定吃了 `annotate_name` **之后**的名字，"
+        "被吸收的药店替服务中心决定了子类（多命中 ⇒ other）")
+    stats = to_stats({"medical": [item]}, {}, SCOPE, CENTER)
+    derive_stats_from_points(stats, pts)
+    med = next(s for s in stats if s["category"] == "medical")
+    assert med["coverage"] == pytest.approx(round(1 / 3, 4)), (
+        f"覆盖度实得 {med['coverage']} ⇒ 落盘的 `sub_kind` 没被统计侧吃到"
+        "（后缀把服务中心判成 other 时这里会掉到 0.0）")
+    assert med["in_circle"] == 1, "点数口径被门槛计数替换 ⇒ 会破 check_poi_conservation"
 
 def test_u26_absorbed_key_collapses_refetched_duplicate():
     """U26：`absorbed` 按记录身份去重 —— S8 扩词把同一个 ATM 再抓回来时不得数两遍。"""

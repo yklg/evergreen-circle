@@ -17,20 +17,29 @@
 import { describe, it, expect } from 'vitest'
 
 import {
+  BOTH_GAP_DESC,
   CALIBER_GAP_DESC,
   CALIBER_GAP_ROW_KEYS,
   COMPARE_EQUAL_WORD,
   COMPARE_ROWS,
+  COVERAGE_CALIBER_VERSION,
+  COVERAGE_GAP_DESC,
+  caliberGapDesc,
   caliberPolicyGap,
   compareCaliberNotice,
+  compareCaliberNotices,
   compareDesc,
   compareRows,
   confidenceBadgeLabel,
   confidenceOf,
+  coverageCaliberGap,
+  coverageCaliberVersionOf,
   poiConservation,
   policyVersionOf,
   samplingReach,
   staleCaliberNotice,
+  staleCaliberNotices,
+  staleCoverageCaliberNotice,
   SCOPE_POLICY_VERSION,
 } from '../livingCircle'
 import type { LivingCircleReport } from '../../types'
@@ -55,6 +64,11 @@ interface Contract {
     desc: string
     stale_notice: string
     applies_to: string[]
+    // 第二根轴（片 1c-β C3）：评分口径 `cov-*` 的对照值与三句结论句
+    coverage_version_current: string
+    coverage_desc: string
+    both_desc: string
+    coverage_stale_notice: string
   }
 }
 
@@ -132,14 +146,17 @@ describe('R6 · num() 在真实夹具上的取值与展示', () => {
   it('六行取值（A=凯里 / B=劲松）与实测一致', () => {
     const got = Object.fromEntries(COMPARE_ROWS.map((d) => [d.key, [d.num(KAILI), d.num(JINSONG)]]))
     // 每行两列：[凯里, 劲松]。劲松列 = `ev-1` 重刷代际（采集 206 / 圈内 150 / 实测盲区 0 /
-    // 65.8 分）；凯里列仍是升级前快照。与后端 `test_residential_category_baseline.py` 同源。
+    // 65.8 分）；凯里列 = 10-01 `cov-1` 回填代际（教育 coverage 1.0 → 0.3333 ⇒ 总分 68.7 → 65.4）。
+    // ⚠️ 这一格换数之后，**两城总分反了**：凯里 65.4 < 劲松 65.8 ⇒ 拿这两份演示数据对比时
+    //    "A更成熟"不再成立（旧注释里那句"68.7>65.8"是回填前的事实）。与后端
+    //    `test_residential_category_baseline.py` 同源。
     expect(got).toEqual({
       '15min 等时圈面积 (km²)': [1.56, 1.76],
       可达采样点数: [126, 162],
       'POI 采集': [217, 206],
       '圈内 POI': [98, 150],
       服务盲区: [0, 0],
-      综合评分: [68.7, 65.8],
+      综合评分: [65.4, 65.8],
     })
   })
 
@@ -157,7 +174,8 @@ describe('R6 · num() 在真实夹具上的取值与展示', () => {
     expect(DEF_OF('POI 采集')!.cell(KAILI)).toBe('217 处')
     expect(DEF_OF('圈内 POI')!.cell(KAILI)).toBe('98 处')
     expect(DEF_OF('服务盲区')!.cell(KAILI)).toBe('0 处')
-    expect(DEF_OF('综合评分')!.cell(KAILI)).toBe('68.7')
+    // 10-01 `cov-1` 回填后的真读数（回填前是 '68.7'；这一格与上面六行表同一件事）
+    expect(DEF_OF('综合评分')!.cell(KAILI)).toBe('65.4')
   })
 })
 
@@ -315,7 +333,112 @@ describe('P0-3 · 判盲口径版本守卫', () => {
     expect(rows['POI 采集'].desc).not.toBe(GAP.desc)
     expect(rows['圈内 POI'].desc).not.toBe(GAP.desc)
   })
+})
 
+/* ── 第二根轴 · 评分口径（`cov-1`）守卫（片 1c-β C2/C3 = 第 21 轮 P1-3）──────────────
+   判盲那把尺与评分那把尺**互相独立**（换分子不改证据域，扩证据域也不改分子），所以要拦
+   "两把键互相顶替"的**两个方向**：只有评分轴不同 ⇒ 那句里不许出现"判盲"；只有判盲轴不同
+   ⇒ 不许出现"评分口径"。版本一律由测试自己拼装（不读出厂快照现值），理由同上面那个 describe。 */
+describe('第二根轴 · 评分口径版本守卫', () => {
+  const GAP = C.caliber_incomparable
+  const EV = SCOPE_POLICY_VERSION
+  const COV = COVERAGE_CALIBER_VERSION
+
+  /** 同时盖两根轴的版本戳；`null` = 抹掉那把键（模拟换代前冻结的存量报告）。 */
+  const stamp = (lc: LivingCircleReport, ev: string | null, cov: string | null) => {
+    const cal = { ...(lc.caliber ?? {}) } as Record<string, unknown>
+    if (ev === null) delete cal.scope_policy_version
+    else cal.scope_policy_version = ev
+    if (cov === null) delete cal.coverage_caliber_version
+    else cal.coverage_caliber_version = cov
+    return { ...lc, caliber: cal } as LivingCircleReport
+  }
+  const rowsOf = (a: LivingCircleReport, b: LivingCircleReport) =>
+    Object.fromEntries(compareRows(a, b, 'A', 'B').map((r) => [r.metric, r]))
+
+  it('前端常量与契约夹具逐字相同（第二根轴：版本 / 两句结论 / 陈旧句），且三句互不相同', () => {
+    expect(COVERAGE_CALIBER_VERSION).toBe(GAP.coverage_version_current)
+    expect(COVERAGE_GAP_DESC).toBe(GAP.coverage_desc)
+    expect(BOTH_GAP_DESC).toBe(GAP.both_desc)
+    expect(staleCoverageCaliberNotice(stamp(KAILI, EV, null))).toBe(GAP.coverage_stale_notice)
+    // 三句若写成同一句，就等于只有一根轴在守 ⇒ 当场红
+    expect(new Set([GAP.desc, GAP.coverage_desc, GAP.both_desc]).size).toBe(3)
+    expect(GAP.coverage_desc).not.toContain('判盲')
+    expect(GAP.desc).not.toContain('评分口径')
+    // 出厂两份演示件的评分轴现值：两边都是当前版本 ⇒ 第二句在这对上**永不**出现
+    // （所以上面那些用例必须自己造差值，不能指望演示对）
+    expect(coverageCaliberVersionOf(KAILI)).toBe(COV)
+    expect(coverageCaliberVersionOf(JINSONG)).toBe(COV)
+  })
+
+  it('只有评分轴不同（判盲轴两边相同）⇒ 那两行拦成第二句，其余行照常', () => {
+    for (const covB of [null, 'cov-0']) {
+      const a = stamp(KAILI, EV, COV)
+      const b = stamp(JINSONG, EV, covB)
+      expect(caliberPolicyGap(a, b), '前提不成立：判盲轴本该相同').toBe(false)
+      expect(coverageCaliberGap(a, b), `cov=${covB ?? '未声明'} 被判成同口径`).toBe(true)
+      expect(caliberGapDesc(a, b)).toBe(COVERAGE_GAP_DESC)
+      const rows = rowsOf(a, b)
+      for (const key of GAP.applies_to) {
+        expect(rows[key].desc, `${key} 必须标注评分口径不可比`).toBe(COVERAGE_GAP_DESC)
+      }
+      for (const key of ['15min 等时圈面积 (km²)', '可达采样点数', 'POI 采集', '圈内 POI']) {
+        expect(rows[key].desc).not.toBe(COVERAGE_GAP_DESC)
+      }
+      // 拦的是结论句不是数值：与"不拦"时逐字节相同
+      const plain = rowsOf(a, stamp(JINSONG, EV, COV))
+      for (const key of GAP.applies_to) {
+        expect([rows[key].a_value, rows[key].b_value]).toEqual([plain[key].a_value, plain[key].b_value])
+      }
+      // 横幅也要说话（页面调的是清单那颗），且不许借用判盲那三个字
+      const notices = compareCaliberNotices(a, b)
+      expect(notices.map((n) => n.replace(/\s/g, '')).join('')).toContain('评分口径')
+      for (const n of notices) expect(n).not.toContain('判盲')
+    }
+  })
+
+  it('两根轴同时不同 ⇒ 第三句（不许只报一半）', () => {
+    const a = stamp(KAILI, EV, COV)
+    const b = stamp(JINSONG, 'ev-0-legacy', null)
+    expect(caliberGapDesc(a, b)).toBe(BOTH_GAP_DESC)
+    const rows = rowsOf(a, b)
+    for (const key of GAP.applies_to) {
+      expect(rows[key].desc).toBe(BOTH_GAP_DESC)
+    }
+    // 单轴那两支必须各自仍可达到（否则第三句是吞掉前两句而不是并列）
+    expect(caliberGapDesc(stamp(KAILI, EV, COV), stamp(JINSONG, 'ev-0-legacy', COV))).toBe(CALIBER_GAP_DESC)
+    expect(caliberGapDesc(stamp(KAILI, EV, COV), stamp(JINSONG, EV, null))).toBe(COVERAGE_GAP_DESC)
+    expect(caliberGapDesc(stamp(KAILI, EV, COV), stamp(JINSONG, EV, COV))).toBeNull()
+  })
+
+  it('两份都缺 cov 键 ⇒ 彼此可比（不得谎报不可比），但陈旧提示各要报出来', () => {
+    const a = stamp(KAILI, EV, null)
+    const b = stamp(JINSONG, EV, null)
+    expect(coverageCaliberGap(a, b)).toBe(false)
+    expect(caliberGapDesc(a, b)).toBeNull()
+    const rows = rowsOf(a, b)
+    for (const key of GAP.applies_to) {
+      expect(rows[key].desc).not.toBe(COVERAGE_GAP_DESC)
+    }
+    // 都出自换代前 ⇒ 横幅也要报"都旧"（只拦不同不报都旧 = 两个被高估的分数并排）
+    expect(compareCaliberNotices(a, b).join('')).toContain('都出自评分口径换代前')
+    // 两轴都旧 ⇒ 横幅必须**两句都在**（只报一句 = 同屏两处披露各说一半，表格那格会写着两句）
+    const bothAxesOld = [stamp(KAILI, null, null), stamp(JINSONG, null, null)] as const
+    const banner = compareCaliberNotices(bothAxesOld[0], bothAxesOld[1])
+    expect(banner).toHaveLength(2)
+    expect(banner[0]).toContain('判盲')
+    expect(banner[1]).toContain('评分口径')
+    // 读侧同理：两份单份看都要各说一句，且两轴都旧 ⇒ 清单里两句都在
+    const bothOld = stamp(KAILI, null, null)
+    const notices = staleCaliberNotices(bothOld)
+    expect(notices).toHaveLength(2)
+    expect(notices[0]).toContain('判盲口径已升级')
+    expect(notices[1]).toContain('评分口径已升级')
+    expect(staleCaliberNotices(stamp(KAILI, EV, COV))).toHaveLength(0)
+  })
+})
+
+describe('降档徽标与置信度安全取值', () => {
   it('confidence 安全取值：旧快照缺键 ⇒ null（不猜 full），limited ⇒ 降档徽标带覆盖率', () => {
     // ① 演示链（内嵌夹具）没有 scores.confidence —— 渲染层必须拿 null，不能崩也不能自称 full
     expect(confidenceOf(KAILI)).toBeNull()

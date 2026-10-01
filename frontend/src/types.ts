@@ -759,8 +759,23 @@ export interface FacilityCategoryStat {
   total: number
   /** 15 分钟圈内数量 */
   in_circle: number
-  /** 覆盖度 0-1（圈内数/该类别在圈内的理想阈值） */
+  /** 覆盖度 0-1 = `min(1, 分子 / 该类理想阈值)`。分子**看口径**（`cov-1`）：
+   *  建了子类表的类别取 `required_in_circle`（门槛项数），没建表或旧快照取 `in_circle`（点数）。
+   *  ⚠️ 旧注释"圈内数/理想阈值"只描述了后一种，别让下一个读它的人按点数推风险面。 */
   coverage: number
+  /** `cov-1`：覆盖度的**分子**（门槛项数），由后端随 coverage 一起算好。
+   *  `null` = 这一类没建子类表 ⇒ 没有门槛项口径可言，**展示侧不得印成 0**；
+   *  键整个缺席 = 本字段上线前冻结的历史快照 ⇒ 按点数口径解释 coverage。
+   *  ⚠️ 前端**不许**拿点位名自己重判子类来凑这个数 —— 判类只有一份实现，在后端。 */
+  required_in_circle?: number | null
+  /** `cov-1` 甲档（片 1c-β C1）：门槛项**名单**（计入覆盖度分子的那一组子类名），由后端
+   *  `category_rule.sub_kind_rule_labels` 现取。⚠️ 它是**规则名单**，不是"这批圈内采到了哪些"：
+   *  凯里圈内 25 处医疗点里 `pharmacy` 实测 0 颗，按 present-only 出名单会让"药店"从披露里消失
+   *  （而药店正是盲区三要素之一）。
+   *  `null` = 这一类没建子类表；键整个缺席 = 名单上线前冻结的快照 ⇒ 那句说明**不出现**。 */
+  scored_as?: string[] | null
+  /** 不计入分子的那一组子类名（三档语义同 `scored_as`；`诊所、医院不计入分子` 那句的来源） */
+  unscored_as?: string[] | null
   /** 最近设施步行耗时(分钟)，无则 null */
   min_minutes: number | null
   /** 最近设施名 */
@@ -826,6 +841,11 @@ export interface PoiPoint {
   minutes: number | null
   /** 是否落在 15min 等时圈内 */
   in_circle: boolean
+  /** `cov-1`：这颗点**自己**的子类键（如 `primary` / `pharmacy` / `clinic`），由后端
+   *  `poi.to_points` 落盘，且判的是 `annotate_name` **之前**的原始名（否则被吸收子点会替父点决定子类）。
+   *  `null` = 该类别没建子类表；键整个缺席 = 本字段上线前冻结的旧快照 ⇒ 该类按点数口径解释覆盖度。
+   *  ⚠️ 展示侧只许念，不许据 `name` 重判 —— 判类实现全仓只有一份，在后端。 */
+  sub_kind?: string | null
 }
 
 /** 盲区补点处方（策略 + 优先级，供整改参考） */
@@ -1107,6 +1127,12 @@ export interface LivingCircleReport {
        走的就是旧快照）会当场崩。缺键本身是信息：`staleCaliberNotice()` 据此给陈旧提示。 */
     /** 判盲空间口径版本号（当前 `ev-2` = 追加逐格台账）；缺 ⇒ 升级前的旧报告 */
     scope_policy_version?: string
+    /** **第二根轴**：评分口径版本号（当前 `cov-1` = 覆盖度分子由点数改成门槛项数）。
+     *  它与上面那把管的是两件事（"证据怎么查" vs "同样的点位算什么分"），所以独立命名、
+     *  独立取值 —— 拿 `ev-*` 表达评分变化等于在版本记录上撒谎。
+     *  缺 ⇒ 这份产物的分数是**点数口径**算的；读侧只能按旧定义解释覆盖度，
+     *  不得挂"门槛项"那句新文案（后端 `reuse_policy` 的「评分口径」那一拦用的就是这把键）。 */
+    coverage_caliber_version?: string
     /** 采集证据余量 = 判定半径（由「判盲需要 1km 完整证据」导出，不是可填的名义值） */
     evidence_margin_m?: number
     /** **实测**证据边界（登记类逐类边界的最小值）；null ⇒ 本次没绑定实测证据 */

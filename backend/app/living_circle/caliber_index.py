@@ -122,7 +122,9 @@ def _populate_index() -> None:
         _INDEX[f"poi::CATEGORY_DEFS.{cat}"] = CaliberView(
             ref=f"poi::CATEGORY_DEFS.{cat}", kind="category", module="poi",
             label=defn.get("label", cat),
-            value=f"ideal_circle={defn.get('ideal_circle', '—')}",
+            # value 里带"满分线"三个字：裸 `ideal_circle=3` 会被 prose 与专家卡读成"要 3 处才算及格"，
+            # 而它是**拿到 100% 的分需要几处**；及格/缺口在系统里是网格判据，不是这个数（计划 §十九）。
+            value=f"覆盖度满分线 ideal_circle={defn.get('ideal_circle', '—')}",
         )
     for key, kw_list in poi.TRIAD_KEYWORDS.items():
         _INDEX[f"poi::TRIAD_KEYWORDS.{key}"] = CaliberView(
@@ -269,6 +271,10 @@ def _populate_index() -> None:
         # —— 浅一层到 `cells_ledger.n` 会让"ref 指向的键真在产出对象里"那条核对恒绿。
         ("cells_ledger", "逐格判定台账", "living_circle.caliber.cells_ledger"),
         ("scope_policy_version", "判盲口径版本声明", "living_circle.caliber.scope_policy_version"),
+        # **第二根轴的登记**（计划 §六 四步的第四步）。它与上面那把管的是两件事：那把管
+        # 「证据域/判盲怎么算」，这把管「同样的点位算出什么分」。不登记 ⇒ 专家口径引用不到、
+        # prose 里提到就撞词表闸，而载荷每天都在发射它（`scope.py` 唯一写点）。
+        ("coverage_caliber_version", "评分口径版本声明", "living_circle.caliber.coverage_caliber_version"),
         ("confidence", "评分置信度", "living_circle.scores.confidence"),
         ("evidence", "盲区扣分证据链", "living_circle.scores.evidence"),
     ):
