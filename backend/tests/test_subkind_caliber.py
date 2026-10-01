@@ -1006,7 +1006,7 @@ def test_sub_kind_rule_labels_land_in_payload_without_rejudging():
     """
     import copy
 
-    from app.living_circle.category_rule import SUB_KIND_TABLE, sub_kind_rule_labels
+    from app.living_circle.category_rule import SUB_KIND_TABLE, sub_kind_of, sub_kind_rule_labels
 
     assert sub_kind_rule_labels("education") == (["小学"], ["幼儿园", "中学"])
     assert sub_kind_rule_labels("medical") == (
@@ -1034,6 +1034,24 @@ def test_sub_kind_rule_labels_land_in_payload_without_rejudging():
     assert edu_s["scored_as"] == ["小学"] and edu_s["unscored_as"] == ["幼儿园", "中学"]
     assert fin_s["scored_as"] is None and fin_s["unscored_as"] is None
     assert fin_s["required_in_circle"] is None, "名单与分子两件事不同源 ⇒ 三档语义裂开"
+
+    # ①的**机器形态**（第 22 轮 R22-7 补：原先这一半只在 education 上跑，而样本里小学/幼儿园/中学
+    # 全在场 ⇒ present-only 与规则名单给出同一份答案，本条根本测不住它 docstring 声称的那件事）。
+    # 这里故意造出"圈内 0 颗药店"的形状（凯里实测正是这样：25 处医疗点里 pharmacy 0 颗）——
+    # 若名单实现退化成 present-only，"药店"会从披露里消失，而药店是三要素之一 ⇒ 这条当场红。
+    med_items = [{**_ll(140.0 + i * 40.0, 70.0), "name": n, "tag": "", "type": ""}
+                 for i, n in enumerate(["凯里京港医院门诊", "凯里华康诊所", "大十字社区卫生服务中心"])]
+    judged = [sub_kind_of(dict(it), "medical") for it in med_items]
+    assert "pharmacy" not in judged, (
+        f"样本里出现了 pharmacy（{judged}）⇒ 圈内 0 颗药店的前提没了，本条退化成自证")
+    med_s = next(s for s in to_stats({"medical": med_items}, {}, SCOPE, CENTER)
+                 if s["category"] == "medical")
+    assert "药店" in med_s["scored_as"], (
+        f"名单里没有药店：{med_s['scored_as']} ⇒ 名单变成 present-only，"
+        "圈内 0 颗的门槛项从披露里消失了（而药店是三要素之一）")
+    assert med_s["in_circle"] > med_s["required_in_circle"], (
+        f"点数 {med_s['in_circle']} 与分子 {med_s['required_in_circle']} 没分开 ⇒ "
+        "这条同时在测的另一件事（分子只取门槛项）已经不成立了")
 
     # 生产者②：派生链就地覆盖 ⇒ 两键也必须一起覆盖
     points = asm.build_poi_block(per_cat, {}, SCOPE, CENTER,

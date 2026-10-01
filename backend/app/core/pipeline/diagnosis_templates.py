@@ -194,6 +194,16 @@ def _ideal(cat: str) -> int:
     return int((CATEGORY_RULES.get(cat) or {}).get("ideal_circle") or 1)
 
 
+# 第 22 轮 R22-1：采集停止线按**点数**、覆盖度分子按**门槛项**，这两件事的单位不同
+# （停止线本身在 `poi_collector` 里刻意没改 —— 改它会多烧外呼配额，需单独拍板）。
+# 不对称不许只活在注释里：凡是把"门槛项不足"送上屏的地方，都附这句交代。
+# ⚠️ 这句与前端 `mocks/livingCircleReports.ts` 的 `_COV_STOP_LINE_NOTE` 逐字同源。
+_COV_STOP_LINE_NOTE = (
+    '另需交代：采集的停止线按圈内点数算（点数达到该类满分线即停止扩词），而这里的分子按门槛项算'
+    ' ⇒ 若圈内点数已达满分线而门槛项仍不足，不排除是采集先停的手，不能只读成「社区没有」。'
+)
+
+
 def _med_cov_sentence(m: Optional[dict]) -> str:
     """医疗节那句「达标 / 存在缺口」必须自证它判的是哪把尺（第 21 轮 P1-2 + §十九 措辞义务）。
 
@@ -217,7 +227,7 @@ def _med_cov_sentence(m: Optional[dict]) -> str:
             f"相当于圈内基层医疗 ≥{need} 家；不等于「医疗不缺了」。"
             if cov >= 0.75 else
             f"覆盖度 {_pct(cov)} ⇒ 本节写「存在缺口」—— 这只指基层医疗门槛项不足 {need} 家"
-            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。")
+            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。" + _COV_STOP_LINE_NOTE)
     return head + tail
 
 
@@ -237,7 +247,7 @@ def _edu_cov_sentence(e: Optional[dict]) -> str:
     named = f"「{' / '.join(str(x) for x in labels)}」" if labels else "门槛项"
     return (f"但覆盖度的分子只取{named} {req} 处 ÷ 满分线 {_ideal('education')} ⇒ {_pct(cov)} —— "
             f"「圈内 {in_circle} 处」与「覆盖度 {_pct(cov)}」是两个口径各自的数，"
-            f"不是同一个数的两次说法。")
+            f"不是同一个数的两次说法。" + _COV_STOP_LINE_NOTE)
 
 
 def _chart_radar(lc: dict) -> dict:

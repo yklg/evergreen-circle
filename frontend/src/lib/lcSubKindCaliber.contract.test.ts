@@ -93,6 +93,11 @@ describe('v7.2 · 评分口径版本键的前端回退臂', () => {
     expect(notices.length, '旧快照必须至少有一句陈旧提示').toBeGreaterThan(0)
     const cov = lib.staleCoverageCaliberNotice(lc)
     expect(typeof cov).toBe('string')
+    // R22-3（第 22 轮）：这条才是"清单真的接上了第二根轴"的钉子。原先只断 `notices.length > 0`，
+    // 而前端这份 kaili 夹具**本来就没有** `scope_policy_version`（实测 grep 命中 0）⇒ 判盲那一句
+    // 独立就满足 length>0，评分句没被收进清单也照样绿。`compareDiffContract.test.ts` 里那一条
+    // 吃的是自造载荷，替不了这份"从真夹具删键"的判定。
+    expect(notices, '评分轴那句没被收进清单 ⇒ 报告页只报判盲那半，两把键互相顶替又回来了').toContain(cov)
     // 缺键 ⇒ 说的是"这份按点数"，且**不猜**版本号（载荷里从来没有过任何 cov 串）
     expect(String(cov)).toContain('本报告按圈内点数计分')
     expect(String(cov)).not.toMatch(/cov-\d/)

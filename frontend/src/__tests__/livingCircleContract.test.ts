@@ -397,7 +397,12 @@ describe('T-FE-02b · 历史快照（无 timed / 无汇总数）读侧兼容', (
           .toBe(c.required_in_circle != null)
         if (tabled) {
           expect(c.scored_as!.length).toBeGreaterThan(0)
-          expect(lcCategoryCaliberNote(c)).toContain(String(c.required_in_circle))
+          const note = lcCategoryCaliberNote(c)
+          // R22-4（第 22 轮）：原先写的是 `toContain(String(c.required_in_circle))` —— 那句话里
+          // 本来就同时有 `圈内 25 处` 和 `中 5 处`，裸数字 "5" 会被 "25" 白送（凯里医疗 25/5、
+          // 教育 15/1 两档都是这个形状）⇒ 分子印错也不会红。改钉**句法位置**：`中 N 处`。
+          expect(note, `${c.category}：建了表却没出句子`).not.toBeNull()
+          expect(String(note)).toContain(`中 ${c.required_in_circle} 处`)
         } else {
           expect(lcCategoryCaliberNote(c)).toBeNull()
         }

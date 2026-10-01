@@ -655,6 +655,13 @@ async def collect_poi(
             triads[key] = _dedupe(items, 50.0, "geometric")
 
     # ── B 阶段：S8 渐进式扩词（仅 under-target，吃剩余预算）──
+    # ⚠️ 这里的停止线吃的是**圈内点数**，而 `cov-1` 之后覆盖度的分子吃**门槛项数**
+    # （`poi.required_count_from_points`）—— 同一个 `ideal_circle` 在两处是两种单位
+    # （第 22 轮 R22-1）。后果不是算错分，而是**归因错**：一类只要点数够 3 颗就停止扩词，
+    # 之后报告可能写"门槛项不足 3 家"，读者会读成"社区没有"，而真实原因是我们自己先停的手。
+    # 本行刻意**不改判定**（改成按门槛项收手会多扩几轮词 = 多烧外呼配额，需单独拍板），
+    # 不对称改由上屏那句显式交代：`diagnosis_templates._COV_STOP_LINE_NOTE`
+    # 与前端 `mocks/livingCircleReports.ts` 同一句，两份逐字同源。
     ideal = {cat: defn["ideal_circle"] for cat, defn in CATEGORY_RULES.items()}
     for cat, defn in CATEGORY_RULES.items():
         hits = _in_circle_count(per_category.get(cat, []), scope)

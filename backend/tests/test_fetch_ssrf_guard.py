@@ -1,6 +1,11 @@
-"""SSRF 内网访问防护（实施计划 v3 §九 · TC-11/12/14/15/17/18，全条 xfail(strict=True)）。
+"""SSRF 内网访问防护（实施计划 v3 §九 · TC-11/12/14/15/17/18）。
 
-为什么这些用例今天必须是红的
+**现状（10-02 第 22 轮复核）**：防线已落地，本文件 **0 条 xfail 标记**（`grep -c "^@pytest.mark.xfail"` = 0），
+全部为正式断言。标题原先写的"全条 `xfail(strict=True)`"是 B0 落地前的旧状态，与正文脱节会误导下一个
+读它的人（第 22 轮 R22-8）；随之删掉的还有已无消费者的 `_X_B1` 标记 —— 它记的那笔「netloc 凭据归一」欠账
+已随 §二 B1 落地转正，见 `test_credential_in_netloc_is_stripped_before_it_reaches_storage_or_ui` 的转正记录。
+
+为什么这些用例钉的是「被拒绝」而不是「没抓到」
 --------------------------
 计划 v3 的 B0 之前，`app/core/fetcher.py:32` 的 `fetch_page()` 对**任意** URL 无差别发请求：
 `httpx.Client(timeout=..., follow_redirects=True)`，无 scheme 白名单、无解析后地址校验。
@@ -18,10 +23,13 @@
   `test_ipaddress_classification_table_is_what_we_assume`，把"我以为的语义"钉成"实测的语义"）。
 - `domain_of()` 的行为取自 `fetcher.py:25-29`：`urlparse(url).netloc.lower().replace("www.", "")`。
 
-📌 现状（B0 落地后）：本文件除 `test_credential_in_netloc_is_stripped...` 一条
-   （属计划 §二 B1，欠的是**存储/展示面**的凭据归一，不是出网判定）外，全部为正式断言，
-   无 xfail 标记。`FetchRejected` 走的是**上抛**通道而非 `ok=False` 降级通道 ——
+📌 通道纪律：`FetchRejected` 走的是**上抛**通道而非 `ok=False` 降级通道 ——
    断言一律落在"被拒绝"这个具体失败种类上，不接受"没抓到东西"当通过。
+
+⚠️ **两条没有活入口的用例**（第 22 轮 R22-9，仍未修）：`test_public_looking_hostname_that_resolves_to_loopback_is_rejected`
+   的两个参数（`WILDCARD_DNS_HOSTS`）要靠真实 DNS 解析探针域名，不可解析时走 `pytest.skip(...)`
+   ⇒ 它们在离线读数里既不是红、也不是绿，而是**没跑**。报"这批全绿"时必须带上 `-rs` 把 skip 行列出来，
+   否则账面会盖掉这一点。`MAX_REDIRECTS` 至今零判据。
 """
 from __future__ import annotations
 
@@ -32,21 +40,9 @@ import pytest
 
 from app.core import fetcher
 
-_X_B1 = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "依赖实施计划 v3 §二 B1（入口凭据剥离）或 domain_of 改造：今天 "
-        "domain_of('http://u:p@evil.com/x') == 'u:p@evil.com'，凭据会随 source_url/domain "
-        "落库并渲染进 <a href>。B0 的出网闸门用的是 parsed.hostname（已剥凭据），"
-        "所以**拒绝判定**不受此项影响 —— 这里欠的是**存储与展示面**的归一化。"
-        "转绿时必须同时删除配对用例 test_domain_of_today_keeps_credentials_this_is_the_observed_fact。"
-    ),
-)
-
-
 def _rejected(url: str) -> bool:
     """`fetch_page` 必须在**发出任何请求前**拒绝该 URL。"""
-    FetchRejected = fetcher.FetchRejected          # 今天 AttributeError ⇒ 判为预期失败
+    FetchRejected = fetcher.FetchRejected          # B0 已落地：取不到就是本文件整体失效，当场红
     try:
         fetcher.fetch_page(url)
     except FetchRejected:

@@ -205,3 +205,38 @@ def test_bad_input_flagged():
     assert assert_mirror_consistent("nope", _mk_report()) != []
     assert assert_mirror_consistent(_mk_report(), [1, 2]) != []
     assert assert_mirror_consistent({"data_origin": "x"}, _mk_report()) != []
+
+
+def test_cov_stop_line_note_is_one_text_on_both_ends():
+    """第 22 轮 R22-1 的连带：那句"停止线按点数、分子按门槛项"在两端是**两份物理字面量** ⇒ 得有人比。
+
+    后端 `diagnosis_templates._COV_STOP_LINE_NOTE` 进生产正文，前端 `mocks/livingCircleReports.ts`
+    的同名常量进演示态正文（演示数字来自这里）。前端**拿不到满分线数值**（`ideal_circle` 不在报告
+    payload 里，§十九），所以两边都写成**条件句**才可能逐字相同。改一边忘另一边 ⇒ 同一个事实两种说法，
+    而今天没有任何东西会红 —— 本条就是补那只眼睛（与夹具双侧 md5 那条同一分工，只是对象换成文案）。
+    """
+    import re
+
+    from app.core.pipeline import diagnosis_templates as dt
+
+    py_note = dt._COV_STOP_LINE_NOTE
+    ts_path = PROJECT / "frontend" / "src" / "mocks" / "livingCircleReports.ts"
+    ts_src = ts_path.read_text(encoding="utf-8")
+    block = re.search(r"const COV_STOP_LINE_NOTE =\s*(.*?)\n\n", ts_src, re.S)
+    assert block, f"前端那份常量没了（{ts_path.name}）⇒ 演示态那句交代静默消失"
+    ts_note = "".join(re.findall(r"'([^']*)'", block.group(1)))
+
+    assert py_note, "后端常量是空串 ⇒ 下面那句等值断言恒真"
+    for token in ("停止线", "圈内点数", "门槛项"):
+        assert token in py_note, f"抽到的不是那句话（缺「{token}」）⇒ 本条在比空串"
+    assert py_note == ts_note, (
+        f"两端已分叉：后端「{py_note[:18]}…」vs 前端「{ts_note[:18]}…」"
+        "⇒ 同一个事实在生产正文与演示正文里有两种说法")
+
+    # 常量存在 ≠ 正文用了它：两个消费者各引用一次才算真同源（否则只是两份没人读的字符串）
+    py_src = (BACKEND_DIR / "app" / "core" / "pipeline" / "diagnosis_templates.py").read_text(encoding="utf-8")
+    assert py_src.count("+ _COV_STOP_LINE_NOTE") == 2, (
+        f"后端引用该常量的正文处数 = {py_src.count('+ _COV_STOP_LINE_NOTE')}（应为 2：医疗缺口分支 + 教育那句）"
+        " ⇒ 常量还在、正文里已经没有它 = 假同源")
+    assert ts_src.count("${COV_STOP_LINE_NOTE}") == 2, (
+        f"前端插值处数 = {ts_src.count('${COV_STOP_LINE_NOTE}')}（应为 2，同上）")

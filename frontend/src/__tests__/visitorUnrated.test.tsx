@@ -139,6 +139,19 @@ describe('未评状态的消费点清单（回归面棘轮）', () => {
       .sort()
     expect(testHits, `豁免挡掉的不止一个已知文件（${testHits.join(', ')}）⇒ 作用面变了，须重数`).toEqual([OUTLIER])
 
+    // R22-6：`tsx` 那一支**没有见证文件** —— `src/` 下 `__tests__` 外的 10 个测试文件全是 `.ts`，
+    // 所以上面三条端到端判据钉不住它：把正则写成 `\.test\.ts$`，三条全绿而豁免面静默少一档。
+    // 这里按**形状**各钉一次，并顺带钉住那个不对称（R22 的 P2）：`walk` 传 basename、
+    // 自证传相对路径，今天靠 `$` 锚定才等价 —— 去掉锚定两边就会分叉，这条会当场红。
+    for (const base of ['Cell.test.tsx', 'Cell.test.ts']) {
+      expect(isTestFile(base), `${base} 那一支没被武装 ⇒ 取样面窄了一档`).toBe(true)
+      expect(isTestFile(`components/lifecircle/${base}`), `带目录前缀的 ${base} 判不出 ⇒ 两种调用形状分叉`).toBe(true)
+    }
+    for (const base of ['ComparePage.tsx', 'livingCircle.ts', 'testHelpers.ts']) {
+      expect(isTestFile(base)).toBe(false)
+      expect(isTestFile(`lib/${base}`)).toBe(false)
+    }
+
     // 正半：6 个生产消费点**不得**被 isTestFile 挡掉，且它们仍在扫描面上、仍命中
     const found = scoresConsumers()
     for (const f of BASELINE) {
