@@ -169,8 +169,8 @@
     }
   },
   "caliber_incomparable": {
-    "_note": "两侧 caliber.scope_policy_version 不同（含一侧未声明 = 判盲口径升级前的旧报告）⇒ 证据域定义已变更，「服务盲区」「综合评分」两行**不可直接比**：旧口径只判了可达区一角的格，盲区天然少报、分数天然偏高，分差会被读成「两个社区不同」而不是「口径变了」。优先级低于离线（offline 时仍用离线文案，那份连 POI 都没采）。与后端 `main.py:_DIFF_DESC_CALIBER_GAP` / 前端 `lib/livingCircle.ts:CALIBER_GAP_DESC` 逐字同源；`policy_version_current` 同时是前端陈旧提示与后端 `scope.SCOPE_POLICY_VERSION` 的对照值。",
-    "policy_version_current": "ev-1",
+    "_note": "两侧 caliber.scope_policy_version 不同（含一侧未声明 = 判盲口径升级前的旧报告）⇒ 证据域定义已变更，「服务盲区」「综合评分」两行**不可直接比**：旧口径只判了可达区一角的格，盲区天然少报、分数天然偏高，分差会被读成「两个社区不同」而不是「口径变了」。优先级低于离线（offline 时仍用离线文案，那份连 POI 都没采）。与后端 `main.py:_DIFF_DESC_CALIBER_GAP` / 前端 `lib/livingCircle.ts:CALIBER_GAP_DESC` 逐字同源；`policy_version_current` 同时是前端陈旧提示与后端 `scope.SCOPE_POLICY_VERSION` 的对照值 —— 后端升版本（现 `ev-2` = 追加逐格台账）时这一格必须同批改，`test_caliber_gap_literals_match_contract_fixture` 与 `compareDiffContract.test.ts` 两侧都钉着它。",
+    "policy_version_current": "ev-2",
     "desc": "不可比 · 判盲口径已升级",
     "stale_notice": "判盲口径已升级（证据域独立），本报告的盲区数与综合评分偏乐观 —— 建议重新体检",
     "applies_to": [

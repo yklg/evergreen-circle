@@ -54,7 +54,14 @@ async def augment_one(client: BaiduClient, lc: Dict[str, Any]) -> Dict[str, Any]
     sample_xy = np.array([to_local_xy(center, sp["lng"], sp["lat"]) for sp in sample_pts])
     sample_minutes: List[Optional[float]] = [sp.get("minutes") for sp in sample_pts]
 
-    collected = await load_poi(client, center, scope.collect_radius_m, scope=scope)
+    # 取证额度按**夹具自己声明的规格**换（`sampling.spec.profile` 是阶段 0 起如实回传的
+    # 生效规格）；夹具没有 spec 块时按 standard 计 —— 旧夹具本就只可能出自那一档。
+    _spec = (lc.get("sampling") or {}).get("spec") or {}
+    collected = await load_poi(
+        client, center, scope.collect_radius_m, scope=scope,
+        sample_profile=str(_spec.get("profile") or "standard"),
+        travel_mode=caliber.travel_mode,
+    )
     per_category, _triads = collected.per_category, collected.triads
     # 重刷夹具必须一并绑定实测证据 —— 否则新夹具的 `caliber` 缺 evidence_* 字段，
     # 读侧契约与前端举证会拿到「旧口径形状的新数据」。

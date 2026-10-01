@@ -17,6 +17,7 @@ import {
   MapPin,
   Info,
   FileText,
+  Layers,
   Play,
   X,
   Navigation,
@@ -32,9 +33,11 @@ import { launchLifeCircle, subscribeLifeCircleTask } from '../lib/lifeCircleFlow
 import { useDataModeStore } from '../store/dataModeStore'
 import { useTaskRegistry } from '../store/taskRegistry'
 import LcMap from '../components/lifecircle/LcMap'
+import CellsLedgerCard from '../components/lifecircle/CellsLedgerCard'
 import RegionSelector from '../components/lifecircle/RegionSelector'
 import type { LcMapHandle, LcMapMode, LcBlindSev } from '../components/lifecircle/LcMap'
 import type {
+  ForensicRoundRow,
   LngLat,
   LivingCircleReport,
 } from '../types'
@@ -58,6 +61,10 @@ import {
   samplingReachLabel,
   severityOf,
   degradeBanner,
+  evidenceDiscs,
+  cellsLedgerOf,
+  cellVerdict,
+  judgeRulerLabel,
 } from '../lib/livingCircle'
 import { asBdLngLat } from '../lib/geo'
 import type { CoordSys } from '../lib/geo'
@@ -112,6 +119,13 @@ export default function LifeCirclePage() {
   /* BMapGL 真实地图渲染层（C5 徽标语义 + C3 定位按钮共用） */
   const lcMapRef = useRef<LcMapHandle>(null)
   const [mapMode, setMapMode] = useState<LcMapMode>('boot')
+  /** 片 5：证据域图层开关（默认关 —— 它是解释层，不是主叙事层；见 LcMap.showEvidenceDiscs） */
+  const [evidenceOn, setEvidenceOn] = useState(false)
+  /** C1：判定尺图层开关（同样默认关）。它回答的是"判一格用的圆有多大"，
+   *  与证据盘回答的"查到哪儿"是两件事，所以不合并成一个开关。 */
+  const [judgeScaleOn, setJudgeScaleOn] = useState(false)
+  /** C5：选中的判定格 `(行, 列)`。卡片格阵与地图点击共用这一个状态。 */
+  const [selectedCell, setSelectedCell] = useState<[number, number] | null>(null)
   const [locating, setLocating] = useState(false)
   const [locateErr, setLocateErr] = useState('')
   /** v5 A：真实模式「定位到我」后的待确认定位（确认弹窗数据源，确认才发起体检） */
@@ -137,6 +151,10 @@ export default function LifeCirclePage() {
      均由注册表派生（lifeCircleFlow 写入），不再维护并行的局部进度。 */
   const [runMsg, setRunMsg] = useState('')
   const [runTaskId, setRunTaskId] = useState('')
+  /* 片 5：取证回合的实时那一行（`round` 事件的 `text` 原样上屏，前端不重排句子）。
+     只在「开始跟随一个新任务」那两处清 —— 不挂在 runMsg 的五个写点上：横幅本身只在
+     `runActive` 时渲染，任务一落终态就整块卸载，散五处反而漏一处就把上一轮的账挂到下一轮。 */
+  const [roundLines, setRoundLines] = useState<{ text: string; row: ForensicRoundRow }[]>([])
   const lcTasks = useTaskRegistry((s) => s.tasks)
   const regTask = runTaskId ? lcTasks[runTaskId] : null
   const runActive = !!regTask && regTask.status === 'running'
@@ -149,6 +167,9 @@ export default function LifeCirclePage() {
   const flowCallbacks = {
     onProgress: (_stage: string, _percent: number, message?: string) => {
       if (message) setRunMsg(message)
+    },
+    onRound: (row: ForensicRoundRow, text: string) => {
+      setRoundLines((prev) => [...prev, { text, row }])
     },
     onError: (message: string) => {
       setRunTaskId('')
@@ -178,6 +199,7 @@ export default function LifeCirclePage() {
     pendingTaskRef.current = incomingTaskId
     setRunTaskId(incomingTaskId)
     setRunMsg('')
+    setRoundLines([])
     setCtaErr('')
     flowRef.current = subscribeLifeCircleTask(incomingTaskId, flowCallbacks)
   }, [incomingTaskId, isFixture])
@@ -215,6 +237,11 @@ export default function LifeCirclePage() {
   const center: LngLat = customCenter ?? report?.scene.center ?? [0, 0]
   // R-7：降级披露唯一出口（与报告页同一函数，不在这里另写一套文案）
   const dgBanner = report ? degradeBanner(report) : null
+  /** C6：判定尺那句口径的半径部分。取自产物（台账 → 盲区条目），取不到就整块不出现 ——
+   *  写死 "1km" 会在分档后变成一句假话。 */
+  const rulerLabel = report ? judgeRulerLabel(report) : null
+  /** C4：逐格台账。取不到（`ev-2` 之前的报告、离线骨架、或台账半截不合形）⇒ 整张卡不出现。 */
+  const ledger = report ? cellsLedgerOf(report) : null
 
   // 样区路由参数与报告 id：custom → 最近样例 kaili（仅演示分支使用）
   const effectiveScene = sceneId === 'custom' ? 'kaili' : sceneId
@@ -276,6 +303,7 @@ export default function LifeCirclePage() {
     setCtaBusy(true)
     setRunTaskId('')
     setRunMsg('正在创建任务…')
+    setRoundLines([])
     try {
       const input = buildTaskInput(opts)
       const handle = await launchLifeCircle(
@@ -614,6 +642,23 @@ export default function LifeCirclePage() {
               <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
             </div>
             {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
+            {/* 片 5：取证扩容回合的实时账（文案 = 后端 `round` 事件自带 text，唯一措辞出处）。
+                刻意不改 stage/percent：那一格额度花在补算上，但阶段没变（仍是采集）。 */}
+            {roundLines.map((l) => (
+              <div
+                key={`${l.row.pass_no}-${l.row.dispatched ? 'sent' : 'skip'}`}
+                className="mt-1 flex items-start gap-1.5 rounded-btn bg-card/70 px-2 py-1 text-tag text-ink-2"
+              >
+                <Layers size={12} className="mt-0.5 shrink-0 text-primary" />
+                <span>
+                  {l.text}
+                  <span className="ml-1 text-ink-3">（取证额度剩 {l.row.pool_remaining} 次）</span>
+                  {l.row.anchors_dropped > 0 && (
+                    <span className="ml-1 font-medium text-warn">份额砍掉 {l.row.anchors_dropped} 个锚点</span>
+                  )}
+                </span>
+              </div>
+            ))}
           </div>
           <div className="h-1.5 w-40 overflow-hidden rounded-chip bg-line">
             <div
@@ -639,10 +684,19 @@ export default function LifeCirclePage() {
             onMapMode={setMapMode}
             onIsoHover={setIsoHoverMinutes}
             onBlindHover={setBlindHoverSev}
+            showEvidenceDiscs={evidenceOn}
+            showJudgeScale={judgeScaleOn}
+            selectedCell={selectedCell}
+            onCellPick={setSelectedCell}
           />
 
-          {/* 图例（悬浮） */}
-          <div className="absolute left-3 top-3 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur">
+          {/* 图例（悬浮）。⚠️ `z-10` 不是装饰：百度 GL 会在地图容器里注入 `.BMap_mask`
+              （实测 `position:absolute; z-index:9; pointer-events:auto`），而本面板原先是
+              `z-index:auto` ⇒ 同层按 DOM 序，后注入的 mask 压在面板上。面板以前只有色块和文字
+              （看不见也点不着，无人察觉），片 5 往里放了**第一个可交互控件**（证据域勾选）后，
+              真机上 `elementFromPoint(勾选框中心)` 返回的是 `BMap_mask` —— 点击被地图吃掉。
+              抬到 10（> mask 的 9）之后同一判据返回 INPUT，真指针点击成功。 */}
+          <div className="absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur">
             <span className="text-tag font-medium text-ink-2">图层</span>
             {Object.entries(LC_CAT_COLOR).map(([k, v]) => (
               <span key={k} className="flex items-center gap-1.5 text-tag text-ink-3">
@@ -681,6 +735,42 @@ export default function LifeCirclePage() {
               <img src={fixPlusSvgDataUrl(LC_FIX_DOT)} alt="" className="h-3.5 w-3.5" />
               补点处方（流动服务/改道/补建）
             </span>
+            {/* 片 5：证据域图层开关。**没有明细就不出现**（旧快照/离线从没发过 `evidence_anchors`，
+                给一个勾不动的复选框等于摆一个假入口）。 */}
+            {evidenceDiscs(report).length > 0 && (
+              <label className="mt-1 flex cursor-pointer items-start gap-1.5 border-t border-line/70 pt-1.5 text-tag font-medium text-ink-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-3.5 w-3.5"
+                  checked={evidenceOn}
+                  onChange={(e) => setEvidenceOn(e.target.checked)}
+                />
+                <span>
+                  证据域（查到哪儿）
+                  <span className="mt-0.5 block font-normal text-ink-3">
+                    {evidenceDiscs(report).length} 盘 · 实线查全 / 虚线未查全
+                  </span>
+                </span>
+              </label>
+            )}
+            {/* C1/C6 · 判定尺开关 + 那句口径。**没有尺就不出现**（同证据盘那条纪律：
+                摆一个勾不动的复选框等于摆一个假入口）。半径取自产物，不写死 1km。 */}
+            {rulerLabel && (
+              <label className="mt-1 flex cursor-pointer items-start gap-1.5 border-t border-line/70 pt-1.5 text-tag font-medium text-ink-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-3.5 w-3.5"
+                  checked={judgeScaleOn}
+                  onChange={(e) => setJudgeScaleOn(e.target.checked)}
+                />
+                <span>
+                  判定尺（判一格用多大）
+                  <span className="mt-0.5 block font-normal text-ink-3">
+                    判盲问的是{rulerLabel}，不是眼前这一小块
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
 
           {dragging ? (
@@ -823,6 +913,17 @@ export default function LifeCirclePage() {
               <FileText size={15} /> 查看{isFixture ? '体检报告' : '最新报告'}
             </button>
           </div>
+
+          {/* C4 · 逐格台账卡。**没有台账就不出现**（`ev-2` 之前的报告与离线骨架走这一支）：
+              摆一张只能看不能对的空卡，等于又造一个假入口。 */}
+          {ledger && (
+            <CellsLedgerCard
+              led={ledger}
+              selected={selectedCell}
+              onPick={setSelectedCell}
+              verdictAt={(i, j) => cellVerdict(report, [i, j])}
+            />
+          )}
 
           <div className="rounded-card border border-line bg-card p-4 shadow-card">
             <div className="mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink">

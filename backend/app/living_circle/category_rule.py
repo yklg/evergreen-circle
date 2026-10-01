@@ -147,7 +147,14 @@ def evaluate_category(
         if a_hit:
             return key, CONFIDENCE["high"]
         # 名称弱先验：仅作 mid，不覆盖标签命中。
-        if any(_norm(kw) in name for kw in defn["keywords"]):
+        # 第十八轮 P0-4 / 第十九轮拍板 ①：**名称通道同样吃 `reject_tags`**（table 驱动 ⇒ 子类表
+        # 注入后自动获得同一能力，零新实现）。代价已写在计划 §二：这条同时改变 8 个大类的名称判定
+        # 行为，不是"只影响子类层"；10-01 只读探针实测改判面 = 502 颗真点位里 1 颗
+        # （`凯峰建材大市场` `shopping→other`），另在合成样本上确实存在（`菜市场` `other→market`）。
+        # 不写这条会怎样：`sub_kinds` 里 `primary.reject_tags=["家长学校"]` 拦不住
+        # 「凯里市第十三小学家长学校」——它照样靠"小学"被判成小学 ⇒ 门槛项白加一 ⇒ 覆盖度假了。
+        if any(_norm(kw) in name for kw in defn["keywords"]) and not any(
+                _norm(r) in name for r in defn["reject_tags"]):
             name_hits.append(key)
     # 名称命中落在多类（模糊）→ 归 other，避免以名称拍脑袋（口径原则：名称仅弱先验）。
     # 这里必须**计数**而不是「留最后一个」：单变量覆盖会让判定随判表的书写次序漂移，

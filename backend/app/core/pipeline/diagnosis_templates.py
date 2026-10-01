@@ -424,6 +424,23 @@ def _sec_blindspot(lc: dict) -> dict:
     }
 
 
+def _origin_note(lc: dict) -> str:
+    """「结论基于什么取证」这句提醒的唯一归属处——按 data_origin 出话，不抄常量。
+
+    第三档（未知/缺失）既不自称真实也不自称演示：没声明来源就是"不知道"，
+    替它任选一边都是作伪证。offline 走不到这里（assemble_report 已分叉到 _offline_sections）。
+    """
+    origin = (lc.get("data_origin") or "")
+    if origin == "live":
+        interp = (lc.get("sampling") or {}).get("interpolation") or "—"
+        return (f"提醒：本报告为真实接口取证（data_origin=live），分级等时圈由采样点测时经 {interp} 插值推导；"
+                "正式结论以 M5 阶段实地测时为准。")
+    if origin in ("fixture", "fixture_sample"):
+        return "提醒：结论基于演示数据（fixture），正式结论以 M5 阶段真实路网测时为准。"
+    return (f"提醒：本报告未声明数据来源（data_origin={origin or '缺失'}），结论按未核验口径解读，"
+            "正式结论以 M5 阶段真实路网测时为准。")
+
+
 def _sec_conclusion(lc: dict) -> dict:
     total = (lc.get("scores") or {}).get("total", 0)
     suggestions = _build_suggestions(lc)
@@ -431,7 +448,7 @@ def _sec_conclusion(lc: dict) -> dict:
         "id": "conclusion", "title": "体检结论与整改建议", "level": 2,
         "key_takeaway": f"综合 {total} 分（{_grade(total)}）；共 {len(lc.get('blindspots', []))} 处服务盲区，整改优先级见下",
         "paragraphs": [f"本样区{('存在多处服务盲区，整改优先级如下：' if lc.get('blindspots') else '设施覆盖整体均衡，建议保持既有配置并动态复检。')}", *suggestions,
-                       "提醒：结论基于演示数据（fixture），正式结论以 M5 阶段真实路网测时为准。"],
+                       _origin_note(lc)],
         "claims": [{
             "claim_id": "c-lc-conclusion-1",
             "text": f"样区综合 {total} 分（{_grade(total)}），首要整改方向：{suggestions[0].lstrip('· ') if suggestions else '持续监测'}",

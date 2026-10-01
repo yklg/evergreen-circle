@@ -107,7 +107,10 @@ def test_legacy_card_and_dashboard_reads():
     card = [r for r in db.list_reports() if r["id"] == "r_legacy"][0]
     assert "brands" not in card and "destinations" in card
     assert db.evidence_facets()["by_destination"] == {"大理": 1}
-    assert db.dashboard_stats()["destination_distribution"] == {"大理": 1}
+    # 目的地口径的第二处读面：本轮 dashboard 瘦到两键，destination_distribution 搬进
+    # intel_overview 的图谱段 —— 断言不删，重锚到键真正所在的那份契约。
+    graph_nodes = db.intel_overview()["destination_graph"]["nodes"]
+    assert {n["destination"]: n["count"] for n in graph_nodes} == {"大理": 1}
 
 
 # ── ② 旧报告 refine：不因缺新键失败，且用上了归一后的目的地 ──

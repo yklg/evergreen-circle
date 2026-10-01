@@ -27,7 +27,7 @@ POI 标 True 但坐标在 3km 外     Q2 变体：标记与几何矛盾         
 删掉环的 ``geojson``           判不了（信息不足）                    **不得误报**
 ===========================  ==================================  ==========================
 
- rev2 追加三条（证据相，底本先把夹具升格成 ``ev-1`` 自洽口径）：
+ rev2 追加三条（证据相，底本先把夹具升格成**当前版本**自洽口径）：
 
 ===========================  ==================================  ==========================
 余量改回 0 / collect≠外接圆+余量   D2 回退 ⇒ 判盲面塌回 5%          B5 余量≤0、关系复算不符
@@ -48,7 +48,9 @@ from pathlib import Path
 
 import pytest
 
+from app.living_circle.blindspot import BLIND_GRID_M
 from app.living_circle.geo_utils import haversine_m, ring_area_km2, xy_to_lnglat
+from app.living_circle.grid import grid_spec
 from app.living_circle.report_contract import (
     BLINDSPOT_AREA_RATIO_MAX,
     GEOM_TOL,
@@ -58,7 +60,6 @@ from app.living_circle.report_contract import (
 )
 from app.living_circle.scope import (
     BLIND_RADIUS_M,
-    EVIDENCE_MARGIN_M,
     SCOPE_POLICY_VERSION,
     TRIAD_KEYS,
 )
@@ -316,20 +317,95 @@ def test_insufficient_input_is_not_a_violation(mutate, label):
 
 # ── B5 / B10 / B11：证据相三条 ──────────────────────────────────
 # 这三条守的不是几何，而是「我实际查到哪儿」与「我据此敢下多大结论」之间的那条链。
-# 底本必须先把夹具升格成 **ev-1 自洽产物**：新口径下不合规的报告会让任何一条恒真命中，
+# 底本必须先把夹具升格成 **当前版本自洽产物**：新口径下不合规的报告会让任何一条恒真命中，
 # 变异样本也就失去判别力（与 B1/B2 用「凯里夹具无盲区」当前提是同一纪律）。
 
+#: 台账的字母表在测试里**写成字面量**，不从 `blindspot` 导入：那三个字符就是写侧与读侧的
+#: 契约本身。测试若跟着常量走，常量被改错的那天测试会跟着一起改错（恒真断言）。
+LED_YES, LED_NO, LED_UNK, LED_NO_DIST = "1", "0", ".", "-"
+
+
+def _ledger_for(lc: dict, *, blind: int = 0, capped: int = 0) -> dict:
+    """按 caliber 现有的分账**合成**一张自洽台账，供 B5/B10/B11 的用例当底本。
+
+    ⚠️ 它是"照分账摆出来的格子"，不是任何一次真实判定的产物 —— 用途只有一个：
+    让底本在 `ev-2` 门禁下自洽（否则 B13 的"缺台账即违规"会把每条无关用例都拖红）。
+    B13 自己的判别力由下面那批**故意改坏**的用例提供。
+
+    摆法（行优先）：前 `blind` 格判盲（菜市场 judge=1/present=0，其余两类命中）、
+    接着 `judged-blind` 格确认不盲（三类皆有据且命中）、再 `capped` 格记封顶、
+    剩下的未定 —— 后两类三类输入位全是 `.`，正是"没查过"该有的形状。
+    """
+    cal = lc["caliber"]
+    spec = grid_spec(_center(lc), float(cal["reach_circumradius_m"]), BLIND_GRID_M)
+    n = spec.n
+    inside_n = int(cal["cells_inside"])
+    judged = int(cal["cells_judged"])
+    if not (0 <= blind <= judged <= inside_n <= n * n) or not 0 <= capped <= inside_n - judged:
+        raise ValueError(
+            f"无法为分账 inside={inside_n}/judged={judged} 摆出台账（blind={blind} capped={capped}）")
+    radius = int(round(float((lc.get("blindspots") or [{}])[0].get("radius_m", BLIND_RADIUS_M))))
+
+    marks = {name: [[LED_NO] * n for _ in range(n)] for name in ("inside", "capped", "blind", "verdict")}
+    judge = {k: [[LED_NO] * n for _ in range(n)] for k in TRIAD_KEYS}
+    present = {k: [[LED_UNK] * n for _ in range(n)] for k in TRIAD_KEYS}
+    near = {k: [[LED_NO_DIST] * n for _ in range(n)] for k in TRIAD_KEYS}
+
+    cells = [(i, j) for i in range(n) for j in range(n)]
+    groups = (
+        (cells[:blind], "blind"),
+        (cells[blind:judged], "ok"),
+        (cells[judged:judged + capped], "capped"),
+        (cells[judged + capped:inside_n], "unknown"),
+    )
+    for span, kind in groups:
+        for i, j in span:
+            marks["inside"][i][j] = LED_YES
+            if kind == "blind":
+                marks["blind"][i][j] = marks["verdict"][i][j] = LED_YES
+            elif kind == "ok":
+                marks["verdict"][i][j] = LED_YES
+            elif kind == "capped":
+                marks["capped"][i][j] = LED_YES
+            if kind not in ("blind", "ok"):
+                continue                       # 未定/封顶的格：三类输入位保持 `.`
+            for idx, k in enumerate(TRIAD_KEYS):
+                judge[k][i][j] = LED_YES
+                # 判盲格让**第一个类**缺命中（存在性结论），其余类命中；不盲格三类全命中。
+                hit = kind == "ok" or idx > 0
+                present[k][i][j] = LED_YES if hit else LED_NO
+                near[k][i][j] = str(400 + 10 * idx) if hit else str(radius + 200)
+
+    cal["cells_blind"] = blind
+    cal["cells_unjudgeable_by_cap"] = capped
+    cal["cells_unknown"] = inside_n - judged - capped
+    return {
+        "grid": "square", "schema_version": 1, "n": n,
+        "step_m": round(spec.step, 1), "scan_m": round(spec.scan, 1),
+        "radius_m": radius,
+        "center": [round(_center(lc)[0], 6), round(_center(lc)[1], 6)],
+        **{name: ["".join(r) for r in rows] for name, rows in marks.items()},
+        **{f"judge.{k}": ["".join(r) for r in judge[k]] for k in TRIAD_KEYS},
+        **{f"present.{k}": ["".join(r) for r in present[k]] for k in TRIAD_KEYS},
+        **{f"nearest.{k}": [" ".join(r) for r in near[k]] for k in TRIAD_KEYS},
+    }
+
+
 def _ev1_caliber(lc: dict, **over) -> dict:
-    """把夹具的旧 D2 口径（余量 0、collect == 外接圆）升格成 ev-1 自洽口径。"""
+    """把夹具的旧 D2 口径（余量 0、collect == 外接圆）升格成**当前版本**自洽口径。
+
+    含逐格台账：`ev-2` 的门禁是"声明了本版本就必须自带"，底本不带 ⇒ B13 会把这里
+    每一条无关用例都判红（那正是 P0-2 预判过的形状，落在这里当回归哨）。
+    """
     cal = lc["caliber"]
     circum = float(cal["reach_circumradius_m"])
-    collect = circum + EVIDENCE_MARGIN_M
+    collect = circum + BLIND_RADIUS_M
     inside = int(cal["cells_inside"])
     cal.update({
         "collect_radius_m": round(collect, 1),
-        "collect_margin_m": round(EVIDENCE_MARGIN_M, 1),
+        "collect_margin_m": round(BLIND_RADIUS_M, 1),
         "scope_policy_version": SCOPE_POLICY_VERSION,
-        "evidence_margin_m": round(EVIDENCE_MARGIN_M, 1),
+        "evidence_margin_m": round(BLIND_RADIUS_M, 1),
         "evidence_radius_m": round(collect, 1),
         "evidence_frontier_m": {k: round(collect, 1) for k in TRIAD_KEYS},
         "evidence_complete": True,
@@ -339,7 +415,21 @@ def _ev1_caliber(lc: dict, **over) -> dict:
         "cells_unknown": 0,
     })
     cal.update(over)
+    cal["cells_ledger"] = _ledger_for(
+        lc, blind=int(over.get("cells_blind") or 0),
+        capped=int(over.get("cells_unjudgeable_by_cap") or 0))
     return cal
+
+
+def _set_coverage(lc: dict, *, judged: int, blind: int = 0, capped: int = 0) -> dict:
+    """改判定面，并**同步重摆台账**。
+
+    为什么要有这个助手而不是直接 `caliber.update(...)`：台账是从分账摆出来的，只改数不改台账
+    ⇒ B13 的"计数与台账对不上账"会在每条无关用例上响。噪声吃掉判别力之后，真违规也就看不见了。
+    """
+    lc["caliber"]["cells_judged"] = judged
+    lc["caliber"]["cells_ledger"] = _ledger_for(lc, blind=blind, capped=capped)
+    return lc
 
 
 def _rescore(lc: dict) -> dict:
@@ -357,7 +447,7 @@ def _rescore(lc: dict) -> dict:
 
 
 def _ev1(**over) -> dict:
-    """ev-1 自洽底本（默认判满可达区 ⇒ share=1、confidence=full）。"""
+    """当前版本自洽底本（默认判满可达区 ⇒ share=1、confidence=full，且自带台账）。"""
     lc = _base()
     _ev1_caliber(lc, **over)
     return _rescore(lc)
@@ -397,7 +487,7 @@ def test_collect_radius_not_derived_from_margin_is_flagged():
     """余量声明 1000 却只外扩一半 ⇒ 关系被写死而不是导出。"""
     lc = _ev1()
     lc["caliber"]["collect_radius_m"] = round(
-        float(lc["caliber"]["reach_circumradius_m"]) + EVIDENCE_MARGIN_M / 2, 1
+        float(lc["caliber"]["reach_circumradius_m"]) + BLIND_RADIUS_M / 2, 1
     )
     assert any("≠ 可达区外接圆" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
 
@@ -445,11 +535,40 @@ def test_judge_radius_not_derived_from_evidence_is_flagged():
     assert any("判定域不再由证据域导出" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
 
 
+def test_b10_fires_when_the_run_used_a_different_ruler():
+    """**成对判据·红的那条**：报告按 800m 的尺自洽，B10 今天仍然判它违规 ⇒ 证明 B10 读的是
+    兼容常量（1000），不是本次判定实际吃的那把尺（计划 v6.9 ⑧″，第十四轮 P0-3 打回的
+    就是"只写一条极性"—— 单写不叫的那条会退化成任何实现都沉默的假闸）。
+
+    分档真上线（阶段 3-5）之后这条就是**误报**：riding 报告会被按步行档判成不合规。
+    修法在批次二（B10 改读产物自己声明的半径），所以这里同时钉住文本，别红错地方。
+    """
+    lc = _ev1()
+    bound = float(lc["caliber"]["evidence_radius_m"])
+    lc["caliber"]["judge_radius_m"] = round(bound - 800.0, 1)   # 自称按 800m 判
+    violations = assess_geometry(lc).violations
+    hits = [v for v in violations if "判定域不再由证据域导出" in v]
+    assert hits, f"按 800m 自洽的报告今天没被 B10 抓住 ⇒ B10 的取法已改，本判据要重指：{violations}"
+    assert "1000m" in hits[0], hits[0]
+
+
+def test_b10_cannot_see_the_declared_ruler_yet():
+    """**成对判据·不叫的那条**：产物里写了「本次用 800」，B10 今天完全看不见它。
+
+    这条今天**绿**（不叫 = 现状为真），批次二让 B10 改读该声明后它必须**变红** ——
+    留在这里的作用是把"第二把尺"这件事说成事实而不是承诺：口径键 `blind_radius_m`
+    目前**没有任何读者**（写侧也没发，见 v6.9 ③′.5 决定「不加顶层披露键」）。
+    """
+    lc = _ev1()
+    lc["caliber"]["blind_radius_m"] = 800.0        # 本次用的尺（今天无人读，明天是靶子）
+    issues = assess_geometry(lc)
+    assert issues.ok, f"该键今天不该有读者；若 B10 已开始读它，请把上一条红的那起改名：{issues.reason}"
+
+
 def test_zero_judged_cells_must_all_be_unknown():
     """一格未判却有 5 格没记未定 ⇒ 「判不了」正在被当成「不盲」。"""
     lc = _ev1()
-    inside = int(lc["caliber"]["cells_inside"])
-    lc["caliber"].update({"cells_judged": 0, "cells_unknown": inside - 5})
+    _set_coverage(lc, judged=0, capped=5)      # 三态闭合：inside = 0 判 + (inside−5) 未定 + 5 封顶
     assert any("判不了」被当成「不盲" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
 
 
@@ -460,8 +579,80 @@ def test_judged_mask_cannot_survive_zero_judge_radius():
     cal["evidence_radius_m"] = round(BLIND_RADIUS_M, 1)   # 只查到 1000m ⇒ judge=0
     cal["judge_radius_m"] = 0.0
     cal["evidence_complete"] = False
-    cal.update({"cells_judged": 10, "cells_unknown": int(cal["cells_inside"]) - 10})
+    _set_coverage(lc, judged=10)
     assert any("judged 掩码已退化" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+# ── B12 · 逐锚点举证与逐类标量边界必须由**同一批盘**导出（计划 v5.9 前置②）──
+# 写侧守卫（`SpatialScope._one_region_source`）只拦「经过值对象」的写法；落库件是 JSON，
+# 拼得出「明细来自回合区域、标量却来自首轮绑定」的报告 —— 而那正是取证回合接线后同时持有的
+# 两块。判据取**区间包含**而不是「等于 max」：同一批盘有两种合法塌缩（采集器逐类取各词最小值
+# =保守合取；区域视图取圆盘最大值 =向后兼容既有键），钉死其中一种等于替批次二预定标量语义。
+
+def _anchor_row(cat, exhausted, *, request=None, cap_hit=False, reason="page_cap"):
+    return {
+        "category": cat, "anchor": [106.0, 29.0],
+        "request_radius_m": round(float(exhausted if request is None else request), 1),
+        "exhausted_radius_m": round(float(exhausted), 1),
+        "complete": not cap_hit, "cap_hit": cap_hit, "stop_reason": reason,
+    }
+
+
+def test_anchor_detail_disagreeing_with_frontier_is_flagged():
+    """明细里药店最深只到「标量边界 − 900m」，标量却报满采集半径 ⇒ 那个数不来自这批盘。"""
+    lc = _ev1()
+    cal = lc["caliber"]
+    front = float(cal["evidence_frontier_m"]["pharmacy"])
+    cal["evidence_anchors"] = [_anchor_row("pharmacy", front - 900.0, request=front)]
+    assert any("落在该锚点明细的深度区间" in v for v in assess_geometry(lc).violations), (
+        assess_geometry(lc).reason
+    )
+
+
+def test_frontier_at_the_min_collapse_is_not_flagged():
+    """生产标量绑定取的是逐类**各词边界的最小值** ⇒ 必须被判为同源（第五轮复审 P0-2 的形状）。
+
+    `poi_collector.frontier_m` 明确 min、`EvidenceRegion.frontier_m` 明确 max，两者都从同一批
+    `TermEvidence` 行导出。门禁若只认 max，阶段 3 第一份带 `judged_region` 的报告就会违规
+    —— 而 market 本来就有 3 个词，min≠max 是常态不是异常。
+    """
+    lc = _ev1()
+    cal = lc["caliber"]
+    front = float(cal["evidence_frontier_m"]["market"])
+    cal["evidence_anchors"] = [
+        _anchor_row("market", front, reason="complete"),
+        _anchor_row("market", front - 2000.0, request=front),
+    ]
+    cal["evidence_frontier_m"]["market"] = round(front - 2000.0, 1)   # 逐类取 min = 生产写法
+    violations = assess_geometry(lc).violations
+    assert not any("深度区间" in v for v in violations), f"min 塌缩被误判成不同源：{violations}"
+
+
+def test_anchor_detail_without_frontier_entry_is_flagged():
+    """有盘却无该类逐类边界 ⇒ 报告答不出这块盘把边界推到哪儿（第三态归因也跟着断线）。"""
+    lc = _ev1()
+    cal = lc["caliber"]
+    cal["evidence_frontier_m"].pop("pharmacy")
+    cal["evidence_anchors"] = [_anchor_row("pharmacy", 2000.0, reason=None, cap_hit=False)]
+    assert any("却缺 `evidence_frontier_m` 条目" in v for v in assess_geometry(lc).violations), (
+        assess_geometry(lc).reason
+    )
+
+
+def test_anchor_detail_consistent_with_frontier_is_clean():
+    """控制腿（防「一律判违规」）：明细覆盖标量值时不得响。
+
+    market 给两块**不同深度**的盘，是为了让区间这条判据真的在测区间 —— 若判据被改回
+    「等于第一块盘」，这里就该红。
+    """
+    lc = _ev1()
+    cal = lc["caliber"]
+    front = cal["evidence_frontier_m"]
+    rows = [_anchor_row(cat, float(front[cat]), reason="complete") for cat in TRIAD_KEYS]
+    rows.insert(0, _anchor_row("market", float(front["market"]) - 400.0, reason="complete"))
+    cal["evidence_anchors"] = rows
+    issues = assess_geometry(lc)
+    assert issues.ok, issues.reason
 
 
 # ── B11 · 扣分与判定面一致 ──────────────────────────────────────
@@ -475,7 +666,7 @@ def test_full_confidence_with_partial_coverage_is_flagged():
     """覆盖率 82% 却自称 full ⇒ 「没判的 17 格」冒充「没问题」。"""
     lc = _ev1()
     inside = int(lc["caliber"]["cells_inside"])
-    lc["caliber"].update({"cells_judged": inside - 17, "cells_unknown": 17})
+    _set_coverage(lc, judged=inside - 17)      # 未定 17 格由台账同步摆出来
     lc["scores"]["confidence"] = "full"
     assert any("冒充「没问题」" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
 
@@ -496,7 +687,8 @@ def test_penalty_reverted_to_count_only_is_flagged():
     c = _center(lc)
     inside = int(lc["caliber"]["cells_inside"])
     judged = round(inside * 0.8)
-    lc["caliber"].update({"evidence_complete": False, "cells_judged": judged, "cells_unknown": inside - judged})
+    lc["caliber"]["evidence_complete"] = False
+    _set_coverage(lc, judged=judged)
     lc["blindspots"] = [_blindspot("bs-a", c, 300.0), _blindspot("bs-b", c, 300.0)]
     _rescore(lc)
     assert assess_geometry(lc).ok, assess_geometry(lc).reason
@@ -514,3 +706,147 @@ def test_judged_share_must_match_the_cells_accounting():
     lc = _ev1()
     lc["scores"]["evidence"]["judged_share"] = 0.99
     assert any("与 caliber 分账" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+
+
+# ── B13：逐格台账（计划 cells-ledger-judge-scale §4.3）────────────────
+# 这批用例问的是同一件事：**台账说的、计数说的、规则重抄出来的，三者是不是同一次判定**。
+# 每条变异都断言**命中的那一条判据文本**，不断言笼统的 `not ok` —— 后者会让"底本不自洽"
+# 冒充成"判据有效"（本仓反复出事的恒真形状）。
+
+def _b13(lc: dict) -> list:
+    """只取台账相关的违例行（其余判据可能同时红，但那不是本批用例的判别对象）。"""
+    issues = assess_geometry(lc)
+    return [v for v in issues.violations
+            if "cells_ledger" in v or "台账" in v or "不对称规则" in v]
+
+
+def test_ledger_consistent_with_accounting_is_clean():
+    """正向对照（防"一律判违规"）：自洽底本上 B13 一条都不许响。"""
+    lc = _ev1()
+    assert lc["caliber"]["cells_ledger"]["n"] % 2 == 1
+    assert _b13(lc) == [], _b13(lc)
+
+
+def test_declared_version_without_ledger_is_flagged():
+    """声明了当前版本却没发台账 ⇒ 违规。这正是"键缺席即跳过"那条路永远查不到的形状。"""
+    lc = _ev1()
+    del lc["caliber"]["cells_ledger"]
+    hits = _b13(lc)
+    assert len(hits) == 1 and "却缺 cells_ledger" in hits[0], hits
+
+
+def test_legacy_ev1_report_is_not_flagged_and_stays_visible():
+    """P0-2 的回归哨：存量 `ev-1` 报告（没有台账这个键）**不得**被 B13 判违规、更不得消失。
+
+    这条是整批改动的代价边界 —— 门禁若写成"有版本号就必须带台账"，库里唯一那条 ev-1
+    实测报告与劲松出厂快照会从历史列表与报告页一起蒸发（`list_living_circle_reports`
+    默认按 `assess_geometry` 过滤）。
+    """
+    lc = _ev1()
+    lc["caliber"]["scope_policy_version"] = "ev-1"
+    del lc["caliber"]["cells_ledger"]
+    assert "ev-1" != SCOPE_POLICY_VERSION, "底本须落后当前版本，本用例才有判别力"
+    issues = assess_geometry(lc)
+    assert _b13(lc) == [], _b13(lc)
+    assert report_is_presentable(lc), issues.reason
+
+
+def test_third_state_collapsed_to_zero_is_flagged():
+    """把 `.` 抹成 `0`（"没查过"写成"查过且没有"）⇒ 必须报第三态被压成二态。
+
+    这就是复审 P0-1 的形状：`present` 若用 bool 承载，塌缩发生在**渲染之前**，
+    B13 会把"无从知道"复算成"确认不盲"。
+    """
+    lc = _ev1()
+    led = lc["caliber"]["cells_ledger"]
+    led["present.pharmacy"] = [r.replace(LED_UNK, LED_NO) for r in led["present.pharmacy"]]
+    hits = _b13(lc)
+    assert any("第三态被压成了二态" in v for v in hits), hits
+
+
+def test_blind_bit_flipped_against_the_rule_is_flagged():
+    """只翻结论位、不动输入位 ⇒ 必须被"不对称规则重抄"抓到。
+
+    没有这一条，B13 就只剩"台账与计数同源复算"的同义反复：`blind` 与计数一起改错时
+    谁都发现不了。规则重抄是**读侧独立实现**，与 B11 重抄扣分公式同理。
+    """
+    lc = _ev1()
+    led = lc["caliber"]["cells_ledger"]
+    assert sum(r.count(LED_YES) for r in led["blind"]) == 0, "底本默认无盲格，翻一位才是干净的注入"
+    row = list(led["blind"][0])
+    row[led["inside"][0].index(LED_YES)] = LED_YES
+    led["blind"][0] = "".join(row)
+    hits = _b13(lc)
+    # 只报"规则重抄"那一条，**不**报计数不符 —— 两个检查看的不是同一件事：
+    # 计数由输入位复算（没动），结论位却被人改过。只留一条断言就看不出这层分工。
+    assert len(hits) == 1 and "盲区位与规则不符" in hits[0], hits
+
+
+def test_count_drift_against_ledger_is_flagged():
+    """顶层计数与台账复算差 3 格 ⇒ 报"对不上账"，且**不许**有容差。"""
+    lc = _ev1()
+    lc["caliber"]["cells_blind"] = int(lc["caliber"]["cells_blind"]) + 3
+    hits = _b13(lc)
+    assert len(hits) == 1 and "计数与逐格台账对不上账" in hits[0], hits
+
+
+def test_truncated_matrix_is_flagged_not_skipped():
+    """半截台账（少一行）必须报违规 —— 不许按"判不了即跳过"放行。
+
+    缺键有"缺 cells_ledger"那条兜着，形状不符若被跳过，等于给序列化截断开了后门。
+    """
+    lc = _ev1()
+    led = lc["caliber"]["cells_ledger"]
+    led["inside"] = led["inside"][:-1]
+    hits = _b13(lc)
+    assert any("缺失或形状/字母不符" in v for v in hits), hits
+    assert any("inside" in v for v in hits), hits
+
+
+def test_ledger_grid_drift_is_flagged():
+    """`step_m` 与外接圆/格距推出的格阵不符 ⇒ 台账不是这次判定那张格阵。"""
+    lc = _ev1()
+    lc["caliber"]["cells_ledger"]["step_m"] = 999.0
+    hits = _b13(lc)
+    assert any("≠ 格阵复算" in v and "step_m" in v for v in hits), hits
+
+
+def test_ledger_n_not_derivable_is_flagged():
+    """`n` 与 `reach_circumradius_m` 推出来的边长不等 ⇒ 报格阵不符（复算走 `grid_spec`，
+    测试不另抄一遍 ceil/linspace —— 抄的那份会在 `BLIND_GRID_M` 改动那天先漂）。"""
+    lc = _ev1()
+    cal = lc["caliber"]
+    want = grid_spec(_center(lc), float(cal["reach_circumradius_m"]), BLIND_GRID_M).n
+    cal["cells_ledger"]["n"] = want + 2
+    hits = _b13(lc)
+    assert any(f"推出的 {want}" in v for v in hits), hits
+
+
+def test_ledger_ruler_must_match_the_blindspot_ruler():
+    """台账那把尺与上屏盲区声明的尺分叉 ⇒ 图上 800m 圆旁边会标着 1km，必须报。"""
+    lc = _ev1()
+    lc["blindspots"] = [dict(lc["blindspots"][0], radius_m=800)] if lc["blindspots"] else \
+        [{"id": "bs-注入-1", "radius_m": 800}]
+    lc["caliber"]["cells_ledger"]["radius_m"] = 1000
+    hits = _b13(lc)
+    assert any("不是同一把尺" in v for v in hits), hits
+
+
+def test_distance_and_hit_bit_cannot_disagree():
+    """命中位与最近距离互相打脸（说没命中却报 300m，尺是 1000m）⇒ 必须报。
+
+    这一条盯的是 `_hit_and_nearest_m` 被拆回两份实现的那天：距离与命中一旦分家，
+    卡片上"1km 内没有"和"最近 300m"会同时上屏。
+    """
+    lc = _ev1(cells_blind=2)          # 底本带 2 个判盲格：那里 market 是 present=0 + 距离>尺
+    led = lc["caliber"]["cells_ledger"]
+    assert _b13(lc) == [], "带盲格的底本自身须自洽，注入才是干净的"
+    radius = int(led["radius_m"])
+    i = next(r for r, row in enumerate(led["inside"]) if LED_YES in row)
+    j = led["inside"][i].index(LED_YES)
+    toks = led["nearest.market"][i].split(" ")
+    assert toks[j] != LED_NO_DIST and int(toks[j]) > radius, "底本里这格应是判盲格（距离 > 尺）"
+    toks[j] = str(radius - 700)
+    led["nearest.market"][i] = " ".join(toks)
+    hits = _b13(lc)
+    assert any("最近距离与命中位互相打脸" in v for v in hits), hits

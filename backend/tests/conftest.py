@@ -42,15 +42,26 @@ def live_payload(payload: dict) -> dict:
     * ``test_caching_datasource.py`` 末尾 `test_stale_policy_*` 三条**故意不带版本**的
       负对照 —— 它们负责证明门真的有牙，全量套壳会把门架空。
     """
-    payload.setdefault("caliber", {})["scope_policy_version"] = SCOPE_POLICY_VERSION
+    cal = payload.setdefault("caliber", {})
+    cal.setdefault("scope_policy_version", SCOPE_POLICY_VERSION)
+    # 批 A③：复用门现在还要比**本次请求的口径三元组**（出行方式/采样档/研究半径）。
+    # 这里盖的是 `CheckParams` 的默认档（walking / standard / 2500m），与 `test_caching_datasource`
+    # 的 `_shanghai()`/`_kaili()` 两个场景逐字一致 —— 它们是"机制测试"，测的是键与命中，
+    # 口径匹配门自身由 `test_caching_datasource` 末尾 `test_reuse_gate_*` 专测（那里逐字段造反例）。
+    # 若有用例把请求改成 riding/precise 却仍指望命中，**别改这里的默认值**，
+    # 让那条请求自己声明 —— 否则门就被壳子架空了。
+    cal.setdefault("travel_mode", "walking")
+    cal.setdefault("sample_profile", "standard")
+    payload.setdefault("scene", {}).setdefault("study_radius_m", 2500.0)
     return payload
 
 
 @pytest.fixture(autouse=True)
 def _isolate():
-    """每用例前清空 settings/prefs 表并重置进程级迁移标记/缓存。"""
+    """每用例前清空 settings/prefs/user_sources/discovery_cache 表并重置进程级迁移标记/缓存。"""
     db.clear_settings()
     db.clear_prefs()
+    db.clear_user_sources()
     db.clear_discovery_cache()
     db.invalidate_aggregates()          # G5：聚合读缓存与库文件解耦，隔离库切换必须显式失效
     rc._MODEL_MIGRATED = False

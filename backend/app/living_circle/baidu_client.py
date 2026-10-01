@@ -45,7 +45,7 @@ PLACE_PAGE_SIZE_MAX = 20
 
 # `place_search` 的停止原因 —— **证据完整性的唯一承重判据**（P0-1）。
 # 为什么必须显式建模：`results.append` 是无条件的（跨页去重只累加 `new_in_page`、从不删行），
-# 故 `len(results)` 不编码任何内部状态；五个退出点共享同一个整数。探针亦确认
+# 故 `len(results)` 不编码任何内部状态；六个退出点共享同一个整数。探针亦确认
 # `len_alone_decisive = false`（`len == page_size` 时「恰好查完」与「被截断」同值）。
 STOP_COMPLETE = "complete"        # 短页 ⇒ 半径内已查全 ⇒ 可把请求半径当作证据边界
 STOP_EMPTY = "empty"              # status=0 且 0 条 ⇒ 该半径内**真的没有**（可用于判盲）
@@ -53,6 +53,40 @@ STOP_PAGE_CAP = "page_cap"        # 页深耗尽而末页仍是满页 ⇒ **被�
 STOP_DUP_STOP = "dup_stop"        # 收益止损 ⇒ 同「被截断」处理（再翻也未必有新点，但边界外仍可能有）
 STOP_API_ERROR = "api_error"      # 请求失败/非 0 status ⇒ **一无所知**，绝不可当作「没有」
 STOP_NOT_RUN = "not_run"          # 未发起任何请求（页深 0 / 预算拒绝）⇒ 同样是一无所知
+# 服务端**自有**上限：它自称还有货，却在翻页途中不再给（短页/空页收的尾）。
+# 与 `page_cap` 分名的理由只有一个 —— 归责不同：`page_cap` 是「我们没接着翻」（我们的失职，
+# 判 unknown），`server_cap` 是「再翻也没有」（百度的天花板，判第三态 `unjudgeable_by_cap`）。
+# 混起来就是把外部限制写成自己的漏查，或反过来把自己的没查洗成天经地义。
+STOP_SERVER_CAP = "server_cap"
+
+
+def _server_owed_a_page(total: Optional[int], held: int) -> bool:
+    """服务端自称还欠我们**至少一整页**，却已经停止供货。
+
+    阈值取「一整页」而不是「>0」：探针实测 `total` 在同一次翻检里会漂移（60→63→60）。
+    按 `>0` 判，多报 3 条的抖动就足以把**真查全**的批次打成不完整 ⇒ 有据率跟着接口抖动涨落。
+    一整页是「还欠货」的最小可信单位 —— 再小就无法与漂移区分。
+
+    `held` 传的是**原始行数**（含跨页重复），故本判据偏保守：重复越多越不容易触顶，
+    宁可少报一次封顶，也不许凭空替接口作伪证。
+    """
+    return total is not None and int(total) - int(held) >= PLACE_PAGE_SIZE_MAX
+
+
+def is_exhausted(stop_reason: Optional[str]) -> bool:
+    """该停止原因是否构成「请求半径内已查全」——**词汇判定的唯一归属**。
+
+    `place_search` 的返回、`poi_collector.TermEvidence`、`scope.EvidenceDisc` 三处都要问这
+    一个问题。此前前两处各写了一遍 `in (STOP_COMPLETE, STOP_EMPTY)`；盘上再加第三份的话，
+    将来加第四种停止原因只会有两处记得更新 —— 而漏更的那处的表现是「报告把没查全的当查全」。
+    `None`（合成圆盘/无来源）落 False：一无所知 ≠ 没有设施。
+    """
+    return stop_reason in (STOP_COMPLETE, STOP_EMPTY)
+
+
+def is_server_cap(stop_reason: Optional[str]) -> bool:
+    """接口能力封顶（≠ 我们没查）：第三态 `unjudgeable_by_cap` 的唯一原料。"""
+    return stop_reason == STOP_SERVER_CAP
 
 
 class PlaceSearchOut(NamedTuple):
@@ -65,7 +99,8 @@ class PlaceSearchOut(NamedTuple):
     几何半径猜，猜错就是误报盲区。
 
     `total` 只作旁证：探针实测同一次逐页翻检中它会漂移（60 → 63 → 60），
-    **承重判据是 `stop_reason`**。
+    **承重判据是 `stop_reason`**。它唯一被允许参与的判定是「服务端自称还欠一整页却断了货」
+    （`_server_owed_a_page` ⇒ `STOP_SERVER_CAP`）—— 阈值取整页正是为了不被漂移带偏。
     """
 
     items: List[Dict[str, Any]]
@@ -78,13 +113,26 @@ class PlaceSearchOut(NamedTuple):
         """半径内是否已查全 —— 只有为真时，请求半径才可以被当作**证据边界**使用。
 
         `api_error` / `not_run` 落 False 是刻意的：一无所知 ≠ 没有设施。
+        `server_cap` 落 False 同理：服务端自称还有，就不许把请求半径当边界。
         """
-        return self.stop_reason in (STOP_COMPLETE, STOP_EMPTY)
+        return is_exhausted(self.stop_reason)
 
     @property
     def truncated(self) -> bool:
-        """明确「还想拿但没拿到」的两种情形（不含失败/未跑，那些是 unknown）。"""
-        return self.stop_reason in (STOP_PAGE_CAP, STOP_DUP_STOP)
+        """明确「还想拿但没拿到」的三种情形（不含失败/未跑，那些是 unknown）。
+
+        `cap_hit` 是它的**子集**：只有服务端自己断货那种「再怎么加预算也拿不到」才算封顶。
+        """
+        return self.stop_reason in (STOP_PAGE_CAP, STOP_DUP_STOP, STOP_SERVER_CAP)
+
+    @property
+    def cap_hit(self) -> bool:
+        """接口能力封顶（≠ 我们没查）：第三态 `unjudgeable_by_cap` 的唯一原料。
+
+        做成 `stop_reason` 的**派生量**而非第二个字段：两者若各说各话，「封顶」就成了
+        一个可以脱离证据单独填写的名义值 —— 本仓对这种字段零容忍。
+        """
+        return is_server_cap(self.stop_reason)
 
 
 def _shared_gate_params(ak: str) -> Tuple[int, float, GlobalRateLimiter, GlobalDailyBudget]:
@@ -117,7 +165,8 @@ def _default_guard(ak: str = "") -> "CallGuard":
     个人免费档并发≈3 / QPS≈3。旧默认 ``CallGuard()``（并发 4 / 间隔 0.25s ≈ 4QPS）
     **已经高于免费档**，是「100/3 超限短信」与后续调研失败的推手之一。
 
-    ``max_total_calls``（v5 B4/R2b）：接 `quota.total_calls_hard_ceiling()`（免费档 45），
+    ``max_total_calls``（v5 B4/R2b）：接 `quota.total_calls_hard_ceiling()`（免费档 79 =
+    42 精度预算 + 34 扩容回合格 + 3 intake 头寸，v5.4 起、v6.1 抬档），
     让管线 L277-281 的 ``total_meltdown`` 降级路径真正可触发——预算耗尽 → 诚实离线，
     绝不硬算。预算公式唯一归属 `quota.py`，此处只消费数值（I2 同哲学）。
     ⚠️ **本字段必须留在这里**：`test_u16_default_guard_wired_to_hard_ceiling` 钉住它；
@@ -377,6 +426,11 @@ class BaiduClient:
         else:
             # 页深跑满且末页仍是满页 ⇒ 后面还有，只是没翻 —— 这就是被截断
             stop = STOP_PAGE_CAP if pages_fetched else STOP_NOT_RUN
+        # 「短页/空页 = 已查全」这条判据的隐含前提是**百度肯把货给完**。它自称 total=200
+        # 却从第 2 页起一条不给时，按 complete 收口就是把「只拿到 20/200」洗成
+        # 「2500m 内查全」⇒ 判盲会在那一圈里判出假盲区（本轮要消灭的头号缺陷形态）。
+        if stop in (STOP_COMPLETE, STOP_EMPTY) and _server_owed_a_page(total, len(results)):
+            stop = STOP_SERVER_CAP
         return PlaceSearchOut(results, total, pages_fetched, stop)
 
 

@@ -67,7 +67,13 @@ class CountingSource:
             "poi": {"categories": [], "total": 0, "in_circle": 0, "points": []},
             "blindspots": [],
             "scores": {"total": 88.0, "triads": [], "radar": [], "note": ""},
-            "caliber": {"scope_policy_version": self.policy_version},
+            # 批 A③：复用门现在比**本次请求的口径三元组**，替身必须把它替的那一面补齐
+            # （真实组装层就是从这里落的，见 `assemble_living_circle` 与 `scope.payload`）。
+            "caliber": {
+                "scope_policy_version": self.policy_version,
+                "travel_mode": params.travel_mode,
+                "sample_profile": params.sample_profile,
+            },
         }
 
 
@@ -240,8 +246,12 @@ def test_u34_travel_mode_is_a_cache_key_dimension():
                          sample_profile=p.sample_profile, travel_mode=tm_b)
         assert CachingDataSource._payload(pa) != CachingDataSource._payload(pb), \
             f"{tm_a}/{tm_b} 不得串同一缓存键"
-    # 端到端：同场景同中心换出行方式 → **精确键不命中**（键含 travel_mode），
-    # 只可能经邻近兜底复用（served_from='nearby_cache' 而非 'cache'）——串键会直接 'cache' 命中。
+    # 端到端：同场景同中心换出行方式 → **精确键不命中**（键含 travel_mode）。
+    # 批 A③ 改的是后半句：邻近兜底现在也过口径比较 ⇒ **riding 的体检不会被一份 walking 报告答掉**。
+    # 改前这里断的是 `served_from == "nearby_cache"`，那条断言的真实目的是"证明精确键没串"，
+    # 而它顺手把跨档复用当成了可接受行为 —— 骑行档的可达区、证据面与步行档不是同一个问题
+    # （`repository.find_recent_report_near` 只按中心点距离取最近一份，键前缀帮不上忙）。
+    # 代价写在计划里：换档后那一次会重跑取证（约 32 次检索），换来的是对得上档位的答案。
     repo = Repository()
     src = CountingSource()
     ds = _ds(repo, src)
@@ -251,9 +261,10 @@ def test_u34_travel_mode_is_a_cache_key_dimension():
     pb = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734),
                      study_radius_m=2500.0, sample_profile="standard", travel_mode="riding")
     hit_b = ds.peek(pb)
-    assert hit_b is not None
-    assert hit_b["served_from"] == "nearby_cache"  # 精确键未命中（travel_mode 是键维度）→ 邻近兜底
-    assert src.calls == 1
+    assert hit_b is None, (
+        "riding 的体检被 walking 的报告答掉了 —— 复用门没比口径（批 A③ 的判据）"
+    )
+    assert src.calls == 1, "本用例只验 peek 的判定，不该顺手重算"
 
 
 # ── v5 U23-U25/U32-U33 · 缓存单一入口 peek / 邻近缓存 / 键一致性（E0/D24/D25）──
@@ -418,3 +429,73 @@ def test_non_live_modes_are_not_version_gated(mode):
     })
     hit = ds.peek(p)
     assert hit is not None and hit["scene"]["name"] == "演示数据"
+
+
+# ── 批 A③ · 复用门要比**本次请求的口径三元组** ──────────────────────
+
+def test_reuse_gate_requires_the_request_caliber_triple():
+    """主判据：邻近命中的三份口径声明逐个与本次请求相等，缺一项都不给复用。
+
+    四条子判据各自精确到失败种类（`reason` 必须点名是哪一项不符，不是"都返回 False"）：
+      ① 同档同参 ⇒ **仍可**复用（邻近兜底是 D9/O1 的设计，门不许做成零复用）；
+      ② 换 travel_mode / 换 sample_profile / 换 study_radius ⇒ 三种各自不可复用；
+      ③ 载荷缺任一项声明 ⇒ 不可复用，理由是「不能猜口径」而不是「值不符」；
+      ④ 调用方没给本次口径 ⇒ fail-closed（live 载荷一律不可复用，不"跳过比较"）。
+    另钉一条形状细节：payload 把半径落成 `int`、请求侧是 `float`，归一后必须算同一个档
+    —— 逐字串比会让「当前编排刚产出的报告」被自己拦下。
+    """
+    from app.living_circle.report_contract import reuse_policy
+
+    base = {
+        "data_origin": "live",
+        "scene": {"name": "凯里老街", "center": [107.9758, 26.5734], "study_radius_m": 2500},
+        "caliber": {"scope_policy_version": SCOPE_POLICY_VERSION,
+                    "travel_mode": "walking", "sample_profile": "standard"},
+    }
+    wanted = {"travel_mode": "walking", "sample_profile": "standard", "study_radius_m": 2500.0}
+    assert reuse_policy(base, wanted) == (True, "")
+    assert reuse_policy(
+        {**base, "scene": dict(base["scene"], study_radius_m=2500.0)}, wanted
+    ) == (True, ""), "半径 2500（落盘形）与 2500.0（请求形）被判成两个档 ⇒ 自家产物拦自家"
+
+    for field, value, label in (("travel_mode", "riding", "出行方式"),
+                                ("sample_profile", "precise", "采样档"),
+                                ("study_radius_m", 5000.0, "研究半径")):
+        ok, why = reuse_policy(base, dict(wanted, **{field: value}))
+        assert not ok, f"{field} 换成 {value} 后仍被判可复用 ⇒ 门没比这一项"
+        assert label in why, f"失败种类没点名：{why!r}（期望含 {label!r}）"
+
+    for spot, key in (("caliber", "travel_mode"), ("caliber", "sample_profile"),
+                      ("scene", "study_radius_m")):
+        stripped = {**base, spot: {k: v for k, v in base[spot].items() if k != key}}
+        ok, why = reuse_policy(stripped, wanted)
+        assert not ok and "不能猜口径" in why, (
+            f"缺 {spot}.{key} 的载荷得到 {why!r} —— 邻近复用把没声明当成了相符"
+        )
+
+    ok, why = reuse_policy(base, None)
+    assert not ok and "未收到本次请求的口径" in why, f"wanted 缺失时门放行了：{why!r}"
+
+
+def test_reuse_gate_does_not_reject_a_fresh_product_of_itself():
+    """不变式：**当前编排刚产出的 live 报告，同参第二次必须命中缓存**（零新增调用）。
+
+    这条是批 A③ 落地时用来否掉原方案的判据。原稿写的是「`unknown/inside` 超阈值 或
+    `evidence_complete=false` ⇒ 不可复用」，而线上唯一那份带 ev-1 的存量报告实测就是
+    `evidence_complete=false`、share=21/99=21.2% —— 那条规则拦的不是旧答案，是**当前编排
+    刚跑出来的那份**，后果是每次体检都被推去重跑取证（`U22/U39` 的"二次命中零新增调用"
+    当场就红，真实配额也重复花）。
+    复用门要回答的是「换我重跑一次，答案会不会不同」，不是「这份结论厚不厚」；
+    证据面薄的账由评分侧外推封顶（`scoring.JUDGE_SHARE_FLOOR`）与 `confidence=limited` 负责。
+    """
+    repo = Repository()
+    src = CountingSource()
+    ds = _ds(repo, src)
+    p = _shanghai()
+    asyncio.run(ds.compute(p))
+    assert src.calls == 1
+    hit = ds.peek(p)
+    assert hit is not None and hit["served_from"] == "cache", (
+        "刚产出的报告第二次同参请求没命中 ⇒ 复用门把自己那一份也拦下了"
+    )
+    assert src.calls == 1, "同参二次不该重跑计算源"

@@ -169,6 +169,10 @@ def test_cache_hit_skips_expansion_zero_baidu_calls():
                 for p in origins
             ]
 
+        async def measure_matrix(self, travel_mode, origins, destination):
+            """公开测时面：`live_forensic_steps`（片 0 后的唯一编排入口）只调这一个。"""
+            return await self._measure_matrix(travel_mode, origins, destination)
+
         async def aclose(self):
             pass
 

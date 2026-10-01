@@ -19,9 +19,15 @@ from pathlib import Path
 import pytest
 
 from app.living_circle import blindspot, data_source, field, isochrone, scoring, scope
-from app.living_circle.caliber import get_caliber
+from app.living_circle.caliber import (
+    DEFAULT_CALIBERS,
+    ReachCaliber,
+    _apply_manifest_caliber,
+    get_caliber,
+)
 from app.living_circle.data_source import CheckParams, OfflineDataSource
 from app.living_circle.geo_utils import haversine_m
+from app.living_circle.poi_collector import POIBudget
 from app.living_circle.isochrone import ISO_MINUTES, MODE_PARAMS, build_sample_points
 from app.living_circle.isochrone import hour_to_minutes
 
@@ -168,13 +174,19 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
     from app.living_circle import caliber_index
 
     rev2_refs = (
-        "scope::EVIDENCE_MARGIN_M", "scope::SCOPE_POLICY_VERSION",
+        "scope::SCOPE_POLICY_VERSION",
         "scoring::BLINDSPOT_PENALTY_PER_EXTRA", "scoring::JUDGE_SHARE_FLOOR",
         "report::cells_inside", "report::cells_judged", "report::cells_unknown",
+        # 第三态（片 1a 补登记）：不放进这份白名单就是「登记了没人验」——
+        # 下面的产出核对是按**末段键名**匹配的，浅到放进嵌套支也照样绿。
+        "report::cells_unjudgeable_by_cap",
         "report::evidence_margin_m", "report::evidence_radius_m",
         "report::evidence_frontier_m", "report::evidence_complete",
         "report::judge_radius_m", "report::scope_policy_version",
         "report::confidence", "report::evidence",
+        # 片 4：取证回合账目。放进这份名单才有意义 —— 名册登记与产出核对是两条腿，
+        # 少前者是"引用不到"，少后者是"登记了个不存在的键"。
+        "report::forensic",
     )
     missing = sorted(set(rev2_refs) - set(caliber_index.all_refs()))
     assert not missing, f"rev2 口径键未登记进 caliber_index：{missing}"
@@ -183,14 +195,22 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
     s = scope.SpatialScope(
         travel_mode="walking", reach_min=20.0,
         reach_ring=((107.97, 26.57), (107.98, 26.57), (107.98, 26.58), (107.97, 26.58)),
-        reach_circumradius_m=1367.2, collect_radius_m=1367.2 + scope.EVIDENCE_MARGIN_M,
+        reach_circumradius_m=1367.2, collect_radius_m=1367.2 + WALK_CALIBER.blind_radius_m,
         study_radius_m=2500.0,
     ).with_evidence(
         {"market": 2367.2, "pharmacy": 1800.0, "primary": 2367.2},
         complete=False, detail={"truncated_terms": ["药店"], "starved_terms": []},
     )
+    # 三态必须闭合：97 = 已判 5 + 无据 90 + 接口封顶 2（这条算式在此不是为了测 payload，
+    # 是为了让上面那份逐键核对拿到**真出过数**的载荷，而不是一个恰好有键的样板）
     payload = s.payload(WALK_CALIBER, {"cells_inside": 97, "cells_judged": 5,
-                                      "cells_unknown": 92, "cells_blind": 2})
+                                      "cells_unknown": 90, "cells_unjudgeable_by_cap": 2,
+                                      "cells_blind": 2},
+                        # 取证账目由**真生产者**造（空记录 = 一次没派的形状），不在测试里手抄
+                        # 一份字段表 —— 手抄的那份只会验"我写的键在我抄的表里"（恒真）。
+                        forensic=data_source.forensic_block(
+                            [], max_rounds=data_source.MAX_FORENSIC_ROUNDS,
+                            pool=POIBudget(total=0)))
     produced_scores = scoring.compute_scores([], [], 0, judged_share=5 / 97, evidence_complete=False)
 
     for ref in rev2_refs:
@@ -201,8 +221,17 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         host = payload if ".caliber." in value else produced_scores
         assert key in host, f"{ref} 指向 {value!r}，但产出对象里没有 {key!r} —— 登记与实现漂移"
 
-    # 证据余量与判定半径必须是**同一把尺**（余量由证据需求导出，不是第二个旋钮）
-    assert caliber_index.view("scope::EVIDENCE_MARGIN_M").value == str(scope.BLIND_RADIUS_M)
+    # 采集留边的举证路径（片 1b 第二段：解绑后它是**导出量**，不再是模块常量）：
+    # 参数侧指回口径对象，产物侧指回 payload 键（上面那份逐键核对已经验过它在 payload 里）。
+    # ⚠️ 这里不许改回 `view("scope::EVIDENCE_MARGIN_M").value == str(...)`：那条钉的是
+    # 「常量值 == walking 快照」，值相等就绿，正是第十二轮复审 P0-3 点名的假闸。
+    assert caliber_index.view("scope::EVIDENCE_MARGIN_M") is None, (
+        "`scope::EVIDENCE_MARGIN_M` 又登记回来了 —— 留边在构造时现算，"
+        "名册里留一个指向 import 期 walking 快照的 ref，就是替一个不该存在的第二住所背书"
+    )
+    assert caliber_index.view("caliber::walking.blind_radius_m") is not None, (
+        "判定半径的住所没有可引用的 ref ⇒ 专家卡与词表闸拿不到唯一事实源"
+    )
 
 
 def _probe_index_with_missing_symbol():
@@ -222,13 +251,13 @@ def _probe_index_with_missing_symbol():
     code = (
         "import json\n"
         "from app.living_circle import caliber_index, scope\n"
-        "REF = 'scope::EVIDENCE_MARGIN_M'\n"
+        "REF = 'scope::SCOPE_POLICY_VERSION'\n"
         "had = caliber_index.view(REF) is not None\n"
         "value_before = getattr(caliber_index.view(REF), 'value', None)\n"
         "n_before = len(caliber_index.all_refs())\n"
         "err = None\n"
         "try:\n"
-        "    del scope.EVIDENCE_MARGIN_M\n"
+        "    del scope.SCOPE_POLICY_VERSION\n"
         "    caliber_index._build_index()\n"
         "except Exception as e:\n"
         "    err = type(e).__name__\n"
@@ -401,3 +430,62 @@ def test_injected_walk_speed_should_take_effect():
     slow = asyncio.run(isochrone.IsochroneEngine(walk_speed=37.5).compute(center, radial(75.0), study_radius_m=2500, mode="quick"))
     fast = asyncio.run(isochrone.IsochroneEngine(walk_speed=150.0).compute(center, radial(75.0), study_radius_m=2500, mode="quick"))
     assert slow["isochrones"][0]["area_km2"] != fast["isochrones"][0]["area_km2"]
+
+
+# ── 生活圈片 1b · 半径的住所搬到口径对象之后的两处静默前置 ──────────────
+
+def test_blind_radius_lives_in_the_caliber_and_survives_manifest_rebuild():
+    """判定半径的**住所**是 `ReachCaliber.blind_radius_m`，且必须活得过 manifest 重建。
+
+    为什么单独钉这条（第十二轮 P0-6 / 第十四轮 P1-1）：`_apply_manifest_caliber` 是
+    **逐字段手抄重建**（那份清单列了 9 个字段名）。漏抄一行不会报错，只会把该字段打回
+    dataclass 默认值 —— 而默认值恰好等于原值 ⇒ "分档"静默失效、全量一字不差。
+    所以判据必须用一个**非 1000** 的值。monkeypatch 走不通（`ReachCaliber` 是 frozen，
+    且 manifest 只在 import 期应用一次），只能手造实例直调那个重建函数。
+    """
+    probe = ReachCaliber(
+        travel_mode="probe", speed_m_per_min=80.0, detour_k=1.3,
+        study_radius_m=2500, blind_radius_m=800.0,
+    )
+    rebuilt = _apply_manifest_caliber(probe, {"chunk": 25})
+    assert rebuilt.blind_radius_m == 800.0, (
+        "manifest 重建把判定半径打回了默认值 ⇒ 新字段没进那份逐字段手抄的清单，"
+        "分档会在没人报错的情况下失效"
+    )
+
+    # 住所只有一处：兼容名必须仍等于 walking 档的登记值（它不许变成第二个数）
+    assert scope.BLIND_RADIUS_M == get_caliber("walking").blind_radius_m
+    assert scope.resolve_blind_radius_m("walking") == get_caliber("walking").blind_radius_m
+    # 今天三档同值是**现状**不是省略：分档属于阶段 3-5 的政策决定（计划 v6.9 ①）
+    assert {m: c.blind_radius_m for m, c in DEFAULT_CALIBERS.items()} == {
+        "walking": 1000.0, "riding": 1000.0, "driving": 1000.0,
+    }
+    # 显式覆盖必须原样用，不许被口径盖掉
+    assert scope.blind_radius_or(800.0, "walking") == 800.0
+
+    # 收紧（批 A①）：回落哪一档必须由调用方**点名**。这两个 helper 的 `travel_mode` 不许
+    # 再带默认值 —— 默认值存在 = 省略实参的调用静默按步行档算（分档日无人报警）；改成必填后，
+    # 漏传在第一次调用就 TypeError，那四个拿不到 mode 的站点（`EvidenceDisc`/`is_cap_bound`/
+    # `BlindnessField`/`LatticeAnchors`）则在代码里显式写着 "walking"，债看得见。
+    for helper in (scope.resolve_blind_radius_m, scope.blind_radius_or):
+        param = inspect.signature(helper).parameters["travel_mode"]
+        assert param.default is inspect.Parameter.empty, (
+            f"{helper.__name__}.travel_mode 又带回默认值了 ⇒ 纯几何值对象的省略路径重新变成"
+            "没人点名的步行档回落"
+        )
+
+
+def test_blind_radius_is_indexed_as_a_caliber_param():
+    """新字段必须**进口径名册**：不登记 ⇒ 专家卡引用不到，prose 里提到就撞词表闸。
+
+    这正是项目记忆里「机制就绪但绑定仅 1/48」那一坑（阶段 4）⇒ 登记与取值、label 一起核。
+    """
+    from app.living_circle import caliber_index
+
+    ref = "caliber::walking.blind_radius_m"
+    assert ref in caliber_index.all_refs(), f"{ref} 未登记 ⇒ 名册缺一支"
+    view = caliber_index.view(ref)
+    assert view.value == "1000.0", view.value
+    assert view.label == "盲区判定半径", (
+        f"label 兜底成了裸英文名（{view.label}）⇒ 上屏会露一个没人认识的键（第十四轮 P2）"
+    )

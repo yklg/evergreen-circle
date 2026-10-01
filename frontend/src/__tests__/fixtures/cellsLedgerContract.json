@@ -1,0 +1,159 @@
+{
+  "_meta": {
+    "purpose": "逐格台账（`caliber.cells_ledger`，契约 B13）的**两侧同钉**契约夹具。范式同 `compareDiffContract.json` / `poiMetricLabel`：这份 JSON 是写侧与读侧共用的唯一契约文本，后端 `tests/test_cells_ledger_contract.py` 与前端 `src/lib/__tests__/cellsLedgerContract.test.ts` 各钉一次。",
+    "producer": "字母表、键名、格型与 schema 版本由后端 `app/living_circle/blindspot.py` 的 `LEDGER_*` 常量与 `render_cells_ledger()` 决定；`sample` 是**手工构造**的 3×3 最小样本（不是某次真实判定的产物），用来把九种格态各摆一遍。",
+    "why_manual": "真实台账一份是 15×15×10 张矩阵（约 5 KB），塞进契约夹具会把「字母表与键名」这件事埋没在数据里。3×3 够表达全部五档结论与第三态，且 `cellAt` 的格阵换算有活入口。"
+  },
+  "letters": {
+    "yes": "1",
+    "no": "0",
+    "unknown": ".",
+    "no_distance": "-"
+  },
+  "grid": "square",
+  "schema_version": 1,
+  "keys": [
+    "blind",
+    "capped",
+    "center",
+    "grid",
+    "inside",
+    "judge.market",
+    "judge.pharmacy",
+    "judge.primary",
+    "n",
+    "nearest.market",
+    "nearest.pharmacy",
+    "nearest.primary",
+    "present.market",
+    "present.pharmacy",
+    "present.primary",
+    "radius_m",
+    "scan_m",
+    "schema_version",
+    "step_m",
+    "verdict"
+  ],
+  "matrix_keys": [
+    "inside",
+    "capped",
+    "blind",
+    "verdict",
+    "judge.market",
+    "judge.pharmacy",
+    "judge.primary",
+    "present.market",
+    "present.pharmacy",
+    "present.primary"
+  ],
+  "distance_keys": [
+    "nearest.market",
+    "nearest.pharmacy",
+    "nearest.primary"
+  ],
+  "verdict_words": {
+    "outside": "可达区外 · 不判",
+    "blind": "判盲",
+    "clear": "确认不盲",
+    "unknown": "未定（有类没查全）",
+    "capped": "判不动（接口封顶）"
+  },
+  "sample": {
+    "grid": "square",
+    "schema_version": 1,
+    "n": 3,
+    "step_m": 200.0,
+    "scan_m": 200.0,
+    "radius_m": 1000,
+    "center": [107.9758, 26.5734],
+    "inside": ["010", "111", "010"],
+    "capped": ["000", "001", "000"],
+    "blind": ["000", "010", "000"],
+    "verdict": ["010", "010", "010"],
+    "judge.market": ["010", "111", "010"],
+    "judge.pharmacy": ["010", "111", "010"],
+    "judge.primary": ["010", "010", "010"],
+    "present.market": [".1.", "101", ".1."],
+    "present.pharmacy": [".1.", "111", ".1."],
+    "present.primary": [".1.", ".1.", ".1."],
+    "nearest.market": ["- 320 -", "410 1180 260", "- 300 -"],
+    "nearest.pharmacy": ["- 240 -", "180 350 210", "- 260 -"],
+    "nearest.primary": ["- 150 -", "- 420 -", "- 190 -"]
+  },
+  "expected_cells": [
+    {
+      "i": 0, "j": 0, "verdict": "outside",
+      "classes": [
+        {"key": "market", "evidence": false, "hit": null, "nearestM": null},
+        {"key": "pharmacy", "evidence": false, "hit": null, "nearestM": null},
+        {"key": "primary", "evidence": false, "hit": null, "nearestM": null}
+      ]
+    },
+    {
+      "i": 0, "j": 1, "verdict": "clear",
+      "classes": [
+        {"key": "market", "evidence": true, "hit": true, "nearestM": 320},
+        {"key": "pharmacy", "evidence": true, "hit": true, "nearestM": 240},
+        {"key": "primary", "evidence": true, "hit": true, "nearestM": 150}
+      ]
+    },
+    {
+      "i": 1, "j": 0, "verdict": "unknown",
+      "classes": [
+        {"key": "market", "evidence": true, "hit": true, "nearestM": 410},
+        {"key": "pharmacy", "evidence": true, "hit": true, "nearestM": 180},
+        {"key": "primary", "evidence": false, "hit": null, "nearestM": null}
+      ]
+    },
+    {
+      "i": 1, "j": 1, "verdict": "blind",
+      "classes": [
+        {"key": "market", "evidence": true, "hit": false, "nearestM": 1180},
+        {"key": "pharmacy", "evidence": true, "hit": true, "nearestM": 350},
+        {"key": "primary", "evidence": true, "hit": true, "nearestM": 420}
+      ]
+    },
+    {
+      "i": 1, "j": 2, "verdict": "capped",
+      "classes": [
+        {"key": "market", "evidence": true, "hit": true, "nearestM": 260},
+        {"key": "pharmacy", "evidence": true, "hit": true, "nearestM": 210},
+        {"key": "primary", "evidence": false, "hit": null, "nearestM": null}
+      ]
+    },
+    {
+      "i": 2, "j": 0, "verdict": "outside",
+      "classes": [
+        {"key": "market", "evidence": false, "hit": null, "nearestM": null},
+        {"key": "pharmacy", "evidence": false, "hit": null, "nearestM": null},
+        {"key": "primary", "evidence": false, "hit": null, "nearestM": null}
+      ]
+    },
+    {
+      "i": 2, "j": 1, "verdict": "clear",
+      "classes": [
+        {"key": "market", "evidence": true, "hit": true, "nearestM": 300},
+        {"key": "pharmacy", "evidence": true, "hit": true, "nearestM": 260},
+        {"key": "primary", "evidence": true, "hit": true, "nearestM": 190}
+      ]
+    },
+    {
+      "i": 2, "j": 2, "verdict": "outside",
+      "classes": [
+        {"key": "market", "evidence": false, "hit": null, "nearestM": null},
+        {"key": "pharmacy", "evidence": false, "hit": null, "nearestM": null},
+        {"key": "primary", "evidence": false, "hit": null, "nearestM": null}
+      ]
+    }
+  ],
+  "cell_at": {
+    "_note": "`cellAt` 的格阵换算钉在这里：格心轴 = linspace(-scan_m, scan_m, n)，行 i 沿 y（北为正）、列 j 沿 x（东为正）。局部米坐标 (x, y) 由 `lcMeters(center, lng, lat)` 给出，与后端 `geo_utils.to_local_xy` 同式（等距圆柱近似，M_PER_DEG_LAT=111320）。",
+    "cases": [
+      {"lnglat": [107.9758, 26.5734], "cell": [1, 1]},
+      {"lnglat": [107.9758, 26.5752], "cell": [2, 1]},
+      {"lnglat": [107.97761, 26.5734], "cell": [1, 2]},
+      {"lnglat": [107.9740, 26.5734], "cell": [1, 0]},
+      {"lnglat": [107.9758, 26.5800], "cell": null}
+    ]
+  }
+}

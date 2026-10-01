@@ -87,7 +87,7 @@ def _populate_index() -> None:
         ns = f"caliber::{mode}"
         # 基础字段
         for fname in ("speed_m_per_min", "detour_k", "study_radius_m",
-                       "iso_minutes", "reach_full_min", "basis"):
+                       "iso_minutes", "reach_full_min", "blind_radius_m", "basis"):
             val = _require_attr(c, fname, f"{ns}.{fname}")
             label = _caliber_field_label(fname)
             _INDEX[f"{ns}.{fname}"] = CaliberView(
@@ -168,7 +168,10 @@ def _populate_index() -> None:
         )
 
     # 4. blindspot :: 常量
-    for cname in ("BLIND_RADIUS_M", "BLIND_GRID_M", "SEV_HEAVY", "SEV_MEDIUM"):
+    for cname in ("BLIND_RADIUS_M", "BLIND_GRID_M", "SEV_HEAVY", "SEV_MEDIUM",
+                  # 逐格台账的表示法三枚：不登记 ⇒ 专家卡一引用就被词表闸判成虚构指标
+                  # （阶段 4 的老坑）。`LEDGER_UNKNOWN` 是第三态那个记号本身，值得单独可引。
+                  "LEDGER_SCHEMA_VERSION", "LEDGER_GRID", "LEDGER_UNKNOWN"):
         _INDEX[f"blindspot::{cname}"] = CaliberView(
             ref=f"blindspot::{cname}", kind="param", module="blindspot",
             label=_blindspot_label(cname),
@@ -219,14 +222,19 @@ def _populate_index() -> None:
         label="总采样点数", value="living_circle.sample_count",
     )
 
-    # 7. scope :: 判盲口径的版本与证据余量（rev2 单一事实源）
+    # 7. scope :: 判盲口径的版本号（rev2 单一事实源）
     #    不登记就无法被专家卡引用，而 prose 一旦提到就会被词表闸判成「编造指标」。
     #    `BLIND_RADIUS_M` 已在 `blindspot::` 下登记（同一个定义，两个 ref 只会让名册重复），
-    #    这里只补 rev2 新增的两把常量。
+    #    这里只补 rev2 新增的那一把常量。
+    #    ⚠️ 曾登记过的 `scope::EVIDENCE_MARGIN_M`（采集证据余量）**已撤**：余量不再是一个
+    #    模块常量，而是「外接圆 + 本次判定半径」的导出量（片 1b 第二段）。可举证路径现在是：
+    #    参数侧 `caliber::{mode}.blind_radius_m`（住所），产物侧 `report::evidence_margin_m`
+    #    （payload 里那个数）。⚠️ 产物还有第二把键 `collect_margin_m`（前端恒等式读它），
+    #    名册里**没有**它的 ref —— 这是改动前就存在的不对称，不是本轮造成的；补登记会新增
+    #    一条可被 prose 引用的 ref，归批次二与 B10 读侧一起判（第十六轮复审 P2-4）。
     from app.living_circle import scope as _scope
 
     for sname, slabel in (
-        ("EVIDENCE_MARGIN_M", "采集证据余量"),
         ("SCOPE_POLICY_VERSION", "判盲口径版本"),
     ):
         _INDEX[f"scope::{sname}"] = CaliberView(
@@ -243,11 +251,23 @@ def _populate_index() -> None:
         ("cells_inside", "可达区内判定格数", "living_circle.caliber.cells_inside"),
         ("cells_judged", "已判定格数", "living_circle.caliber.cells_judged"),
         ("cells_unknown", "证据不足未判格数", "living_circle.caliber.cells_unknown"),
+        # 第三态：判不动且归因于**服务端封顶**的格（`cells_inside = judged + unknown + 这一格`）。
+        # 此前是「载荷里有、名册里无」—— 专家口径引用不到它，而报告每天都在发射它（阶段 3-f 的
+        # 产物）。登记它不等于修好读侧：`report_contract` 的 B10/B11 仍按 `inside` 算分母，
+        # 那条账记在批次二（`test_degrade_chain.py:930/:954` 那对 xfail 是它的台账）。
+        ("cells_unjudgeable_by_cap", "接口封顶判不动格数", "living_circle.caliber.cells_unjudgeable_by_cap"),
         ("evidence_margin_m", "证据余量声明", "living_circle.caliber.evidence_margin_m"),
         ("evidence_radius_m", "实测证据边界半径", "living_circle.caliber.evidence_radius_m"),
         ("evidence_frontier_m", "逐类实测证据边界", "living_circle.caliber.evidence_frontier_m"),
         ("evidence_complete", "证据完整性", "living_circle.caliber.evidence_complete"),
         ("judge_radius_m", "可判定半径", "living_circle.caliber.judge_radius_m"),
+        # 片 4：取证回合的账目（跑了几轮、打了几个锚点、为什么收手）。它是**嵌套对象**，
+        # 而下面那条"ref 指向的键必须真在产出对象里"的核对只看顶层末段键名 ⇒ 登记的必须是
+        # `forensic` 这个块本身，不是 `forensic.rounds` 之类（浅一层就恒绿，测不到东西）。
+        ("forensic", "取证回合账目", "living_circle.caliber.forensic"),
+        # 逐格台账（契约 B13）。同 `forensic` 的理由：它是**嵌套对象**，登记的必须是块本身
+        # —— 浅一层到 `cells_ledger.n` 会让"ref 指向的键真在产出对象里"那条核对恒绿。
+        ("cells_ledger", "逐格判定台账", "living_circle.caliber.cells_ledger"),
         ("scope_policy_version", "判盲口径版本声明", "living_circle.caliber.scope_policy_version"),
         ("confidence", "评分置信度", "living_circle.scores.confidence"),
         ("evidence", "盲区扣分证据链", "living_circle.scores.evidence"),
@@ -345,6 +365,7 @@ def _caliber_field_label(fname: str) -> str:
         "study_radius_m": "研究半径",
         "iso_minutes": "等时圈档位",
         "reach_full_min": "最大可达时间",
+        "blind_radius_m": "盲区判定半径",
         "basis": "政策依据",
     }
     return labels.get(fname, fname)
@@ -386,6 +407,9 @@ def _blindspot_label(cname: str) -> str:
         "BLIND_GRID_M": "盲区网格间距",
         "SEV_HEAVY": "重度阈值",
         "SEV_MEDIUM": "中度阈值",
+        "LEDGER_SCHEMA_VERSION": "逐格台账表示法版本",
+        "LEDGER_GRID": "逐格台账格型",
+        "LEDGER_UNKNOWN": "逐格台账第三态记号",
     }
     return labels.get(cname, cname)
 

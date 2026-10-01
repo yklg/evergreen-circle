@@ -7,7 +7,13 @@ import time
 import httpx
 import pytest
 
-from app.living_circle.baidu_client import BaiduClient, STOP_COMPLETE
+from app.living_circle.baidu_client import (
+    PLACE_PAGE_SIZE_MAX,
+    STOP_COMPLETE,
+    STOP_PAGE_CAP,
+    STOP_SERVER_CAP,
+    BaiduClient,
+)
 from app.living_circle.caliber import get_caliber
 from app.living_circle.data_source import LiveDataSource
 from app.living_circle.request_guard import (
@@ -114,6 +120,87 @@ def test_place_search_normalizes_results():
     assert len(items) == 2
     assert items[0]["name"] == "凯里老街菜市场"
     assert items[0]["lng"] == pytest.approx(107.9760)
+
+
+# ── 接口自有上限：「百度不给」与「我们没翻」必须分名（计划 v4 阶段 3-f）────
+# 「短页/空页 = 半径内已查全」这条判据的隐含前提是服务端肯把货给完。它自称 total=200
+# 却从第 2 页起一条不给时，按 complete 收口就是把「只拿到 20/200」洗成「2500m 内查全」
+# ⇒ 判盲会在那一圈里判出**假盲区**。这是本轮采集侧最要命的一种撒谎。
+
+def _place_rows(n: int, start: int = 0):
+    return [
+        {
+            "name": f"药店{start + k}",
+            "location": {"lng": 107.97 + 0.0001 * (start + k), "lat": 26.57},
+            "address": "",
+        }
+        for k in range(n)
+    ]
+
+
+def _paged_client(pages):
+    """按 `page_num` 分派响应的桩：`pages[页号] = 该页 payload`，缺页按 404 处理。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        qp = dict(httpx.QueryParams(request.url.query))
+        payload = pages.get(int(qp.get("page_num", "0")))
+        if payload is None:
+            return httpx.Response(200, json={"status": 404, "message": "no-mock"})
+        return httpx.Response(200, json=payload)
+
+    return BaiduClient(ak="test-ak", transport=httpx.MockTransport(handler))
+
+
+def test_place_search_server_cap_is_not_completeness():
+    """百度满一页后自行断货、却自称 total 远大于已给 ⇒ 封顶，**不得**记成查全。"""
+    c = _paged_client({
+        0: {"status": 0, "total": 200, "results": _place_rows(20)},
+        1: {"status": 0, "total": 200, "results": []},
+    })
+    out = asyncio_run(c.place_search("药店", (107.9758, 26.5734), radius_m=2500, max_pages=3))
+
+    assert out.stop_reason == STOP_SERVER_CAP
+    assert out.evidence_complete is False, "服务端自称还有货 ⇒ 请求半径不是证据边界"
+    assert out.cap_hit is True and out.truncated is True
+
+
+def test_place_search_first_page_empty_with_nonzero_total_is_cap_not_absence():
+    """首页就 0 条但 total 自称 45 ⇒ 是接口没给货，不是「这一圈真的没有」。
+
+    落成 `STOP_EMPTY` 会被判盲直接当「没有」用 —— 全称否定最需要穷尽性证据，
+    而这条恰恰给不出。
+    """
+    c = _paged_client({0: {"status": 0, "total": 45, "results": []}})
+    out = asyncio_run(c.place_search("药店", (107.9758, 26.5734), radius_m=2500))
+    assert out.stop_reason == STOP_SERVER_CAP and out.cap_hit is True
+
+
+def test_place_search_total_drift_does_not_overturn_completeness():
+    """探针实测 `total` 会在同一次翻检里漂移（60→63→60）⇒ 不足一整页的差额不许改判。
+
+    阈值取 `PLACE_PAGE_SIZE_MAX` 的唯一理由就是这条噪声：按 `>0` 判，有据率会跟着
+    接口抖动涨落 —— 把承重判据绑在一个会漂的数上，比不判更糟。
+    """
+    c = _paged_client({
+        0: {"status": 0, "total": 60, "results": _place_rows(20)},
+        1: {"status": 0, "total": 60, "results": _place_rows(20, start=20)},
+        2: {"status": 0, "total": 60, "results": _place_rows(20, start=40)[:3]},
+    })
+    out = asyncio_run(c.place_search("药店", (107.9758, 26.5734), radius_m=2500, max_pages=3))
+    assert out.stop_reason == STOP_COMPLETE and out.cap_hit is False
+    assert 60 - len(out.items) < PLACE_PAGE_SIZE_MAX     # 差额不足一页 ⇒ 判据前提成立
+
+
+def test_page_cap_is_ours_not_the_interfaces():
+    """页深跑满（我们的闸）算截断但**不算**封顶：那是「我们没接着翻」，该记 unknown。
+
+    分名混一次的代价是双向的 —— 把 `page_cap` 标成封顶，等于把自己的失职推给百度，
+    并按计划 D1③ 免掉一次本该发生的取证加码。
+    """
+    c = _paged_client({0: {"status": 0, "total": 200, "results": _place_rows(20)}})
+    out = asyncio_run(c.place_search("药店", (107.9758, 26.5734), radius_m=2500, max_pages=1))
+    assert out.stop_reason == STOP_PAGE_CAP
+    assert out.truncated is True and out.cap_hit is False
 
 
 def test_route_matrix_chunks_and_parses():
@@ -376,7 +463,7 @@ def test_u16_default_guard_wired_to_hard_ceiling():
     from app.living_circle.quota import total_calls_hard_ceiling
 
     guard = _default_guard()
-    assert guard.max_total_calls == total_calls_hard_ceiling()  # 免费档 45，非 0
+    assert guard.max_total_calls == total_calls_hard_ceiling()  # 免费档 79（42+34+3），非 0
     assert guard.max_total_calls > 0
 
 

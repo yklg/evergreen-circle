@@ -249,6 +249,28 @@ def sample_plan(
     )
 
 
+def matrix_demand_points(
+    sample_profile: str,
+    travel_mode: str,
+    center: LngLat = (0.0, 0.0),
+) -> int:
+    """某档采样规格**需要**多少个点 —— 预算反向导出（计划 v4 D5）的取数口。
+
+    刻意走 `_two_stage_points` 真造一遍再数，而不是另写一条闭式公式：点数由
+    「奇数对称粗网格 ∩ 圆 + 极坐标环带 + 5 位坐标去重」共同决定，任何近似式都是
+    同一口径的第二份实现（本仓最贵的那类债）。代价是数百点的构建，换来的是
+    「预算算的点数」与「实际发的点数」**必然**一致。
+
+    `center` 只影响去重键的浮点舍入（±1 点量级），默认 (0,0) 已够预算用；
+    要逐次精确就把真实中心传进来。
+    """
+    params = get_mode_params_for_travel_mode(travel_mode, sample_profile)
+    coarse = float(params["coarse"])
+    fine = params.get("fine")
+    band = get_caliber(travel_mode).fine_band if fine and float(fine) > 0 else None
+    return len(_two_stage_points(center, float(params["study_radius_m"]), coarse, fine, band))
+
+
 def build_sample_points(
     center: LngLat,
     study_radius_m: float = 2500.0,
@@ -362,7 +384,8 @@ class IsochroneEngine:
 
         meter_fn(points) -> 步行耗时(分钟)列表（None=不可达）；由调用方注入
         （live=百度 route_matrix 批量；fixture 测试=合成场）。
-        ``max_points``（v5 B2）：预算感知采样上限（免费档 375）；None/≤0 保持双阶段。
+        ``max_points``（v5 B2 / D5）：预算感知采样上限，由 `quota.max_matrix_origins(档位, 出行方式)`
+        反向导出（免费档 standard：步行 1100 / 驾车 375）；None/≤0 保持双阶段。
         ``travel_mode``：边界加密环带**归属哪一档口径**。必须显式传 —— 环带
         `(max(最内圈半径,400), 研究半径)` 是逐档派生的（步行 2500 / 骑行 5000 / 驾车 9000），
         而本函数只收到已解析好的 `study_radius_m`，无从推断，过去因此一路硬回落到步行

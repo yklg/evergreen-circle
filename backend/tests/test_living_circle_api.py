@@ -392,14 +392,14 @@ def test_caliber_gap_blocks_only_the_verdict_rows():
     assert rows["综合评分"]["desc"] != _DIFF_DESC_CALIBER_GAP, (
         "两侧同版本（均未声明）应视为可比 —— 否则存量报告两两对比全部失明")
     a["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION
-    b["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION   # 双双升到 ev-1
+    b["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION   # 双双升到当前版本
     rows = by_metric(_lc_diff(a, b))
     assert rows["综合评分"]["desc"] != _DIFF_DESC_CALIBER_GAP, (
         "两侧都声明了同一版本 ⇒ 可比；若这里红成『不可比』，说明守卫把『声明过版本』"
         "当成了『版本不同』（存量报告两两对比会全部失明，只是换了个触发路径）")
 
     # ② 版本错配 ⇒ 两行结论被拦，其余四行照常判胜负。两种错配形态都要过：
-    #    『一侧升到 ev-1、另一侧仍是旧口径』与『一侧根本没声明』（存量 26 次体检的真实形态）
+    #    『一侧升到当前版本、另一侧仍是旧口径』与『一侧根本没声明』（存量 26 次体检的真实形态）
     for legacy_b in ("ev-0-legacy", None):
         a, b = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
         a["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION

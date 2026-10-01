@@ -2,8 +2,9 @@
 
 职责边界（架构分治，rev3 §二）：
   - **策略层**：怎么花预算、怎么扩词（plan_initial / ExpansionCtx / collect_poi）。
-  - **不含预算定义**：只消费 `quota` 产出的**分配快照**（`POIBudget` 从 `quota.quota_budget()`
-    实例化，不定义 total/poi 公式）。
+  - **不含预算定义**：只消费 `quota` 产出的**分配快照**（`POIBudget` 由调用方
+    按 `quota.quota_budget(sample_profile, travel_mode)` 实例化后传入；本模块既不定义
+    total/poi 公式，也不猜采样规格 —— 规格只住在调用方手里）。
   - **不含 HTTP**：真实调用委托 `client.place_search`（外部注入，可经 MockTransport/stub 替换）。
   - 排序统一收敛到 `poi.to_points`（rev3 P1-2）：本模块**不设独立 rerank**。
 """
@@ -21,11 +22,20 @@ from app.living_circle.baidu_client import (
     STOP_EMPTY,
     STOP_NOT_RUN,
     STOP_PAGE_CAP,
+    STOP_SERVER_CAP,
+    is_exhausted,
+    is_server_cap,
 )
 from app.living_circle.caliber import facility_merge_enabled
 from app.living_circle.category_rule import CATEGORY_RULES, TRIAD_RULES
-from app.living_circle.quota import quota_budget
-from app.living_circle.scope import TRIAD_KEYS
+from app.living_circle.anchors import anchor_key
+from app.living_circle.scope import TRIAD_KEYS, EvidenceDisc
+
+# ⚠️ 上面这几个 `STOP_*` 里，`STOP_COMPLETE/EMPTY/DUP_STOP/NOT_RUN` 在本模块已**无代码引用**
+# （完整性与封顶的判定收进了 `baidu_client.is_exhausted/is_server_cap`），留着是因为测试把它们
+# 当采集层门面在用（`pc.STOP_EMPTY`）。测试文件自己的注释主张「按契约该从 baidu_client 取」——
+# 那句话是对的，收口时把这几处测试的引用一并改指过去，然后删掉这里的再导出；不在本轮顺手改，
+# 是为了不让「删无用 import」和「8 处测试改引用」混进同一个改动里。
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +74,15 @@ class TermEvidence:
     @property
     def complete(self) -> bool:
         """半径内是否已查全（`api_error` / `not_run` 落 False：一无所知 ≠ 没有）。"""
-        return self.stop_reason in (STOP_COMPLETE, STOP_EMPTY)
+        return is_exhausted(self.stop_reason)
+
+    @property
+    def cap_hit(self) -> bool:
+        """被**接口自有上限**卡住（≠ 我们没翻）：第三态 `unjudgeable_by_cap` 的唯一原料。
+
+        同样做成 `stop_reason` 的派生量，不留第二个可独立填写的字段。
+        """
+        return is_server_cap(self.stop_reason)
 
     @property
     def frontier_m(self) -> float:
@@ -72,6 +90,22 @@ class TermEvidence:
         if self.complete:
             return float(self.requested_radius_m)
         return float(self.farthest_m or 0.0)
+
+    def as_disc(self, anchor: Tuple[float, float]) -> "EvidenceDisc":
+        """把这一行的事实变成**证据圆盘**（T-P0-4：全项目唯一转换器）。
+
+        为什么必须是唯一一处：转换里有三个容易各抄各的判断 —— 穷尽深度取 `frontier_m`
+        （不是 farthest、也不是 requested）、锚点由调用方给（一行本身不带坐标）、
+        完整性/封顶由 `stop_reason` 派生。第 0 步脚本原本自带一份等价构造，那份就是
+        这里要收掉的第二实现。
+        """
+        return EvidenceDisc(
+            category=self.category,
+            anchor=(float(anchor[0]), float(anchor[1])),
+            request_radius_m=float(self.requested_radius_m),
+            exhausted_radius_m=float(self.frontier_m),
+            stop_reason=self.stop_reason,
+        )
 
     def as_row(self) -> Dict[str, Any]:
         return {
@@ -84,6 +118,7 @@ class TermEvidence:
             "stop_reason": self.stop_reason,
             "farthest_m": self.farthest_m,
             "frontier_m": round(self.frontier_m, 1),
+            "cap_hit": self.cap_hit,
         }
 
 
@@ -95,6 +130,11 @@ class CollectionEvidence:
     per_term: Tuple[TermEvidence, ...] = ()
     starved_terms: Tuple[Tuple[str, str], ...] = ()   # (category, term)：预算拒绝 ⇒ 0 次调用
     aborted: bool = False                             # 熔断 / 日预算耗尽
+    # 逐锚点**证据盘**（计划 v5.8 回合函数的产物）。默认 `()` = 首轮采集的形状，此时判盲仍走
+    # 标量视图（与今天逐字相同）；回合函数填它，调用方才能把「A ∪ 本轮」合成一个 region。
+    # 盘只由 `TermEvidence.as_disc(anchor)` 这一个转换器产出 —— 这里不留第二个构造点，
+    # 也不叫 `anchors`：锚点是「打哪儿」，盘是「证到哪儿」，后者才是判盲要吃的东西。
+    discs: Tuple[EvidenceDisc, ...] = ()
 
     def frontier_m(self, category: str) -> float:
         """类别的证据边界 = 其各词边界的**最小值**（保守合取）。
@@ -110,6 +150,42 @@ class CollectionEvidence:
     def triad_frontier_m(self, keys: Sequence[str]) -> Dict[str, float]:
         return {k: self.frontier_m(k) for k in keys}
 
+    def stop_reason_by_category(self) -> Dict[str, str]:
+        """逐类「为什么停」——取**决定该类边界的那一行**（frontier 最小者）的原因。
+
+        与 `frontier_m` 同源同规则：边界由短板定，原因也该由同一块短板给。若各按各的规则
+        （边界取 min、原因取第一个词），标量视图就会出现「边界是截断词给的、原因却报查全」。
+        该类无任何行 ⇒ 不进表（无事实可报），由 `bound_source_by_category` 归成 `missing`。
+        """
+        binding: Dict[str, TermEvidence] = {}
+        for t in self.per_term:
+            cur = binding.get(t.category)
+            if cur is None or t.frontier_m < cur.frontier_m:
+                binding[t.category] = t
+        return {cat: t.stop_reason for cat, t in binding.items()}
+
+    def bound_source_by_category(self) -> Dict[str, str]:
+        """逐类「边界这个数是从哪儿来的」—— T-P0-4 的映射表（计划 v5.6 三次复审版）。
+
+        映射按**实际数据结构**写，不是按理想枚举写（复审 T-P0-4 那条就打在这里）：
+        - 决定边界的那行 `stop_reason ∈ {complete, empty}` ⇒ `frontier`：数由实测证明；
+        - 那行是 `page_cap`/`dup_stop`/`server_cap` ⇒ 也是 `frontier`，只是**不完整**
+          （数确实是实测到的最远点，缺口由 `evidence_complete` 与 `capped` 分职披露）；
+        - 那行是 `api_error` ⇒ `missing`：一行点位都没有，那个「边界」根本不该被当数用；
+        - **该类无任何行** ⇒ `missing`：一次都没查成。注意 `starved` 的形态是「无行」而不是
+          某一行写着 starved，所以不能靠读 `stop_reason` 找到它。
+        `degenerate`（快照/离线反推）不归这里判 —— 那是「有没有 region」层面的事实，
+        由 `SpatialScope.evidence_bound_source` 说，两个键不复用同词。
+        """
+        reasons = self.stop_reason_by_category()
+        out: Dict[str, str] = {}
+        for t in self.per_term:
+            if t.category in out:
+                continue
+            reason = reasons.get(t.category)
+            out[t.category] = "missing" if reason == STOP_API_ERROR else "frontier"
+        return out
+
     @property
     def truncated_terms(self) -> Tuple[str, ...]:
         """发了请求但**没查全**的词（被单页上限截断 / 收益止损提前收页）。
@@ -118,6 +194,23 @@ class CollectionEvidence:
         「截断」就会被稀释成噪声 —— 与 `poi.truncated`（展示上限）不复用同词同理。
         """
         return tuple(f"{t.category}:{t.term}" for t in self.per_term if not t.complete)
+
+    @property
+    def capped_terms(self) -> Tuple[str, ...]:
+        """被**接口能力上限**卡住的词（`place_search` 回传 `cap_hit`）。
+
+        取「任一词触顶即算该类触顶」：一个词查不全，整个类别的召回就永远差一截 ——
+        这是全称结论（「这一圈没有」）的合取前提被破坏，与 `frontier_m` 取 min 同理。
+        """
+        return tuple(f"{t.category}:{t.term}" for t in self.per_term if t.cap_hit)
+
+    @property
+    def capped_categories(self) -> Tuple[str, ...]:
+        seen: Dict[str, None] = {}
+        for t in self.per_term:
+            if t.cap_hit:
+                seen.setdefault(t.category, None)
+        return tuple(seen)
 
     @property
     def complete(self) -> bool:
@@ -135,6 +228,7 @@ class CollectionEvidence:
             "requested_radius_m": round(float(self.requested_radius_m), 1),
             "terms": [t.as_row() for t in self.per_term],
             "starved_terms": [f"{c}:{t}" for c, t in self.starved_terms],
+            "capped_terms": list(self.capped_terms),
             "aborted": self.aborted,
         }
 
@@ -176,14 +270,53 @@ def _farthest_m(center: Tuple[float, float], items: Sequence[Dict[str, Any]]) ->
     return None if best is None else round(best, 1)
 
 
+def _items_of(out: Any) -> List[Dict[str, Any]]:
+    """`place_search` 返回值里的点位（鸭子类型兼容旧 stub：非 `PlaceSearchOut` 时按列表读）。"""
+    return list(getattr(out, "items", out) or [])
+
+
+def _evidence_row(category: str, term: str, req_radius: float, out: Any,
+                  center: Tuple[float, float]) -> TermEvidence:
+    """一次**成功返回**的检索 → 举证行（唯一构造点，`collect_poi` 与取证回合共用）。
+
+    拿不到 `stop_reason` 时按**截断**处理而不是按查全：判「没有」需要穷尽性证据，
+    而一条来路不明的返回恰恰给不出它（当成查全会把「没查到」洗成「没有」）。
+    """
+    items = _items_of(out)
+    return TermEvidence(
+        category=category, term=term, requested_radius_m=float(req_radius),
+        pages_fetched=int(getattr(out, "pages_fetched", 1) or 0), returned=len(items),
+        total=getattr(out, "total", None),
+        stop_reason=str(getattr(out, "stop_reason", STOP_PAGE_CAP) or STOP_PAGE_CAP),
+        farthest_m=_farthest_m(center, items),
+    )
+
+
+def _api_error_row(category: str, term: str, req_radius: float) -> TermEvidence:
+    """一次**没发出去/发出去没成**的检索 → `api_error` 举证行（唯一构造点）。
+
+    这条的价值在**留痕**：`complete=False` 且无点位，在报告里它是「这一词我们没查成」，
+    不是「这一圈没有设施」。三条检索通道（A 阶段、三要素、扩词）与取证回合都造这一行，
+    所以它不许在第三处被重抄一遍 —— 抄一遍就会有一处漏掉「不退款」那半条语义。
+    """
+    return TermEvidence(
+        category=category, term=term, requested_radius_m=float(req_radius),
+        pages_fetched=0, returned=0, total=None,
+        stop_reason=STOP_API_ERROR, farthest_m=None,
+    )
+
+
 @dataclass
 class POIBudget:
     """quota 产出的**分配快照**（不含预算定义，rev3 P1-1/P1-3）。
 
     - remaining：剩余可调用次数；`consume(cat)` 预扣后返回是否获批。
-    - `refund(cat)`：调用**失败**回滚预扣（防扩词/翻页空转烧预算）。
     - `quench(cat)`：该类别因边际收益跌破阈值而冻结（不再为该类扩词）。
     - `fork()`：返回独立子快照（如需并发分账），子快照消费不影响父。
+    - ⚠️ `refund(cat)` **自 v5.6 起无生产调用点**：三条检索通道（A 阶段、三要素、扩词）都
+      已统一到「失败不退款 + 记 `api_error` 举证」（`_record_failure`）。理由：请求真发出去
+      了额度就已花掉，退款会让「点位凭空消失」在账面上变成「钱没花」。它还留着只因为它自己的
+      单测在测这个原语；**要不要连同那条用例一起删，属公类 API 取舍，留给评审定**，不在本轮顺手删。
     """
 
     total: int
@@ -353,8 +486,7 @@ async def collect_poi(
     center: Tuple[float, float],
     radius_m: float,
     scope: Any,
-    budget_snapshot: Optional[POIBudget] = None,
-    n_terms: Optional[int] = None,
+    budget_snapshot: POIBudget,
 ) -> PoiCollection:
     """预算感知 S1-S8 采集管线（rev3 §三）—— 返回 :class:`PoiCollection`。
 
@@ -363,14 +495,18 @@ async def collect_poi(
       B. S8 自适应扩词（仅 under-target 类别，吃剩余预算，渐进式停止）；
       C. 扩词后合并去重（不排序——排序由 to_points 单一实现承担）。
 
-    `scope` 透传给 under-target 判定**与逐类检索半径**（`required_radius_m`）；
-    `n_terms` 缺省按类别判表词数全集估算页深。
+    `scope` 透传给 under-target 判定**与逐类检索半径**（`required_radius_m`）。
+
+    `budget_snapshot` **不留默认值**（D5 分区翻转后必须）：取证额度现在是
+    「全局预算 − 矩阵按采样规格算出的需求调用」，规格只住在调用方手里。留一个
+    「自己猜一份预算」的默认，等于让骑行/驾车档拿步行的 chunk 去算矩阵、再把差额全给
+    取证 —— 两端相加越过 42 的精度预算，撞上 45 的熔断闸，把分区算错演成接口故障。
 
     **证据账目**：每个词的 `stop_reason` / 实测边界 / 是否被预算饿死都落进
     `CollectionEvidence`，由装配层绑进 `SpatialScope` 的「事后举证」相 ——
     判盲的可判定半径从此由**实测边界**决定，而不是由请求半径猜。
     """
-    budget = budget_snapshot or POIBudget(total=_poi_budget(n_terms))
+    budget = budget_snapshot
     per_category: Dict[str, list] = {}
     ctx = ExpansionCtx(used_terms=set())
     evidence: List[TermEvidence] = []
@@ -379,24 +515,26 @@ async def collect_poi(
     def _record(category: str, term: str, req_radius: float, out: Any) -> List[Dict[str, Any]]:
         """把一次 `place_search` 的结果转成 (点位, 举证)。`out` 为 None 视为调用失败。
 
-        拿不到 `stop_reason`（非 :class:`PlaceSearchOut` 的鸭子类型返回）时按
-        **截断**处理而非按查全处理 —— 保守方向唯一正确：判「没有」需要穷尽性证据，
-        而一条来路不明的返回恰恰给不出它。当成查全会把「没查到」洗成「没有」。
+        举证行的构造只住在 `_evidence_row`（取证回合函数共用同一处），这里只留两件事：
+        「None ⇒ 一无所知、不得当作『没有』」这层守卫，以及把点位交回调用方。
         """
         if out is None:      # 旧 stub / 客户端返回 None ⇒ 一无所知，不得当作「没有」
             return []
-        items = list(getattr(out, "items", out) or [])
-        evidence.append(TermEvidence(
-            category=category,
-            term=term,
-            requested_radius_m=req_radius,
-            pages_fetched=int(getattr(out, "pages_fetched", 1) or 0),
-            returned=len(items),
-            total=getattr(out, "total", None),
-            stop_reason=str(getattr(out, "stop_reason", STOP_PAGE_CAP) or STOP_PAGE_CAP),
-            farthest_m=_farthest_m(center, items),
-        ))
+        items = _items_of(out)
+        evidence.append(_evidence_row(category, term, req_radius, out, center))
         return items
+
+    def _record_failure(category: str, term: str, req_radius: float) -> None:
+        """一次**没发出去/发出去没成**的检索 → 记 `api_error` 举证，**不退款**。
+
+        唯一实现：A 阶段（`_initial_search`）、三要素循环、扩词循环与取证回合都走这里
+        （计划 v5.6 T-P0-3 / T-P0-3b）；行本身由 `_api_error_row` 造，第三处不再抄一遍。
+        不退款是因为请求真发出去了、额度就已经花掉；退款会让「点位凭空消失」在账面上
+        变成「钱没花」，缺口于是不可见 —— 而调用失败恰恰是最需要被看见的那类缺口。
+        这条举证的意义在于**留痕**：`complete=False` 且无点位，报告里它是「这一词我们
+        没查成」，不是「这一圈没有设施」；后续的 `bound_source` 派生（S-P0-2）正以此为原料。
+        """
+        evidence.append(_api_error_row(category, term, req_radius))
 
     # ── A 阶段：S1 + S2 + S3 初始检索（budget-derived 页深驱动）──
     all_keywords: List[str] = []
@@ -413,15 +551,29 @@ async def collect_poi(
         raw = await client.place_search(kw, center, radius_m=_term_radius(scope, cat, radius_m),
                                         max_pages=pages)
         if raw is None:
-            budget.refund(cat, units=pages)
+            # **不退款**（计划 v4 阶段 3）：见 `_record_failure` 的 docstring —— 该语义现在
+            # 只住在那一处，三要素循环与 A 阶段共用同一个构造，不留第二套。
+            _record_failure(cat, kw, _term_radius(scope, cat, radius_m))
             return None, "failed"
         return raw, "ok"
 
-    a_plan: List[Tuple[str, str, int]] = [
-        (cat, kw, pages_of.get(kw, 1))
-        for cat, defn in CATEGORY_RULES.items()
-        for kw in defn["keywords"]
-    ]
+    # 准入顺序 = **按词序号转置**（阶段 3 的确定性修复）。旧顺序沿 `CATEGORY_RULES` 字典序
+    # 逐类摊开 ⇒ 预算一紧就**整类蒸发**（北京实测：42 总额里 POI 只分到 27、25 词 ⇒ 页深 1、
+    # 三要素只剩 2 单位、S8 扩词进不去，谁饿死完全取决于字典序）。转置后饿死落在
+    # 「每类尾部若干词」—— 每类都还剩证据，缺失不再偏袒字典序靠后的那一类。
+    # ⚠️ 必须 `sorted()`：dict 的插入序会随定义顺序改动而漂移，而「同输入必同准入集」
+    # 是报告可复现的前提（u38b 钉稳定性、u38c 钉落点形状）。
+    cats_sorted = sorted(CATEGORY_RULES)
+    kw_by_cat = {c: list(CATEGORY_RULES[c]["keywords"]) for c in cats_sorted}
+    deepest = max((len(kws) for kws in kw_by_cat.values()), default=0)
+    a_plan: List[Tuple[str, str, int]] = []
+    for idx in range(deepest):
+        for cat in cats_sorted:
+            kws = kw_by_cat[cat]
+            if idx >= len(kws):
+                continue          # 词数不齐：短的那类在这一层没有位置
+            kw = kws[idx]
+            a_plan.append((cat, kw, pages_of.get(kw, 1)))
     # B2 并发（延迟优化）：A 阶段词间无依赖，asyncio.gather 并发发出；预算准入仍是
     # 先到先得（consume 为同步原子操作，事件循环内按任务序确定）→ 准入集合与串行一致
     # （U38 锚定）。三要素检索保持在其后串行 —— 预算顺序与现行为完全一致，防准入漂移。
@@ -478,8 +630,10 @@ async def collect_poi(
     for key, ref in TRIAD_RULES.items():
         if key.startswith("_") or key == "market":
             continue
-        defn = ref if isinstance(ref, dict) else {"keywords": [ref]}
-        kw = (defn.get("keywords") or [""])[0]
+        # 词表解析只住在 `triad_keywords`（第四轮复审 P1-5：这里原本自己抄了一份
+        # `ref if isinstance(ref, dict) else {"keywords": [ref]}`，与回合函数那份是第二实现）
+        kws = triad_keywords(key)
+        kw = kws[0] if kws else ""
         triad_r = _term_radius(scope, key, radius_m)
         if not kw:
             continue
@@ -488,7 +642,12 @@ async def collect_poi(
             continue
         raw = await client.place_search(kw, center, radius_m=triad_r, max_pages=1)
         if raw is None:
-            budget.refund(f"triad-{key}")
+            # T-P0-3（计划 v5.6）：三要素**不再退款、也不再静默跳过**。旧写法是
+            # `budget.refund(...) + continue` —— 于是「药店这一类我们根本没查成」在报告里
+            # 什么都留不下：点位没有、预算账面像没花、连一行 TermEvidence 都没有，
+            # 判盲时那一类的证据缺口无从归因（三要素是盲区 1km 硬判的输入，缺一个类
+            # 就等于整份盲区结论少了依据）。现在与类目路径同语义：不退款 + 记 api_error 行。
+            _record_failure(key, kw, triad_r)
             continue
         items = _record(key, kw, triad_r, raw)
         if items:
@@ -512,7 +671,11 @@ async def collect_poi(
             raw = await client.place_search(term, center, radius_m=_term_radius(scope, cat, radius_m),
                                             max_pages=_EXPANSION_PAGES)
             if raw is None:
-                budget.refund(cat)
+                # T-P0-3b（计划 v5.6）：扩词失败与 A 阶段/三要素**同一语义** —— 不退款、留一行
+                # `api_error`。旧写法 `budget.refund(cat) + break` 有两个洞：账面像没花，且这一类
+                # 的扩词是"中途失败"还是"到量收手"在报告里完全同形，无从归因。
+                # 仍然 `break`（本类不再继续扩词）：失败不代表该停的是**别的类**，那由外层循环各判。
+                _record_failure(cat, term, _term_radius(scope, cat, radius_m))
                 break
             new_items = _record(cat, term, _term_radius(scope, cat, radius_m), raw)
             before = _in_circle_count(per_category.get(cat, []), scope)
@@ -543,6 +706,168 @@ async def collect_poi(
         if ids
     )
     return PoiCollection(merged_cat, triads, ev, merged_out)
+
+
+def triad_keywords(category: str) -> Tuple[str, ...]:
+    """该三要素类要用的**全部**关键词（唯一解析点，计划 v5.8）。
+
+    `TRIAD_RULES["market"]` 是字符串 `"market"` —— 首轮里 market 直接复用类目通道那 3 个词
+    的结果（「省 1 次调用」）。但那个技巧在**新锚点上不成立**：首轮那 3 个词是在分析中心查的，
+    证不了另一个锚点周围 1km 内有没有。所以回合按全词表逐锚点重查，解析只放这一处，
+    别处不再抄一遍 `TRIAD_RULES` 的形状（抄过一次的地方就是下一次漂移的地方）。
+    """
+    ref = TRIAD_RULES.get(category)
+    if isinstance(ref, str):
+        return tuple((CATEGORY_RULES.get(ref) or {}).get("keywords") or ())
+    return tuple((ref or {}).get("keywords") or ())
+
+
+@dataclass(frozen=True)
+class ForensicRound:
+    """一个取证回合的产物 —— **不持循环**（终止阶梯归外循环，计划阶段 5）。
+
+    刻意同时带回 `evidence`（含逐锚点盘）与 `points`：证据域与点位集必须同批交付，
+    调用方才拼得出「A ∪ 本轮」。只交证据会逼调用方去 `per_term` 里反推点位 —— 那是
+    同一事实的第二份取法（`--dry` 实测就撞在这条上：只装本轮的写法把「本轮不扩」
+    显示成了「什么都没查」）。
+    """
+
+    round_no: int
+    evidence: CollectionEvidence
+    points: Dict[str, Tuple[Dict[str, Any], ...]] = field(default_factory=dict)
+    anchors_planned: Dict[str, int] = field(default_factory=dict)
+    anchors_used: Dict[str, int] = field(default_factory=dict)
+    # **实际发出过请求的锚点名单** —— 下一回合 `plan_expansion(already_tried=…)` 的唯一来源。
+    # 第四轮复审 P1-4 打的就是这里：只有计数没有名单时，接线方只能拿「本轮规划到的锚点」去喂
+    # 下一轮，而规划集里含被池子饿死的那些 ⇒ 没打的点被记成「已试」⇒ 扩容静默停止。
+    # 口径按「至少发出过一次请求」计（含失败的请求）：重发同样花钱，而「这一带还没证」
+    # 由 region 的未覆盖格数说，不靠重打同一批锚点说。
+    anchors_attempted: Dict[str, Tuple[Tuple[float, float], ...]] = field(default_factory=dict)
+    # 同回合内被并掉的**重复锚点**数（调用方传重了 ⇒ 只发一次，但重了几个必须是字段）。
+    # 不记这个数，`planned` 与 `used + not_run` 就对不上账，「少打了几次」又会长得像「没这些点」。
+    anchors_merged: Dict[str, int] = field(default_factory=dict)
+
+    @property
+    def anchors_not_run(self) -> Dict[str, int]:
+        """计划要打但没打满词表的锚点数（池子见底时的披露位，P0-3）。
+
+        恒等式 `planned == used + merged + not_run` 由 `collect_triad_evidence` 逐类算完
+        再返回，测试对着它核对分账闭合（与判盲那套三态分账同形）。
+        """
+        return {cat: max(0, self.anchors_planned.get(cat, 0) - self.anchors_used.get(cat, 0)
+                         - self.anchors_merged.get(cat, 0))
+                for cat in self.anchors_planned}
+
+    @property
+    def discs(self) -> Tuple[EvidenceDisc, ...]:
+        """本轮证据盘 = `evidence.discs` 的同一批对象，不留第二份。"""
+        return self.evidence.discs
+
+
+async def collect_triad_evidence(
+    client: Any,
+    scope: Any,
+    anchors: Dict[str, Sequence[Tuple[float, float]]],
+    pool: POIBudget,
+    *,
+    round_no: int = 1,
+) -> ForensicRound:
+    """按需扩容回合：在给定锚点上重查三要素，产出**新盘 + 新点位**（计划阶段 5 / v5.8）。
+
+    四条纪律，各防一件具体的事：
+
+    1. **不猜预算、不挑锚点**：`pool` 必须是调用方按 `quota.forensic_budget()` 实例化的快照
+       （与 `collect_poi.budget_snapshot` 同纪律）；打哪些锚点已由
+       `LatticeAnchors.plan_expansion(region, grid, cat, inside=…)` 决定，本函数一个都不自己
+       挑 —— 再决定一次就是第二实现。
+    2. **每锚点全词**：`triad_keywords(cat)`（market 3 词、pharmacy/primary 各 1 词），
+       沿用生产的关键词口径，不是脚本里 `keywords[0]` 那条捷径。
+    3. **池子拒了的词不产盘**：`not_run` 只是「没打」，把它写成一块半径 0 的盘等于凭空宣布
+       「这里查过且什么都没有」。它只进 `starved_terms` 与 `anchors_not_run` 两个披露位。
+       `anchors_used` 只数**词表全部发出去**的锚点 ⇒ 打了一半的锚点算 `not_run`（保守方向：
+       宁可少认一个锚点，也不把「只查了一个词」报成「这个点查干净了」）。
+    4. **调用失败不退款 + 记 `api_error`**：与三条既有检索通道同一语义，行由
+       `_api_error_row` 造。
+
+    取证通道**一律走 `geometric` 去重**（不跟随类目通道的设施归并）：盲区是「1km 内有没有」
+    的硬判，宁多勿少，归并少掉一个坐标就等于少判一处（`_dedupe` 那条「隔离墙」注释）。
+    """
+    rows: List[TermEvidence] = []
+    discs: List[EvidenceDisc] = []
+    raw_by_cat: Dict[str, List[Dict[str, Any]]] = {}
+    planned: Dict[str, int] = {}
+    used: Dict[str, int] = {}
+    merged: Dict[str, int] = {}
+    attempted: Dict[str, List[Tuple[float, float]]] = {}
+    starved: List[Tuple[str, str]] = []
+
+    for category in TRIAD_KEYS:
+        terms = triad_keywords(category)
+        raw_anchors = tuple(anchors.get(category) or ())
+        planned[category] = len(raw_anchors)
+        used[category] = 0
+        merged[category] = 0
+        attempted[category] = []
+        if not raw_anchors or not terms:
+            continue
+        radius_m = _term_radius(scope, category, float(getattr(scope, "collect_radius_m", 0.0)))
+        # 坐标归一 + **同回合去重**：同一个锚点同一批词发两遍就是白烧（B5 那层判据），
+        # 而「是不是同一个点」只能有一处判法 ⇒ 用 `anchors.anchor_key`，不在这里另写四舍五入。
+        uniq: List[Tuple[float, float]] = []
+        seen: set = set()
+        for pos, item in enumerate(raw_anchors):
+            try:
+                lng, lat = float(item[0]), float(item[1])
+            except (TypeError, KeyError, IndexError) as exc:
+                raise ValueError(
+                    f"anchors[{category!r}] 第 {pos} 项不是坐标对：{item!r} —— 这里要的是"
+                    "**锚点序列**，单个锚点写作 ((lng, lat),)；裸 (lng, lat) 会被当成两个锚点、"
+                    "各取到一个坐标分量"
+                ) from exc
+            key = anchor_key((lng, lat))
+            if key in seen:
+                merged[category] += 1
+                continue
+            seen.add(key)
+            uniq.append(key)
+        for tup in uniq:
+            starved_here = False
+            sent_any = False
+            for term in terms:
+                if not pool.consume(f"forensic-{category}"):
+                    starved.append((category, term))
+                    starved_here = True
+                    continue                      # 0 次调用 ⇒ 无行无盘，只留饿死账
+                sent_any = True
+                out = await client.place_search(term, tup, radius_m=radius_m, max_pages=1)
+                if out is None:
+                    rows.append(_api_error_row(category, term, radius_m))
+                    continue
+                row = _evidence_row(category, term, radius_m, out, tup)
+                rows.append(row)
+                items = _items_of(out)
+                discs.append(row.as_disc(tup))     # 唯一转换器：盘只能从举证行导出来
+                if items:
+                    raw_by_cat.setdefault(category, []).extend(items)
+            if sent_any:
+                attempted.setdefault(category, []).append(tup)
+            if not starved_here:
+                used[category] += 1
+
+    points = {cat: tuple(_dedupe(raw_by_cat.get(cat, []), 50.0, "geometric"))
+              for cat in TRIAD_KEYS}
+    evidence = CollectionEvidence(
+        # 本轮没有单一「请求半径」：逐词各自请求到哪儿写在行上（`TermEvidence.requested_radius_m`）。
+        # 顶层这个数取口径定格的采集半径，语义与首轮同源，不是某一锚点的半径。
+        requested_radius_m=float(getattr(scope, "collect_radius_m", 0.0) or 0.0),
+        per_term=tuple(rows),
+        starved_terms=tuple(starved),
+        aborted=pool.remaining <= 0 and bool(starved),
+        discs=tuple(discs),
+    )
+    return ForensicRound(round_no=round_no, evidence=evidence, points=points,
+                         anchors_planned=planned, anchors_used=used, anchors_merged=merged,
+                         anchors_attempted={c: tuple(v) for c, v in attempted.items()})
 
 
 def merge_all(
@@ -577,12 +902,6 @@ def merge_all(
             kept = _dedupe(items, radius_m, "geometric")
         out[cat] = kept
     return out
-
-
-def _poi_budget(n_terms: Optional[int]) -> int:
-    """实例化 POIBudget 用的 poi 预算（从 quota 快照取，非本模块定义预算公式）。"""
-    _mat, poi = quota_budget()
-    return poi
 
 
 def _dedupe(

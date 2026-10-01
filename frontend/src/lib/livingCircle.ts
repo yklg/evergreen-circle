@@ -5,7 +5,17 @@
  * 避免各页面各自复制一份「m 等距投影 → 像素」逻辑造成画布不一致。
  * M 阶段 BMapGL 接入后仅替换渲染层，投影语义保持不变。
  */
-import type { LifeCircleDegraded, LngLat, LivingCircleReport, PoiPoint } from '../types'
+import type {
+  CellsLedgerRaw,
+  EvidenceDisc,
+  ForensicAccount,
+  ForensicRoundRow,
+  LifeCircleDegraded,
+  LifeCirclePartial,
+  LngLat,
+  LivingCircleReport,
+  PoiPoint,
+} from '../types'
 
 /* 画布几何：研究范围 5km × 5km → 画布 W×H（m 等距投影局部近似，单一真相源） */
 export const LC_CANVAS = { R: 2500, W: 860, H: 620 } as const
@@ -55,6 +65,10 @@ export const LC_BLIND_SEV: Record<string, { fill: string; stroke: string; label:
 }
 /** 补点处方符号（C3：实心绿核 + 白边） */
 export const LC_FIX_DOT = '#1f9e63'
+/** 判定尺那一圈（C2）与概览小图的参考圆（C3）共用的颜色 —— tailwind `info` token（莫兰迪蓝）。
+ *  选它是因为它**不在**严重度色阶（红/橙/黄）与等时圈五级色里：这一层说的是"尺子多大"，
+ *  不该被读成"这里多严重"。两处必须同一个色，否则图例与概览说的不是一回事。 */
+export const LC_JUDGE_SCALE_COLOR = '#8FA8C0'
 /** 固有尺寸（G5 定版）：SVG 串自带 18×18，图例等消费方用 CSS 缩放 —— 同源=串，尺寸归消费方 */
 export const LC_FIX_ICON_SIZE = 18
 
@@ -227,6 +241,37 @@ export function lcToPx(center: LngLat, lng: number, lat: number): [number, numbe
   const { R, W, H } = LC_CANVAS
   const [mx, my] = lcMeters(center, lng, lat)
   return [W / 2 + (mx / R) * (W / 2), H / 2 - (my / R) * (H / 2)]
+}
+
+/**
+ * 米偏移 → 经纬度：`lcMeters` 的**逆**，全仓唯一实现。
+ *
+ * 分母是 `111320`（米/度），**不是** `111320 × π/180` —— 后者把度当成弧度处理，
+ * 环会放大 180/π ≈ 57.3 倍（第十六轮评审 P0-1：34 个证据盘整层落到画布外，
+ * 描边档一个像素都看不见、填充档把画布染成一片灰）。
+ * 纬度方向的 `cos` 取**原点**纬度：本函数的契约是「以 `origin` 为局部原点的米偏移」，
+ * 与 `lcMeters` 同侧，正反两变换在同一处成立。
+ */
+export function lcFromMeters(origin: LngLat, mx: number, my: number): LngLat {
+  const cos = Math.cos((origin[1] * Math.PI) / 180)
+  return [origin[0] + mx / (111320 * cos), origin[1] + my / 111320]
+}
+
+/**
+ * 以某点为圆心、`radiusM` 为半径的**投影后**环（走 `lcFromMeters`，即 `lcMeters` 的逆）。
+ *
+ * 为什么不能直接画 SVG `<circle r=米×比例>`：`lcToPx` 的横纵比例本就不同
+ * （W/2÷R ≠ H/2÷R，画布是把 5km×5km 方形拉进 860×620 的矩形），一个正圆会把纵向
+ * 多出 ~39% —— 那与等时圈多边形不是同一把尺。走这条逆投影生成环，再交 `lcPolyPts`，
+ * 证据盘与等时圈在同一个各向异性里对齐。
+ */
+export function lcRing(point: LngLat, radiusM: number, steps = 48): LngLat[] {
+  const out: LngLat[] = []
+  for (let i = 0; i < steps; i++) {
+    const a = (i / steps) * Math.PI * 2
+    out.push(lcFromMeters(point, radiusM * Math.cos(a), radiusM * Math.sin(a)))
+  }
+  return out
 }
 
 /** 两场景中心点间的近似直线距离（米）。仅用于「是否可同框真实叠加」的判定，不做地理结算。 */
@@ -921,9 +966,13 @@ export function emptyBlindspotNote(lc: Pick<LivingCircleReport, 'caliber'>): str
  * **载荷里的一个事实**（不是缓存键、也不是一列状态位）—— 只有拿着当前版本才能比。
  * 换版本时只改后端 + 夹具，两侧测试各钉一次（后端
  * `test_caliber_gap_literals_match_contract_fixture` / 前端
- * `livingCircleContract.test.ts`），不会一边新一边旧。
+ * `livingCircleContract.test.ts` + `compareDiffContract.test.ts:229`），不会一边新一边旧。
+ *
+ * `ev-1` = 证据域独立于可达域；`ev-2` = 追加逐格台账 `caliber.cells_ledger`（契约 B13）。
+ * 升到 `ev-2` 的可见后果：出厂那两份 `ev-1` 快照（凯里演示件、劲松实测件）从此各带一行
+ * 「判盲口径已升级……建议重新体检」—— 那是 D-4「只拦复用、不拦可见性」的正常表现。
  */
-export const SCOPE_POLICY_VERSION = 'ev-1'
+export const SCOPE_POLICY_VERSION = 'ev-2'
 
 /** 口径版本不同 ⇒ 差异表那两行的结论句（与后端 `_DIFF_DESC_CALIBER_GAP` 逐字同源）。 */
 export const CALIBER_GAP_DESC = '不可比 · 判盲口径已升级'
@@ -959,6 +1008,173 @@ export function staleCaliberNotice(lc: Pick<LivingCircleReport, 'caliber'>): str
   return v == null
     ? '判盲口径已升级（证据域独立），本报告的盲区数与综合评分偏乐观 —— 建议重新体检'
     : `判盲口径已升级（本报告 ${v}，当前 ${SCOPE_POLICY_VERSION}），盲区数与综合评分偏乐观 —— 建议重新体检`
+}
+
+/* ── 逐格台账（契约 B13 · 计划 cells-ledger-judge-scale §6）───────────────────
+ *
+ * 这片只做**解码**，不做判定：五个字母（`1`/`0`/`.`/`-`/格型）与十张矩阵的含义都由
+ * 后端 `blindspot.render_cells_ledger` 定，前端若在这里重抄一遍"缺哪类算盲"，就成了
+ * 同一判据的第二份实现 —— 那正是本仓反复出事的形状（不对称规则只许有 `_verdict_masks` 一处）。
+ *
+ * 取值一律走 `cellsLedgerOf`：**任何**不符（缺键、行数/行长不符、字母表外、格型或
+ * schema 不是这一代）都返回 `null`，调用方据此**不画图层**。宁可少一层解释，
+ * 也不能把半截台账读成一份结论。
+ */
+
+export const LEDGER_SCHEMA_VERSION = 1
+export const LEDGER_GRID = 'square'
+export const LEDGER_YES = '1'
+export const LEDGER_NO = '0'
+/** 第三态：这一类在该格**没被证明查全** ⇒ 命中与否无从知道。⚠️ 不是「没有」。 */
+export const LEDGER_UNKNOWN = '.'
+export const LEDGER_NO_DISTANCE = '-'
+export const LEDGER_TRIAD_KEYS = ['market', 'pharmacy', 'primary'] as const
+
+/** 一格的结论档。五档各自对应台账里的一句话，**不许合并**（合并即说谎）：
+ *  `outside` 可达区外不判 · `blind` 判盲 · `clear` 三类皆有据且皆命中 ·
+ *  `unknown` 有类没查全（我们的取证缺口）· `capped` 判不动且归因于接口封顶。 */
+export type LedgerVerdict = 'outside' | 'blind' | 'clear' | 'unknown' | 'capped'
+
+export interface LedgerClassState {
+  key: string
+  label: string
+  /** 有据？null = 无从知道（`.`） */
+  evidence: boolean | null
+  /** 1km 内命中？null = 无从知道 */
+  hit: boolean | null
+  /** 最近举证点距离（米）；null = 没有距离可报 */
+  nearestM: number | null
+}
+
+export interface LedgerCellState {
+  i: number
+  j: number
+  verdict: LedgerVerdict
+  classes: LedgerClassState[]
+}
+
+const LEDGER_CHARS = new Set([LEDGER_YES, LEDGER_NO, LEDGER_UNKNOWN])
+
+const ledgerRows = (v: unknown, n: number): v is string[] =>
+  Array.isArray(v) && v.length === n && v.every(
+    (r) => typeof r === 'string' && r.length === n && [...r].every((c) => LEDGER_CHARS.has(c)),
+  )
+
+const ledgerDistRows = (v: unknown, n: number): v is string[] =>
+  Array.isArray(v) && v.length === n && v.every(
+    (r) => typeof r === 'string' && r.split(' ').length === n
+      && r.split(' ').every((t) => t === LEDGER_NO_DISTANCE || /^\d+$/.test(t)),
+  )
+
+/** 取台账并验形；不合规 ⇒ `null`（不抛、不猜满）。 */
+export function cellsLedgerOf(lc: Pick<LivingCircleReport, 'caliber'>): CellsLedgerRaw | null {
+  const led = lc.caliber?.cells_ledger as CellsLedgerRaw | undefined | null
+  if (!led || typeof led !== 'object') return null
+  const n = led.n
+  // n 必须是正的奇数：判定格阵恒为奇数（分析中心要恰好落在格心上，否则中心格被半格偏移污染）
+  if (!Number.isInteger(n) || n <= 0 || n % 2 === 0) return null
+  if (led.grid !== LEDGER_GRID || led.schema_version !== LEDGER_SCHEMA_VERSION) return null
+  if (!Array.isArray(led.center) || led.center.length !== 2) return null
+  if (!(led.step_m > 0) || !(led.scan_m > 0) || !(led.radius_m > 0)) return null
+  for (const key of ['inside', 'capped', 'blind', 'verdict'] as const) {
+    if (!ledgerRows(led[key], n)) return null
+  }
+  for (const triad of LEDGER_TRIAD_KEYS) {
+    if (!ledgerRows(led[`judge.${triad}`], n) || !ledgerRows(led[`present.${triad}`], n)) return null
+    if (!ledgerDistRows(led[`nearest.${triad}`], n)) return null
+  }
+  return led
+}
+
+/** 经纬度 → 格索引 `(i 行=y, j 列=x)`；落在格阵外 ⇒ `null`。
+ *  格心轴是后端 `linspace(-scan, scan, n)`，这里用**同一个** `lcMeters` 换算（等距圆柱近似），
+ *  两端同式才不会出现「点在这格、卡片说那格」。 */
+export function cellAt(lc: Pick<LivingCircleReport, 'caliber'>, lnglat: LngLat): [number, number] | null {
+  const led = cellsLedgerOf(lc)
+  if (!led) return null
+  return cellIndex(led, lnglat)
+}
+
+export function cellIndex(led: CellsLedgerRaw, lnglat: LngLat): [number, number] | null {
+  const [x, y] = lcMeters(led.center, lnglat[0], lnglat[1])
+  // `+ 0` 不是装饰：`Math.round(-0.2)` 给的是 `-0`，而 `Object.is(-0, 0)` 为 false ⇒
+  // 同一格会被 React key 与测试当成两格。坐标本身是 NaN 时不回落，直接判"不在格阵里"。
+  const i = Math.round((y + led.scan_m) / led.step_m) + 0
+  const j = Math.round((x + led.scan_m) / led.step_m) + 0
+  if (!Number.isFinite(i) || !Number.isFinite(j)) return null
+  if (i < 0 || j < 0 || i >= led.n || j >= led.n) return null
+  return [i, j]
+}
+
+/** 格索引 → 格心经纬度（画选中格与它的判定圆要用）。 */
+export function cellCenter(led: CellsLedgerRaw, i: number, j: number): LngLat {
+  return lcFromMeters(led.center, -led.scan_m + j * led.step_m, -led.scan_m + i * led.step_m)
+}
+
+/** 读一格的状态。**只读字符**：结论取自后端发下来的 `blind`/`verdict`/`capped` 三张位，
+ *  不在这里重算不对称规则。 */
+export function cellVerdict(lc: Pick<LivingCircleReport, 'caliber'>,
+                            cell: [number, number] | null): LedgerCellState | null {
+  const led = cellsLedgerOf(lc)
+  if (!led || !cell) return null
+  const [i, j] = cell
+  if (i < 0 || j < 0 || i >= led.n || j >= led.n) return null
+  const bit = (rows: string[]) => rows[i][j]
+  const at = (rows: string[]) => rows[i]?.[j] ?? LEDGER_UNKNOWN
+  const dist = (rows: string[]) => {
+    const tok = rows[i]?.split(' ')[j]
+    return tok === undefined || tok === LEDGER_NO_DISTANCE ? null : Number(tok)
+  }
+  let verdict: LedgerVerdict = 'outside'
+  if (bit(led.inside) === LEDGER_YES) {
+    if (bit(led.blind) === LEDGER_YES) verdict = 'blind'
+    else if (bit(led.verdict) === LEDGER_YES) verdict = 'clear'
+    else verdict = bit(led.capped) === LEDGER_YES ? 'capped' : 'unknown'
+  }
+  const classes: LedgerClassState[] = []
+  for (const triad of LEDGER_TRIAD_KEYS) {
+    const present = at(led[`present.${triad}`])
+    classes.push({
+      key: triad,
+      label: lcEvidenceCategoryLabel(triad),
+      evidence: at(led[`judge.${triad}`]) === LEDGER_YES ? true : false,
+      hit: present === LEDGER_UNKNOWN ? null : present === LEDGER_YES,
+      nearestM: dist(led[`nearest.${triad}`]),
+    })
+  }
+  return { i, j, verdict, classes }
+}
+
+/** 本次判定那把尺（米）。两个来源按新旧排：台账（`ev-2` 起有）→ 盲区条目自带的 `radius_m`。
+ *  两个都没有 ⇒ `null` —— **不许**回落到常量 1000：多模式分档后它不是常量，
+ *  写死就会让图上 800m 的圆旁边标着 1km（复审 v1.2 P1-1 的落点）。 */
+export function judgeRulerM(lc: Pick<LivingCircleReport, 'caliber' | 'blindspots'>): number | null {
+  const led = cellsLedgerOf(lc)
+  if (led) return led.radius_m
+  const declared = (lc.blindspots ?? [])
+    .map((b) => (typeof b.radius_m === 'number' && b.radius_m > 0 ? b.radius_m : null))
+    .find((v): v is number => v !== null)
+  return declared ?? null
+}
+
+/** 那把尺的上屏说法（图例与概览小图共用同一句，两处文案不许各写一份半径）。 */
+export function judgeRulerLabel(lc: Pick<LivingCircleReport, 'caliber' | 'blindspots'>): string | null {
+  const m = judgeRulerM(lc)
+  return m === null ? null : `以格心为圆心、半径 ${Math.round(m)}m 的圆`
+}
+
+/**
+ * 三要素那一排的取数出口（菜市场 / 药店 / 小学各一枚 chip）。
+ *
+ * 为什么要收成一处而不是让每个渲染面自己 `.map(lc.scores.triads)`：`visitorUnrated` 那条
+ * 棘轮按**文本**扫「谁在读报告分数」，读法散到 `src/dev/` 的预览件上就会把渲染出口谎报成
+ * 新的分数消费点。取数走这里（本文件已在基线内），预览件与生产视图共用同一份行对象，
+ * 也顺带消灭了"探针自己抄一遍取数"这种第二实现。
+ */
+export function triadRows(
+  lc: Pick<LivingCircleReport, 'scores'>,
+): LivingCircleReport['scores']['triads'] {
+  return lc.scores?.triads ?? []
 }
 
 /** 评分置信度安全取值：旧快照 / 离线骨架缺该键 ⇒ `null`（渲染层不给徽标，不猜成 full）。 */
@@ -1048,6 +1264,9 @@ export const DEGRADE_DETAIL_LABELS: Record<string, string> = {
   quota_blocked: '配额受限',
   isochrone_empty: '测时失败',
   poi_empty: '采集为空',
+  // 片 4：取证额度不足 —— **只**出现在 `report.partial.detail`，不是降级成因。
+  // 说成"熔断"会让读者以为这份报告随时可能整份作废，而它说的是"按计划只打了这么多"。
+  forensic_pool_short: '取证额度不足',
   unknown: '配额耗尽',
 }
 
@@ -1090,6 +1309,223 @@ export function degradeBanner(
     action: d.note ? `${d.note} · 配额恢复后可发起实时重检` : '配额恢复后可发起实时重检',
     tone: 'risk',
   }
+}
+
+/**
+ * 取证账目 / 证据域明细的**唯一取值出口**（计划 v7.1 片 5）。
+ *
+ * 为什么"缺键就是缺键"而不给默认值：`caliber.forensic` 与 `evidence_anchors` 都是
+ * **不传不发**（后端 `scope.payload` 只在真走了取证阶段时才发射）。若这里回落成
+ * `{rounds: 0}` 或 `[]`，离线估算与判盲口径升级前冻结的旧快照就会被前端说成
+ * 「取证过了、只是没扩出东西」—— 替一次没发生的事举证。
+ */
+export function forensicAccount(
+  lc: Pick<LivingCircleReport, 'caliber'>,
+): ForensicAccount | null {
+  return lc.caliber?.forensic ?? null
+}
+
+export function evidenceDiscs(lc: Pick<LivingCircleReport, 'caliber'>): EvidenceDisc[] {
+  return lc.caliber?.evidence_anchors ?? []
+}
+
+/** 三要素检索类 → 展示层身份（中文名 + 配色借用哪个展示类）。
+ *
+ * ⚠️ 它的键集合 = 后端 `triad_keywords` 那三枚，与 `LC_CAT_LABEL`（8 个**展示类**，镜像后端
+ * `CATEGORY_RULES`、键集由 `lcCatLabel.contract.test.ts` 钉住）是**两套键**：药店 / 小学不是展示
+ * 类别，把它们并进那张表会当场撞那条两端契约。证据盘的 `category` 用的是这一套。
+ *
+ * 配色**不另起一套**：三要素本来就是对应展示类的代表点（药店∈医疗、小学∈教育），图例里那些点
+ * 已经是这两个色；新造色等于让读者对两次色卡。 */
+export const LC_TRIAD: Record<string, { label: string; colorClass: string }> = {
+  market: { label: '菜市场', colorClass: 'market' },
+  pharmacy: { label: '药店', colorClass: 'medical' },
+  primary: { label: '小学', colorClass: 'education' },
+}
+
+/** 证据盘/回合账目里那一枚类别键怎么念：先查三要素表，再落展示类表，最后原样给键。 */
+export function lcEvidenceCategoryLabel(key: string): string {
+  return LC_TRIAD[key]?.label ?? LC_CAT_LABEL_OF(key, key)
+}
+
+/**
+ * 证据盘配色 —— BMap 的 `Circle`、降级画布的 `<polygon>`、预览探针**共用这一个出口**。
+ *
+ * 为什么不能就地 `LC_CAT_COLOR[d.category] ?? '#5F7B69'`（第十六轮评审 P1）：三要素里的
+ * `pharmacy` / `primary` 不在 `LC_CAT_COLOR` 的 8 枚展示类里 ⇒ 凯里实测 34 盘中 24 盘落进兜底色，
+ * 而 `#5F7B69` **正是** `LC_ISO_COLORS` 四级的描边色 —— 图层打开后证据盘与等时圈同色，等于没打开。
+ * 未知类别落 `#7c6670`（与 POI 点层同一枚兜底），**不落在等时圈绿上**。
+ */
+export function lcEvidenceDiscColor(key: string): string {
+  return LC_CAT_COLOR[LC_TRIAD[key]?.colorClass ?? key] ?? '#7c6670'
+}
+
+/** 逐趟表「锚点」那一格的句子 —— 报告页与预览探针**共用这一处**（两处各写一份就会一新一旧：
+ *  「只判了一次」那句就是探针先犯、组件跟着犯）。
+ *
+ * 未派发那趟**分两档**，因为"没派发"有两种真原因：
+ * - `anchors_planned > 0`：缺口在、额度只容得下一部分，但那趟被我们自己的上限卡住 ⇒
+ *   念「需求 N · 额度容 M · 一个没打」（凯里实测：17 / 3 / 14，收手 `rounds_exhausted`）。
+ * - `anchors_planned === 0`：**排不出新锚点**（网格步长已到底，北京实测收手 `nothing_to_ask`）⇒
+ *   念「没排出新锚点」。此时若还说"额度容 0"，就是把没点可打演成钱不够 —— 归因方向错到底，
+ *   与后端 `degrade_policy.partial_block()` 那条优先级是同一族缺陷。 */
+export function roundAnchorCell(r: ForensicRoundRow): string {
+  if (r.dispatched) return `${r.anchors_planned}→${r.anchors_sent}→${r.anchors_used}`
+  return r.anchors_planned === 0 ? '没排出新锚点' : `需求 ${r.anchors_planned} · 额度容 ${r.anchors_sent} · 一个没打`
+}
+
+/** 逐趟表「未跑 / 砍掉」那一格：未派发趟没有"跑了没成"这回事 ⇒ 未跑位给 `—`，砍掉的账照念。 */
+export function roundDroppedCell(r: ForensicRoundRow): string {
+  return r.dispatched ? `${r.anchors_not_run} / ${r.anchors_dropped}` : `— / ${r.anchors_dropped}`
+}
+
+/**
+ * 合成盘：后端从**标量边界反推**出来的举证盘，没有逐锚点检索记录
+ * （`stop_reason=null` 且实测半径 == 请求半径，见 `scope.py:892-894`「它按定义不自称查全」）。
+ *
+ * 为什么前端要单独认这一档（批 B 真打接口读数带出的缺陷）：这类盘上屏若走「未查全」，
+ * 同一行就同时写着「实测查到 2367m / 请求 2367m」和「未查全」—— 读者只会读到矛盾。
+ * 而把它说成「查全」更不行（后端就是按"没证明"发的）。⇒ 第三档，不是两档。
+ * 真数据里两城都有：凯里 2/5 盘、北京 1/14 盘。
+ */
+export function isSyntheticDisc(d: EvidenceDisc): boolean {
+  return (
+    !d.complete &&
+    d.stop_reason == null &&
+    Math.abs(d.exhausted_radius_m - d.request_radius_m) < 0.5 // 后端两值各按 0.1 取整
+  )
+}
+
+/** 一个证据盘的悬浮举证句 —— BMap 的 `Circle` 与降级画布的 `<polygon>` **共用这一句**。
+ *  两个渲染分支各写一份 tooltip 文案，就会在"这圈到底查没查全"上说出不一致的话。 */
+export function evidenceDiscTitle(d: EvidenceDisc): string {
+  const cat = lcEvidenceCategoryLabel(d.category)
+  const state = d.complete
+    ? '查全'
+    : isSyntheticDisc(d)
+      ? '按首轮边界反推的举证盘（未逐锚点记录，不自称查全）'
+      : `未查全${d.stop_reason ? `（${d.stop_reason}）` : ''}${d.cap_hit ? ' · 被接口上限截断' : ''}`
+  return `${cat} 证据盘：实测查到 ${Math.round(d.exhausted_radius_m)}m / 请求 ${Math.round(
+    d.request_radius_m,
+  )}m · ${state}`
+}
+
+/** 锚点那一行的念法（A 档「亮的那颗点是什么」）。与 `evidenceDiscTitle` 同处出句：
+ *  预览探针与地图浮层各写一份，就会出现"预览里有、实现里没有"那种偏离。 */
+export function evidenceDiscAnchorLabel(d: EvidenceDisc): string {
+  return `取证锚点 · ${lcEvidenceCategoryLabel(d.category)} · (${d.anchor[0].toFixed(4)}, ${d.anchor[1].toFixed(4)})`
+}
+
+/* ──── 圈选联动：命中判定 + 选中态描边（live / 降级 / 探针共用同一处） ──── */
+
+/** 盘的像素域描述：调用方投影（live 走 `pointToPixel`，降级走 `lcToPx`）后交进来。
+ *  `index` 是身份 —— `EvidenceDisc` 只有 7 个字段、后端不发 id（`types.ts:984-993`），
+ *  同心盘（北京实测中心 3 盘同一 anchor）只能靠数组下标区分。 */
+export interface LcDiscHitTarget {
+  index: number
+  centerPx: [number, number]
+  radiusPx: number
+}
+
+export type LcDiscHitKind = 'ring' | 'center' | 'inside' | 'nearest'
+
+export interface LcDiscHit {
+  target: LcDiscHitTarget
+  /** ring=压在环线上 / center=压在圆心 / inside=落在某盘内 / nearest=谁都没中、取最近圆心 */
+  kind: LcDiscHitKind
+  /** 该档判据下的距离（ring 为到环线的差，其余为到圆心的差），单位 px */
+  deltaPx: number
+}
+
+/** 环带命中宽度：盘只描边 ⇒ 可指的是边界本身，与等时圈那条 14px 透明命中线同量级。 */
+export const LC_HIT_BAND_PX = 12
+/** 圆心命中半径：锚点标记与同心盘用这一档解歧。 */
+export const LC_HIT_CENTER_PX = 10
+
+/**
+ * 光标 → 哪个盘。**确定性优先级 ①环带 > ②圆心 > ③内部归属 > ④最近圆心**，
+ * 同级一律按下标升序取第一个 ⇒ 同心三盘（北京 market/pharmacy/primary）的消歧结果可写进用例，
+ * 不依赖"谁碰巧近"。写不成全序就会让 live 与降级两分支各挑一个盘，正是本次投诉的机制。
+ */
+export function hitEvidenceDisc(
+  cursor: [number, number],
+  targets: LcDiscHitTarget[],
+): LcDiscHit | null {
+  if (targets.length === 0) return null
+  const measured = targets.map((t) => ({ t, d: Math.hypot(cursor[0] - t.centerPx[0], cursor[1] - t.centerPx[1]) }))
+  const bandDelta = (x: (typeof measured)[number]) => Math.abs(x.d - x.t.radiusPx)
+  const byBand = measured
+    .filter((x) => bandDelta(x) < LC_HIT_BAND_PX)
+    .sort((a, b) => bandDelta(a) - bandDelta(b) || a.t.index - b.t.index)
+  if (byBand.length)
+    return { target: byBand[0].t, kind: 'ring', deltaPx: bandDelta(byBand[0]) }
+  const byCenter = [...measured].sort((a, b) => a.d - b.d || a.t.index - b.t.index)
+  if (byCenter[0].d < LC_HIT_CENTER_PX) return { target: byCenter[0].t, kind: 'center', deltaPx: byCenter[0].d }
+  const inside = byCenter.filter((x) => x.d < x.t.radiusPx)
+  if (inside.length) return { target: inside[0].t, kind: 'inside', deltaPx: inside[0].d }
+  return { target: byCenter[0].t, kind: 'nearest', deltaPx: byCenter[0].d }
+}
+
+/** 盘的描边：常态 1.4 = `LcMap` 今天的构造值（`lifeCircleForensicUi.test.tsx:300` 钉住的是它）。
+ *  ⚠️ 选中态**只加粗、只提不透明度**，绝不动 `fillOpacity:0` 与 `enableClicking:false`
+ *  —— 那两枚是「勾开图层后地图仍能被拖动」那条真机证据的载体，改了就把"突出"做成"挡操作"。 */
+export const LC_DISC_WEIGHT = { idle: 1.4, focus: 3.2, dim: 1 } as const
+
+/** 盘的三档描边：`dim` 是"别的盘"——选中一个盘时其余要退到背景去，
+ *  否则 14 个盘同屏时"突出"根本看不出来（预览第一轮 A/B 两张看不出区别就是这个原因）。
+ *  与等时圈 hover 的淡化档同族（`LcMap` 的 `dimRings`）。 */
+export function discStroke(state: 'idle' | 'focus' | 'dim'): { strokeWeight: number; strokeOpacity: number } {
+  if (state === 'focus') return { strokeWeight: LC_DISC_WEIGHT.focus, strokeOpacity: 1 }
+  if (state === 'dim') return { strokeWeight: LC_DISC_WEIGHT.dim, strokeOpacity: 0.14 }
+  return { strokeWeight: LC_DISC_WEIGHT.idle, strokeOpacity: 0.9 }
+}
+
+/** 取证锚点标记（A 档「亮的那颗点」）：盘心现在图上**不存在任何标记** ——
+ *  真读数两城 19 个盘的 anchor 与任一 POI 坐标逐位相等的有 0 个，所以必须新画一颗，
+ *  不能拿附近的设施点冒充锚点。形状与 `fixPlusSvg` 同族（实心核 + 白边），纯函数零 SDK 依赖。 */
+export function lcAnchorDotSvg(color: string, size = 22): string {
+  const c = size / 2
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<circle cx="${c}" cy="${c}" r="${c - 1.5}" fill="none" stroke="#ffffff" stroke-width="3"/>` +
+    `<circle cx="${c}" cy="${c}" r="${c - 1.5}" fill="none" stroke="${color}" stroke-width="1.6"/>` +
+    `<circle cx="${c}" cy="${c}" r="3.2" fill="${color}"/></svg>`
+  )
+}
+
+export function lcAnchorDotDataUrl(color: string, size = 22): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(lcAnchorDotSvg(color, size))}`
+}
+
+export interface PartialBanner {
+  /** 归因标签（`取证额度不足` / `总量熔断`…），给窄容器用 */
+  label: string
+  /** 标题：按成因分支各给一句**为真**的话 —— 两族混成一句就是说假话 */
+  title: string
+  /** 正文：后端 `partial.note` 原样上屏（唯一措辞出处，前端不改写） */
+  body: string
+  /** 视觉基调：部分完成不是事故 ⇒ 与 `degradeBanner` 的 risk 拉开一档，走 warn */
+  tone: 'warn'
+}
+
+/**
+ * `partial` 横幅**唯一出口**（与 `degradeBanner()` 分名分职，不并入）。
+ *
+ * 两条分支的依据是后端 `degrade_policy.partial_block()`：`detail` 要么是
+ * `forensic_pool_short`（额度按计划打完还有格没判出），要么是熔断族（取证那一格被闸掐住）。
+ * 前者**不是**接口故障，后者是 —— 所以标题分两句写，正文一律吃后端 `note`。
+ */
+export function partialBanner(
+  lc: Pick<LivingCircleReport, 'partial'>,
+): PartialBanner | null {
+  const p: LifeCirclePartial | undefined = lc.partial
+  if (!p) return null
+  const label = degradeDetailLabel(p.detail)
+  const title =
+    p.detail === 'forensic_pool_short'
+      ? `${label}：扩容回合没把可达区铺完（不是接口故障）`
+      : `${label}：取证阶段被熔断，本次只完成一部分`
+  return { label, title, body: p.note ?? '', tone: 'warn' }
 }
 
 /**

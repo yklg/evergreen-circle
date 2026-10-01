@@ -39,6 +39,15 @@ class StubBaidu:
             for p in origins
         ]
 
+    async def measure_matrix(self, travel_mode, origins, destination):
+        """公开测时入口 —— `live_forensic_steps` 只认这一个（与真实 `BaiduClient` 同面）。
+
+        ⚠️ 补齐它不是为了迁就实现：片 0 之前 pipeline 走公开、`LiveDataSource.compute`
+        走私有，两份 stub 各按「自己那份编排」挑方法实现 ⇒ 这个 fake 一直比真客户端少一面。
+        收拢成一份编排后统一走公开面，缺这面的 fake 就在真接缝上断。
+        """
+        return await self._measure_matrix(travel_mode, origins, destination)
+
     async def aclose(self):
         pass
 

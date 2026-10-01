@@ -98,6 +98,15 @@ describe('LivingCircleReport fixture 契约', () => {
   // 两端各锁一次。判据写成**条件式**而不是「夹具必须有这六个键」：内置快照冻结在口径升级
   // 之前，硬要求 Presence 会让整组用例在重刷夹具（要花配额）之前恒红，等于没有护栏。
   it('证据相键：缺键只允许是「升级前的旧快照」，且必须被陈旧提示覆盖', () => {
+    // 声明了任一版本就必须自带的那五条（"版本号与键集是同一次发布的两半"）。
+    // 提到外面是因为下面**两条**分支都要查它：旧版本快照也不能空着手。
+    const EVIDENCE_KEYS = [
+      'evidence_margin_m',
+      'evidence_frontier_m',
+      'evidence_complete',
+      'evidence_bound_source',
+      'judge_radius_m',
+    ] as const
     for (const r of reports) {
       const cal = r.caliber!
       const v = policyVersionOf(r)
@@ -110,18 +119,21 @@ describe('LivingCircleReport fixture 契约', () => {
         expect(cal.cells_unknown!).toBeGreaterThan(0)
         continue
       }
-      // 声明了版本 ⇒ 整套证据键必须齐（版本号与键集是同一次发布的两半）
-      expect(v).toBe(SCOPE_POLICY_VERSION)
-      expect(staleCaliberNotice(r)).toBeNull()
-      for (const k of [
-        'evidence_margin_m',
-        'evidence_frontier_m',
-        'evidence_complete',
-        'evidence_bound_source',
-        'judge_radius_m',
-      ] as const) {
+      for (const k of EVIDENCE_KEYS) {
         expect(cal![k], `caliber.${k} 缺失（声明了版本却不举证）`).toBeDefined()
       }
+      if (v !== SCOPE_POLICY_VERSION) {
+        // 声明了**旧**版本（当前 `ev-2` 之前冻结的实测快照，如劲松）⇒ 它仍是用户的历史，
+        // 但必须说出来，而且那句提示要带上**报告自己的**版本号（无版本号那条分支说的是另一件事）。
+        // 这一支在升 `ev-2` 之前是空集 ⇒ 它现在钉的正是"出厂演示件多一行陈旧提示"那个已拍板的后果。
+        const notice = staleCaliberNotice(r)
+        expect(notice, `${r.scene.name}：声明了旧版本（${v}）必须给陈旧提示`).toBeTruthy()
+        expect(notice!).toContain(v)
+        expect(notice!).toContain(SCOPE_POLICY_VERSION)
+        continue
+      }
+      // 声明了版本且就是当前版本 ⇒ 陈旧提示必须收起（否则用户永远被告知"你的报告过期了"）
+      expect(staleCaliberNotice(r)).toBeNull()
       // B5 的关系必须在客户端也复算得动（否则 UI 无法回答「这次实际查到哪儿」）
       expect(cal.collect_radius_m).toBeCloseTo(cal.reach_circumradius_m! + cal.evidence_margin_m!, 1)
       expect(cal.evidence_margin_m).toBeGreaterThan(0)
@@ -131,8 +143,10 @@ describe('LivingCircleReport fixture 契约', () => {
       if (cal.cells_judged === 0) expect(cal.cells_unknown).toBe(cal.cells_inside)
     }
 
-    // ⚠️ 上面那支在两份内置快照上都只走 `v === null` 分支 ⇒ 新口径那半今天是**空转**的。
-    // 这里用「夹具 + 人工升格」把新分支真跑一遍，等将来重刷夹具后它自动变成真实路径。
+    // ⚠️ 上面那支对两份内置快照：凯里走 `v === null`、劲松走「声明了但已落后」（`ev-1` ≠ 当前）
+    // ⇒ **当前版本那一半**今天仍是空转的。这里用「夹具 + 人工升格」把它真跑一遍，
+    // 等将来重刷夹具（要花配额）后它自动变成真实路径。
+    // （中间那一支不再是空集 —— 它从 `ev-2` 起就在守"出厂件会多一行陈旧提示"这个已拍板后果。）
     const K = kaili as unknown as LivingCircleReport
     // 夹具前提：即便是旧口径快照也必须带 caliber（举证对象本身不缺）。缺了说明夹具被
     // 改动过 —— 当场说清楚，别让下面整支在 undefined 上算出个看起来合理的数。
@@ -168,8 +182,10 @@ describe('LivingCircleReport fixture 契约', () => {
       regressed.caliber!.reach_circumradius_m! + regressed.caliber!.evidence_margin_m!,
       1,
     )
-    // 版本号写错（如后端升到 ev-2 而前端常量没跟着改）⇒ 陈旧提示必须说话
-    expect(staleCaliberNotice(upgraded({ scope_policy_version: 'ev-2' }))).toContain('ev-2')
+    // 版本号与当前不同 ⇒ 陈旧提示必须说话，并且要**报出报告自己那个号**（不是笼统一句"过期了"）。
+    // 这条注释里举的例子今天已经成真：出厂的劲松快照声明 `ev-1`、当前常量是 `ev-2`
+    // ⇒ 那个分支在上面的 `reports` 循环里已是真实路径，这里再拿一个不可能的号验"带号"这半。
+    expect(staleCaliberNotice(upgraded({ scope_policy_version: 'ev-0-legacy' }))).toContain('ev-0-legacy')
   })
 
   it('等时圈族必须覆盖 5/10/15/20 分钟且多边形闭合、面积为正', () => {

@@ -12,10 +12,10 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { BlindSpot, LivingCircleReport, LngLat } from '../../types'
 import { getMapConfig, geolocateMe, loadBMapGL } from '../../lib/bmap'
-import type { BMapGLNamespace, BMapMap, BMapMapOverlay, BMapOverlayEvent, BMapPoint, BMapPolyline } from '../../lib/bmap'
+import type { BMapGLNamespace, BMapMap, BMapMapEvent, BMapMapOverlay, BMapOverlayEvent, BMapPoint, BMapPolyline } from '../../lib/bmap'
 import { lcMapStyle } from '../../lib/bmapStyle'
 import { useMapNotesStore } from '../../store/mapNotesStore'
-import { asBdLngLat, asBdLngLatOrNull, rejectBdLngLatSource, toDiagPair } from '../../lib/geo'
+import { asBdLngLat, asBdLngLatOrNull, bmapEventLngLat, describeBMapEvent, rejectBdLngLatSource, toDiagPair } from '../../lib/geo'
 import type { CoordSys } from '../../lib/geo'
 import { HeatFieldOverlay, minuteHeatColor } from './HeatFieldOverlay'
 import type { HeatSamplePoint } from './HeatFieldOverlay'
@@ -27,18 +27,29 @@ import {
   LC_FIX_DOT,
   LC_ISO_COLORS,
   LC_ISO_COLORS_B,
+  LC_JUDGE_SCALE_COLOR,
+  cellCenter,
+  cellIndex,
+  cellsLedgerOf,
+  lcMeters,
+  judgeRulerM,
   affectedOf,
   blindCanRaw,
   blindHeatFill,
   blindPolygonOf,
   blindSevSpec,
+  evidenceDiscs,
+  evidenceDiscTitle,
   fixPlusSvg,
   fixesOf,
   gapScoreOf,
   heatSamplePoints,
   lcFillSpec,
+  lcFromMeters,
+  lcEvidenceDiscColor,
   lcPolyPts,
   lcRightmost,
+  lcRing,
   lcToPx,
   lcSnapshotPoiLayer,
   poiRenderSet,
@@ -82,6 +93,18 @@ export interface LcMapProps {
   onIsoHover?: (minutes: number | null) => void
   /** C8：悬停盲区 → 严重度（离开=null）。同上低频纪律 */
   onBlindHover?: (sev: LcBlindSev | null) => void
+  /** 片 5：证据域图层（逐锚点举证盘）。**默认关**：34 个 1.4km 盘是"解释为什么判不了"用的，
+   *  不是主叙事层；开着画时只描边不填充（填充会把等时圈色阶压掉，见预览「四种画法」）。 */
+  showEvidenceDiscs?: boolean
+  /** 判定尺图层（C2）：给每处盲区画出「判一格用的那把圆」。默认关，理由与证据盘同一条 ——
+   *  它是解释层不是主叙事层。人眼在 15 级视野里只能看到 250–680m，而判定问的是 1km 圆，
+   *  尺度差 3–6 倍 ⇒ 没有这一层，"这块看着空"就永远会被读成"这里该判盲"。 */
+  showJudgeScale?: boolean
+  /** C5：选中的判定格 `(行i, 列j)`，与逐格台账卡（C4）双向 —— 卡里点一格、或地图上点一块，
+   *  都画同一枚方框 + 该格的判定圆。`null` ⇒ 不画。 */
+  selectedCell?: [number, number] | null
+  /** 地图上点中一格（或点到格阵外）的回调。只有台账在且判定尺开着时才可能触发。 */
+  onCellPick?: (cell: [number, number] | null) => void
 }
 
 /**
@@ -300,13 +323,31 @@ function NotesToggle({ on, onToggle, disabled }: { on: boolean; onToggle: () => 
 }
 
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover },
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, selectedCell = null, onCellPick },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<BMapMap | null>(null)
   const bmapRef = useRef<BMapGLNamespace | null>(null)
   const overlaysRef = useRef<BMapMapOverlay[]>([])
+  /** 片 5：证据域图层的覆盖物**单独记账**（不进 `overlaysRef`）。
+   *  理由见下方独立 effect —— 与主覆盖层同进同出会让"勾一下图层"把相机复位。 */
+  const discOverlaysRef = useRef<BMapMapOverlay[]>([])
+  /** 判定尺图层（C2）的覆盖物同样单独记账 —— 与证据盘是同一条理由：视图开关不该复位相机。 */
+  const scaleOverlaysRef = useRef<BMapMapOverlay[]>([])
+  /** C5（选中格方框 + 该格判定圆）的覆盖物，单独记账 —— 同上一条理由。 */
+  const cellOverlaysRef = useRef<BMapMapOverlay[]>([])
+  /** 地图 click 监听器只注册一次（挂在主 effect 上），读不到后续 render 的 props ⇒
+   *  这两个开关用 ref 转发。**不**把它们塞进主 effect 的 deps：那会让每次勾图例都
+   *  重建整幅覆盖层并把相机复位回中心 15 级（`discOverlaysRef` 那条教训）。 */
+  const judgeScaleRef = useRef(false)
+  const onCellPickRef = useRef(onCellPick)
+  /** 点选分诊探针只打一次（换样区 / 重挂载会再打 —— 有意的：那时事件形状可能又不同）。 */
+  const shapeProbeRef = useRef(false)
+  useEffect(() => {
+    judgeScaleRef.current = showJudgeScale
+    onCellPickRef.current = onCellPick
+  }, [showJudgeScale, onCellPick])
   const [mode, setMode] = useState<LcMapMode>('boot')
   /** 双边界档位：显示圆角（smoothed）↔ 精确锯齿（raw）。打开/切换后按需重绘覆盖层。 */
   const [boundaryView, setBoundaryView] = useState<BlindBoundaryView>('smoothed')
@@ -464,6 +505,9 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       mapRef.current = null
       bmapRef.current = null
       overlaysRef.current = []
+      discOverlaysRef.current = []
+      scaleOverlaysRef.current = []
+      cellOverlaysRef.current = []
       mapListenersRef.current = []
     }
   }, [])
@@ -678,6 +722,9 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
         }
       }
     })
+
+    // 片 5：证据域图层（逐锚点举证盘）**不在这里画**，见下方独立 effect。
+    // 三条硬约束（配色/命中/不进 fitPts）与"为什么不并进本 effect"都写在那一处。
 
     // 盲区：连续缺口热力填充（C1）+ 严重度语义色描边/标号（C2）+ 补点处方（C3）+ 详情（C4）。仅主报告。
     if (!compareReport) {
@@ -910,10 +957,48 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       // S2（技术评审）：live 模式的「点空白关卡」。降级画布的 onCanvasClick 不覆盖 live；
       // 防御②：GL 若把 overlay click 连带派发成 map click（冒泡），卡片打开后 100ms 内的
       // map click 视为同一次点击不关卡（配合 overlay handler 的 domEvent 掐断双保险）。
-      const onBlankClick = () => {
+      //
+      // C5：判定尺开着且这份报告带台账时，**落在格阵里**的点击先解释成"选这一格"，
+      // 不再顺手关卡（否则点一格看台账会把别的浮层一起清掉，两个手势互相打架）。
+      // 格阵外照旧关卡并清掉选中。这里**不新增任何可点覆盖物** —— 复用地图已有的 click
+      // 事件，正是为了绕开 `LcMap.tsx:587-592` 那条已否证的形状（可点面会吃掉圈内 tooltip）。
+      // ⚠️ 取值一律走 `lib/geo.ts::bmapEventLngLat`（本文件里不许再出现第二个解地图事件
+      // 字段的地方，防线见 `mapEventCoordGuard.test.ts`）。真机第一轮这里手写 `e.latLng.lng()`：
+      // 键名与取值方式两处都错，当场抛 TypeError 把整个 handler 打死 —— 不但不选格，
+      // 连下面那条「点空白关卡」也一起失灵。
+      const onBlankClick = (e?: BMapMapEvent) => {
         if (performance.now() - lastCardOpenAt.current < 100) return
-        setIsoCard(null)
-        clearFixCircle()
+        const close = () => {
+          setIsoCard(null)
+          clearFixCircle()
+          onCellPickRef.current?.(null)
+        }
+        // 开关关着 ⇒ 不把手势解释成"选格"，照旧关卡（没有依据的入口不摆：见 C1 那条纪律）。
+        if (!judgeScaleRef.current) {
+          close()
+          return
+        }
+        const ll = bmapEventLngLat(e, 'LcMap.mapClick.cellPick')
+        const led = cellsLedgerOf(report)
+        const cell = ll !== null && led !== null ? cellIndex(led, ll) : null
+        if (!shapeProbeRef.current) {
+          // 四路分诊：没选上格有四种互不相同的原因（字段没取到 / 台账没读到 / 落在格阵外 /
+          // 其实成功了）。本仓拿不到真实指针点击（SDK 不认合成事件，CDP 只能打元素中心，
+          // 而中心恰被可拖标记占着）⇒ 用户这一次点击是唯一证据，要一次把四种都摊开。
+          const dist = ll !== null && led !== null
+            ? Math.round(Math.hypot(...lcMeters(led.center, ll[0], ll[1])))
+            : null
+          console.warn(`[LcMap] 点选分诊｜${describeBMapEvent(e)}`
+            + `｜经纬度=${ll === null ? 'null' : `${ll[0]},${ll[1]}`}`
+            + `｜台账=${led === null ? '没读到' : '读到'}`
+            + `｜格=${cell === null ? `无${dist === null ? '' : `（距中心 ${dist}m）`}` : `(${cell[0]},${cell[1]})`}`)
+          shapeProbeRef.current = true
+        }
+        if (cell !== null) {
+          onCellPickRef.current?.(cell)
+          return
+        }
+        close()
       }
       map.addEventListener('click', onBlankClick)
       mapListenersRef.current.push({ ev: 'click', fn: onBlankClick })
@@ -927,6 +1012,130 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, report, compareReport, customCenter, draggableCenter, boundaryView])
+
+  /* 片 5 · 证据域图层（逐锚点举证盘）—— **单独一个 effect**，不并进上面那份主覆盖层。
+   *
+   * 为什么不并进（第十六轮评审 P1）：主 effect 收尾是 `centerAndZoom(center, 15)`，且开头
+   * `resetInteractionState()` 会关卡清服务圈 —— 把 `showEvidenceDiscs` 塞进它的 deps，
+   * 就等于「每勾一次图例，地图跳回中心 15 级、打开的服务圈被清掉」。那一层是**视图开关**，
+   * 不该触发整幅重建。代价是覆盖物要单独记账（`discOverlaysRef`）：主 effect 只摘自己那份，
+   * 摘不到这里，所以本 effect 自己负责增删，并在 `report` 变化时随主层一起换新（deps 同键）。
+   *
+   * 三条硬约束：
+   * ① 整层不参与命中（`enableClicking: false`）—— 这些盘覆盖整个可达区，若可点就会把地图 click
+   *    （拖中心点、点空白关卡）与圈内热力 tooltip 的命中全吃掉；等时圈那边为此专门改用「沿环线的
+   *    窄 Polyline 命中层」，这里更干脆。⚠️ 该选项是 BMap 公开 API，但**本仓至今没有真机 spike**
+   *    （评审 P2）⇒ 真机首跑要确认「勾开后仍可拖中心点、点空白关卡」。
+   * ② `fillOpacity: 0` 只描边 —— 34 层填充叠在可达区上会把五级色阶压掉，且与盲区热力抢色。
+   *    ⚠️ 这条**不引用那张 11:59 的长图当依据**：那张图是在 `lcRing` 米→度多乘 π/180（盘放大
+   *    57.3 倍）的缺陷下出的，填充档那一片灰是几何错误的产物。几何已修，图待重出、结论待重拍。
+   * ③ 不进 `fitPts`：这一层是解释层，不该改变自动视野。 */
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (mode !== 'live' || !map || !bmap) return
+    for (const o of discOverlaysRef.current) map.removeOverlay(o)
+    discOverlaysRef.current = []
+    if (!showEvidenceDiscs || compareReport || typeof bmap.Circle !== 'function') return
+    for (const d of evidenceDiscs(report)) {
+      const color = lcEvidenceDiscColor(d.category)
+      const circle = new bmap.Circle(new bmap.Point(d.anchor[0], d.anchor[1]), d.exhausted_radius_m, {
+        strokeColor: color,
+        strokeWeight: 1.4,
+        strokeOpacity: 0.9,
+        strokeStyle: d.complete ? 'solid' : 'dashed',
+        fillColor: color,
+        fillOpacity: 0,
+        enableClicking: false,
+      })
+      map.addOverlay(circle)
+      discOverlaysRef.current.push(circle)
+    }
+  }, [mode, report, compareReport, showEvidenceDiscs])
+
+  /* C2 · 判定尺图层：给**每处盲区**画出「判它用的那把圆」（半径 = 本次判定实际吃的尺）。
+   *
+   * 这一层补的是尺度，不是新结论：15 级视野里人眼只能看到 250–680m，而判定问的是
+   * 「以格心为圆心 1km 的圆里有没有」—— 差 3–6 倍，所以"这块看着很空"永远会被读成
+   * "这里该判盲"（本轮第三次被同样地问，根因就在这）。
+   *
+   * 三条硬约束**照抄证据盘那三层**（同一份教训，不重犯）：
+   * ① `enableClicking: false` —— 整层不参与命中，否则地图 click（拖中心点、点空白关卡）
+   *    与圈内热力 tooltip 全被吃掉。⚠️ 与证据盘同一条**未做真机 spike** 的风险，
+   *    首跑必须实测「勾开后仍可拖中心点、点空白关卡」，不通过就退回窄 Polyline 命中层。
+   * ② `fillOpacity: 0` 只描边 —— 填充会把五级等时圈色阶压掉，并与盲区热力抢色。
+   * ③ 不进 `fitPts` —— 解释层不该改变自动视野。
+   * 半径**从产物取**（`judgeRulerM`）：写死 1000 会在分档后画出 800m 的圆标 1km。 */
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (mode !== 'live' || !map || !bmap) return
+    for (const o of scaleOverlaysRef.current) map.removeOverlay(o)
+    scaleOverlaysRef.current = []
+    if (!showJudgeScale || compareReport || typeof bmap.Circle !== 'function') return
+    const rulerM = judgeRulerM(report)
+    if (rulerM === null) return
+    for (const b of report.blindspots ?? []) {
+      const circle = new bmap.Circle(new bmap.Point(b.center[0], b.center[1]), rulerM, {
+        strokeColor: LC_JUDGE_SCALE_COLOR,
+        strokeWeight: 1.6,
+        strokeOpacity: 0.85,
+        strokeStyle: 'dashed',
+        fillColor: LC_JUDGE_SCALE_COLOR,
+        fillOpacity: 0,
+        enableClicking: false,
+      })
+      map.addOverlay(circle)
+      scaleOverlaysRef.current.push(circle)
+    }
+  }, [mode, report, compareReport, showJudgeScale])
+
+  /* C5 · 选中格：方框 + **这一格自己的**判定圆，让卡片上的文字与图上的圈一一对应。
+   *
+   * 与 C2 同一套三条硬约束（只描边、不参与命中、不进 fitPts）。**这里没有可命中的格层** ——
+   * `LcMap.tsx:587-592` 的真机 spike 早已否证"给可达区铺可点面"（面填充可拾取且与命中线
+   * 在同一次悬停同时触发 ⇒ 等于把锁铺满整个可达区，圈内采样点 tooltip 被静默清零）。
+   * 选格走地图**已有**的 click 事件（见下面 onBlankClick 里的 cellAt），零新增覆盖物。 */
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (mode !== 'live' || !map || !bmap) return
+    for (const o of cellOverlaysRef.current) map.removeOverlay(o)
+    cellOverlaysRef.current = []
+    if (!selectedCell || compareReport || typeof bmap.Polygon !== 'function') return
+    const led = cellsLedgerOf(report)
+    if (!led) return
+    const [i, j] = selectedCell
+    if (i < 0 || j < 0 || i >= led.n || j >= led.n) return
+    const half = led.step_m / 2
+    const [cx, cy] = cellCenter(led, i, j)
+    const corners = [
+      [-half, -half], [half, -half], [half, half], [-half, half],
+    ].map(([dx, dy]) => lcFromMeters([cx, cy], dx, dy))
+    const box = new bmap.Polygon(corners.map(([a, b]) => new bmap.Point(a, b)), {
+      strokeColor: LC_JUDGE_SCALE_COLOR,
+      strokeWeight: 2,
+      strokeOpacity: 1,
+      fillColor: LC_JUDGE_SCALE_COLOR,
+      fillOpacity: 0.08,
+      enableClicking: false,
+    })
+    map.addOverlay(box)
+    cellOverlaysRef.current.push(box)
+    if (typeof bmap.Circle === 'function') {
+      const ring = new bmap.Circle(new bmap.Point(cx, cy), led.radius_m, {
+        strokeColor: LC_JUDGE_SCALE_COLOR,
+        strokeWeight: 1.6,
+        strokeOpacity: 0.9,
+        strokeStyle: 'dashed',
+        fillColor: LC_JUDGE_SCALE_COLOR,
+        fillOpacity: 0,
+        enableClicking: false,
+      })
+      map.addOverlay(ring)
+      cellOverlaysRef.current.push(ring)
+    }
+  }, [mode, report, compareReport, selectedCell])
 
   useEffect(() => {
     onMapMode?.(mode)
@@ -1013,11 +1222,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       const py = ((e.clientY - rect.top) / rect.height) * LC_CANVAS.H
       const mx = ((px - LC_CANVAS.W / 2) / (LC_CANVAS.W / 2)) * LC_CANVAS.R
       const my = ((LC_CANVAS.H / 2 - py) / (LC_CANVAS.H / 2)) * LC_CANVAS.R
-      const dLat = my / 111320
-      const dLng = mx / (111320 * Math.cos((center[1] * Math.PI) / 180))
       // 这是**算出来的** BD-09（中心 + 米偏移反投影），仍需过值域闸：
       // R 派生自 study_radius_m 后若失控，算出的点会越界，此处是最后一道网。
-      const next = asBdLngLatOrNull([center[0] + dLng, center[1] + dLat], 'LcMap.fallbackCanvas.click')
+      // 反投影本身走 `lcFromMeters` —— 与证据盘环（`lcRing`）同一个逆运算，不再自带一份系数。
+      const next = asBdLngLatOrNull(lcFromMeters(center, mx, my), 'LcMap.fallbackCanvas.click')
       if (next) onCenterChange?.(next)
     }
     return (
@@ -1052,6 +1260,24 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
                 <polygon key={`b-${z.minutes}`} points={lcPolyPts(center, ring)} fill={c.fill} stroke={c.stroke} strokeWidth={1.5} strokeLinejoin="round" />
               )
             })}
+
+          {/* 片 5：证据域图层（降级画布分支，与 BMap 分支同判据：只描边、虚线=未查全、同一句 title）。
+              环走 `lcRing` 逆投影生成，**不用 SVG 正圆** —— 画布横纵比例本就不同（见 `lcRing` 注释）。 */}
+          {showEvidenceDiscs &&
+            !secondary &&
+            evidenceDiscs(report).map((d, di) => (
+              <polygon
+                key={`disc-${d.category}-${di}`}
+                points={lcPolyPts(center, lcRing([d.anchor[0], d.anchor[1]], d.exhausted_radius_m))}
+                fill="none"
+                stroke={lcEvidenceDiscColor(d.category)}
+                strokeWidth={1.4}
+                strokeOpacity={0.9}
+                strokeDasharray={d.complete ? undefined : '6 4'}
+              >
+                <title>{evidenceDiscTitle(d)}</title>
+              </polygon>
+            ))}
 
           {!secondary &&
             report.blindspots.map((b, bi) => {

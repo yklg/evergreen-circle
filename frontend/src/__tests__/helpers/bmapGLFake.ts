@@ -188,6 +188,23 @@ export class BMapPolygon {
   getPosition = (): LngLat => this.point
 }
 
+/** 证据域图层（片 5）用的圆：形参按真 API 取 `(center, radius, opts)`，三样都留下供断言。
+ *
+ * 在此之前替身命名空间里**没有** `Circle` ⇒ 生产侧那句 `typeof bmap.Circle === 'function'`
+ * 在 jsdom 里恒假，BMap 分支整块在测试面不可达（第十六轮评审 P1「BMap 分支零覆盖」）。
+ * `instances.circles` 那枚注册表也是从这里开始才有主人。 */
+export class BMapCircle {
+  center: LngLat
+  radius: number
+  opts: Record<string, unknown>
+  constructor(center: LngLat, radius: number, opts: Record<string, unknown> = {}) {
+    this.center = center
+    this.radius = radius
+    this.opts = opts
+    instances.circles.push(this)
+  }
+}
+
 export class BMapMarker {
   point: LngLat
   opts: Record<string, unknown>
@@ -223,6 +240,15 @@ export type MapCall = [method: string, args: unknown[]]
 
 export class BMapMapBase {
   readonly calls: MapCall[] = []
+  /**
+   * 已注册的**地图级**事件处理器（`click` / `movestart` / `zoomstart` / `tilesloaded`）。
+   *
+   * 为什么要有它：本仓拿不到真实指针点击（第三方 SDK 不认合成事件，CDP 只能打元素中心，
+   * 而地图中心恰被可拖的中心标记占着），所以"地图点选"这条链此前只能靠人工验收。
+   * 有了注册表，`lcMapCellClick` 就能直接取到真 handler 并喂事件载荷。
+   * 仍然 `log` —— 既有套件按 `calls` 断言过"确实订阅了"，摘掉会假红。
+   */
+  readonly handlers: Record<string, (...a: unknown[]) => unknown> = {}
   constructor(...args: unknown[]) {
     instances.maps.push(this)
     this.log('constructor', args)
@@ -256,9 +282,13 @@ export class BMapMapBase {
   }
   addEventListener(...args: unknown[]): void {
     this.log('addEventListener', args)
+    const [type, fn] = args as [string, (...a: unknown[]) => unknown]
+    if (typeof type === 'string' && typeof fn === 'function') this.handlers[type] = fn
   }
   removeEventListener(...args: unknown[]): void {
     this.log('removeEventListener', args)
+    const [type, fn] = args as [string, (...a: unknown[]) => unknown]
+    if (typeof type === 'string' && this.handlers[type] === fn) delete this.handlers[type]
   }
   getContainer(): HTMLElement {
     return document.createElement('div')
@@ -281,6 +311,7 @@ export function fakeBMapModule(ns: FakeNamespace = {}) {
     Icon: BMapIcon,
     InfoWindow: BMapInfoWindow,
     Polygon: BMapPolygon,
+    Circle: BMapCircle,
     Marker: BMapMarker,
     Label: BMapLabel,
     Map: BMapMapBase,

@@ -28,11 +28,11 @@ import copy
 import datetime as _dt
 import logging
 import os
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
 
 import numpy as np
 
-from app.living_circle.blindspot import TRIAD_LABEL, find_blindspots_with_stats
+from app.living_circle.blindspot import TRIAD_LABEL, render_cells_ledger
 from app.living_circle.caliber import facility_merge_enabled, get_caliber
 from app.living_circle.facility_rule import FACILITY_MERGE_M, FACILITY_RULE_VERSION
 from app.living_circle.geo_utils import point_in_ring, ring_area_km2, to_local_xy
@@ -46,8 +46,14 @@ from app.living_circle.poi import (
     to_points,
     to_stats,
 )
-from app.living_circle.scope import SpatialScope
+from app.living_circle.scope import SpatialScope, blind_radius_or
 from app.living_circle.scoring import compute_scores, triad_from_points
+# 判定覆盖率的比率**只住一处**（批 A③）：`judgement.py` 运行期不 import 本项目任何模块，
+# 所以 assemble 与 report_contract 都指过来不会成环。
+from app.living_circle.judgement import judged_share
+
+if TYPE_CHECKING:                    # 只喂注解；判定产物的形状定义在 `judgement.py`
+    from app.living_circle.judgement import Judgement
 
 logger = logging.getLogger(__name__)
 
@@ -198,18 +204,6 @@ def _affected_for(ring: Any, center: tuple, sample_pts: List[Dict[str, Any]]) ->
     }
 
 
-def _judged_share(blind_stats: Mapping[str, int]) -> Optional[float]:
-    """判定覆盖率 = 已判定格 / 可达区内格。无判定格（`cells_inside == 0`）⇒ ``None``。
-
-    交给评分的是**比例**而不是格数：格数随格距与场景大小变化，比例才是「这次判了多少面」
-    的可比量。`None` 表示覆盖率无从谈起，评分据此退回按条数扣分（不猜、不放大）。
-    """
-    inside = int(blind_stats.get("cells_inside", 0) or 0)
-    if inside <= 0:
-        return None
-    return int(blind_stats.get("cells_judged", 0) or 0) / float(inside)
-
-
 def assemble_living_circle(
     check: Any,
     iso: Dict[str, Any],
@@ -219,6 +213,11 @@ def assemble_living_circle(
     data_origin: str = "live",
     intake_meta: Optional[Dict[str, Any]] = None,
     poi_merged: Sequence[Dict[str, Any]] = (),
+    partial: Optional[Dict[str, Any]] = None,
+    *,
+    judgement: "Judgement",
+    sample_profile: Optional[str] = None,
+    forensic: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """由阶段产物组装 ``LivingCircleReport``（对齐前端 F0 契约）。
 
@@ -232,6 +231,26 @@ def assemble_living_circle(
     intake_meta : intake 阶段的**溯源标注**（如名称与中心点是否同源）。
                   由编排层（pipeline）注入，组装层只负责落到 ``scene`` 上，
                   不做判定 —— 判定需要「样例库」这类 intake 知识，不属于几何组装。
+    partial     : ``report["partial"]`` 节点（由 `degrade_policy.partial_for` 构造），
+                  **仅在取证阶段被闸切断时给**。缺省不发射这个键 —— 一份完整跑完的
+                  live 报告不该带着「部分完成」的暗示，而缺席本身也要能被读出。
+    judgement   : **必填、无回落**（计划 v6.5 片 1a）。`blindspot.judge_once` 的产物：
+                  盲区条目 + 三态账目 + 逐格掩码。组装层从此**不判盲** —— 它只消费判定结果，
+                  并就地补 `reach`/`affected`（这两样要耗时场与采样点，只有本层持有）。
+                  之所以不留「不传就自己判一次」的回落：那等于允许两条判定路径并存，
+                  回合与报告可能吃两块证据区域两份掩码，而"同源"这条承诺只剩 docstring。
+                  调用方只有 `data_source.live_forensic_steps` 一处（离线估算与夹具各自
+                  拼整包，不进本函数）。
+    sample_profile : **本次真正用的采样档**（编排层里那个 `profile = sample_profile or
+                  check.sample_profile`）。缺省 ⇒ 与请求档同值，所以今天默认路径逐字节不变。
+                  为什么要有这个形参（第十六轮复审 P1-1）：`caliber.sample_profile` 是复用门
+                  `reuse_policy` 的比较项之一（批 A③），而门要比的是"这份答案是按哪一档跑出来的"。
+                  请求档不等于实跑档 —— 后台精报会把 `standard` 的请求跑成别的档（今天
+                  `_schedule_refine` 无调用点，所以不发作），拿请求档声明就是让门建在一个会
+                  撒谎的字段上：错档的邻近请求被放行、同档的同参请求反被拦下。
+    forensic  : 取证回合的账目（`caliber.forensic`）。由编排层（`live_forensic_steps`）交出，
+                  组装层不数格子也不猜轮次 —— 它连"跑了几轮"都不可能知道，知道的那一层是循环。
+                  缺省不发这个键（离线估算与夹具从没走过取证阶段）。
     """
     center = tuple(check.center)
     sample_pts = iso["sampling"]["points"]
@@ -286,10 +305,10 @@ def assemble_living_circle(
         field_fn,
     )
 
-    # ── 盲区（判定网格限定在可达区内；不可判定格计入 stats 显式暴露）──
-    blindspots, blind_stats = find_blindspots_with_stats(
-        center, scope, triads, prefix=check.scene_name
-    )
+    # ── 盲区（判定在编排层完成，本层只消费产物；见参数表 `judgement` 的所有权契约）──
+    # `blindspots` 是**移交进来**的可变条目 ⇒ 下面就地补 reach/affected；
+    # `blind_stats` 是**判定时刻的快照** ⇒ 本层不许回头改它（评分与举证读的同一份）。
+    blindspots, blind_stats = judgement.spots, judgement.stats
     # 装配层补齐 真实可达(reach) + 受影响人口(affected) —— 二者数据(sampling/field_fn)只在此层持有(R1/R3)
     for b in blindspots:
         b["reach"] = _reach_for(tuple(b["center"]), field_fn, b)
@@ -298,14 +317,26 @@ def assemble_living_circle(
         stats,
         triads_conclusion,
         len(blindspots),
-        judged_share=_judged_share(blind_stats),
+        judged_share=judged_share(blind_stats),
         evidence_complete=bool(scope.evidence_complete),
     )
 
     # ── 口径举证（唯一实现；含本次实测的空间量，便于回答「盲区为什么只有这么大」）──
     caliber = get_caliber(check.travel_mode)
-    caliber_report = scope.payload(caliber, blind_stats)
-    caliber_report["sample_profile"] = check.sample_profile
+    # `judged_region` = **这一次判定真正吃的那片区域**（片 4 的接点）。不传的话，跑了扩容回合的
+    # 报告会上屏「首轮那三块中心盘」的逐锚点明细，而盲区是按并集判出来的 —— 明细与结论分家。
+    # 今天 0 回合时 `judgement.region` 恰是 `degenerate_evidence_region` 那三块盘（`judge_region`
+    # 的缺省出路），所以默认路径的 `evidence_anchors` 内容与"退化重放"逐位同源。
+    caliber_report = scope.payload(caliber, blind_stats,
+                                   judged_region=judgement.region, forensic=forensic,
+                                   # 逐格台账：渲染只吃**这一次判定**的掩码（`render_cells_ledger`
+                                   # 不重算格阵），尺取 `judgement.radius_m` —— 报告里每条盲区的
+                                   # `radius_m` 读的就是同一把，文案与图形此处分文不差。
+                                   cells_ledger=render_cells_ledger(judgement.masks,
+                                                                    judgement.radius_m))
+    # 声明的是**实跑档**（编排层传进来的 `sample_profile`），不是请求档 —— 复用门拿这个字段
+    # 判"这是不是本次请求的答案"，两个字段在精报路径上会分叉（第十六轮 P1-1）。缺省时两者同值。
+    caliber_report["sample_profile"] = sample_profile or check.sample_profile
     # 设施归并的**回溯凭据**：点位名可能已被升格改写（`中国建设银行24小时自助银行(X支行)`
     # → `中国建设银行(X支行)`），与百度原始 POI 名不再逐字一致。没有这段说明，报告里
     # 的名字就对不上数据源，答辩时无法举证。条数披露在 `poi.merged`，此处只记口径本身。
@@ -320,7 +351,7 @@ def assemble_living_circle(
         ),
     }
 
-    return {
+    out = {
         "scene": {
             "name": check.scene_name,
             "city": check.city,
@@ -338,6 +369,9 @@ def assemble_living_circle(
         "blindspots": blindspots,
         "scores": scores,
     }
+    if partial is not None:
+        out["partial"] = partial
+    return out
 
 
 def annotate_blindspots(report: Dict[str, Any]) -> Dict[str, Any]:
@@ -390,7 +424,19 @@ def annotate_blindspots(report: Dict[str, Any]) -> Dict[str, Any]:
         key_of_label = {v: k for k, v in TRIAD_LABEL.items()}
         miss_keys = [key_of_label.get(l, l) for l in missing_labels]
         miss_nearest = _missing_nearest_m(miss_keys, nearest)
-        farness = _excess_farness(miss_nearest)
+        # 判定半径的来源（生活圈片 1b）：这条路径服务 fixture/预计算件，**手里没有
+        # `Judgement`**（`assemble_living_circle` 那条才有），所以数只能取报告自己发射的
+        # `blindspots[].radius_m`；缺该键（历史件）⇒ 按口径决议值回落。
+        # ⚠️ 回落**不加新顶层键**去披露：那条分支今天没有真实载体（两份夹具的 `blindspots`
+        # 都是空数组），给零消费者的产物开契约面要连名册与前端一起动。缺陷本身由
+        # `test_annotate_radius_fallback_is_invisible` 以 xfail 挂账，栖身之所归批次二。
+        declared = b.get("radius_m")
+        # `travel_mode` 这里点名 `"walking"` 是**明写的债**，不是签名替我选的默认：这条路径
+        # 服务存量件，产物里其实写着 `caliber.travel_mode`，但改吃它要把「未知档名」的处理
+        # 一起设计（`db.py:1585` 那支没有 try 兜，抛错就等于历史报告读接口 500）⇒ 归批次二，
+        # 与 B10 读侧「改吃产物声明的半径」是同一次动作。
+        radius_m = blind_radius_or(None if declared is None else float(declared), "walking")
+        farness = _excess_farness(miss_nearest, radius_m)
         gap = _gap_score(len(miss_keys) if miss_keys else 1, farness)
         b["severity"] = _severity_of(gap)
         b["gap_score"] = gap

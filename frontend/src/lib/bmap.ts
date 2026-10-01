@@ -44,9 +44,12 @@ export interface BMapMap {
   pointToPixel(point: BMapPoint): { x: number; y: number }
   /** 地图 DOM 容器（HeatFieldOverlay 挂 canvas 覆盖层；BMapGL Map 官方方法） */
   getContainer(): HTMLElement
-  /** 地图级事件订阅（平移/缩放重绘热力覆盖层；SDK 支持，测试桩可缺省） */
-  addEventListener?(event: string, fn: () => void): void
-  removeEventListener?(event: string, fn: () => void): void
+  /** 地图级事件订阅。⚠️ 载荷**有内容**，见 `BMapMapEvent` —— 这条签名以前写成
+   *  `fn: () => void`，等于宣称"地图事件不带东西"，于是每个调用点各自猜形状。
+   *  本仓未开 `strict`（`tsconfig.app.json`），这层类型只是文档不是防线；
+   *  真防线是 `src/__tests__/mapEventCoordGuard.test.ts`。 */
+  addEventListener?(event: string, fn: BMapMapListener): void
+  removeEventListener?(event: string, fn: BMapMapListener): void
   /** 当前中心（BD-09 GL Point）——C7 flyTo 起飞前视口快照；测试桩可缺省 */
   getCenter?(): BMapPoint
   /** 当前缩放级别——同上 */
@@ -58,6 +61,33 @@ export interface BMapMap {
 export interface BMapMapCtor {
   new (container: HTMLElement, opts?: { zoom?: number; enableHighResZoom?: boolean }): BMapMap
 }
+
+/**
+ * 地图级事件载荷（只声明本项目用到的字段）。
+ *
+ * 为什么两案键名并存：GL 源码里 `i.latLng = nq.latlng` 那次改名**只发生在覆盖物派发
+ * 路径**上，地图自身的 click 带的是内部小写名 `latlng`。仓内那份 2026-09-23 的 spike
+ * 记录的是覆盖物事件形状（驼峰），被读宽一档当成"所有事件都驼峰"，就产生了
+ * 「字段压根不存在、取到 undefined」这一轮排查。取值一律走
+ * `lib/geo.ts::bmapEventLngLat`，两案按序试。
+ *
+ * `point` / `pixel` 是投影平面坐标，**永不参与取值**（见 `geo.ts` 里
+ * `rejectBdLngLatSource` 的 docstring：北极圈事故），声明出来只为让诊断文本有处可读。
+ */
+export interface BMapMapEvent {
+  type?: string
+  target?: BMapMap
+  /** 地图级事件的经纬度（BD-09） */
+  latlng?: BMapPoint
+  /** 覆盖物派发路径上的那份经纬度（驼峰） */
+  latLng?: BMapPoint
+  /** 容器像素 —— 只进诊断文本 */
+  pixel?: { x: number; y: number }
+  /** 投影平面坐标 —— 只进诊断文本 */
+  point?: { lng?: number; lat?: number; x?: number; y?: number }
+}
+
+export type BMapMapListener = (e: BMapMapEvent) => void
 
 /**
  * 覆盖物事件对象（仅声明本项目用到的字段）。
@@ -113,6 +143,11 @@ export interface BMapPolygonCtor {
       fillOpacity?: number
       strokeStyle?: string
       strokeOpacity?: number
+      /** GL 公开 API：`false` ⇒ 整个覆盖物不参与命中。**Polygon 原先没声明这一项**
+       *  （原先没有任何 Polygon 需要它 —— 等时圈 Polygon 刻意不挂 hover）。
+       *  判定尺的选中格方框要它：真机 spike 实测**面填充同样可拾取**，不设 false 就会
+       *  把这 195m 见方一格内的采样点 tooltip 全吃掉。 */
+      enableClicking?: boolean
     },
   ): BMapPolygon
 }
@@ -162,6 +197,9 @@ export interface BMapCircleCtor {
       fillOpacity?: number
       strokeStyle?: string
       cursor?: string
+      /** GL OverlayOptions：false ⇒ 该覆盖物完全不参与命中（不吃 click、不派 mouseover）。
+       *  证据域那一层要用：几十个盘铺满可达区，可点就会把地图取点与圈内热力 tooltip 全挡住。 */
+      enableClicking?: boolean
     },
   ): BMapCircle
 }

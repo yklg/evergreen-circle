@@ -48,6 +48,66 @@ export interface CreateTaskResp {
   purpose?: string
   /** 归一化后的调研类型 key（后端 type_key() 回落 guide）；演示/LC 兜底路径可不带，读侧按 guide 容错 */
   researchType?: string
+  /** 仅当请求带了 source_urls 时返回：入口卫生后的清单（计划 v3 §二 B1）。 */
+  sourceUrls?: UserSourceEcho
+}
+
+/** 用户指定信源的入口回执：accepted 是**归一化后**的网址，界面要显示这一份而不是用户原样输入。 */
+export interface UserSourceEcho {
+  accepted: string[]
+  /** 超过条数上限被砍掉的条数（不静默丢弃） */
+  truncated: number
+  /** 被拒条目与其可读原因（非法协议、超长…） */
+  rejected: { url: string; reason: string }[]
+}
+
+/**
+ * 报告级用户指定信源举证块（计划 v3 §二 B5；真相源 `report["user_sources"]`）。
+ * summary 的桶名与后端 `audit.USER_SOURCE_COVERAGE_BUCKETS` 逐字一致 —— 前端不另造一套词。
+ */
+export interface UserSourceSummary {
+  total: number
+  cited: number
+  uncited: number
+  unread: number
+  blocked: number
+  gated_off_query: number
+  merged: number
+  pending: number
+  denominator: number
+  /** 分母为 0 时后端发 null（不是 0%，0% 会被读成"一条都没引用"） */
+  rate: number | null
+}
+
+export interface UserSourceItem {
+  uid: string
+  url: string
+  url_canonical: string
+  /** 存储态（collect 写）：只描述"读没读到" */
+  state: 'pending' | 'fetched' | 'unread' | 'blocked' | 'gated_off_query' | 'merged'
+  /** 派生覆盖桶（audit 算）：与 state 是两套词表，别混用 */
+  coverage: 'pending' | 'unread' | 'blocked' | 'cited' | 'uncited'
+  reason: string
+  evidence_id: string
+  group_id: string
+  bytes: number | null
+  ms: number | null
+  cited_by: string[]
+}
+
+export interface UserSourceBlock {
+  /** 中文标签来自后端注册表下发，前端不再抄一份映射 */
+  label: string
+  summary: UserSourceSummary
+  items: UserSourceItem[]
+  note: string
+}
+
+/** `GET /api/source-kinds` 下发视图（真相源 backend/app/core/source_type.py）。 */
+export interface SourceKindView {
+  id: string
+  label: string
+  in_stats: boolean
 }
 
 /* 调研类型（GET /api/research-types —— 注册表为唯一真相源，前端不复制文案） */
@@ -65,11 +125,73 @@ export type SSEEventType =
   | 'evidence'
   | 'chart'
   | 'image'
+  | 'user_source'
   | 'progress'
   | 'trace'
+  | 'round'
   | 'report_ready'
   | 'done'
   | 'error'
+
+/** 一趟取证判定的逐条账目 —— 后端 `ForensicRoundRecord.to_row()` 的**唯一**前端镜像。
+ *  为什么只留这一份：同一个行对象既从 `round` 事件发出、又落进
+ *  `caliber.forensic.rounds_detail[]`（两处由同一个函数产），若前端也声明两份，
+ *  上屏与落库就会各自漂移 —— 正是本片要消灭的那类分家。 */
+export interface ForensicRoundRow {
+  pass_no: number
+  dispatched: boolean
+  calls: number
+  pool_remaining: number
+  anchors_planned: number
+  anchors_sent: number
+  anchors_used: number
+  anchors_merged: number
+  anchors_not_run: number
+  anchors_dropped: number
+  starved_terms: number
+  points_added: number
+  cells_undecided_before: number
+  cells_blind_before: number
+  cells_undecided_after: number | null
+  cells_blind_after: number | null
+  asking: string[]
+  stopped_by: string | null
+  per_category: Record<string, {
+    reason: string
+    stride: number
+    cells_uncovered: number | null
+    anchors_total: number
+    anchors_dropped: number
+    exhausted_min_m: number | null
+  }>
+}
+
+/** `round` 事件载荷（生活圈取证回合，计划 v7.0 片 4）：一个扩容回合花了多少额度、买回几格结论。
+ *  刻意**不**复用 `trace`：那个名字在 research 侧有一个已定的 `TraceSpan` 形状（prompt/tokens…），
+ *  在同一事件名下挂第二种载荷 = 让两个链路各自演进时互相撞坏。
+ *  ⚠️ 上屏文案取事件自带的 `text`（后端 `pipeline/living_circle.py` 的 STEP_ROUND 分支是唯一
+ *  措辞出处），前端**不重排句子** —— 否则同一件事两处各说一遍。 */
+export interface ForensicRoundEvent {
+  stage?: string
+  text?: string
+  round: ForensicRoundRow
+}
+
+/** `user_source` 事件载荷：用户指定网址的逐条读取进度与终态（计划 v3 §二 F1/B2）。
+ *  后端先发自 `state:'reading'`，同一条 uid 随后发终态；前端按 uid upsert（不是追加），
+ *  否则列表会随返工轮越滚越长。 */
+export interface UserSourceEvent {
+  id: string
+  url: string
+  index: number
+  total: number
+  state: 'reading' | UserSourceItem['state']
+  reason?: string
+  evidence_id?: string
+  bytes?: number
+  ms?: number
+  ts?: string
+}
 
 /* 澄清问卷 SSE 事件（CreateTaskResp 不再携带问卷，改为 ClarifyPage 内 SSE 懒加载） */
 export type ClarifySSEEventType = 'clarify_stage' | 'clarify_ready' | 'clarify_update' | 'error'
@@ -304,6 +426,8 @@ export interface Report {
   quality_before?: Record<string, unknown>
   quality_after?: Record<string, unknown>
   audit_review?: AuditReview
+  /** 用户指定信源举证块（计划 v3 §二 B5）：仅带清单的任务有；与 audit_review 同级 */
+  user_sources?: UserSourceBlock
   trace?: TraceSpan[]
   /* v2.1 客观性：方法论与局限 + 矛盾陈述（正式契约字段，均可选） */
   methodology?: ReportMethodology
@@ -443,6 +567,10 @@ export interface IntelOverview {
   avg_evidence_per_report: number
   fact_accuracy: number
   platform_distribution: Record<string, number>
+  /** 库内「用户指定」类证据条数（后端 _agg_compute 恒发，无则 0） */
+  user_source_evidence: number
+  /** 口径变动说明行：仅当分布里真含用户指定信源时非空（degradeDisclosure 同源纪律） */
+  distribution_note: string
   destination_graph: DestinationGraph
   // 业务闭环聚合（后端 _agg_compute 恒发，故为必填：可选化只会让消费方各自兜底）
   minutes_saved: number
@@ -488,6 +616,12 @@ export interface Subscription {
   last_run_at: string
   last_report_id: string
   run_count: number
+  /** 这条订阅的**用户指定信源清单**（计划 v3 §二 B8）：复跑必须带同一份，
+   *  否则第二次跑出的报告不含用户钉的文档，两次口径不可比而界面看不出差别。
+   *  后端恒发数组（旧库该列为 NULL 也回落成 []），故为必填。 */
+  source_urls: string[]
+  /** 仅 POST 那次返回：入口卫生回执（accepted/truncated/rejected），与建任务响应同形状 */
+  sourceUrls?: UserSourceEcho
 }
 
 /* 专家工作量 */
@@ -536,7 +670,7 @@ export type SaveSettingsResp = Omit<SettingsResp, 'secrets' | 'groups'>
    与 SettingsResp 的边界：settings 是系统级运行时配置（密钥 GET 脱敏）；
    prefs 是用户级偏好，明文、无密钥、原样返回，且**只回库中实际存在的键**
    （前端靠 stored 判定"是否首次"，见 src/lib/persist.ts）。 */
-export type PrefValue = string | number | boolean
+export type PrefValue = string | number | boolean | string[]
 export type PrefsValues = Record<string, PrefValue>
 
 export interface PrefsResp {
@@ -829,6 +963,94 @@ export interface LifeCircleDegraded {
   note?: string
 }
 
+/**
+ * **部分完成**标记（后端 `degrade_policy.partial_block()` 唯一产出；计划 v7.0 片 4）。
+ *
+ * - 与 `degraded` 不是一回事：`degraded` 说「这份换成了离线骨架」，`partial` 说
+ *   「这份仍是实时口径，只是有些格/类没查到」。D1① 定的是取证阶段被切断**不降级**，
+ *   所以前端绝不能把两者并进同一个横幅（那会把"按计划只打了这么多"说成事故）。
+ * - `detail` 与 `degraded.detail` 共用同一张归因表（`degradeDetailLabel()`），
+ *   但**成因族不同**：这里可能是 `forensic_pool_short`（额度不足），也可能是熔断族
+ *   （取证那一格被闸掐住）。文案分支见 `lib/livingCircle.partialBanner()`。
+ */
+export interface LifeCirclePartial {
+  stage: string
+  detail: string
+  note: string
+}
+
+/** 一个证据圆盘（后端 `EvidenceDisc`，由 `TermEvidence.as_disc()` 这一处转换）。
+ *  `exhausted_radius_m` 才是"实际查到哪儿"：查全时=请求半径，被截断时=最远实测点。 */
+export interface EvidenceDisc {
+  category: string
+  anchor: [number, number]
+  request_radius_m: number
+  exhausted_radius_m: number
+  complete: boolean
+  cap_hit: boolean
+  /** 完整性/封顶的**出处**；`null` = 合成盘（从标量边界反推，按定义不自称查全） */
+  stop_reason: string | null
+}
+
+/** 取证回合总账（`caliber.forensic`，后端 `data_source.forensic_block()` 唯一构造点）。
+ *  **缺席即"这次没走取证阶段"**（离线估算与夹具）⇒ 前端不得回落成 `rounds: 0` 去举证。 */
+export interface ForensicAccount {
+  rounds: number
+  judging_passes: number
+  max_rounds: number
+  stop_reason: string | null
+  pool_total: number
+  pool_used: number
+  pool_remaining: number
+  anchors_planned: number
+  anchors_sent: number
+  anchors_used: number
+  anchors_merged: number
+  anchors_not_run: number
+  anchors_dropped: number
+  calls: number
+  /** 补算回来的点位只进判盲、不进评分与展示计数（两面性的显式声明） */
+  points_added_judging_only: number
+  points_policy: string
+  /** 「现在为什么停」的逐类读数（取最后一趟）；历史流水在 `rounds_detail` */
+  per_category: ForensicRoundRow['per_category']
+  rounds_detail: ForensicRoundRow[]
+}
+
+/** 逐格判定台账（`caliber.cells_ledger`，契约 B13）。形状与后端
+ *  `blindspot.render_cells_ledger` 逐字对齐，两侧由 `cellsLedgerContract.json` 同钉：
+ *
+ *  - 十张 `n×n` 矩阵是**行字符串**（行沿 y、列沿 x），字母表只有 `1` / `0` / `.`；
+ *  - 三张 `nearest.{类}` 是空格分隔的 `n` 个记号，`-` = 无从知道，其余是整米数。
+ *
+ *  ⚠️ `.` 不是 `0`：它表示「这一类的 1km 判定圆没被证明查全」，即**没查过**。把两者合并
+ *  就等于让报告重犯「判不了冒充不盲」—— 那正是 `ev-1` 整套改造要消灭的形状。
+ *  缺整个键 ⇒ 这份报告出自逐格台账上线之前（`ev-2` 前）或离线骨架 ⇒ 格级图层不出现，
+ *  一律经 `cellsLedgerOf()` 取值（它返回 `null`，不猜、不抛）。 */
+export interface CellsLedgerRaw {
+  grid: string
+  schema_version: number
+  n: number
+  step_m: number
+  scan_m: number
+  /** 本次判定实际吃的那把尺（米）。**不许**在前端写回 1000 —— 多模式分档后它不是常量。 */
+  radius_m: number
+  center: [number, number]
+  inside: string[]
+  capped: string[]
+  blind: string[]
+  verdict: string[]
+  'judge.market': string[]
+  'judge.pharmacy': string[]
+  'judge.primary': string[]
+  'present.market': string[]
+  'present.pharmacy': string[]
+  'present.primary': string[]
+  'nearest.market': string[]
+  'nearest.pharmacy': string[]
+  'nearest.primary': string[]
+}
+
 export interface LivingCircleReport {
   scene: LifeCircleScene
   generated_at: string
@@ -847,6 +1069,8 @@ export interface LivingCircleReport {
   cached_at?: string
   /** R-7：降级标记（存在即降级）。文案请走 `degradeDetailLabel()`，不要在消费点自己 switch。 */
   degraded?: LifeCircleDegraded
+  /** 片 4/5：部分完成标记（存在即"有格/类没查到"，**不是**降级）。文案走 `partialBanner()`。 */
+  partial?: LifeCirclePartial
   /** R2/R6：测算口径举证对象（出行方式、速度、绕行系数等） */
   caliber?: {
     travel_mode: string
@@ -881,7 +1105,7 @@ export interface LivingCircleReport {
        全部可选：判盲口径升级**前**冻结的快照与离线骨架不带这些键。前端一律经
        `lib/livingCircle.ts` 的安全取值读，**不得**无条件解构 —— 否则演示链（内嵌夹具
        走的就是旧快照）会当场崩。缺键本身是信息：`staleCaliberNotice()` 据此给陈旧提示。 */
-    /** 判盲空间口径版本号（当前 `ev-1`）；缺 ⇒ 升级前的旧报告 */
+    /** 判盲空间口径版本号（当前 `ev-2` = 追加逐格台账）；缺 ⇒ 升级前的旧报告 */
     scope_policy_version?: string
     /** 采集证据余量 = 判定半径（由「判盲需要 1km 完整证据」导出，不是可填的名义值） */
     evidence_margin_m?: number
@@ -899,6 +1123,17 @@ export interface LivingCircleReport {
     evidence_truncated_terms?: string[]
     /** 被预算拒绝、一次都没发的检索词（连边界都没有）—— 与截断**不是同一种缺陷** */
     evidence_starved_terms?: string[]
+    /* ── 片 4/5 · 逐锚点举证与取证账目 ──
+       两把尺并存这件事要说清：上面那批 `evidence_*` **标量**仍是旧口径（批次二才收敛），
+       而下面这两块是逐盘/逐趟的明细 —— 由 `scope.payload(judged_region=/forensic=)` 跟着
+       **判定真正吃的那块区域**发射。读侧任何一处拿标量去否证明细，都会得出反向结论。 */
+    /** 判定吃的那块证据域的逐盘明细；缺 ⇒ 旧快照没发过（不是"没有盘"） */
+    evidence_anchors?: EvidenceDisc[]
+    /** 取证回合账目；**缺 ⇒ 这次根本没走取证**（离线/夹具），不得回落成 `rounds: 0` */
+    forensic?: ForensicAccount
+    /** 逐格判定台账（契约 B13）；**缺 ⇒ 这份报告早于 `ev-2`** 或来自离线骨架
+     *  ⇒ 格级图层与逐格卡都不出现，经 `cellsLedgerOf()` 取，取不到就是 `null`（不猜、不抛） */
+    cells_ledger?: CellsLedgerRaw
   }
   isochrones: IsochroneZone[]
   sampling: {

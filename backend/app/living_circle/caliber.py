@@ -27,7 +27,9 @@ class ReachCaliber:
     - fine_band：由最内圈半径派生（防「最内圈网格坍缩」复发），非硬编码；
     - api：实测能力（探针写入 manifest.json 后加载）；
     - basis：政策原文出处（答辩举证用）；
-    - measured：是否经真实路网测时验证（True=步行，False=近似口径）。
+    - measured：是否经真实路网测时验证（True=步行，False=近似口径）；
+    - blind_radius_m：盲区判定半径（「多大范围内没有该类设施 ⇒ 该格判盲」），
+      是判盲与取证共用的那把尺，见 `scope.BLIND_RADIUS_M` 的兼容说明。
     """
     travel_mode: str
     speed_m_per_min: float
@@ -38,6 +40,13 @@ class ReachCaliber:
     api: Optional[ApiCapability] = None
     basis: str = ""
     measured: bool = False
+    # 盲区判定半径的**住所**（生活圈片 1b）。此前它只住在 `scope.BLIND_RADIUS_M` 一个模块
+    # 常量上，却有 21 条取值途径（15 个函数默认值 + 5 处体内硬用 + 1 处发射进报告）——
+    # 默认值在 def 期就被焊进函数对象，所以"改源头"不会让默认路径跟着改。搬进口径对象后，
+    # 半径与 speed/detour_k/study_radius 同族，可随出行方式分档。
+    # ⚠️ 三个档位今天**同值**，这是现状不是巧合的省略：判盲半径分档属于阶段 3-5 的政策决定，
+    # 本片只把住所搬对、不改任何一格的结论（验收线 = 默认路径逐字节不变）。
+    blind_radius_m: float = 1000.0
 
     @property
     def innermost_radius_m(self) -> float:
@@ -179,6 +188,10 @@ def _apply_manifest_caliber(caliber: ReachCaliber, manifest: Dict[str, Any]) -> 
         api=api,
         basis=caliber.basis,
         measured=measured,
+        # ⚠️ 这个重建是**逐字段手抄**的：漏一行不会报错，只会把该字段打回 dataclass 默认值
+        # （`blind_radius_m` 漏抄 ⇒ 分档静默失效，且默认值恰好等于原值 ⇒ 无人能发现）。
+        # `test_manifest_rebuild_preserves_blind_radius` 钉的就是这一行。
+        blind_radius_m=caliber.blind_radius_m,
     )
 
 

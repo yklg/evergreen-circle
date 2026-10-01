@@ -33,19 +33,30 @@ from app.living_circle.caliber import caliber_payload_key
 from app.living_circle.data_source import (
     CheckParams,
     LiveDataSource,
+    live_forensic_steps,
     Repository,
     refine_live_with_profile,
+    RoundOutcome,
+    STEP_COLLECT,
+    STEP_DEGRADED,
+    STEP_JUDGE,
+    STEP_MEASURE,
+    STEP_REPORT,
+    STEP_ROUND,
 )
+from app.living_circle.isochrone import IsochroneEngine
 from app.living_circle.degrade_policy import (
-    DETAIL_LABELS,
-    degraded_block,
     DEGRADE_REASON_QUOTA_EXHAUSTED,
     DEGRADE_REASONS,
+    DETAIL_LABELS,
+    PARTIAL_NOTE,
     degrade_detail,
     degrade_reason,
     degraded_block,
     detail_label,
+    partial_for,
 )
+from app.living_circle.judgement import STAT_KEYS
 from app.living_circle.request_guard import CallGuard, get_daily_budget
 
 # 复用同目录既有的 live 分支驱动件（stub / 工厂顶替 / 参数构造）—— 与 U18/U36 同一套，
@@ -108,6 +119,18 @@ class NullMeasureStub(PipelineStubBaidu):
         return [None for _ in origins]
 
 
+class EmptyPoiStub(PipelineStubBaidu):
+    """测时**正常**、但 8 类 POI 全空 ⇒ 第二条降级出路（`poi_empty`）的最小前置（M14-c）。
+
+    与 `NullMeasureStub` 刻意分开：那支断在测时阶段（等时圈族为空，第一条出路），
+    这支走过了 `scope_or_degrade` 与 `load_poi`，是在**采集之后**被残缺判定拦下的 ——
+    两条出路的 step 载荷形状不同（这支带 `scope`/`collected`），判据也得分开钉。
+    """
+
+    def _poi_set(self, query, center):
+        return []
+
+
 class MeltedMeasureStub(PipelineStubBaidu):
     """测时经**已熔断**的 guard 发起 ⇒ 全部 `None`（供 M1/M2 造出「精报降级」前置）。"""
 
@@ -157,10 +180,16 @@ def _done(events):
 # ── M3 · 真 CallGuard 熔断 ⇒ 必须降级（根因 A 的真正判据）───────
 
 def test_m3_real_callguard_meltdown_must_degrade(monkeypatch):
-    """M3（P0）：真 `CallGuard(max_total_calls=N)` 在 POI 采集中途熔断 ⇒ 必须诚实降级。
+    """M3（P0）：真 `CallGuard(max_total_calls=N)` 在 POI 采集中途熔断 ⇒ 任务照以 done 收尾。
 
     **被测范围**：完整流水线（含 `load_poi` → `degrade_if_incomplete`）。
     档位：修复前 🔴 行为红（真红 —— 存在正确实现可使其绿）；修复后 🟢。
+
+    ⚠️ 判据随 **D1①（计划 v4 阶段 4）重指**：这条用例原本钉的是「熔断 ⇒ 整份 offline」。
+    实测 N=3 时矩阵只占掉前 1~2 次调用，熔断发生在**取证途中** —— 等时圈是真测过的，
+    把它打回 detour_k 正圆等于「用一定不出错换掉本来已经算出来的东西」。本用例保留的
+    是它真正要守的那件事：**绝不因百度配额演成「调研失败」**。offline 那条路另有
+    `test_d1_isochrone_stage_abort_still_degrades` 守着（测时阶段中止，几何没拿到）。
     """
     guard = CallGuard(max_total_calls=3, min_interval_s=0, backoff_base_s=0.001)
     stub = GuardedStub(KAILI_CENTER, guard)
@@ -173,9 +202,16 @@ def test_m3_real_callguard_meltdown_must_degrade(monkeypatch):
     assert _done(events)["data"].get("status") != "failed"
     rid = _done(events)["data"]["report_id"]
     rep = db.get_living_circle_report(rid)
-    assert rep["living_circle"]["data_origin"] == "offline", "真 guard 熔断后必须降级（根因 A）"
-    assert rep["living_circle"]["degraded"]["reason"] == DEGRADE_REASON_QUOTA_EXHAUSTED
-    assert rep["living_circle"]["degraded"]["detail"] == "total_meltdown"
+    lc = rep["living_circle"]
+    assert lc["data_origin"] == "live", "取证途中熔断不许丢掉已测过的实时几何（D1①）"
+    assert "degraded" not in lc, f"partial 不是降级：{lc.get('degraded')}"
+    assert lc["partial"]["detail"] == "total_meltdown", (
+        f"残缺必须可归因到配额信号：{lc.get('partial')}"
+    )
+    assert lc["isochrones"], "保留 live 几何不是空壳：等时圈族得真在报告里"
+    assert lc["sampling"]["interpolation"] != "circular_approx", (
+        "熔断产出正圆 = 已知 P1 答辩反证据，D1 就是为了堵掉它"
+    )
     assert db.get_task_full(tid)["status"] == "done"
 
 
@@ -465,6 +501,533 @@ def test_m9c_guard_script_passes_on_this_repo():
     assert r.returncode == 0, f"γ 守卫在本仓判红：\n{r.stderr}"
 
 
+# ── M13/M14 · G-9 取证编排单实现（计划 v6.1 片 0）────────────────
+#
+# 片 0 收拢掉的是**三份**同构编排（pipeline live 分支 / `LiveDataSource.compute` /
+# `refine_live_with_profile`）。收拢这件事本身没有运行时症状可测：三份都跑得过、
+# 事件都发得出 —— 缺陷的形状是「以后改一份、漏两份」。所以判据只能是**静态**的
+# （谁还在别处串这些原语）+ **接缝契约**（唯一那份按什么顺序交出事实）。
+# M13 系列守前者，M14 系列守后者。
+
+# 合法形态：**六个**取证原语各调一次，且全部落在 `live_forensic_steps` 函数体内。
+# 第六名 `collect_triad_evidence` 是片 4（取证回合）加进 G-9 的 —— 这份桩必须跟着长，
+# 否则 M13b 会替"新原语其实没人守"背书（它报的就是 `{'collect_triad_evidence': 0}`）。
+_G9_LEGAL_SOURCE = (
+    "from app.living_circle.data_source import (bind_evidence, degrade_if_incomplete,\n"
+    "                                           load_poi, scope_or_degrade)\n"
+    "from app.living_circle.poi_collector import POIBudget, collect_triad_evidence\n"
+    "async def live_forensic_steps(client, engine, check):\n"
+    "    scope, degraded = await scope_or_degrade(iso={}, params=check)\n"
+    "    if degraded is not None:\n"
+    "        return degraded\n"
+    "    collected = await load_poi(client, check.center, 2000, scope=scope)\n"
+    "    scope = bind_evidence(scope, collected)\n"
+    "    degraded = await degrade_if_incomplete(per_category=collected.per_category,\n"
+    "                                           params=check)\n"
+    "    if degraded is not None:\n"
+    "        return degraded\n"
+    "    round1 = await collect_triad_evidence(client, scope, {}, POIBudget(total=0),\n"
+    "                                          round_no=1)\n"
+    "    return assemble_living_circle(check, {}, collected.per_category,\n"
+    "                                  collected.triads, scope)\n"
+)
+
+
+def _write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_m13_g9_flags_a_second_forensic_orchestration(tmp_path):
+    """M13（P1 · 敏感性对照）：在唯一入口之外再串一遍原语 ⇒ G-9 必红。
+
+    桩里那段就是被删掉的 pipeline live 分支的形状（自己调 `load_poi`）。
+    合成树里没有 `data_source.py` ⇒ 计数那半边判据不参与 ⇒ 应当**恰好一条**违例。
+    """
+    mod = _load_guard_script()
+    _write(
+        tmp_path / "app/core/pipeline/rogue.py",
+        "from app.living_circle.data_source import load_poi\n"
+        "async def live_branch(client, scope):\n"
+        "    return await load_poi(client, (0, 0), 2000, scope=scope)\n",
+    )
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-9" in line]
+    assert len(hits) == 1, f"新增的第二份取证编排未被告发（守卫有洞）：{bad}"
+    assert "rogue.py" in hits[0] and "load_poi" in hits[0], hits[0]
+
+
+def test_m13b_g9_accepts_the_allowlisted_orchestration(tmp_path):
+    """M13 的**合法必绿**对照：五步各一次、都在 `live_forensic_steps` 内 ⇒ 不报。
+
+    没有这条，M13 可能只是「任何树都红」的噪声门（那种门的下场是被关掉）。
+    """
+    mod = _load_guard_script()
+    _write(tmp_path / "app/living_circle/data_source.py", _G9_LEGAL_SOURCE)
+    bad, _ = mod.scan(tmp_path)
+    assert not [line for line in bad if "G-9" in line], f"唯一入口被误报：{bad}"
+
+
+def test_m13c_g9_fires_when_the_orchestration_drops_a_step(tmp_path):
+    """M13c（P1 · **少做一步**也要红）：从生成器里删掉 `bind_evidence` 那一步 ⇒ G-9 报计数。
+
+    这条是 M13 的另一半：只拦「多抄一份」的门守不住「这一份自己漏了一步」，
+    而「三份各自漏一点」正是收拢前真实存在的病根。
+    """
+    mut = _G9_LEGAL_SOURCE.replace(
+        "    scope = bind_evidence(scope, collected)\n", ""
+    )
+    assert len(mut.splitlines()) == len(_G9_LEGAL_SOURCE.splitlines()) - 1, (
+        "变异没落到桩源码上（那行字面量已被改走）⇒ 本用例会退化成 M13b 的恒绿"
+    )
+    mod = _load_guard_script()
+    _write(tmp_path / "app/living_circle/data_source.py", mut)
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-9" in line]
+    assert len(hits) == 1, f"掉一步未被告发（只守「多抄」的门）：{bad}"
+    assert "bind_evidence" in hits[0], hits[0]
+
+
+# ── M14 · 唯一编排的**步骤顺序**契约（回合循环要接的接缝）────────
+
+async def _collect_steps(client, check, **kw) -> list:
+    return [s async for s in live_forensic_steps(client, IsochroneEngine(), check, **kw)]
+
+
+def test_m14_forensic_steps_emit_the_frozen_order_on_the_happy_path():
+    """M14-a：完整取证 ⇒ **骨架**序列恰为 `measure → collect → judge → report`，
+    而 `round` 只许插在 `collect` 与 `judge` 之间（片 4 之后这条才成立）。
+
+    钉顺序而不是钉内容，是因为 pipeline 的事件文本、`stage_seq` 与 `evidence_count`
+    都是**按这些时刻**长的（`test_u36`/`test_m12` 守上屏那一面）。取证回合（片 4）
+    把这个序列包进循环里 ⇒ 顺序一旦漂，事件就会在没人改 pipeline 的情况下变样。
+
+    ⚠️ 片 4 把这条从「四步逐字等长」重指成「骨架等长 + 插入点受限」，两件事各守一半：
+    骨架那条一字未改（四类仍在、相对次序不许动）；新增的是"回合步只能落在这个缝里"，
+    因为 `round` 步交的是"补采之后的新判定"，跑到 `judge` 之后或 `collect` 之前都是分家。
+    这份 stub 现在**确实**会打一个回合（凯里那三类的实测边界落在可扩的档位上），
+    所以这条同时也是"回合进了唯一编排"的顺序证据 —— 不许有人为了让它变四步而砍回合。
+
+    ⚠️ 片 1a 改的是**两个数**，别把它们混成一句（第十一轮 P1：原文写「四步升到五步」，
+    与下面那条四元素断言自相矛盾）：kind **名册**从四类升到五类（新增 `judge`，与既有
+    `degraded` 一样是分支类，happy path 走不到它），而本用例这条 happy path 的**步骤序列**
+    从三步升到四步。片 4 再加一名 `round`（它是分支类：只在真打了回合的那次跑动里出现）。
+    上屏事件序列仍是三步的量 —— `judge` 一步**不发事件**，那句由 `test_u36` 守逐字节相同。
+    """
+    steps = asyncio.run(_collect_steps(PipelineStubBaidu(KAILI_CENTER), _check("凯里老街-M14")))
+    kinds = [s.kind for s in steps]
+    by_kind = {s.kind: s for s in steps}
+
+    assert [k for k in kinds if k != STEP_ROUND] == [
+        STEP_MEASURE, STEP_COLLECT, STEP_JUDGE, STEP_REPORT
+    ], f"取证步骤骨架漂了：{kinds}"
+    _judge_at = kinds.index(STEP_JUDGE)
+    _collect_at = kinds.index(STEP_COLLECT)
+    assert all(_collect_at < i < _judge_at for i, k in enumerate(kinds) if k == STEP_ROUND), (
+        f"`round` 步跑到了 collect/judge 之外：{kinds}")
+    # `measure` 必须**先于**采集流出：这是 SSE「边跑边出」的唯一保证，
+    # 用「一把协程返回末值」的写法实现同一编排就会在这里红。
+    first = by_kind[STEP_MEASURE]
+    assert first.iso.get("isochrones"), "首步没带等时圈 ⇒ measure 事件将无事实可发"
+    assert first.collected is None and first.report is None, "首步就交报告 = 事件后置"
+    collect = by_kind[STEP_COLLECT]
+    assert collect.collected.per_category, "collect 步必须交出采集事实（POI 计数吃它）"
+    assert collect.partial is None, (
+        "健康 stub 不该在**采集那一刻**带残缺声明 —— 回合的缺口晚一步才成形（`round`/`judge` 步上）"
+    )
+    assert collect.judgement is None, "判定不许发生在采集步（它在 bind_evidence 之后）"
+    judged = by_kind[STEP_JUDGE]
+    assert judged.judgement is not None, "judge 步必须把判定产物交出去（回合读的就是它）"
+    assert judged.report is None, "judge 步不许顺手把报告也交了 —— 组装在它之后"
+    assert by_kind[STEP_REPORT].report["data_origin"] == "live"
+    assert by_kind[STEP_REPORT].report["poi"]["points"], "组装步的报告须已含点位"
+
+
+# ── M15 · G-10 判定唯一入口（片 1a 的结构闸）──────────────────
+
+# 合法形状：唯一入口在编排层，三个视图壳与 `_verdict_masks` 全在 blindspot 内部按表互调。
+_G10_LEGAL_BLINDSPOT = (
+    "def _verdict_masks():\n"
+    "    return 1\n"
+    "def cover_matrix():\n"
+    "    return _verdict_masks()\n"
+    "def undecided_mask():\n"
+    "    return _verdict_masks()\n"
+    "def judge_once():\n"
+    "    return _verdict_masks()\n"
+    "def find_blindspots_with_stats():\n"
+    "    return judge_once()\n"
+    "def find_blindspots():\n"
+    "    return judge_once()\n"
+)
+_G10_LEGAL_DATA_SOURCE = (
+    "from app.living_circle.blindspot import judge_once\n"
+    "async def live_forensic_steps():\n"
+    "    return judge_once()\n"
+)
+
+
+def _g10_tree(root: Path, blindspot_src: str = _G10_LEGAL_BLINDSPOT) -> None:
+    _write(root / "app/living_circle/blindspot.py", blindspot_src)
+    _write(root / "app/living_circle/data_source.py", _G10_LEGAL_DATA_SOURCE)
+
+
+def test_m15_g10_flags_a_second_judging_entry(tmp_path):
+    """M15（P1）：在登记表之外调 `judge_once` ⇒ G-10 必红。
+
+    桩里那段是「第四份取证编排」的**判定半边**：新入口自己判盲，产物就与线上那份无关，
+    回合与报告各吃一块证据区域 —— G-9 拦不住它（G-9 只数取证步骤原语）。
+    """
+    mod = _load_guard_script()
+    _g10_tree(tmp_path)
+    _write(
+        tmp_path / "app/core/pipeline/rogue.py",
+        "from app.living_circle.blindspot import judge_once\n"
+        "def somewhere(center, scope, triads):\n"
+        "    return judge_once(center, scope, triads)\n",
+    )
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-10" in line]
+    assert len(hits) == 1, f"第二处判定入口未被告发（守卫有洞）：{bad}"
+    assert "rogue.py" in hits[0] and "judge_once" in hits[0], hits[0]
+    # 这里只钉**文本不串号**：M13 系列按 `"G-9" in line` 过滤，所以 G-10 的违例文案里
+    # 不许出现 `G-9` 字样。⚠️ 第一次写这条时我把它写成了「整棵树滤不出 G-9」—— 那是错的：
+    # 这棵合成树里的 `data_source.py` 不含取证编排，G-9 的计数判据**本来就该红**
+    # （实测这次全量就是这么报的）。合成树里别的规则合法作响，不是污染。
+    assert "G-9" not in hits[0], hits[0]
+
+
+def test_m15b_g10_flags_production_use_of_the_old_view(tmp_path):
+    """M15b（P1）：生产侧调旧报告视图 `cover_matrix` ⇒ 也必红（期望 0 那一类）。
+
+    这是片 1a 之后最省事的回退形状 —— 「先拿现成的三元组用着」，一步之后就是第二处
+    逐格判定，而它不会出现在任何一条事件序列用例里。
+    """
+    mod = _load_guard_script()
+    _g10_tree(tmp_path)
+    _write(
+        tmp_path / "app/core/pipeline/rogue2.py",
+        "from app.living_circle.blindspot import cover_matrix\n"
+        "def somewhere(center, scope, point_sets):\n"
+        "    return cover_matrix(center, scope, point_sets)\n",
+    )
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-10" in line]
+    assert len(hits) == 1, f"生产侧旧视图调用未被告发：{bad}"
+    assert "cover_matrix" in hits[0], hits[0]
+
+
+def test_m15c_g10_accepts_the_registered_layout(tmp_path):
+    """M15 的**合法必绿**对照：登记表里那套形状不许误报。
+
+    没有这条，M15/M15b 可能只是「任何树都红」的噪声门。
+    桩里的计数与 `JUDGE_EXPECTED_CALLS` 逐名相等：`judge_once` 3（编排 1 + 两壳 2）、
+    `_verdict_masks` 3（三个视图各 1）、其余四名 0。
+    """
+    mod = _load_guard_script()
+    _g10_tree(tmp_path)
+    bad, _ = mod.scan(tmp_path)
+    assert not [line for line in bad if "G-10" in line], f"登记表内的形状被误报：{bad}"
+
+
+def test_m15d_g10_fires_when_a_registered_call_site_disappears(tmp_path):
+    """M15d（P1）：登记表里的调用点**掉了**也要红 —— 只拦「多一处」的闸会留下过期豁免。
+
+    形状：把 `find_blindspots` 改成自己 `_verdict_masks`（不再走唯一入口）⇒
+    `judge_once` 从 3 掉到 2。这正是片 0 那三份编排的起点形状：各走各的、没人报错。
+    """
+    mut = _G10_LEGAL_BLINDSPOT.replace(
+        "def find_blindspots():\n    return judge_once()\n",
+        "def find_blindspots():\n    return _verdict_masks()\n",
+    )
+    assert mut != _G10_LEGAL_BLINDSPOT, "变异没落到桩源码上 ⇒ 本用例退化成 M15c 的恒绿"
+    mod = _load_guard_script()
+    _g10_tree(tmp_path, mut)
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-10" in line]
+    assert len(hits) == 1, f"调用点掉出一处未被告发：{bad}"
+    assert "'judge_once': (2, 3)" in hits[0], hits[0]
+
+
+def test_m15e_g10_fires_through_an_import_alias(tmp_path):
+    """M15-e（第十一轮 P0-3）：`import judge_once as probe` 再调 `probe(...)` ⇒ 仍必红。
+
+    G-10 的登记表是**按名字**匹配的：别名把名字换掉、调用照旧，改前这棵树在闸下**全绿**
+    —— 那意味着「第二处逐格判定」只要改一行导入写法就能重新开张，而片 1a 的全部立论
+    （判定只有一处、掩码与账目同源）就只剩约定没有闸。这条用例的红点判据是**报文里
+    出现原名 `judge_once`**：只有做了归一才会出现，不归一时命中数是 0。
+    """
+    mod = _load_guard_script()
+    _g10_tree(tmp_path)
+    _write(
+        tmp_path / "app/core/pipeline/rogue_alias.py",
+        "from app.living_circle.blindspot import judge_once as probe\n"
+        "def somewhere(center, scope, triads):\n"
+        "    return probe(center, scope, triads)\n",
+    )
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-10" in line]
+    assert len(hits) == 1, f"别名调用点未被告发（名字匹配可被 `as` 绕过）：{bad}"
+    assert "rogue_alias.py" in hits[0] and "judge_once" in hits[0], hits[0]
+
+
+def test_m15f_g10_fires_through_getattr(tmp_path):
+    """M15-f（第十一轮 P0-3 的另一半）：`getattr(mod, "judge_once")(...)` ⇒ 必红。
+
+    别名好歹要改导入；getattr 用字符串取函数，导入行一字不动。生产侧没有任何理由
+    动态取用登记表成员，所以这条**不并入计数**（并入就等于给它一间合法房间），直接判红。
+    """
+    mod = _load_guard_script()
+    _g10_tree(tmp_path)
+    _write(
+        tmp_path / "app/core/pipeline/rogue_dyn.py",
+        "import app.living_circle.blindspot as bs\n"
+        "def somewhere(center, scope, triads):\n"
+        "    return getattr(bs, 'judge_once')(center, scope, triads)\n",
+    )
+    bad, _ = mod.scan(tmp_path)
+    hits = [line for line in bad if "G-10" in line]
+    assert len(hits) == 1, f"getattr 动态取用未被告发：{bad}"
+    assert "rogue_dyn.py" in hits[0] and "getattr" in hits[0], hits[0]
+
+
+
+def test_m14b_forensic_steps_exit_with_degraded_at_the_first_branch():
+    """M14-b：测时阶段中止（等时圈族为空）⇒ 只交 `measure` 再交 `degraded`，**没有** collect。
+
+    两条降级出路都以 `STEP_DEGRADED` 交出（调用方据此只发一条「降级为离线估算」消息，
+    `evidence_count=0`）。这里守的是「降级步之后编排必须提前收尾」—— P0-6 那两份旧抄本
+    各自漏过的正是这一步的 return。
+    """
+    steps = asyncio.run(
+        _collect_steps(NullMeasureStub(KAILI_CENTER), _check("凯里老街-M14b"))
+    )
+
+    assert [s.kind for s in steps] == [STEP_MEASURE, STEP_DEGRADED], (
+        f"降级出路不该再走采集：{[s.kind for s in steps]}"
+    )
+    degraded = steps[-1].report
+    assert degraded["data_origin"] == "offline"
+    assert degraded["degraded"]["detail"] == "isochrone_empty"
+    assert steps[-1].collected is None, "降级步不该假装采到过东西"
+
+
+def test_m14c_forensic_steps_exit_with_degraded_when_poi_is_empty():
+    """M14-c（第十一轮 P1）：**第二条**降级出路（等时圈有、POI 全空）也要在生成器级钉住。
+
+    改前只有 M14-b 一条：那条走的是**测时阶段**分流（`scope_or_degrade` 之前就断了），
+    而 POI 全空这支要一路走过 `load_poi` + `bind_evidence` 才被 `degrade_if_incomplete`
+    拦下 —— 载荷形状不同（这支**带** `scope`/`collected`），`judge`/`report` 两步都在它之后。
+    这条缺着，「采集之后 return 掉」就只由 `degrade_if_incomplete` 自己保证：而片 1a 把
+    判定挪到了编排里，一旦有人把 `judge_once` 提到这段之前，全空盘会拿着**空 triads**
+    跑一遍逐格判定并交出一个 `Judgement`（判不动≠判过），本用例正是它的最小反证。
+    """
+    steps = asyncio.run(
+        _collect_steps(EmptyPoiStub(KAILI_CENTER), _check("凯里老街-M14c"))
+    )
+
+    assert [s.kind for s in steps] == [STEP_MEASURE, STEP_DEGRADED], (
+        f"POI 全空的出路不该走到判定/组装：{[s.kind for s in steps]}"
+    )
+    degraded = steps[-1]
+    assert degraded.judgement is None, "降级出路没有判定产物（判定在它 return 之后才发生）"
+    assert degraded.report["data_origin"] == "offline"
+    assert degraded.report["degraded"]["detail"] == "poi_empty"
+    assert degraded.scope is not None, "这支出路已过 `bind_evidence`，scope 是事实的一部分"
+    assert degraded.collected is not None and not any(
+        bool(v) for v in degraded.collected.per_category.values()
+    ), "collected 必须是「真的没采到」，不是 stub 写歪"
+
+
+# ── M16 · 回合载荷 `RoundOutcome` 定死（批 A②，计划 v6.1⑦）──────
+
+def test_m16_round_outcome_is_one_bundle_from_judging_to_report():
+    """M16-a：一轮的整包载荷一次性交出，且 REPORT 步吃的是**同一次判定**的那份。
+
+    批 A② 的独立判据（计划 v6.1⑦ 说「载荷不定死，B1/B3 与逐回合 trace 就无原料」）。
+    钉四件事，各自精确到失败种类：
+      ① `judge` 步带载荷、`report` 步带**同一 round_no** 的载荷 ⇒ 回合循环接得上；
+      ② `report` 步载荷里的 report 与步上那份是**同一个对象**（不是重算/复制）；
+      ③ 五键账目由 `judgement.stats` 与 `report["caliber"]` 逐键相等 ⇒ 上屏账目=这次判定的账目；
+      ④ `measure`/`collect`/`degraded` 三类步**没有**载荷 ⇒ 判定前不存在"回合产物"，
+         降级出路也没有（M14-c 已钉它不判定，这里钉它不交产物）。
+    """
+    steps = asyncio.run(_collect_steps(PipelineStubBaidu(KAILI_CENTER), _check("凯里老街-M16")))
+    by_kind = {s.kind: s for s in steps}
+    assert [s.kind for s in steps if s.kind != STEP_ROUND] == [
+        STEP_MEASURE, STEP_COLLECT, STEP_JUDGE, STEP_REPORT
+    ], f"骨架漂了（M14-a 同一条，这里钉的是载荷挂在哪几步上）：{[s.kind for s in steps]}"
+    assert by_kind[STEP_MEASURE].outcome is None, "measure 步在判定之前，没有回合产物可言"
+    assert by_kind[STEP_COLLECT].outcome is None, "同上"
+
+    judged = by_kind[STEP_JUDGE].outcome
+    reported = by_kind[STEP_REPORT].outcome
+    assert isinstance(judged, RoundOutcome) and isinstance(reported, RoundOutcome)
+    # `round_no` 从批 A② 那个"恒 0 的占位"变成**循环给的数**：末轮趟号 == 派发过的回合数
+    # == `forensic.rounds`。断的是两个来源相等，不是断它等于某个字面量 —— 所以输入换成
+    # "一个回合都不用打"时它仍然成立（那时两边都是 0）。
+    _rounds = reported.report["caliber"]["forensic"]["rounds"]
+    assert judged.round_no == reported.round_no == _rounds, (
+        f"载荷的趟号 {judged.round_no}/{reported.round_no} 与回合账目里的 {_rounds} 分家")
+    assert judged.report is None, "judge 步不许顺手把报告也交了 —— 组装在它之后"
+    assert reported.judgement is judged.judgement, (
+        "REPORT 载荷换了判定对象 ⇒ 回合读到的掩码与上屏账目来自两次判定（片 1a 收掉的那个形状）"
+    )
+    assert reported.report is by_kind[STEP_REPORT].report, (
+        "载荷里的报告与步上的报告不是同一对象 ⇒ 消费方会各拿一份，分家回来了"
+    )
+    assert reported.scope is by_kind[STEP_JUDGE].scope
+    assert reported.collected is by_kind[STEP_JUDGE].collected
+    assert len(STAT_KEYS) == 5, f"名册缩水成 {STAT_KEYS} ⇒ 下面那个 for 会空转"
+    for key in STAT_KEYS:
+        assert int(reported.report["caliber"][key]) == int(reported.judgement.stats[key]), (
+            f"{key} 两份数不同源（报告 {reported.report['caliber'][key]} vs "
+            f"判定 {reported.judgement.stats[key]}）"
+        )
+
+    deg = asyncio.run(_collect_steps(EmptyPoiStub(KAILI_CENTER), _check("凯里老街-M16b")))
+    assert deg[-1].kind == STEP_DEGRADED and deg[-1].outcome is None, (
+        "降级出路交出了回合载荷 —— 那条根本没有判定，产物是空的"
+    )
+
+
+def test_m16b_round_outcome_refuses_a_report_that_changed_the_books():
+    """M16-b（反向，能红的那半）：载荷必须拒绝「报告账目与本次判定不符」的构造。
+
+    这条是 ③ 的反证：把报告里的 `cells_blind` 改成别的数再 `replace` 进载荷，
+    `__post_init__` 必须当场抛 —— 否则载荷就只是个传声筒，拦不住组装层换账目。
+    顺带钉 `round_no` 非负与缺键两种违规形状（三种失败种类各自一条消息，不许合并）。
+    """
+    import dataclasses
+
+    steps = asyncio.run(_collect_steps(PipelineStubBaidu(KAILI_CENTER), _check("凯里老街-M16c")))
+    outcome = [s for s in steps if s.kind == STEP_REPORT][0].outcome
+
+    tampered = dict(outcome.report)
+    tampered["caliber"] = dict(outcome.report["caliber"], cells_blind=999)
+    with pytest.raises(ValueError, match="上屏的账目不是这次判定的账目"):
+        dataclasses.replace(outcome, report=tampered)
+
+    stripped = {k: v for k, v in outcome.report["caliber"].items() if k != "cells_blind"}
+    with pytest.raises(ValueError, match="缺三态键"):
+        dataclasses.replace(outcome, report=dict(outcome.report, caliber=stripped))
+
+    with pytest.raises(ValueError, match="回合序号必须非负"):
+        dataclasses.replace(outcome, round_no=-1)
+
+
+# ── P1a · 判定只跑一遍，且吃的就是绑过实测证据的那一块 ──────────
+
+def test_p1a_judging_runs_once_per_forensic_pass_and_never_through_a_shell(monkeypatch):
+    """一次体检的**每一趟取证**只判一遍（`judge_once` 次数 == 账目里的趟数），三个旧视图壳 0 次。
+
+    为什么行为判据与 G-10 两条都要：G-10 数的是**代码里的调用点**（谁能调），这条数的是
+    **一次真实跑动执行了几次**（`undecided_mask` 也合法存在，所以"能调"不等于"会跑"）。
+    只有这条能抓住「编排里顺手多判了一遍」或「壳在生产路径上被偷偷执行」。
+
+    ⚠️ 片 4 把它从 `== 1` 重指成 `== 回合账目里的 judging_passes`，这不是放宽 —— 原来那句
+    「恰 1 遍」的真实含义是「一次取证=一遍判定，没有第二把尺再判一次」，而回合天然要多判
+    几遍（每补一轮区域就重判一遍，第五轮复审 P0-1 的"点位方向不单调"要求的正是这个）。
+    所以新判据把**两个来源**钉在一起：运行期实际执行次数 与 上屏那份账目。少判一趟、
+    多判一趟、或账目与实际分家，三种都红；而把它改回 `== 1` 会在今天这份输入上直接红
+    （凯里那三类实测边界落在可扩档位上 ⇒ 真会打一个回合）。
+    壳必须恒 0 这半条**一个字都没动** —— 那才是这条用例从片 1a 继承下来的承重部分。
+    """
+    import app.living_circle.blindspot as bs
+    import app.living_circle.data_source as ds
+
+    counts = {"judge_once": 0, "cover_matrix": 0, "undecided_mask": 0,
+              "find_blindspots_with_stats": 0, "find_blindspots": 0}
+    real = {k: getattr(bs, k) for k in counts}
+
+    def _wrap(name):
+        target = real[name]
+
+        def _f(*a, **kw):
+            counts[name] += 1
+            return target(*a, **kw)
+
+        return _f
+
+    for name, fn in ((k, _wrap(k)) for k in counts):
+        monkeypatch.setattr(bs, name, fn)
+    monkeypatch.setattr(ds, "judge_once", _wrap("judge_once"))
+
+    steps = asyncio.run(_collect_steps(PipelineStubBaidu(KAILI_CENTER), _check("凯里老街-P1a")))
+
+    report = steps[-1].report
+    passes = report["caliber"]["forensic"]["judging_passes"]
+    assert counts["judge_once"] == passes, (
+        f"实际判了 {counts['judge_once']} 遍，上屏的账目却写 {passes} 趟 ⇒ 有一个数不是跑出来的")
+    assert counts["judge_once"] >= 1
+    assert report and report.get("blindspots") is not None, "前置：这条跑动确实产出了盲区/报告"
+    assert {k: v for k, v in counts.items() if k != "judge_once"} == dict.fromkeys(
+        ("cover_matrix", "undecided_mask", "find_blindspots_with_stats", "find_blindspots"), 0
+    ), f"旧视图壳在生产路径上被执行了：{counts}"
+
+
+def test_p1a_judge_eats_the_scope_that_bind_evidence_returned(monkeypatch):
+    """判定吃的 scope **必须就是** `bind_evidence` 的返回值，且报告举证与它同源（片 1a）。
+
+    替代 v6.4 那句写不出来的判据（「`Judgement.region` 与绑定后的证据域是同一对象」——
+    生产只绑标量 ⇒ `evidence_region` 恒 None ⇒ `judge_region` 每次现造一块退化区域，
+    `is` 恒假、改 `==` 就成了同义反复。第九轮 P0-4）。
+    换成两句可执行的：① scope **对象身份**（判在 bind 之前 ⇒ 立刻红）；
+    ② 报告里那两个数是**这一次**判定给的（`caliber.cells_inside` 与 `Judgement.stats` 同源、
+    `blindspots` 就是移交出去的那批条目 —— 富化只许就地补 reach/affected，不许换账）。
+    """
+    import app.living_circle.data_source as ds
+
+    seen = {}
+    real_bind, real_judge = ds.bind_evidence, ds.judge_once
+
+    def _bind(scope, collected):
+        out = real_bind(scope, collected)
+        seen["bound"] = out
+        return out
+
+    def _judge(center, scope, triads, *a, **kw):
+        j = real_judge(center, scope, triads, *a, **kw)
+        seen["judged_with"] = scope
+        seen["judgement"] = j
+        return j
+
+    monkeypatch.setattr(ds, "bind_evidence", _bind)
+    monkeypatch.setattr(ds, "judge_once", _judge)
+
+    steps = asyncio.run(_collect_steps(PipelineStubBaidu(KAILI_CENTER), _check("凯里老街-P1a2")))
+    report = steps[-1].report
+
+    assert "bound" in seen and "judged_with" in seen, "前置没凑起来：bind/judge 有一处没被走到"
+    assert seen["judged_with"] is seen["bound"], (
+        "判定吃的不是绑过实测证据的那个 scope ⇒ 判盲与举证各吃一块区域（判在 bind 之前）"
+    )
+    j = seen["judgement"]
+    assert j.stats["cells_inside"] > 0, "判定空转：一格都没进判定网格"
+    # ⚠️ 五个键**逐个**钉，不是只钉 `cells_inside`（第十一轮 P0-2）：判定侧算出五档，
+    # 报告侧只落三档的话，`cells_unjudgeable_by_cap` / `cells_blind` 就在报告里静默消失，
+    # 而 `caliber_index` 已把它们登记成可引用口径键 ⇒ 专家卡引用得到、载荷里读不到（空值）。
+    # 只数键名还不够，值也要对上 —— 否则「写了同名 0」这类形状照样溜过去。
+    cal = report["caliber"]
+    assert len(STAT_KEYS) == 5, (
+        f"名册本身缩水了（{STAT_KEYS}）⇒ 下面那个 for 会空转，五键落点等于没钉"
+    )
+    for key in STAT_KEYS:
+        assert key in cal, f"判定账目 {key!r} 没进报告 caliber（登记与发射脱钩）"
+        assert cal[key] == j.stats[key], (
+            f"报告 caliber.{key} = {cal[key]} 与判定产物 {j.stats[key]} 不符 ⇒ 两处各算一遍"
+        )
+    assert report["blindspots"] is j.spots, (
+        "盲区条目被换了一份 ⇒ 移交契约破了（装配层该就地富化，不该另造一批）"
+    )
+    assert set(j.stats) == set(STAT_KEYS), (
+        f"判定快照的键集变了（报告侧就读这五个）：{sorted(j.stats)}"
+    )
+
+
+
+
 # ── M12 · G9（日预算）侧的事件序列镜像 U36 ────────────────
 
 def test_m12_budget_exhausted_keeps_event_sequence_complete(monkeypatch):
@@ -581,22 +1144,29 @@ def test_m11_history_item_carries_degraded():
 # ── D1 · 降级分级（计划 v4 阶段 4）：T1 边界桩 + T2 挂账对 ─────────
 
 def test_d1_isochrone_branch_is_independent_of_guard_branch():
-    """C2（T1 · 今日即绿）· 触发条件的两条分支必须互相独立，且成因在 `detail` 里不混。
+    """C2（T1）· 三条触发分支必须互相独立，成因在 `detail` 里不混。
 
-    D1 要把「取证配额耗尽」从触发条件里摘出去（改标 `partial`）。本用例锁住**摘的是哪一条**：
-    等时圈缺失是建制级失败（没有可达区就没有判定面），**不许**跟着松动。
-    同时锁住 `detail` 的成因可分辨性 —— `reason` 是闭集单值（K11），分级路由只能靠 `detail`。
+    D1 落地后的分工（本用例就是把这张表钉住，少一条都不行）：
+      · 等时圈缺失 ⇒ 降级（建制级失败，没有判定面）；
+      · **测时阶段**中止 ⇒ 降级（几何本身可能是残缺的一批点插出来的）；
+      · **取证阶段**中止而几何与点位都在 ⇒ **不降级**，只标 partial；
+      · POI 全空 ⇒ 降级（盲区没有输入）。
+    `reason` 是闭集单值（K11），分级路由只能靠 `detail` ⇒ 成因可分辨性一并锁死。
     """
     clean = SimpleNamespace(total_meltdown=False, budget_exhausted=False, stats=SimpleNamespace(quota_hits=0))
-
-    # ① 等时圈缺失：guard 再干净也必须降级
-    assert degrade_reason(clean, has_isochrones=False, has_poi=True) == DEGRADE_REASON_QUOTA_EXHAUSTED
-    # ② guard 中止、数据齐：今日仍降级（D1 要改的是这一条，见下方挂账对）
     melted = SimpleNamespace(total_meltdown=True, budget_exhausted=False, stats=SimpleNamespace(quota_hits=1))
-    assert degrade_reason(melted, has_isochrones=True, has_poi=True) == DEGRADE_REASON_QUOTA_EXHAUSTED
-    # ③ 两条都不触发 ⇒ None（不许因为「有抖动痕迹」就降级，那是 M4 防的过度降级）
+
+    # ① 等时圈缺失：guard 再干净也必须降级（没有可达区就没有判定面）
+    assert degrade_reason(clean, has_isochrones=False, has_poi=True) == DEGRADE_REASON_QUOTA_EXHAUSTED
+    # ② 测时阶段中止（`has_poi=None` = 还没走到采集）：几何随时可能残缺 ⇒ 仍整份降级
+    assert degrade_reason(melted, has_isochrones=True, has_poi=None) == DEGRADE_REASON_QUOTA_EXHAUSTED
+    # ③ 取证阶段中止而几何与点位都在 ⇒ **不降级**（D1①）：残缺由 `partial_for` 承载
+    assert degrade_reason(melted, has_isochrones=True, has_poi=True) is None
+    # ④ POI 全空：盲区没有输入 ⇒ 降级，与 guard 是否中止无关
+    assert degrade_reason(clean, has_isochrones=True, has_poi=False) == DEGRADE_REASON_QUOTA_EXHAUSTED
+    # ⑤ 两条都不触发 ⇒ None（不许因为「有抖动痕迹」就降级，那是 M4 防的过度降级）
     assert degrade_reason(clean, has_isochrones=True, has_poi=True) is None
-    # ④ 成因在 detail 里各归各，且都能翻成中文标签
+    # 成因在 detail 里各归各，且都能翻成中文标签
     assert degrade_detail(clean, isochrone_empty=True) == "isochrone_empty"
     assert degrade_detail(melted) == "total_meltdown"
     assert degrade_detail(SimpleNamespace(total_meltdown=False, budget_exhausted=True,
@@ -605,48 +1175,67 @@ def test_d1_isochrone_branch_is_independent_of_guard_branch():
     assert detail_label("total_meltdown") == "总量熔断"
     # 未知取值回落而不抛（前端拿到的永远是可读文案）
     assert detail_label("forensic_cap") == DETAIL_LABELS["unknown"]
-    assert degrade_reason(melted, has_isochrones=True, has_poi=True) in DEGRADE_REASONS
+    assert degrade_reason(melted, has_isochrones=True, has_poi=None) in DEGRADE_REASONS
+
+    # partial 侧同源同归因：同一个 guard，两个节点说同一件事，不许出现两套成因
+    block = partial_for(melted)
+    assert block is not None and block["stage"] == "forensic"
+    assert block["detail"] == degrade_detail(melted) == "total_meltdown"
+    # 没中止过 ⇒ 不发射 partial 节点（一份完整跑完的报告不该带着「部分完成」的暗示）
+    assert partial_for(clean) is None
 
 
 class _ForensicCapGuard:
-    """guard 桩：**取证**配额耗尽（数据本身够用作活报告）与网络建制级失败无从区分。
+    """guard 桩：只声明「闸落下了」，不声明落在哪个阶段。
 
-    这正是 D1 缺的那个区分位 —— 桩上没有任何字段能让 `degrade_policy` 把两者分开。
+    这正是 D1 原挂账抱怨的「无从区分」—— 落地答案是**不该由 guard 来区分**：
+    阶段由调用点已持有的数据决定，编码在 `has_poi` 的三态里（``None``=采集前）。
+    给 guard 加一个「我是取证阶段中止的」字段，等于让被切断的一方自己声明切断地点，
+    漏填一次就回到整份降级。
     """
 
-    total_meltdown = True          # 今日唯一的中止信号
+    total_meltdown = True
     budget_exhausted = False
     stats = SimpleNamespace(quota_hits=1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1 分级降级待落地（计划 v4 阶段 4）：取证配额耗尽目前会把一份"
-           "「等时圈真测时 + POI 非空」的 live 报告整份打回离线 detour_k 正圆",
-)
 def test_d1_forensic_quota_exhaustion_keeps_live_report():
-    """C1（T2 挂账）· 取证配额耗尽应是「部分完成」，不是「整份不可信」。"""
+    """C1（原 T2 挂账）· **已随阶段 4 转正**：取证配额耗尽是「部分完成」，不是「整份不可信」。"""
     assert degrade_reason(_ForensicCapGuard(), has_isochrones=True, has_poi=True) is None, (
         "取证侧主动收手 ≠ 数据残缺；降级后报告里既没有盲区、等时圈又退成正圆，"
         "等于用「一定不出错」换掉了「本来已经算出来的东西」"
     )
+    block = partial_for(_ForensicCapGuard())
+    assert block is not None and block["note"] == PARTIAL_NOTE, (
+        "不降级还得**说得出来**：残缺不留痕，就等于把没查的演成查完了"
+    )
 
 
-def test_d1_current_guard_abort_degrades_whole_report_regardless_of_data():
-    """C1 的配偶 · **现状记录**：今天只要 guard 中止，数据再齐也整份降级。
+def test_d1_isochrone_stage_abort_still_degrades():
+    """C1 的配偶 · 判据随阶段 4 **重指**：还剩哪一半该整份打回离线。
 
-    写成判据是为了 D1 落地时**必须**把这条打红并显式回答「哪些中止仍算完整」。
-    直接删掉它 = 把一个未经复核的降级语义留在原地。
+    原形态是「只要 guard 中止，数据再齐也整份降级」的现状记录 —— D1 把它打红后，
+    留在这里守的是**没松动的那一半**：采集还没开始（`has_poi=None`）时中止，
+    拿到的环族随时可能是残缺点插出来的，那才是建制级失败。
+    若哪天有人把 partial 一路扩到测时阶段，本用例必须先红并显式回答「残缺的几何凭什么算数」。
     """
-    assert degrade_reason(_ForensicCapGuard(), has_isochrones=True, has_poi=True) \
+    assert degrade_reason(_ForensicCapGuard(), has_isochrones=True, has_poi=None) \
         == DEGRADE_REASON_QUOTA_EXHAUSTED
+    # 而几何压根没拿到时，guard 干不干净都不许走 live
+    clean = SimpleNamespace(total_meltdown=False, budget_exhausted=False, stats=SimpleNamespace(quota_hits=0))
+    assert degrade_reason(clean, has_isochrones=False, has_poi=None) == DEGRADE_REASON_QUOTA_EXHAUSTED
 
 
-def _thin_evidence_scope(bound_m: float):
-    """三类实测证据边界都短于判定半径的口径 ⇒ 每格的 1km 圆都查不全（永不可判）。
+def _thin_evidence_scope(bound_m: float, capped=(), bounds=None):
+    """证据边界短于判定半径的口径 ⇒ 外沿的格 1km 圆查不全（判不出结论）。
 
-    对应活管线里「百度单页 20 条 × 页深 3 = 60 条封顶」把稠密类卡住的真实形状
-    （`capability_manifest.json` 凯里药店实测：60 条 / 3 页才穷尽 / 单页最远 1754.5m）。
+    `capped` 决定这些「判不出」归谁：留空 = 我们的页深没给够（记 `unknown`），
+    给了类名 = 服务端自称还欠一整页却断了货（记 `unjudgeable_by_cap`）。
+    两态的分界正是阶段 3-f 要钉的东西，所以这里必须能分开造。
+
+    `bounds` 可逐类给不同边界（缺省三类同为 `bound_m`）—— 用来造「稠密类被卡住、
+    稀疏类却查全了」这种真实形状（`capability_manifest.json` 凯里实测：药店 60 条要 3 页，
+    菜市场与小学一页就穷尽）。
     """
     from app.living_circle.caliber import get_caliber
     from app.living_circle.geo_utils import xy_to_lnglat
@@ -660,7 +1249,8 @@ def _thin_evidence_scope(bound_m: float):
     ]
     zone = {"minutes": 20.0, "geojson": {"type": "Polygon", "coordinates": [[list(p) for p in ring]]}}
     scope = SpatialScope.from_reach_zone(get_caliber("walking"), KAILI_CENTER, 2500.0, zone)
-    scope = scope.with_evidence({k: float(bound_m) for k in TRIAD_KEYS}, complete=False)
+    fr = dict(bounds) if bounds else {k: float(bound_m) for k in TRIAD_KEYS}
+    scope = scope.with_evidence(fr, complete=False, capped=tuple(capped))
     scope.invariant()
     return scope
 
@@ -670,36 +1260,122 @@ def _all_blind_triads():
     return {"market": [], "pharmacy": [], "primary": []}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1③/三态待落地：`cells_unjudgeable_by_cap`（百度 60 条封顶导致永不可判）"
-           "目前被 `cells_unknown` 吸收 ⇒ 「接口能力封顶」与「我们没查」在报告里分不清",
-)
 def test_d1_capability_cap_neither_degrades_nor_counts_as_unknown():
-    """C3（T2 挂账）· 能力封顶既不该触发降级，也不该混进 unknown。"""
-    from app.living_circle.blindspot import find_blindspots_with_stats
+    """C3（原 T2 挂账）· **已随阶段 3-f 转正**：能力封顶既不触发降级，也不混进 unknown。
 
-    _spots, stats = find_blindspots_with_stats(
-        KAILI_CENTER, _thin_evidence_scope(900.0), _all_blind_triads(), prefix="d1"
-    )
-    # 证据边界 900m < 判定半径 1000m ⇒ 没有任何一格「查得全」⇒ 属「接口封顶」而非「没查」
-    assert stats["cells_unjudgeable_by_cap"] > 0
-    assert stats["cells_inside"] == (
-        stats["cells_judged"] + stats["cells_unknown"] + stats["cells_unjudgeable_by_cap"]
-    ), "三态分账不闭合 ⇒ 封顶格被记成「我们没查」，答辩里等于自己认领一次漏采"
-    assert degrade_reason(None, has_isochrones=True, has_poi=True) is None
-
-
-def test_d1_current_third_state_is_absorbed_into_unknown():
-    """C3 的配偶 · **现状记录**：今天只出四账，封顶格被 `cells_unknown` 吸收。
-
-    D1③/阶段 2a 落地时本用例必须转红，并把判据重指到三态闭合上 —— 不许直接删。
+    转正理由：这条判据缺的两样原料都到位了 —— `place_search` 以 `STOP_SERVER_CAP`
+    回传「服务端自称还欠一整页却断了货」，`with_evidence(capped=…)` 把它绑进逐圆盘。
+    仍挂在别处的只有 D1 的降级分级（`test_d1_forensic_budget_*` 那两条），本用例不替它作证。
     """
     from app.living_circle.blindspot import find_blindspots_with_stats
+    from app.living_circle.scope import TRIAD_KEYS
 
     _spots, stats = find_blindspots_with_stats(
+        KAILI_CENTER,
+        _thin_evidence_scope(900.0, capped=TRIAD_KEYS),
+        _all_blind_triads(),
+        prefix="d1",
+    )
+    # 证据边界 900m < 判定半径 1000m 且三类全封顶 ⇒ 判不出的格属「接口封顶」而非「没查」
+    assert stats["cells_unjudgeable_by_cap"] > 0
+    assert stats["cells_unknown"] == 0, "三类全封顶后仍记 unknown ⇒ 我们在替百度认领漏查"
+    assert stats["cells_inside"] == (
+        stats["cells_judged"] + stats["cells_unknown"] + stats["cells_unjudgeable_by_cap"]
+    ), "三态分账不闭合 ⇒ 答辩里等于自己认领一次漏采"
+    assert set(stats) == {
+        "cells_inside", "cells_judged", "cells_unknown",
+        "cells_unjudgeable_by_cap", "cells_blind",
+    }, "分账键集变了 ⇒ 报告侧与 B11 复算的读键要同批改"
+    assert degrade_reason(None, has_isochrones=True, has_poi=True) is None
+
+    # 反证（不许凭空作伪证）：同一片薄证据、**没有**封顶事实时，第三态必须是 0。
+    _spots, bare = find_blindspots_with_stats(
         KAILI_CENTER, _thin_evidence_scope(900.0), _all_blind_triads(), prefix="d0"
     )
-    assert set(stats) == {"cells_inside", "cells_judged", "cells_unknown", "cells_blind"}
-    assert stats["cells_unknown"] > 0, "前置不成立：薄证据没造出 unknown，本用例会空转"
-    assert stats["cells_inside"] == stats["cells_judged"] + stats["cells_unknown"]
+    assert bare["cells_unjudgeable_by_cap"] == 0
+    assert bare["cells_unknown"] == stats["cells_inside"] - stats["cells_judged"]
+
+
+def test_capability_cap_is_attributed_per_cell_not_per_report():
+    """一类封顶不赦免另两类的缺口：挡住一格的**每一个**类都封顶，才许记「百度的上限」。
+
+    判盲只需一类有据（`blindspot` 文件头那条不对称规则）⇒ 只要还有一类是「我们多给预算
+    就判得动」，那格的缺口就仍记在我们头上。写成 `any(封顶)` 会把我们的失职推给接口，
+    写成「全片开关」会让与封顶无关的格也集体改姓 —— 两个方向都朝「好看」。
+    """
+    from app.living_circle.blindspot import find_blindspots_with_stats
+    from app.living_circle.scope import TRIAD_KEYS
+
+    # ① 三类边界同样短，只有药店是接口封顶、另两类是我们没翻 ⇒ 全部仍记 unknown
+    _s, only_one = find_blindspots_with_stats(
+        KAILI_CENTER,
+        _thin_evidence_scope(900.0, capped=("pharmacy",)),
+        _all_blind_triads(),
+        prefix="c1",
+    )
+    assert only_one["cells_unjudgeable_by_cap"] == 0, (
+        f"一类封顶就赦免了另两类的漏查：{only_one}"
+    )
+    assert only_one["cells_unknown"] > 0
+
+    # ② 稠密类被接口卡死、稀疏类真查全 ⇒ 每一格照样能出「缺哪一类」的结论，第三态为 0
+    #    （`capability_manifest.json` 凯里实测的形状：药店要 3 页，菜市场/小学 1 页穷尽）
+    _s, others_full = find_blindspots_with_stats(
+        KAILI_CENTER,
+        _thin_evidence_scope(
+            900.0,
+            capped=("pharmacy",),
+            bounds={"pharmacy": 900.0, "market": 2500.0, "primary": 2500.0},
+        ),
+        _all_blind_triads(),
+        prefix="c2",
+    )
+    assert others_full["cells_unjudgeable_by_cap"] == 0
+    assert others_full["cells_judged"] == others_full["cells_inside"], (
+        f"另有两类有据却整片判不动 ⇒ 封顶归因越界：{others_full}"
+    )
+    assert others_full["cells_blind"] == others_full["cells_inside"]
+    assert set(TRIAD_KEYS) == {"market", "pharmacy", "primary"}   # 前置：上面按这三类造
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="批次二（阶段 2b）待落地：`judged_share` 的分母仍是 `cells_inside` ⇒ 第三态"
+           "格继续按「我们没查」参与盲区扣分外推，接口封顶的账面代价落回我们头上",
+)
+def test_b11_extrapolation_excludes_the_interface_cap():
+    """计划验收：`unjudgeable_by_cap` 不得进外推分母（B11 分母 = inside − unjudgeable）。"""
+    from app.living_circle.judgement import judged_share
+    from app.living_circle.blindspot import find_blindspots_with_stats
+    from app.living_circle.scope import TRIAD_KEYS
+
+    _s, stats = find_blindspots_with_stats(
+        KAILI_CENTER,
+        _thin_evidence_scope(900.0, capped=TRIAD_KEYS),
+        _all_blind_triads(),
+        prefix="b11",
+    )
+    inside = stats["cells_inside"]
+    assert stats["cells_unjudgeable_by_cap"] > 0, "前置不成立：第三态没出数，本用例会空转"
+    assert judged_share(stats) == pytest.approx(
+        stats["cells_judged"] / (inside - stats["cells_unjudgeable_by_cap"])
+    )
+
+
+def test_b11_current_share_still_divides_by_the_whole_reach():
+    """上一条的配偶 · **现状记录**：分账键已能出数，评分侧仍把封顶格摊进分母。
+
+    阶段 3-f 只负责让「封顶」与「没查」**可分**；把它们分开的账面后果（少外推、
+    `confidence` 不再 full）属批次二 —— 那里动的是 B11 复算与前端第二份复算，跨端 6 份
+    副本必须同批，所以此刻**不许**只改后端这一处。本用例就是把这条没做的账钉在这儿。
+    批次二落地时它必须转红，判据重指到上一条，不许直接删。
+    """
+    from app.living_circle.judgement import judged_share
+
+    stats = {
+        "cells_inside": 121, "cells_judged": 1,
+        "cells_unknown": 0, "cells_unjudgeable_by_cap": 120, "cells_blind": 1,
+    }
+    assert judged_share(stats) == pytest.approx(1 / 121), (
+        "封顶格已从分母里剔出去了 ⇒ 本现状记录该转红，请把判据重指到 B11 的新分母上"
+    )

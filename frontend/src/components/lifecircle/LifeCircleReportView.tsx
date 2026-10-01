@@ -22,9 +22,10 @@ import {
   Sparkles,
   Share2,
   Plus,
+  Layers,
   Info as InfoIcon,
 } from 'lucide-react'
-import type { Report, LivingCircleReport, LngLat, BlindSpot } from '../../types'
+import type { Report, LivingCircleReport, LngLat, BlindSpot, ForensicAccount } from '../../types'
 import {
   LC_CANVAS,
   LC_CAT_COLOR,
@@ -36,6 +37,8 @@ import {
   fixesOf,
   footprintMetaOf,
   gapScoreOf,
+  judgeRulerM,
+  LC_JUDGE_SCALE_COLOR,
   severityOf,
   lcPolyPts,
   lcRightmost,
@@ -52,6 +55,11 @@ import {
   poiMetricLabel,
   poiRenderSet,
   degradeBanner,
+  forensicAccount,
+  evidenceDiscs,
+  partialBanner,
+  roundAnchorCell,
+  roundDroppedCell,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
@@ -127,7 +135,12 @@ function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; sha
 }
 
 /** 分享脱敏的概略片区（口径 ③-A）：不暴露精确多边形的逐格边界，只画「面积等价圆」+ 概略面积。
- *  缺 footprint_meta 时退化为判定格距近似圆。 */
+ *  缺 footprint_meta 时退化为判定格距近似圆。
+ *
+ *  C3：旁边再画一枚**判定尺**参考圈（半径 = 本次判定实际吃的那把尺）。不画它的代价是真实的：
+ *  读者会把这枚灰色椭圆当成"判定范围"，于是"圈里看着空"又被读成"这里该判盲" —— 而它只是
+ *  把 8 个格子的面积折算成等面积圆，跟"多大范围内找设施"没有关系。
+ *  两枚都用同一组 px 比例换算（概览画布 x/y 比例不同 ⇒ 都是椭圆，不是圆），否则两者不可比。 */
 function BlindCoarseCircle({ lc, b }: { lc: LivingCircleReport; b: BlindSpot }) {
   const { W, H, R } = LC_CANVAS
   const pxPerMx = (W / 2) / R
@@ -139,13 +152,24 @@ function BlindCoarseCircle({ lc, b }: { lc: LivingCircleReport; b: BlindSpot }) 
   const r = area > 0 ? Math.sqrt(area / Math.PI) : gridM
   const rx = Math.max(r * pxPerMx, 6)
   const ry = Math.max(r * pxPerMy, 6)
-  const label = fm?.area_m2 != null ? `概略 ${(fm.area_m2 / 1e4).toFixed(1)}公顷` : '概略片区'
+  const label = fm?.area_m2 != null ? `概略 ${(fm.area_m2 / 1e4).toFixed(1)}公顷（面积当量）` : '概略片区'
+  const rulerM = judgeRulerM(lc)
+  const srx = rulerM === null ? 0 : Math.max(rulerM * pxPerMx, 4)
+  const sry = rulerM === null ? 0 : Math.max(rulerM * pxPerMy, 4)
   return (
     <g>
       <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="rgba(120,120,120,0.10)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="4 3" />
       <text x={cx} y={cy - ry - 4} fontSize={10} fill="#8a8a8a" textAnchor="middle">
         {label}
       </text>
+      {rulerM !== null && (
+        <>
+          <ellipse cx={cx} cy={cy} rx={srx} ry={sry} fill="none" stroke={LC_JUDGE_SCALE_COLOR} strokeWidth={1.4} strokeDasharray="6 4" />
+          <text x={cx} y={cy + Math.max(ry, sry) + 10} fontSize={10} fill={LC_JUDGE_SCALE_COLOR} textAnchor="middle">
+            {`判定尺 ${Math.round(rulerM)}m`}
+          </text>
+        </>
+      )}
     </g>
   )
 }
@@ -191,6 +215,86 @@ function jumpToSection(id: string) {
   document.getElementById(`lc-sec-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+/** 部分完成横幅（片 5）。与 `degradeBanner` 的 risk 色**分开**：
+ *  降级说「这份换成了离线骨架」，这里说「仍是实时口径，只是有格没判出」。
+ *  措辞一律走 `lib/livingCircle.partialBanner()` 一处，页面不自己拼句子。 */
+function PartialNote({ lc }: { lc: LivingCircleReport }) {
+  const b = partialBanner(lc)
+  if (!b) return null
+  return (
+    <div className="mx-auto mt-3 flex max-w-6xl items-start gap-2 rounded-card border border-warn/60 bg-warn/10 px-4 py-3" role="status">
+      <TriangleAlert size={15} className="mt-0.5 shrink-0 text-warn" />
+      <div className="min-w-0 text-tag text-ink-2">
+        <div className="text-aux font-semibold text-ink">{b.title}</div>
+        {b.body && <div className="mt-0.5">{b.body}</div>}
+      </div>
+    </div>
+  )
+}
+
+/** 取证回合小节（片 5）。数据只有 `caliber.forensic` 一个来源 —— 它与 `round` 事件
+ *  那一份是后端同一个 `to_row()` 产的，上屏与落库无从各说各话。
+ *  ⚠️ 缺 `forensic` ⇒ **整块不渲染**：离线估算与判盲口径升级前的旧快照从没走过取证，
+ *  这里回落成「0 轮」就是替一次没发生的事举证。 */
+function ForensicSection({ account }: { account: ForensicAccount }) {
+  return (
+    <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-aux font-semibold text-ink">
+        <Layers size={15} className="text-primary" /> 取证回合
+        <span className="text-tag font-normal text-ink-3">
+          判盲共 {account.judging_passes} 趟 · 扩容 {account.rounds} 轮（上限 {account.max_rounds}）· 终点
+          {account.stop_reason ?? '—'}
+        </span>
+      </div>
+      <table className="w-full border-collapse text-tag">
+        <thead>
+          <tr className="border-b border-line text-left text-ink-3">
+            <th className="py-1 pr-2 font-medium">趟次</th>
+            <th className="py-1 pr-2 font-medium">派发</th>
+            <th className="py-1 pr-2 font-medium">调用</th>
+            <th className="py-1 pr-2 font-medium">锚点 计划→派发→用</th>
+            <th className="py-1 pr-2 font-medium">未跑 / 砍掉</th>
+            <th className="py-1 pr-2 font-medium">未决格</th>
+            <th className="py-1 font-medium">收手原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          {account.rounds_detail.map((r) => (
+            <tr key={r.pass_no} className="border-b border-line/60 last:border-0">
+              <td className="py-1 pr-2 text-ink">第 {r.pass_no} 趟</td>
+              <td className="py-1 pr-2">{r.dispatched ? '已派发' : '未派发'}</td>
+              <td className="py-1 pr-2">{r.calls}</td>
+              <td className="py-1 pr-2">{roundAnchorCell(r)}</td>
+              <td className="py-1 pr-2">
+                {roundDroppedCell(r)}
+                {r.starved_terms > 0 && (
+                  <span className="ml-1 font-medium text-warn" title="被额度拒绝、一次都没发的检索词">
+                    饿词 {r.starved_terms}
+                  </span>
+                )}
+              </td>
+              <td className="py-1 pr-2">
+                {r.cells_undecided_after == null
+                  ? `${r.cells_undecided_before} →（本趟之后没再判）`
+                  : `${r.cells_undecided_before} → ${r.cells_undecided_after}`}
+              </td>
+              <td className="py-1 text-ink-2">{r.stopped_by ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 border-t border-line/60 pt-2 text-tag text-ink-3">
+        取证额度 {account.pool_used}/{account.pool_total} 次 · 补算回来的点位 {account.points_added_judging_only} 个
+        <span className="ml-1.5 rounded-chip bg-warn/10 px-1.5 py-0.5 font-medium text-warn">只进判盲，不进评分</span>
+      </p>
+      <p className="mt-1 flex items-start gap-1 text-tag text-ink-3">
+        <InfoIcon size={12} className="mt-0.5 shrink-0" />
+        {account.points_policy}
+      </p>
+    </div>
+  )
+}
+
 /** 覆盖度脚注：只要存在未判定格，就必须写出来（否则盲区数会被读成「全貌」）。
  *
  * ⚠️ 判定与文案都来自 `lib/livingCircle`（体检台共用同一实现）——本组件不再自带一份，
@@ -233,6 +337,9 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   const reach = samplingReach(lc)
   // R-7：降级披露唯一出口（存在 `degraded` 才是「被熔断」，否则只是未联网离线估算）
   const dgBanner = degradeBanner(lc)
+  // 片 5：取证账目与证据域明细（两者都**不传不发** ⇒ 取不到就是 null / 空表，不回落 0）
+  const forensic = forensicAccount(lc)
+  const discs = evidenceDiscs(lc)
   const area15 = lc.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0
   const isShared = typeof window !== 'undefined' && window.location.search.includes('share=1')
   // C1：左竖排章节导航的当前高亮（scroll-spy，与 research 报告页同模式）
@@ -294,6 +401,24 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             <span className="hidden items-center gap-1 text-tag text-ink-2 md:inline-flex">
               <TriangleAlert size={13} className="text-warn" /> 盲区 {lc.blindspots.length} 处
             </span>
+            {/* 片 5：取证摘要 chip。数字与体检单里那张回合表同源（都读 `caliber.forensic`），
+                缺键时整颗不出现 —— 不给离线/旧快照凭空造一个「0 轮」。 */}
+            {forensic && (
+              <span
+                title={forensic.points_policy}
+                className="hidden items-center gap-1 rounded-chip border border-warn/60 bg-warn/10 px-2 py-0.5 text-tag font-medium text-ink-2 md:inline-flex"
+              >
+                <Layers size={12} /> 取证 {forensic.rounds} 轮 · {forensic.calls} 次调用
+              </span>
+            )}
+            {discs.length > 0 && (
+              <span
+                title="判定真正吃的证据域逐盘明细：虚线边界那一圈没查全（图层开关见体检地图页）"
+                className="hidden items-center gap-1 rounded-chip border border-warn/60 bg-warn/10 px-2 py-0.5 text-tag font-medium text-ink-2 md:inline-flex"
+              >
+                <InfoIcon size={12} /> 证据域 {discs.length} 盘
+              </span>
+            )}
             <button
               onClick={() => setShareOpen(true)}
               title="分享报告直达链接 / 二维码"
@@ -310,6 +435,9 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
           </div>
         </div>
       </header>
+
+      {/* 片 5：部分完成披露（与降级横幅分职；不存在 `partial` 时整块不渲染） */}
+      <PartialNote lc={lc} />
 
       {/* 左：竖排章节目录（scroll-spy 高亮；lg 以下隐藏，与 research 报告页一致） */}
       <div className="flex min-h-0 flex-1">
@@ -552,6 +680,9 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
               {caliberNote(lc)}
             </div>
           )}
+
+          {/* 片 5：取证回合账目（与顶部 chip、SSE `round` 事件三处同源一份 `to_row()`） */}
+          {forensic && <ForensicSection account={forensic} />}
 
           <div className="mt-4 flex justify-center pb-4">
             <button

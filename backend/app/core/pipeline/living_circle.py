@@ -24,21 +24,21 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, TypedDict
 
 from app.core import db
 from app.core.config import get_settings
-from app.living_circle.assemble import assemble_living_circle
-from app.living_circle.caliber import caliber_payload_key, get_caliber
+from app.living_circle.caliber import caliber_payload_key
 from app.living_circle.data_source import (
-    bind_evidence,
     CheckParams,
-    degrade_if_incomplete,
-    degrade_to_offline,
-    load_poi,
+    live_forensic_steps,
     refine_live_with_profile,
-    scope_or_degrade,
+    STEP_COLLECT,
+    STEP_DEGRADED,
+    STEP_JUDGE,
+    STEP_MEASURE,
+    STEP_REPORT,
+    STEP_ROUND,
 )
 from app.living_circle.degrade_policy import detail_label
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.isochrone import REACH_FULL_MIN, IsochroneEngine, reach_flags
-from app.living_circle.quota import max_matrix_origins_for
 from app.living_circle.report_contract import assess_geometry
 
 from .diagnosis_templates import assemble_report
@@ -331,77 +331,107 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     yield _ev("message", {"stage": "measure", "percent": 30, "text": "粗扫 400m 网格 → 15min 边界带加密 → 批量距离矩阵测时中…"})
 
     if live_client is not None:
-        iso = await engine.compute(
-            center,
-            lambda pts: live_client.measure_matrix(travel_mode, pts, center),
-            study_radius_m=check.study_radius_m, mode=check.sample_profile,
-            max_points=max_matrix_origins_for(travel_mode),
-            travel_mode=travel_mode,
-        )
-        n_timed = iso["sampling"]["timed_count"]
-        n_in_reach = iso["sampling"]["in_reach_count"]
-        _spec = iso["sampling"]["spec"]
-        _degraded = "；**预算受限已降规格**：放弃边界加密带，插值格距 " \
-                    f"{_spec['grid_step_m']:g}m vs 采样间距 {_spec['sample_step_m']:g}m" \
-                    if _spec["degraded"] else ""
-        yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取{_degraded}"})
-        yield _ev("evidence", {"stage": "measure", "evidence": {
-            "evidence_id": f"ev-{task_id}-measure", "source_url": "live://measure", "source_type": "api_measure",
-            "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_timed} 条耗时，其中 ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach} 条",
-            "credibility": 0.95, "collected_by": "L2-005", "captured_at": _now_iso(),
-        }})
-        yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 1})
+        # 取证编排走**全项目唯一实现** `live_forensic_steps`（计划 v6.1 片 0）。此前这段
+        # 「等时圈 → 口径绑定 → 采集 → 绑证据 → 残缺判定 → 组装」在 pipeline 内联、
+        # `LiveDataSource.compute`、`refine_live_with_profile` 里抄了三遍，而线上只跑第一份
+        # ⇒ 回合循环接在任何一份上，另外两份永远学不到。这里从此只剩一件事：
+        # **把每一步的事实翻成事件**，文本、stage 序号与 evidence_count 的取值逐字照旧
+        # （这张时序表就是片 0 的验收线，网在 `test_u36`/`test_pipeline_event_contract`/`test_u40`）。
+        report_data: Dict[str, Any] = {}
+        async for step in live_forensic_steps(live_client, engine, check,
+                                              intake_meta=intake_meta):
+            if step.kind == STEP_MEASURE:
+                iso = step.iso
+                n_timed = iso["sampling"]["timed_count"]
+                n_in_reach = iso["sampling"]["in_reach_count"]
+                _spec = iso["sampling"]["spec"]
+                _degraded = "；**预算受限已降规格**：放弃边界加密带，插值格距 " \
+                            f"{_spec['grid_step_m']:g}m vs 采样间距 {_spec['sample_step_m']:g}m" \
+                            if _spec["degraded"] else ""
+                yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取{_degraded}"})
+                yield _ev("evidence", {"stage": "measure", "evidence": {
+                    "evidence_id": f"ev-{task_id}-measure", "source_url": "live://measure", "source_type": "api_measure",
+                    "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_timed} 条耗时，其中 ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach} 条",
+                    "credibility": 0.95, "collected_by": "L2-005", "captured_at": _now_iso(),
+                }})
+                yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 1})
 
-        # 空间口径绑定（可达区/采集区/研究区三概念显式化）—— 与 LiveDataSource 同一构造，
-        # 「圈内」从此只由 scope 决定，不再有 iso["isochrones"][-1] 这类按位置取环。
-        # R-3（根因 B）：降级判定必须排在 `from_iso` **之前** —— 配额超限时等时圈族必然为空，
-        # `from_iso` 会先 `raise`（`scope.py:111`）⇒ 降级代码根本到不了，任务停在 measure 失败。
-        # 该 raise 本身是对的（拦「静默空壳报告」）⇒ 不弱化、不删除，只把可降级的分流到它之前。
-        guard = getattr(live_client, "guard", None)
-        scope, degraded = await scope_or_degrade(
-            caliber=get_caliber(travel_mode), center=center, radius_m=check.study_radius_m,
-            iso=iso, params=check, guard=guard,
-        )
+            elif step.kind == STEP_DEGRADED:
+                # 总量熔断降级（rev3 §四G / v3 §3.5）：预算耗尽时产出诚实离线报告
+                # （data_origin='offline'、可视化占位、评分/盲区留待实时重检），**绝不**拿空 POI
+                # 硬算后被几何质检拦成「调研失败」。触发判据的唯一出口在 `degrade_policy`：
+                # 触发=数据缺失（等时圈空 / POI 全空）或**测时阶段**提前中止，配额信号只填 detail
+                # （不用 `stats.quota_hits` 触发：它计在重试内，一次抖动+重试成功就会过度降级）。
+                report_data = step.report or {}
+                _label = detail_label((report_data.get("degraded") or {}).get("detail") or "unknown")
+                yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"百度{_label}：降级为离线估算，评分与盲区需配额恢复后实时重检"})
+                # U36：熔断降级同样发 collect progress —— 保持 STAGES 进度连续（48→72→86），
+                # 否则前端进度条在降级路径从 measure 直接跳到 diagnose。
+                yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 0})
 
-        # collect：POI 采集（半径唯一来自 scope.collect_radius_m；不再硬编码 2000）
-        if degraded is None:
-            collected = await load_poi(live_client, center, scope.collect_radius_m, scope=scope)
-            per_category, triads = collected.per_category, collected.triads
-            # 绑定**实测证据边界**（事后举证相）⇒ 判盲可判定半径由采集事实决定，不由请求半径猜
-            scope = bind_evidence(scope, collected)
-            # 采集中途熔断 ⇒ POI 非空但残缺，同样必须降级（架构评审 P1-2）
-            degraded = await degrade_if_incomplete(per_category=per_category, params=check, guard=guard)
+            elif step.kind == STEP_COLLECT:
+                _n_poi = sum(len(v) for v in step.collected.per_category.values())
+                # 残缺与否在这里就必须区分开：说「采集完成」而实际有几类没查到，
+                # 是本轮改造的头号缺陷形状（把没查的说成查过了）。D1①：取证阶段的中止
+                # 不打回离线，报告保持 live 并标 `partial`。
+                _partial = step.partial
+                if _partial is None:
+                    _collect_text = f"8 类民生设施采集完成：总量 {_n_poi} 处"
+                else:
+                    _collect_text = (
+                        f"8 类民生设施采集中止于配额：已得 {_n_poi} 处，"
+                        f"未采到的类别按证据缺口披露（{detail_label(_partial['detail'])}，报告仍为实时口径）"
+                    )
+                yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": _collect_text})
+                yield _ev("evidence", {"stage": "collect", "evidence": {
+                    "evidence_id": f"ev-{task_id}-collect", "source_url": "live://poi", "source_type": "poi_search",
+                    "title": "POI 采集", "excerpt": f"共 {_n_poi} 处",
+                    "credibility": 0.92, "collected_by": "L2-004", "captured_at": _now_iso(),
+                }})
+                yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 2})
 
-        # 总量熔断降级（rev3 §四G / v3 §3.5）：预算耗尽时产出诚实离线报告（data_origin=offline,
-        # 可视化占位、评分/盲区留待实时重检），**绝不**拿空 POI 硬算后被几何质检拦成「调研失败」。
-        # R-2：判据统一走 `degrade_policy` —— 触发=数据缺失/提前中止，归因=配额信号**只填 detail**
-        # （不用 `stats.quota_hits` 触发：它计在重试内，一次抖动+重试成功就会过度降级）。
-        if degraded is not None:
-            report_data = degraded
-            _label = detail_label((degraded.get("degraded") or {}).get("detail") or "unknown")
-            yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"百度{_label}：降级为离线估算，评分与盲区需配额恢复后实时重检"})
-            # U36：熔断降级同样发 collect progress —— 保持 STAGES 进度连续（48→72→86），
-            # 否则前端进度条在降级路径从 measure 直接跳到 diagnose。
-            yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 0})
-        else:
-            yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"8 类民生设施采集完成：总量 {sum(len(v) for v in per_category.values())} 处"})
-            yield _ev("evidence", {"stage": "collect", "evidence": {
-                "evidence_id": f"ev-{task_id}-collect", "source_url": "live://poi", "source_type": "poi_search",
-                "title": "POI 采集", "excerpt": f"共 {sum(len(v) for v in per_category.values())} 处",
-                "credibility": 0.92, "collected_by": "L2-004", "captured_at": _now_iso(),
-            }})
-            yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 2})
+            elif step.kind == STEP_JUDGE:
+                # 判定步只交事实（掩码 + 三态账目），不发事件：上屏时序与片 0 逐字节相同。
+                continue
 
-            # diagnose：统计/盲区/评分（确定性）—— 组装走全项目唯一实现
-            report_data = assemble_living_circle(check, iso, per_category, triads, scope,
-                                                 intake_meta=intake_meta,
-                                                 poi_merged=collected.merged)
-            # v5 E1：实时重算结果回填缓存（编排器不摸 repo/键，走数据源层 backfill）。
-            # 「live 缓存不装 offline 报告」不再在此判 —— 该不变量的唯一出口是
-            # `Repository.cache_report`（本分支只会是实时产物，且新入口也一并被拦住）。
-            backfill = getattr(source, "backfill", None)
-            if backfill is not None:
-                backfill(check, report_data)
+            elif step.kind == STEP_ROUND:
+                # 取证回合（计划 v7.0 片 4）：发**新事件类型 `round`**，不发 progress、不发 evidence。
+                # 为什么不挂 `trace`（v6.0 原文那个名字）：`trace` 在前端有一个已定的
+                # `TraceSpan` 形状（span_id/agent_id/prompt/tokens…），唯一发射点是 research 引擎，
+                # 还牵 `db.traces` 那张表 —— 拿它装回合遥测就是在同一事件名下造第二种载荷。
+                # 为什么不发 `progress`：`stage_seq == 1..7` 那五处契约会为多出来的回合改写；
+                # 为什么不发 `evidence`：progress 里声明的 `evidence_count` 就会与实发条数分家。
+                # 载荷只有一个来源：`ForensicRoundRecord.to_row()` —— 它与 `caliber.forensic`
+                # 里那一份逐回合流水是同一个函数产的，上屏与落库无从各说各话。
+                _row = (step.forensic_round.to_row() if step.forensic_round is not None else {})
+                yield _ev("round", {
+                    "stage": "collect",
+                    "round": _row,
+                    "text": (f"取证回合：在 {_row.get('anchors_sent', 0)} 个补算锚点上重查三要素"
+                             f"（{_row.get('calls', 0)} 次调用），未决格 "
+                             f"{_row.get('cells_undecided_before', 0)} → "
+                             f"{_row.get('cells_undecided_after', 0)}"),
+                })
+
+            elif step.kind == STEP_REPORT:
+                # STEP_REPORT —— 组装已在数据源层完成（唯一实现），这里只回填缓存。
+                # v5 E1：实时重算结果回填缓存（编排器不摸 repo/键，走数据源层 backfill）。
+                # 「live 缓存不装 offline 报告」不再在此判 —— 该不变量的唯一出口是
+                # `Repository.cache_report`（本分支只会是实时产物，且新入口也一并被拦住）。
+                report_data = step.report or {}
+                backfill = getattr(source, "backfill", None)
+                if backfill is not None:
+                    backfill(check, report_data)
+
+            else:
+                # 这张 if-链是 kind → 事件的**唯一映射表**。`live_forensic_steps` 将来加第 6 类
+                # 步而这里没接，落进兜底分支会被当成「无事发生」—— 事实照发、上屏静默，
+                # 正是最难查的那类缺陷（改动在两个模块各对一半）。当场炸出来。
+                raise ValueError(
+                    f"取证编排发来未接线的事件步 {step.kind!r}：pipeline 的 kind→事件映射"
+                    f"只认 {STEP_MEASURE!r}/{STEP_DEGRADED!r}/{STEP_COLLECT!r}/"
+                    f"{STEP_JUDGE!r}/{STEP_ROUND!r}/{STEP_REPORT!r}，请在此显式接它"
+                )
     else:
         # fixture：整包加载（含场景缓存）
         report_data = await source.compute(check)

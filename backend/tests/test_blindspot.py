@@ -186,6 +186,7 @@ def test_blindspots_confined_to_reach():
 
 # ── R2 严重度标定（纯函数，架构审查收敛）：三档真实可达 + 随 excess 单调上升 ──
 from app.living_circle.blindspot import (  # noqa: E402
+    BLIND_RADIUS_M,
     SEV_HEAVY,
     SEV_MEDIUM,
     _excess_farness,
@@ -195,14 +196,31 @@ from app.living_circle.blindspot import (  # noqa: E402
 
 # 赛题口径：缺失类的最近替代必≥1km（BLIND_RADIUS_M）；excess = d − 1000
 # farness = mean(min(1, excess/1000))；gap = 0.6·(m/3) + 0.4·farness
+# ⚠️ 半径现在**必须由调用方显式给**（片 1b 纪律一：私有几何不许自己取口径，否则
+# `assemble.py` 那条反向 import 的路会在 helper 内部长出第二个住所）⇒ 下面每条都传 `BLIND_RADIUS_M`。
 
 
 def test_excess_farness_missing_inf_is_worst():
     # 缺失类无任何设施 → inf → 该项取 1
-    assert _excess_farness({}) == 0.0
-    assert _excess_farness({"market": float("inf")}) == 1.0
-    assert _excess_farness({"market": 1000.0}) == 0.0  # 恰在必达下限 → 无超量
-    assert _excess_farness({"market": 2000.0}) == 1.0  # 超出 1 个下限 → 归一满
+    assert _excess_farness({}, BLIND_RADIUS_M) == 0.0
+    assert _excess_farness({"market": float("inf")}, BLIND_RADIUS_M) == 1.0
+    assert _excess_farness({"market": 1000.0}, BLIND_RADIUS_M) == 0.0  # 恰在必达下限 → 无超量
+    assert _excess_farness({"market": 2000.0}, BLIND_RADIUS_M) == 1.0  # 超出 1 个下限 → 归一满
+
+
+def test_excess_farness_requires_an_explicit_ruler():
+    """纪律一的正向对照：省略半径必须**响亮失败**，而不是静默按步行档算。
+
+    为什么这条比"能算出数"更重要：`_excess_farness` 拿不到 `travel_mode`，让它自己取口径
+    就等于在同一场判定里允许第二把尺存在（`assemble.py:377` 正是反向 import 原语的那条路）。
+    空输入也要拦 —— 否则「空 dict 的那格可以不带尺来」，规则漏一个洞。
+    """
+    import pytest
+
+    with pytest.raises(ValueError, match="_excess_farness"):
+        _excess_farness({"market": 1200.0})
+    with pytest.raises(ValueError, match="_excess_farness"):
+        _excess_farness({})
 
 
 def test_gap_score_uses_triad_count_not_hardcoded_3():
@@ -225,8 +243,8 @@ def test_severity_three_tiers_all_reachable():
 
 def test_severity_monotonic_with_excess():
     """同 m 下，替代设施越远 → gap 越高 → 严重度越重（决策分档可信）。"""
-    far_near = _excess_farness({"market": 1000.0})  # 0
-    far_far = _excess_farness({"market": 2000.0})  # 1
+    far_near = _excess_farness({"market": 1000.0}, BLIND_RADIUS_M)  # 0
+    far_far = _excess_farness({"market": 2000.0}, BLIND_RADIUS_M)  # 1
     g_near = _gap_score(1, far_near)
     g_far = _gap_score(1, far_far)
     assert g_far > g_near

@@ -145,3 +145,41 @@ export function rejectBdLngLatSource(raw: unknown, where: string, why: string): 
   warnReject(where, `拒绝该坐标来源，不予采纳：${why}｜收到 ${JSON.stringify(raw)} —— ${describeCoordSys(raw)}`)
   return null
 }
+
+/**
+ * **地图级**事件 → BD-09 的唯一出口。组件里不许再出现第二个解字段的地方
+ * （防线见 `src/__tests__/mapEventCoordGuard.test.ts`）。
+ *
+ * ## 为什么白名单里有两案键名
+ *
+ * `LcMap.tsx` 那份 2026-09-23 的 spike 记的是**覆盖物**事件形状（带驼峰 `latLng`），
+ * 而 GL 源码里 `i.latLng = nq.latlng` 那次改名只发生在覆盖物派发路径上 —— 地图自身的
+ * click 带的是内部小写名。真机第一轮按驼峰取，拿到 `undefined`（控制台为证），
+ * 所以这里两案都试，顺序按"地图级更可能"排。
+ *
+ * ## 为什么 `point` / `pixel` 不参与取值
+ *
+ * 它们是投影平面坐标（上面 `rejectBdLngLatSource` 那条 docstring 记过北极圈事故），
+ * 值域闸挡不住"被取模后落进合法区"的脏值 ⇒ 只进诊断文本，永不进 `parseBdLngLat`。
+ * 真要拿 `pixel` 反算经纬度，得走 SDK 投影 API 并先做真机 spike，不在这里顺手加。
+ */
+export function bmapEventLngLat(e: unknown, where: string): LngLat | null {
+  const ev = e as Record<string, unknown> | undefined
+  for (const key of ['latlng', 'latLng'] as const) {
+    const ok = parseBdLngLat(toDiagPair(ev?.[key]))
+    if (ok) return ok
+  }
+  return rejectBdLngLatSource(null, where, `事件里没有经纬度字段；${describeBMapEvent(e)}`)
+}
+
+/**
+ * 把一个地图级事件"到底长什么样"摊成一行文本 —— **只用于诊断与探针**，不参与取值。
+ *
+ * 存在的理由：本仓拿不到真实指针点击（第三方 SDK 不认合成事件，CDP 只能打元素中心，
+ * 而地图中心被可拖的中心标记占着），所以"事件里有哪些键"只能靠用户那一次真机点击取证。
+ * 让那一次点击自带结论，省掉一轮又一轮的猜。
+ */
+export function describeBMapEvent(e: unknown): string {
+  const ev = (e ?? {}) as Record<string, unknown>
+  return `实际键=[${Object.keys(ev).join(',')}]，point=${JSON.stringify(ev.point)}，pixel=${JSON.stringify(ev.pixel)}`
+}

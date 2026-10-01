@@ -66,6 +66,9 @@ function intelPayload(over: Partial<IntelOverview> = {}): IntelOverview {
     avg_evidence_per_report: 12,
     fact_accuracy: 50,
     platform_distribution: { official: 12 },
+    // 后端 `_agg_compute` 恒发的两键（口径说明行仅含用户指定信源时非空）
+    user_source_evidence: 0,
+    distribution_note: '',
     destination_graph: { nodes: [], unattributed: 0, scanned: 12 },
     minutes_saved: 60,
     avg_efficiency: 6,

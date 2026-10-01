@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.geo_utils import to_local_xy
-from app.living_circle.scope import BLIND_RADIUS_M, TRIAD_KEYS
+from app.living_circle.scope import BLIND_RADIUS_M, TRIAD_KEYS, blind_radius_or  # noqa: F401
 
 # 判定半径与必达要素登记表**不在此处定义**。
 # 旧版这里各写一份字面量，注释的理由是「与 `blindspot` 同源但不能 import —— `blindspot`
@@ -49,17 +49,23 @@ class BlindnessField(Field):
     marching-squares 据此切出贴合设施覆盖的连续边界（不再是规则四边形）。
     """
 
-    def __init__(self, center, triads_local: Dict[str, List[Tuple[float, float]]]) -> None:
+    def __init__(self, center, triads_local: Dict[str, List[Tuple[float, float]]],
+                 radius_m: Optional[float] = None) -> None:
         self._center = center
         # 设施局部坐标（米）：k -> [(x,y), ...]，已归一化到场地中心
         self._local: Dict[str, List[Tuple[float, float]]] = triads_local
-        self._radius_m = BLIND_RADIUS_M
+        # 判定半径由调用方传（生产路径传的是 `Judgement` 那一次决议出来的值）；省略时按口径
+        # 决议。这里原先硬写 `BLIND_RADIUS_M` ⇒ 环/面积与掩码可能各取一把尺（第十四轮 P1-3）。
+        # 连续缺失场是纯几何对象，拿不到本次体检的 `travel_mode` ⇒ 回落档位显式点名（批 A①）。
+        # 生产路径永远由 `blindspot.judge_once` 把已决议的半径传进来；这里只兜省略实参的调用。
+        self._radius_m = blind_radius_or(radius_m, "walking")
 
     @classmethod
     def build(
         cls,
         center,
         triads: Dict[str, List[dict]],
+        radius_m: Optional[float] = None,
     ) -> "BlindnessField":
         """从契约 triads（{k: [{lng,lat,...},...]}）构建盲区连续缺失场。
 
@@ -73,7 +79,7 @@ class BlindnessField(Field):
                     arr.append(to_local_xy(center, p["lng"], p["lat"]))
             if arr:
                 local[k] = arr
-        return cls(center, local)
+        return cls(center, local, radius_m)
 
     def read(self, x: float, y: float) -> float:
         # 盲区语义：某点「已覆盖」当且仅当**每个**必达类都有设施落在其 1km 圆内。

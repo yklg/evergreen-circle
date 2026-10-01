@@ -231,9 +231,12 @@ def test_post_migration_read_normalizes_legacy_json(old_db):
         assert db.query_evidences(destination="洱海")[0]["evidence_id"] == "e1"
         assert db.query_evidences(destination="不存在") == []
         assert db.evidence_facets()["by_destination"] == {"洱海": 1, "古城": 1}
-        dash = db.dashboard_stats()
-        assert dash["destination_distribution"] == {"洱海": 1, "古城": 1}
-        assert dash["research_cards"][0]["destinations"] == ["洱海", "古城"]
+        intel = db.intel_overview()
+        assert {n["destination"]: n["count"] for n in intel["destination_graph"]["nodes"]} == {
+            "洱海": 1, "古城": 1,
+        }
+        assert intel["cards"][0]["destinations"] == ["洱海", "古城"]
+        assert set(db.dashboard_stats()) == {"reports", "evidence_total"}
     finally:
         db._DB_PATH, db._SCHEMA_READY = old_path, False
         db._LOCAL.__dict__.pop("conn", None)

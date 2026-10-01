@@ -324,7 +324,12 @@ def _build_report(triads_near_center: bool, evidence_frontier_m: float | Dict[st
             fr = {k: float(evidence_frontier_m) for k in TRIAD_KEYWORDS}
         scope = scope.with_evidence(fr, complete=False)
     scope.invariant()
-    return assemble_living_circle(check, iso, per_category, triads, scope)
+    # 片 1a：判定不住在组装层了 —— 组装层吃的是编排层交下来的 `Judgement`。
+    # 这里补的一行正是线上那一行（`data_source.live_forensic_steps`），入参逐字相同。
+    from app.living_circle.blindspot import judge_once
+
+    j = judge_once(center, scope, triads, prefix=check.scene_name)
+    return assemble_living_circle(check, iso, per_category, triads, scope, judgement=j)
 
 
 def test_assemble_blindspots_confined_to_reach():
@@ -395,7 +400,12 @@ def test_g1_out_of_polygon_point_must_not_set_min_minutes():
                         study_radius_m=2500.0, sample_profile="standard", travel_mode="walking")
     iso = _synthetic_iso(center)
     scope = SpatialScope.from_iso(get_caliber("walking"), center, check.study_radius_m, iso)
-    lc = assemble_living_circle(check, iso, per_category, triads, scope)
+    from app.living_circle.blindspot import judge_once
+
+    lc = assemble_living_circle(
+        check, iso, per_category, triads, scope,
+        judgement=judge_once(center, scope, triads, prefix=check.scene_name),
+    )
 
     cats = {c["category"]: c for c in lc["poi"]["categories"]}
     assert cats["elderly"]["in_circle"] == 0, "前提：该点确实在可达区外"
@@ -407,7 +417,7 @@ def test_g1_out_of_polygon_point_must_not_set_min_minutes():
 
 @pytest.mark.xfail(strict=True, reason=(
     "出厂劲松快照是 G1 修复**之前**跑的：`elderly in_circle=0` 仍带 `min_minutes=19.9`。"
-    "代码已修（见上一条用例），下一次 ev-1 重刷会把它变成 None —— 那时本用例转 XPASS 而"
+    "代码已修（见上一条用例），下一次重刷（ev-2 代际）会把它变成 None —— 那时本用例转 XPASS 而"
     "报错，就是提醒你把这条 xfail 删掉、并把 `test_residential_category_baseline.py` 里"
     "elderly 那一行的注释一并清掉。禁止改成 skip 或放宽断言。"))
 def test_g1_residual_in_shipped_jinsong_snapshot():
@@ -570,11 +580,11 @@ def test_assemble_zero_judged_cells_yields_no_share_not_full_confidence():
     `judged_share` 只在 `cells_inside == 0`（可达区退化，连格子都铺不出来）时才是 ``None``；
     这两种「判不了」在算术上不同（0% 有下限可放大，None 无从放大），必须分开表达。
     """
-    from app.living_circle import assemble as A
+    from app.living_circle.judgement import judged_share
 
-    assert A._judged_share({"cells_inside": 97, "cells_judged": 0}) == 0.0
-    assert A._judged_share({"cells_inside": 0, "cells_judged": 0}) is None
-    assert A._judged_share({"cells_inside": 97, "cells_judged": 5}) == pytest.approx(5 / 97)
+    assert judged_share({"cells_inside": 97, "cells_judged": 0}) == 0.0
+    assert judged_share({"cells_inside": 0, "cells_judged": 0}) is None
+    assert judged_share({"cells_inside": 97, "cells_judged": 5}) == pytest.approx(5 / 97)
 
 
 # ── 副标题：口径 + 分隔符（读者会照抄这两个东西） ──────────────────────

@@ -41,6 +41,7 @@
 | **B5** 证据域自洽：余量>0、``collect == 外接圆+余量``、实测边界 ≤ 请求、不得带缺口称完整 | 余量被改回 0 / 「没查完」被省略 | 余量 0 ⇒ 判盲面 5% ❌ |
 | **B10** ``judge_radius == 证据边界 − 判定半径``（复算）、``judged==0 ⇒ unknown==inside`` | 判定域与证据脱钩 | 5/97 判却报「0 处盲区」❌ |
 | **B11** 新产物必带 ``scores.confidence``；``share<1`` 或证据不齐 ⇒ 不得 full；``penalty_applied`` 可由公式复算 | 证据越少分越高 | 2 处盲区只扣 4 分 ❌ |
+| **B13** 新产物必带 ``cells_ledger``；四张计数由台账复算、结论位由不对称规则重抄、``n``/``step_m``/``scan_m`` 由格阵复算 | 「哪一格凭什么这个结论」无法复原 | 环跨 16 格却只报 8 格 ❌ |
 
 ## 设计纪律：**判不了 ≠ 违规**
 
@@ -62,7 +63,21 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
-from app.living_circle.scope import BLIND_RADIUS_M, SCOPE_POLICY_VERSION
+# B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
+# 台账的三个字符 `1/0/.` 一旦有两份定义，读侧守卫就会在写侧改字母表的那天开始说谎。
+# 依赖方向是 读侧守卫 → 判定模块，与既有 `scope.BLIND_RADIUS_M` 同一条，不构成环
+# （`blindspot` 及其依赖 `geometry/field/geo_utils/grid/judgement/scope` 都不指回本模块）。
+from app.living_circle.blindspot import (
+    BLIND_GRID_M,
+    LEDGER_GRID,
+    LEDGER_NO,
+    LEDGER_SCHEMA_VERSION,
+    LEDGER_UNKNOWN,
+    LEDGER_YES,
+)
+from app.living_circle.grid import grid_spec
+from app.living_circle.judgement import STAT_KEYS
+from app.living_circle.scope import BLIND_RADIUS_M, SCOPE_POLICY_VERSION, TRIAD_KEYS
 from app.living_circle.scoring import (
     BLINDSPOT_PENALTY_CAP,
     BLINDSPOT_PENALTY_PER_EXTRA,
@@ -243,12 +258,13 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
-# ── Tier B · 证据相三条（B5 / B10 / B11）─────────────────────────
+# ── Tier B · 证据相五条（B5 / B10 / B11 / B12 / B13）───────────────────
 def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
-    """证据域自洽（B5）、判定域由证据域导出（B10）、扣分与判定面一致（B11）。
+    """证据域自洽（B5）、判定域由证据域导出（B10）、扣分与判定面一致（B11）、
+    逐锚点举证与标量边界同源（B12）、逐格台账与分账/规则/格阵对得上（B13）。
 
-    三条**只读 payload 数值**，不需要几何参照系 ⇒ 在 ``center is None`` 早退之前调用，
-    否则「中心点缺失」会把这三条一起跳过，而它们看的是数字之间对不对得上。
+    这四条**只读 payload 数值**，不需要几何参照系 ⇒ 在 ``center is None`` 早退之前调用，
+    否则「中心点缺失」会把这几条一起跳过，而它们看的是数字之间对不对得上。
 
     **门禁 = ``caliber.scope_policy_version``**：旧口径产物整套证据键都可能缺席，对它们
     一律「判不了即跳过」（否则存量报告集体被隐藏，正是本模块反复警告的假阳性）。
@@ -312,6 +328,12 @@ def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
             )
 
     # B10 · 判定域必须由证据域导出（复算，不接受「名义上判满了」）
+    # ⚠️ 半径在这里仍是**兼容名**（`scope.BLIND_RADIUS_M` = walking 档快照），不是本次判定
+    # 实际吃的那把尺 —— 复算拿不到 `Judgement.radius_m`（`assess_geometry` 只吃落库 dict，
+    # 而 dict 里没有承载"本次尺"的顶层键）。住所在 `caliber.ReachCaliber.blind_radius_m`
+    # 之后，这条读侧就是**第二把尺**：今天三档同值 ⇒ 无差异；一旦分档，riding/driving 的报告
+    # 会被这条按 1000m 误判。修法属批次二（改读产物自己声明的半径，存量件需回落规则），
+    # 由 `test_b10_reads_the_constant_not_this_runs_ruler` 成对钉住（计划 v6.9 ⑧″）。
     bound = ev_radius if (source == "measured" and ev_radius is not None) else collect
     if judge is not None and bound is not None:
         expected_judge = max(0.0, bound - BLIND_RADIUS_M)
@@ -320,6 +342,43 @@ def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
                 f"judge_radius_m {judge:.1f}m ≠ 证据边界 {bound:.0f}m − 判定半径 "
                 f"{BLIND_RADIUS_M:.0f}m（复算 {expected_judge:.1f}m）—— 判定域不再由证据域导出"
             )
+    # B12 · 逐锚点明细与逐类标量边界必须由**同一批盘**导出（计划 v5.9 前置②）
+    # 写侧有一条守卫（`SpatialScope._one_region_source`：显式 region 与绑定 region 不许是两个
+    # 对象），但那守卫只在「经过值对象」时生效。落库件是 JSON，拼得出「明细来自回合区域、标量
+    # 却来自首轮绑定」的形状 —— 而接线后的取证回合恰好就会同时持有这两块。
+    # ⚠️ 期望值写成**区间包含**而不是「等于 max」：同一批盘有两种合法塌缩 —— 采集器逐类取
+    # **min**（`poi_collector.frontier_m`，保守合取：一个词被截断该类边界就只到那儿），
+    # 区域视图取 **max**（`EvidenceRegion.frontier_m`，向后兼容既有键）。第五轮复审 P0-2 证明
+    # 「等于 max」会把生产自己的标量绑定判成违规（market 三个词 ⇒ min 1500 / max 4535 是常态），
+    # 那等于替批次二预定标量语义。区间外的值只可能来自**另一批盘** ⇒ 那才是要拦的形状。
+    # 键缺席 ⇒ 判不了即跳过（存量 27 份报告没有 `evidence_anchors`，本条对它们恒不触发）。
+    anchors = cal.get("evidence_anchors")
+    if isinstance(anchors, list) and anchors:
+        front = cal.get("evidence_frontier_m")
+        front = front if isinstance(front, dict) else {}
+        spans: Dict[str, List[float]] = {}
+        for row in anchors:
+            if not isinstance(row, dict):
+                continue
+            depth = _num(row.get("exhausted_radius_m"))
+            if depth is not None:
+                spans.setdefault(str(row.get("category")), []).append(depth)
+        for cat, depths in sorted(spans.items()):
+            if cat not in front:
+                out.append(
+                    f"{cat} 有逐锚点举证（{len(depths)} 块盘）却缺 `evidence_frontier_m` 条目 "
+                    "—— 明细与标量视图不是同一块区域塌出来的"
+                )
+                continue
+            got = _num(front.get(cat))
+            lo, hi = min(depths), max(depths)
+            if got is None or not (lo - EVIDENCE_RECOMPUTE_TOL_M <= got <= hi + EVIDENCE_RECOMPUTE_TOL_M):
+                out.append(
+                    f"evidence_frontier_m[{cat}]={front.get(cat)!r} 落在该锚点明细的深度区间 "
+                    f"[{lo:.0f}, {hi:.0f}]m 之外 —— 举证与判定吃的不是同一批盘"
+                    f"（两种合法塌缩 min/max 都在区间内，区间外只能来自另一批证据）"
+                )
+
     if None not in (inside, judged, unknown):
         if judged == 0 and unknown != inside:
             out.append(
@@ -373,6 +432,231 @@ def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
                 f"（应为 {expected_pen:.1f}：实测 {len(blindspots)} 处 ÷ 覆盖率 {share:.1%}，"
                 f"下限 {JUDGE_SHARE_FLOOR:g}、封顶 {BLINDSPOT_PENALTY_CAP:g}）—— 扣分口径被改回「只按条数」"
             )
+
+    # B13 · 逐格台账（计划 cells-ledger-judge-scale §4.3）。
+    # 门禁与上面几条同一条：`scope_policy_version == SCOPE_POLICY_VERSION` ⇒ **必须自带**。
+    # 为什么这里不许"键缺席即跳过"（B12 对 `evidence_anchors` 那种写法）：版本号与键集是
+    # 同一次发布的两半，"声明了 ev-2 却没发台账"正是本条要拦的形状 —— 而缺席跳过会让它
+    # 永远查不出来。存量 ev-1 报告由上面第 264 行的版本门自动豁免，不会因此消失。
+    ledger = cal.get("cells_ledger")
+    if not isinstance(ledger, dict) or not ledger:
+        out.append(
+            f"声明了 scope_policy_version={SCOPE_POLICY_VERSION} 却缺 cells_ledger"
+            " —— 逐格台账与新版本号是同一次发布的两半；缺它，读者复原不出「哪一格凭什么"
+            "是这个结论」，而这条链三次被问的就是这件事"
+        )
+    else:
+        out.extend(_cells_ledger_violations(cal, ledger))
+        # 台账那把尺必须与**每条上屏盲区**声明的尺是同一把（两者同出 `Judgement.radius_m`）。
+        # 上面几条查的是台账内部自洽，查不出"整张台账用了另一把尺"—— 而多模式分档后
+        # `blind_radius_m` 不再恒为 1000，那一格写错的代价就是图上 800m 圆旁边标着 1km。
+        lr = _num(ledger.get("radius_m"))
+        for spot in (blindspots if isinstance(blindspots, list) else []):
+            sr = _num(spot.get("radius_m")) if isinstance(spot, dict) else None
+            if sr is not None and lr is not None and abs(sr - lr) > 1.0:
+                out.append(
+                    f"cells_ledger.radius_m={lr:g} ≠ 盲区 {spot.get('id')!r} 声明的 "
+                    f"{sr:g} —— 台账与上屏结论吃的不是同一把尺"
+                )
+                break
+    return out
+
+
+#: 台账的字母表（与 `blindspot.LEDGER_YES/NO/UNKNOWN` 同一套，读侧不另定一套）。
+LEDGER_CHARS = frozenset({"1", "0", "."})
+#: `nearest.{类}` 的"无从知道"记号（与 `render_cells_ledger` 的渲染逐字对照）。
+LEDGER_NO_DISTANCE = "-"
+
+
+def _ledger_matrix(ledger: Dict[str, Any], key: str, n: int) -> Optional[List[str]]:
+    """取台账的一张 ``n×n`` 字符矩阵；缺失/形状不符/字母表外 ⇒ ``None``（该条判不了）。
+
+    ⚠️ 返回 ``None`` **不是**"跳过就算通过"：调用方必须把它变成一条违规。半截台账比没有台账
+    更危险 —— 没有会被 B13 的"缺键即违规"拦住，半截若被跳过就等于当场放行一个错账。
+    """
+    rows = ledger.get(key)
+    if not isinstance(rows, list) or len(rows) != n:
+        return None
+    for row in rows:
+        if not isinstance(row, str) or len(row) != n or not set(row) <= LEDGER_CHARS:
+            return None
+    return list(rows)
+
+
+def _ledger_distances(ledger: Dict[str, Any], key: str, n: int) -> Optional[List[List[Optional[float]]]]:
+    """取一张最近距离表（空格分隔的 `n` 行，每格 `-` 或非负整数米）；不符 ⇒ ``None``。"""
+    rows = ledger.get(key)
+    if not isinstance(rows, list) or len(rows) != n:
+        return None
+    out: List[List[Optional[float]]] = []
+    for row in rows:
+        if not isinstance(row, str):
+            return None
+        toks = row.split(" ")
+        if len(toks) != n:
+            return None
+        vals: List[Optional[float]] = []
+        for tok in toks:
+            if tok == LEDGER_NO_DISTANCE:
+                vals.append(None)
+                continue
+            if not tok.isdigit():
+                return None
+            vals.append(float(int(tok)))
+        out.append(vals)
+    return out
+
+
+def _cells_ledger_violations(cal: Dict[str, Any], ledger: Dict[str, Any]) -> List[str]:
+    """B13 · 逐格台账与顶层分账、与不对称规则、与格阵必须三处都对得上。
+
+    **效力上限（不写清就会被当成别的东西卖）**：台账与顶层计数**同源**（都出自同一次
+    ``_verdict_masks``），所以本条防的是**渲染 / 截断 / 序列化**这一段的缺陷，
+    不防"两处判定各算一遍" —— 后者由 γ 静态守卫 G-10（判定原语生产侧调用点计数）把守。
+    B13 是兜底，G-10 才是阻止。
+
+    但**不对称规则**这一半不是同义反复：结论（`blind`/`verdict`）与输入（`judge`/`present`）
+    都在台账里，本函数按"判盲只需一类有据、说不盲要三类有据"**重抄一遍**再对表 —— 与 B11
+    重抄扣分公式同理（写侧与读侧守卫必须是两份实现，否则规则被改回去时两边一起漂）。
+    """
+    out: List[str] = []
+    n = ledger.get("n")
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0 or n % 2 == 0:
+        return [
+            f"cells_ledger.n={n!r} 不是正的奇数 —— 判定格阵边长恒为奇数"
+            "（分析中心必须恰好落在格心上，否则中心格被半格偏移污染）"
+        ]
+    if ledger.get("grid") != LEDGER_GRID:
+        out.append(
+            f"cells_ledger.grid={ledger.get('grid')!r} ≠ {LEDGER_GRID!r} —— 行字符串是方格专属"
+            "表示法，换格制（如 H3）得连带换邻接关系，不许沿用同一 schema"
+        )
+    if ledger.get("schema_version") != LEDGER_SCHEMA_VERSION:
+        out.append(
+            f"cells_ledger.schema_version={ledger.get('schema_version')!r} ≠ "
+            f"{LEDGER_SCHEMA_VERSION} —— 读侧与本函数的字母表/键名约定不是同一代"
+        )
+    radius = _num(ledger.get("radius_m"))
+    if radius is None or radius <= 0:
+        out.append(f"cells_ledger.radius_m={ledger.get('radius_m')!r} 不是正数米 —— 台账没带那把尺")
+
+    # 格阵一致性排在矩阵校验**之前**：它只需要 `n` 与 `reach_circumradius_m`，不需要读格子。
+    # 放在后面会让"n 被改错"这种变异先撞上形状不符、提前 return，报成"半截台账"而不是
+    # "格阵不符" —— 失败种类被抢答，排查时会往错的方向走。
+    # 复算走 `grid.grid_spec`（那套算术的唯一住所）而不是再抄一遍 ceil/linspace —— 抄的那份
+    # 会在 `grid_m` 改动时先漂。center 只用于 `cell()`，n/step/scan 不读它 ⇒ 这里传零点是安全的。
+    circum = _num(cal.get("reach_circumradius_m"))
+    if circum is not None and circum > 0:
+        spec = grid_spec((0.0, 0.0), circum, BLIND_GRID_M)
+        if n != spec.n:
+            out.append(
+                f"cells_ledger.n={n} ≠ 由可达区外接圆 {circum:.0f}m 与格距 {BLIND_GRID_M:g}m "
+                f"推出的 {spec.n} —— 台账不是这次判定那张格阵")
+        for gkey, want in (("step_m", spec.step), ("scan_m", spec.scan)):
+            got_g = _num(ledger.get(gkey))
+            if got_g is None or abs(got_g - want) > 0.1:
+                out.append(
+                    f"cells_ledger.{gkey}={ledger.get(gkey)!r} ≠ 格阵复算 {want:.1f}m —— "
+                    "格距一漂，两处的掩码就对不上（这正是 `JudgeMasks` 不许调用方重算格阵的理由）")
+    else:
+        out.append("caliber.reach_circumradius_m 缺失/非正 ⇒ 台账的格阵无从复算（B13 半边失效）")
+
+    mats: Dict[str, Optional[List[str]]] = {
+        name: _ledger_matrix(ledger, name, n)
+        for name in ("inside", "capped", "blind", "verdict")
+    }
+    judge: Dict[str, Optional[List[str]]] = {
+        k: _ledger_matrix(ledger, f"judge.{k}", n) for k in TRIAD_KEYS}
+    present: Dict[str, Optional[List[str]]] = {
+        k: _ledger_matrix(ledger, f"present.{k}", n) for k in TRIAD_KEYS}
+    nearest: Dict[str, Optional[List[List[Optional[float]]]]] = {
+        k: _ledger_distances(ledger, f"nearest.{k}", n) for k in TRIAD_KEYS}
+    short = sorted(
+        [name for name, m in mats.items() if m is None]
+        + [f"{p}.{k}" for p, table in (("judge", judge), ("present", present), ("nearest", nearest))
+           for k, m in table.items() if m is None]
+    )
+    if short:
+        out.append(
+            f"cells_ledger 有矩阵缺失或形状/字母不符（n={n}）：{short} —— "
+            "半截台账比没有台账更危险，不许按『判不了即跳过』放行"
+        )
+        return out
+
+    # 逐格：字母表纪律 + 不对称规则重抄 + 距离与三态同源
+    rule_bad: List[str] = []
+    state_bad: List[str] = []
+    dist_bad: List[str] = []
+    counts = dict.fromkeys(STAT_KEYS, 0)
+    for i in range(n):
+        for j in range(n):
+            if mats["inside"][i][j] != LEDGER_YES:
+                # 区外的格语义上不该判盲 ⇒ 四张结论位必须全是 `0`，逐类输入位必须全是 `.`。
+                # 后半条不是洁癖：`judge.{类}` 是**几何事实**（盘盖没盖到那格的 1km 圆），
+                # 区外也常为 `1`；若那里写出了 `0`/`1`，就是有人替从未求值的格编了结论。
+                if any(m[i][j] != LEDGER_NO for m in (mats["capped"], mats["blind"], mats["verdict"])):
+                    state_bad.append(f"({i},{j}) 区外却有结论位")
+                if any(present[k][i][j] != LEDGER_UNKNOWN or nearest[k][i][j] is not None
+                       for k in TRIAD_KEYS):
+                    state_bad.append(f"({i},{j}) 区外却写了逐类结论/距离")
+                continue
+            counts["cells_inside"] += 1
+            asked = [k for k in TRIAD_KEYS if judge[k][i][j] == LEDGER_YES]
+            for k in TRIAD_KEYS:
+                ch = present[k][i][j]
+                if judge[k][i][j] == LEDGER_NO and ch != LEDGER_UNKNOWN:
+                    state_bad.append(f"({i},{j}) {k} judge=0 却写了 present={ch}")
+                if judge[k][i][j] == LEDGER_YES and ch == LEDGER_UNKNOWN:
+                    state_bad.append(f"({i},{j}) {k} judge=1 却写 present=.（有据却没结论）")
+                got_d = nearest[k][i][j]
+                if ch == LEDGER_UNKNOWN and got_d is not None:
+                    state_bad.append(f"({i},{j}) {k} 无从知道却带距离 {got_d:g}m")
+                if ch == LEDGER_YES and (got_d is None or (radius is not None and got_d > radius + 1.0)):
+                    dist_bad.append(f"({i},{j}) {k} 命中但最近距离={got_d!r}（尺 {radius:g}m）")
+                if ch == LEDGER_NO and got_d is not None and radius is not None and got_d <= radius - 1.0:
+                    dist_bad.append(
+                        f"({i},{j}) {k} 判为没命中但最近距离 {got_d:g}m ≤ 尺 {radius:g}m")
+            missing = [k for k in asked if present[k][i][j] == LEDGER_NO]
+            derived_blind = bool(missing)
+            derived_verdict = derived_blind or (
+                len(asked) == len(TRIAD_KEYS)
+                and all(present[k][i][j] == LEDGER_YES for k in TRIAD_KEYS)
+            )
+            if derived_blind != (mats["blind"][i][j] == LEDGER_YES):
+                rule_bad.append(f"({i},{j}) 盲区位与规则不符")
+            if derived_verdict != (mats["verdict"][i][j] == LEDGER_YES):
+                rule_bad.append(f"({i},{j}) 结论位与规则不符")
+            if mats["verdict"][i][j] == LEDGER_YES:
+                counts["cells_judged"] += 1
+            if mats["capped"][i][j] == LEDGER_YES:
+                counts["cells_unjudgeable_by_cap"] += 1
+            if derived_blind:
+                counts["cells_blind"] += 1
+    counts["cells_unknown"] = (
+        counts["cells_inside"] - counts["cells_judged"] - counts["cells_unjudgeable_by_cap"])
+
+    def _report(bad: List[str], why: str) -> None:
+        out.append(f"{why}：{len(bad)} 格，前 {min(len(bad), 5)} 处 {bad[:5]}")
+
+    if state_bad:
+        _report(state_bad, "cells_ledger 的第三态被压成了二态（字母表纪律）")
+    if rule_bad:
+        _report(rule_bad, "cells_ledger 的结论位与不对称规则重抄不符")
+    if dist_bad:
+        _report(dist_bad, "cells_ledger 的最近距离与命中位互相打脸")
+
+    for key, got in sorted(counts.items()):
+        declared = _num(cal.get(key))
+        if declared is None:
+            out.append(f"台账能复算 {key}，但 caliber 没这个键 —— 分账与台账不是同一次判定")
+        elif int(declared) != got:
+            out.append(
+                f"{key}：顶层报 {declared:g}，台账复算得 {got} —— 计数与逐格台账对不上账"
+                "（同一把尺算出来的东西没有容差）"
+            )
+
+    # 格阵一致性已在上面（矩阵校验之前）查过 —— 那里报的是"台账不是这张格阵"，
+    # 这里不再重复，免得一处缺陷刷两行。
     return out
 
 
@@ -408,7 +692,7 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
         if "collect_radius_m" not in caliber:
             violations.append("未声明采集半径 caliber.collect_radius_m（采集区关系不可举证）")
 
-    # B5/B10/B11 · 证据相三条（只读 payload 数值，不吃几何参照系 ⇒ 必须在 center 早退之前）
+    # B5/B10/B11/B12 · 证据相四条（只读 payload 数值，不吃几何参照系 ⇒ 必须在 center 早退之前）
     violations.extend(_evidence_phase_violations(lc))
 
     if center is None:
@@ -564,8 +848,29 @@ def report_is_presentable(lc: Dict[str, Any]) -> bool:
 
 
 # ── 复用门：口径版本 ────────────────────────────────────────────
-def reuse_policy(lc: Dict[str, Any]) -> Tuple[bool, str]:
+def _radius_key(value: Any) -> Any:
+    """研究半径的比较键：数值归一（`2500` 与 `2500.0` 是同一个档，不是两个）。
+
+    解析不了就**原样返回**：比较自然不成立 ⇒ 判不可复用、去重算。两个都写坏的半径不会因此
+    互相"相等"而蒙过门，也不会有 `ValueError` 抛到读接口上（库里躺着一份半径字段被写坏的
+    报告，正确行为是不复用，不是 500）。
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def reuse_policy(
+    lc: Dict[str, Any],
+    wanted: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, str]:
     """该载荷能否作为**本次**体检的答案被复用 → ``(可否复用, 原因)``。
+
+    `wanted` 是**本次请求的口径三元组** ``{travel_mode, study_radius_m, sample_profile}``。
+    它必填才能过这道门（缺 ⇒ 判不可复用，不是"跳过比较"）：`find_recent_report_near`
+    按中心点距离取最近一份，不比较口径就会把别的档/别的半径/别的采样档的答案卖成本次结果。
+    非 `live` 载荷在函数早期就返回，不经这一步 —— 它们没有实测采集口径可谈。
 
     与 :func:`report_is_presentable` **刻意分开**，两者回答的不是一个问题：
 
@@ -583,10 +888,11 @@ def reuse_policy(lc: Dict[str, Any]) -> Tuple[bool, str]:
     非 ``live`` 载荷（演示夹具 / offline 骨架）不受判盲口径版本约束 —— 它们没有实测
     采集半径可谈，且演示链的可用性由 presentability 那道门负责，这里不越权。
 
-    **几何判据刻意不折进来。** 本函数只回答一个问题：「这份报告的口径是不是本次这一套」。
-    「这份报告能不能给用户看」由 :func:`assess_geometry` 回答，且已在写路径
-    （``pipeline/living_circle.py`` 缓存命中处）与 DB 读路径各就一处 —— 把两者再合成第三道门，
-    等于让同一个谓词有三份实现，正是本模块反复要消灭的形态。
+    **几何判据刻意不折进来。** 本函数回答的是同一个问题的两半：「这份报告的口径是不是本次
+    这一套」（版本）与「它是不是**这一次请求**的答案」（三元组，批 A③）。而「这份报告能不能
+    给用户看」由 :func:`assess_geometry` 回答，且已在写路径
+    （``pipeline/living_circle.py`` 缓存命中处）与 DB 读路径各就一处 ——
+    把两者再合成第三道门，等于让同一个谓词有三份实现，正是本模块反复要消灭的形态。
     """
     if not isinstance(lc, dict) or not lc:
         return False, "报告载荷为空（living_circle 节点缺失）"
@@ -599,6 +905,47 @@ def reuse_policy(lc: Dict[str, Any]) -> Tuple[bool, str]:
             f"判盲口径版本不符（报告 {declared or '未声明'} ≠ 当前 {SCOPE_POLICY_VERSION}）"
             "—— 证据域定义已变更，旧结论的判定覆盖率不可作为本次体检的答案"
         )
+
+    # 批 A③ · 口径三元组必须与**本次请求**一致（邻近复用的真窟窿）。
+    # `repository.find_recent_report_near` 扫的是 `{mode}:report:` 整个命名空间、只按中心点
+    # 距离取最近的一份（`repository.py:267-298`，键前缀里**没有**出行方式/半径/采样档），
+    # 于是「骑行 3000m precise」的体检可以被 400m 外那份「步行 2500m quick」的报告答掉 ——
+    # 版本门拦不住它（两份都是 ev-1）。这不是理论风险：`NEARBY_CACHE_M=500` 覆盖的正是
+    # 同一社区里换档/换半径的二次体检。
+    #
+    # 为什么这里**不**用「判定覆盖率低于下限 ⇒ 不可复用」（批 A③ 落地前的原方案）：
+    # 覆盖率回答的是「这份报告的结论有多厚」，复用门要回答的是「换我重跑一次，答案会不会不同」。
+    # 同版本 + 同口径参数下答案是确定的（薄也是这次该有的答案），拦下来只会把每次体检都推去
+    # 重跑取证 —— `U22/U39` 那条「二次命中零新增调用」的不变式与真实配额都是它的代价，
+    # 而换来的正确性是零。存量 27 份实测：唯一带 ev-1 的那份 share=21/99=21.2%，
+    # 刚好在 `JUDGE_SHARE_FLOOR=20%` 之上 ⇒ 那条规则今天既不拦存量、将来也只拦掉"我自己的产物"。
+    # 证据面薄的账由评分侧外推封顶（`scoring`）与 `confidence=limited` 负责，不由缓存门负责。
+    if wanted is None:
+        return False, (
+            "复用门未收到本次请求的口径（travel_mode/study_radius/sample_profile）"
+            " —— 缺了比较对象，邻近复用无从判断这是不是同一次体检的答案"
+        )
+    # 三个数各按**请求侧出处**读：`caliber.travel_mode` / `caliber.sample_profile` 由组装层
+    # 从 `check` 落笔，而研究半径必须读 `scene.study_radius_m`（那次请求的半径）——
+    # `caliber.study_radius_m` 是**档位**的半径，两者在用户改半径时不相等，拿它比会把
+    # 「当前编排刚产出的报告」判成不可复用（每次都重跑取证，零复用）。
+    cal = lc.get("caliber") or {}
+    scene = lc.get("scene") or {}
+    checks = (
+        ("出行方式", str, cal.get("travel_mode"), wanted["travel_mode"]),
+        ("采样档", str, cal.get("sample_profile"), wanted["sample_profile"]),
+        # 半径按数值归一后再比：payload 落的是 `int(...)` 而请求侧是 float ⇒ 逐字串比会把
+        # 2500 与 2500.0 判成两个档（自家产物拦自家，每次体检都白跑一遍取证）。
+        ("研究半径", _radius_key, scene.get("study_radius_m"), wanted["study_radius_m"]),
+    )
+    for label, coerce, got, want in checks:
+        if got is None:
+            return False, f"报告没有声明{label} —— 邻近复用不能猜口径"
+        if coerce(got) != coerce(want):
+            return False, (
+                f"{label}不符（报告 {got} ≠ 本次 {want}）"
+                " —— 邻近命中按中心点距离取最近一份，口径不同的两份不是同一个问题的答案"
+            )
     return True, ""
 
 

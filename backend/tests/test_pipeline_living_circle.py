@@ -25,7 +25,12 @@ from app.living_circle.caliber import get_caliber
 from app.living_circle.data_source import CachingDataSource, CheckParams, LiveDataSource
 from app.living_circle.geo_utils import haversine_m, xy_to_lnglat
 from app.living_circle.isochrone import IsochroneEngine
-from app.living_circle.quota import mat_budget, max_matrix_origins_for, poi_budget
+from app.living_circle.quota import (
+    forensic_budget,
+    mat_budget_for,
+    max_matrix_origins,
+    quota_budget,
+)
 from app.living_circle.repository import Repository
 
 KAILI = {
@@ -56,7 +61,8 @@ def _run_pipeline(task_id: str) -> list:
 class PipelineStubBaidu:
     """live 分支管线用 stub：计数矩阵分块 / POI 调用，测时用线性步行模型。
 
-    - `measure_matrix`/`_measure_matrix` 都走同一实现（管线调 public、LiveDataSource 调 private）；
+    - `measure_matrix`/`_measure_matrix` 都走同一实现（两面同真实客户端一致：片 0 收拢后
+      编排只调**公开**那面，私有面只是这个 fake 内部共用的实现体）；
     - 分块计数**模拟** BaiduClient 的 chunk 行为：一次整批调用按 chunk 折算批次数；
     - `guard.total_meltdown` 由测试控制（熔断用例置位，真实 guard 语义由 CallGuard 单测覆盖）。
     """
@@ -161,14 +167,29 @@ def test_u17_live_pipeline_respects_budget(monkeypatch):
     _live_source(stub, monkeypatch)
     tid = create_living_circle_task(_live_params(scene_name="凯里老街-U17", sample_profile="standard"))
     events = _run_pipeline(tid)
-    # 矩阵：采样点数 ≤ max_matrix_origins（walking chunk=100 → 1500，O3 双阶段可全精度），
-    # 折算分块（ceil(点数/chunk)）≤ mat_budget=15
-    mp = max_matrix_origins_for("walking")
+    # 矩阵：采样点数 ≤ max_matrix_origins（D5 反向导出：standard/步行 需求 1049 点 →
+    # 11 批，额度贴着需求给，不再虚占 4 批），折算分块（ceil(点数/chunk)）≤ mat_budget
+    mat, poi = quota_budget("standard", "walking")
+    mp = max_matrix_origins("standard", "walking")
     assert 0 < stub.max_pts <= mp, f"采样 {stub.max_pts} 点超出矩阵预算 {mp}"
-    assert math.ceil(stub.max_pts / 100) <= mat_budget() == 15
-    assert stub.matrix_batches <= mat_budget() == 15
-    # POI：采集预算 27 次封顶
-    assert stub.poi_calls <= poi_budget() == 27
+    assert math.ceil(stub.max_pts / 100) == mat == 11, (
+        f"分块数 {math.ceil(stub.max_pts / 100)} 与额度 {mat} 不等 ⇒ 要么虚占、要么被降级"
+    )
+    assert stub.matrix_batches <= mat == 11
+    # POI：矩阵不再虚占后多出来的 4 次回到取证（27 → 31），三要素与 S8 扩词因此不饿死。
+    # ⚠️ 片 4（取证回合）之后这条从"一个上限"拆成**两个**，各拦一种坏形状（计划 v6.1⑧ 原话）：
+    #   ① 首轮仍须 ≤ 31 —— 回合不许把首轮喂胖（那会挤掉 8 类展示计数与 S8 扩词的额度）；
+    #   ② 总额 ≤ 31 + `forensic_budget()` —— 回合只能花自己那一格，不许回头动首轮池子。
+    # 拆分用的"回合花了多少次"取自**落库那份披露**（`caliber.forensic.calls`），不是测试自己
+    # 数的 —— 于是这条同时是"账目与实际对得上"的证据：谁改了计数口径，①② 会朝相反方向红。
+    rid = _done_id(events)
+    _round_calls = (db.get_living_circle_report(rid)["living_circle"]["caliber"]["forensic"]
+                    ["calls"])
+    assert stub.poi_calls - _round_calls <= poi == 31, (
+        f"首轮用了 {stub.poi_calls - _round_calls} 次（回合另花 {_round_calls} 次），"
+        f"而首轮额度只有 {poi}")
+    assert stub.poi_calls <= poi + forensic_budget(), (
+        f"总计 {stub.poi_calls} 次越过 首轮 {poi} + 取证 {forensic_budget()}")
     # 任务正常完成（非熔断、非失败）
     assert _done_id(events) is not None
     assert db.get_task_full(tid)["status"] == "done"
@@ -177,9 +198,9 @@ def test_u17_live_pipeline_respects_budget(monkeypatch):
 def test_u19_budget_limited_sampling_geometry_ok(monkeypatch):
     """U19：预算感知采样后的报告通过几何质检（done 而非 failed）。
 
-    walking 档 chunk=100（capability manifest 实测）→ max_origins=1500 ≥ 旧双阶段
-    1049 点 → O3 恢复全精度双阶段（11 批 ≤ mat_budget）；driving 档 chunk=25 →
-    max_origins=375 → 触发预算受限单阶段（~346 点、14 批 ≤ 15）。两条路径都必须
+    walking 档 chunk=100（capability manifest 实测）→ D5 反向导出 max_origins=1100 ≥ 旧双阶段
+    1049 点 → 全精度双阶段（11 批 = 额度，不虚占）；driving 档 chunk=25 → 需求 505 批被份额闸
+    削到 15 → max_origins=375 → 触发预算受限单阶段（~346 点、14 批 ≤ 15）。两条路径都必须
     IDW 出完整等时圈族，`assess_geometry` 必须 ok（done 而非 failed）。
     """
     for tm, scene in (("walking", "凯里老街-U19w"), ("driving", "凯里老街-U19d")):
@@ -187,10 +208,11 @@ def test_u19_budget_limited_sampling_geometry_ok(monkeypatch):
         _live_source(stub, monkeypatch)
         tid = create_living_circle_task(_live_params(scene_name=scene, travel_mode=tm))
         events = _run_pipeline(tid)
-        mp = max_matrix_origins_for(tm)
+        mp = max_matrix_origins("standard", tm)
         chunk = get_caliber(tm).api.chunk or 25
         assert 0 < stub.max_pts <= mp, f"{tm}: 采样 {stub.max_pts} 点超出矩阵预算 {mp}"
-        assert math.ceil(stub.max_pts / chunk) <= mat_budget(), f"{tm}: 分块数超 mat_budget"
+        assert math.ceil(stub.max_pts / chunk) <= mat_budget_for("standard", tm), \
+            f"{tm}: 分块数超矩阵额度"
         rid = _done_id(events)
         assert rid is not None, f"{tm}: 几何质检未通过（done 缺失）"
         rep = db.get_living_circle_report(rid)
@@ -198,10 +220,16 @@ def test_u19_budget_limited_sampling_geometry_ok(monkeypatch):
         assert rep["living_circle"]["scores"]["total"] > 0  # 几何质检通过 → 已落库签发
 
 
-# ── v5 U18/U36 · 总量熔断 → 诚实离线降级（R2b：熔断接线必须真正生效）──
+# ── v5 U18/U36 · 熔断接线（R2b）+ D1 分级：中断在哪一段决定后果有多重 ──
 
-def test_u18_meltdown_degrades_to_offline_done_not_failed(monkeypatch):
-    """U18：POI 采集计数达熔断阈值 → `total_meltdown` → `data_origin='offline'` → done 非 failed。"""
+def test_u18_forensic_meltdown_keeps_live_partial_done(monkeypatch):
+    """U18（判据随阶段 4 重指）：取证途中熔断 ⇒ **live + partial**，任务仍以 done 收尾。
+
+    本桩的熔断是由 `place_search` 计数触发的 ⇒ 天然发生在**采集途中**：等时圈那时已经
+    真测完了。旧判据钉的是「熔断 ⇒ offline」，而 D1① 之后那等于把已算出的几何与盲区丢掉、
+    换一张 detour_k 正圆。这里守的仍是这条用例真正的不变量：**绝不因百度配额演成调研失败**，
+    外加一条 —— 残缺必须说得出（partial 节点 + 面向用户的熔断文案）。
+    """
     stub = PipelineStubBaidu(KAILI_CENTER, meltdown_after=5)
     _live_source(stub, monkeypatch)
     tid = create_living_circle_task(_live_params(scene_name="凯里老街-U18"))
@@ -211,16 +239,45 @@ def test_u18_meltdown_degrades_to_offline_done_not_failed(monkeypatch):
     rid = done["data"]["report_id"]
     assert rid is not None
     rep = db.get_living_circle_report(rid)
-    assert rep["living_circle"]["data_origin"] == "offline"
-    assert rep["living_circle"]["degraded"]["reason"] == "baidu_quota_exhausted"
+    lc = rep["living_circle"]
+    assert lc["data_origin"] == "live", f"取证途中熔断不许丢几何：{lc.get('degraded')}"
+    assert lc["partial"]["detail"] == "total_meltdown"
+    assert "degraded" not in lc
+    assert lc["blindspots"] is not None and lc["sampling"]["interpolation"] != "circular_approx"
     assert db.get_task_full(tid)["status"] == "done"  # mark_task_done 正确
     assert db.get_task_full(tid)["report_id"] == rid
-    # collect 阶段出现熔断明示
+    # collect 阶段出现熔断明示（文案里不许再写「降级为离线估算」）
     melt_msgs = [
         e for e in events
         if e["type"] == "message" and e["data"].get("stage") == "collect" and "熔断" in e["data"].get("text", "")
     ]
-    assert melt_msgs, "必须向用户明示配额熔断降级"
+    assert melt_msgs, "必须向用户明示配额熔断"
+    assert not any("离线" in e["data"].get("text", "") for e in melt_msgs), (
+        f"报告还是 live，文案却说离线估算：{[m['data']['text'] for m in melt_msgs]}"
+    )
+
+
+def test_u18_measure_stage_meltdown_still_degrades_offline(monkeypatch):
+    """测时阶段就熔断 ⇒ 仍旧整份打回离线，并守住 K11 那个 `reason` 字面量。
+
+    U18 原本一条用例同时钉着两件事：「熔断不失败」与 `reason == baidu_quota_exhausted`
+    （前端映射表与 test_g09 都读这个闭集）。D1 分级后前者归到 partial 那条，
+    这条把它原本顺带覆盖的 offline 路径**显式**接管起来 —— 不然 K11 契约就只剩单元测试、
+    端到端一条都不再经过。
+    """
+    stub = PipelineStubBaidu(KAILI_CENTER)
+    stub.guard.total_meltdown = True          # 采集开始前闸就已落下 ⇒ 测时阶段中止
+    _live_source(stub, monkeypatch)
+    tid = create_living_circle_task(_live_params(scene_name="凯里老街-U18m"))
+    events = _run_pipeline(tid)
+    done = next(e for e in events if e["type"] == "done")
+    assert done["data"].get("status") != "failed"
+    rep = db.get_living_circle_report(done["data"]["report_id"])
+    lc = rep["living_circle"]
+    assert lc["data_origin"] == "offline"
+    assert lc["degraded"]["reason"] == "baidu_quota_exhausted"   # K11 闭集字面量
+    assert lc["degraded"]["detail"] == "total_meltdown"
+    assert "partial" not in lc, "整份降级与部分完成互斥：同时出现就是两条路都在跑"
 
 
 def test_u36_meltdown_event_sequence_complete(monkeypatch):

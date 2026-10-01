@@ -8,8 +8,10 @@
     "quota_blocked": "配额受限",
     "isochrone_empty": "测时失败",
     "poi_empty": "采集为空",
+    "forensic_pool_short": "取证额度不足",
     "unknown": "配额耗尽"
   },
+  "_forensic_pool_short_note": "这一枚只出现在 report.partial.detail，不是 degraded ⇒ 不进下面的 _cases（那批用例断的是「已降级为离线估算」那句标题，套在它身上就是说假话）。",
   "_unknown_inputs": ["", null, "NO_SUCH_DETAIL", "total-meltdown"],
   "_cases": [
     { "detail": "total_meltdown", "label": "总量熔断", "title": "百度总量熔断：本次实时采集被熔断，已降级为离线估算" },

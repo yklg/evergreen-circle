@@ -74,7 +74,9 @@ def _scope():
 
 def _collect(monkeypatch, enabled=True):
     monkeypatch.setenv("LC_FACILITY_MERGE", "on" if enabled else "off")
-    return asyncio.run(pc.collect_poi(StubClient(), CENTER, 2000.0, scope=_scope()))
+    return asyncio.run(pc.collect_poi(
+        StubClient(), CENTER, 2000.0, scope=_scope(), budget_snapshot=pc.POIBudget(total=27)
+    ))
 
 
 # ── P0-1：三要素通道不吃归并 ────────────────────────────────────────

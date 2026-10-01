@@ -148,3 +148,247 @@ class TestCollectPOIConvergence:
             f"应记 25 个饿死词（23 展示 + 2 三要素），实际 {collected.evidence.starved_terms}"
         )
         assert not collected.evidence.complete
+
+    def test_server_capped_term_collapses_its_own_frontier(self):
+        """`server_cap` 在采集账目里的两件事：边界**塌到最远实测点**、并单独进封顶名单。
+
+        只断「它被登记了」不够 —— 判盲吃的是 `frontier_m`。若封顶词仍按请求半径报边界，
+        「2500m 内 200 家药店只拿到 20 家」就会被当成「2500m 内查全」，
+        那一圈里的假盲区于是有了合法身份。
+        """
+        import asyncio
+
+        from app.living_circle.baidu_client import STOP_SERVER_CAP
+
+        rows = [
+            {"name": f"药店{k}", "lng": 107.9758 + 0.008 * k / 20, "lat": 26.5734, "address": ""}
+            for k in range(20)
+        ]
+
+        class Stub:
+            def __init__(self):
+                self.calls = 0
+
+            async def place_search(self, query, *a, **k):
+                self.calls += 1
+                if query == "药店":
+                    return PlaceSearchOut(rows, 200, 1, STOP_SERVER_CAP)
+                return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
+
+        collected = asyncio.run(
+            self._run(Stub(), center=(107.9758, 26.5734), radius_m=2000,
+                      scope=object(), budget_snapshot=budget())
+        )
+        rows_of = {t.term: t for t in collected.evidence.per_term}
+        capped = rows_of["药店"]
+        assert capped.cap_hit is True
+        assert capped.complete is False, "服务端自称还有货 ⇒ 请求半径不得当证据边界"
+        assert capped.frontier_m == pytest.approx(capped.farthest_m, abs=0.1), (
+            f"封顶词的边界应塌到最远实测点，实际 frontier={capped.frontier_m} "
+            f"farthest={capped.farthest_m}"
+        )
+        assert 0 < capped.farthest_m < 1000, (
+            f"前置不成立：桩要造的是「边界短于判定半径」，实测 {capped.farthest_m}m"
+        )
+        assert "pharmacy" in collected.evidence.capped_categories
+        assert "pharmacy:药店" in collected.evidence.capped_terms
+        # 别的类没封顶 ⇒ 不许被连坐（名单只认真撞上限的那些）
+        assert collected.evidence.capped_categories == ("pharmacy",)
+        assert collected.evidence.as_detail()["capped_terms"] == ["pharmacy:药店"]
+
+    def test_triad_call_failure_is_not_refunded_and_leaves_evidence(self):
+        """T-P0-3（计划 v5.6）：三要素调用失败 ⇒ **不退款 + 留一行 api_error 举证**。
+
+        守护的契约有两条，缺一条都算没修：
+        1. **账面**：请求真发出去了，额度就已经花掉。旧写法 `budget.refund(...)` 会让
+           「点位凭空消失」在账上变成「钱没花」⇒ 花掉的额度与真实调用数对不上，缺口不可见。
+           判据取 `spend == calls`：退款会令 spend 少 1。
+        2. **留痕**：必须有一行 `stop_reason=api_error`、`complete=False` 的举证，于是
+           `truncated_terms` 里有 `pharmacy:药店`，报告能说「这一类我们没查成」，
+           而不是「这一圈没有药店」。
+        这条也是 S-P0-2（`bound_source` 派生）的原料 —— 没有这行，派生无从谈起。
+        """
+        import asyncio
+
+        class Stub:
+            def __init__(self):
+                self.calls = 0
+                self.queries: list = []
+
+            async def place_search(self, query, *a, **k):
+                self.calls += 1
+                self.queries.append(query)
+                if query == "药店":
+                    return None          # 百度侧失败：客户端给 None（不是 PlaceSearchOut）
+                return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
+
+        stub = Stub()
+        b = pc.POIBudget(total=40)        # 页深 = floor(40/25 词) = 1 ⇒ 每次调用恰耗 1 单位
+        collected = asyncio.run(
+            self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
+        )
+        # 前置自证：失败的确实是三要素那一词，否则整条用例空过
+        assert stub.queries.count("药店") == 1, (
+            f"桩没让「药店」恰好失败一次（实际 {stub.queries.count('药店')} 次）⇒ 判据没有样本"
+        )
+        assert b.total - b.remaining == stub.calls, (
+            f"花掉的额度({b.total - b.remaining}) ≠ 真实调用数({stub.calls}) ⇒ 有调用被退回了账面"
+        )
+
+        rows = [t for t in collected.evidence.per_term if t.category == "pharmacy"]
+        assert len(rows) == 1, f"三要素失败应留下恰好一行举证，实际 {len(rows)} 行"
+        failed = rows[0]
+        assert failed.stop_reason == pc.STOP_API_ERROR
+        assert failed.returned == 0 and failed.pages_fetched == 0
+        assert failed.complete is False, "调用失败绝不等于「这一圈没有药店」"
+        assert "pharmacy:药店" in collected.evidence.truncated_terms, (
+            "缺口必须可归因：没查成的词要出现在 truncated_terms（发了请求但没查全）"
+        )
+        # 边界保守合取：这一类没证据 ⇒ 边界 0，不许把「一无所知」洗成「查全了」
+        assert collected.evidence.frontier_m("pharmacy") == 0.0
+
+    def test_expansion_call_failure_is_not_refunded_and_leaves_evidence(self):
+        """T-P0-3b（计划 v5.6）：**扩词**失败也与另两条通道同语义 —— 不退款 + 留 `api_error` 行。
+
+        这条是同一语义的第三个实例，也是三个里最难发现的一个：旧写法是
+        `budget.refund(cat) + break` —— 既把钱退回账面，又直接离开循环连一行举证都不记，
+        于是「这一类的扩词中途失败」和「这一类扩到量自然收手」在报告里**完全同形**。
+        判据因此取两条可区分的：① 有一行 `api_error` 且它的词**不在初始关键词里**
+        （证明失败确实发生在扩词阶段，而不是被 A 阶段的同类用例顺手满足）；
+        ② 花掉的额度 == 真实调用数（退款会少记，正是旧行为）。
+        """
+        import asyncio
+
+        from app.living_circle.category_rule import CATEGORY_RULES
+
+        initial = {kw for defn in CATEGORY_RULES.values() for kw in (defn.get("keywords") or [])}
+        initial |= {"药店", "小学"}     # 三要素专用词（market 复用类目，不另发）
+
+        class Stub:
+            def __init__(self):
+                self.calls = 0
+                self.queries: list = []
+
+            async def place_search(self, query, *a, **k):
+                self.calls += 1
+                self.queries.append(query)
+                if query not in initial:
+                    return None          # 只对**扩词**失败：A 阶段与三要素全部正常返回空
+                return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
+
+        stub = Stub()
+        b = pc.POIBudget(total=40)        # 页深 = floor(40/25 词) = 1 ⇒ 每次调用恰耗 1 单位
+        collected = asyncio.run(
+            self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
+        )
+        failed_expansions = [q for q in stub.queries if q not in initial]
+        assert failed_expansions, (
+            "前置不成立：桩没触发任何扩词调用 ⇒ 本用例没有样本（扩词入口/词表可能已变，"
+            "应改判据而不是放宽断言）"
+        )
+        assert b.total - b.remaining == stub.calls, (
+            f"花掉的额度({b.total - b.remaining}) ≠ 真实调用数({stub.calls}) ⇒ 扩词失败被退回了账面"
+        )
+
+        rows = [t for t in collected.evidence.per_term if t.stop_reason == pc.STOP_API_ERROR]
+        assert rows, "扩词失败必须留下 api_error 举证行"
+        assert any(t.term in failed_expansions for t in rows), (
+            f"举证必须对得上失败的扩词：rows={sorted(t.term for t in rows)} "
+            f"failed={sorted(failed_expansions)}"
+        )
+        for t in rows:
+            assert t.returned == 0 and t.pages_fetched == 0
+            assert t.complete is False, "调用失败不等于「这一圈没有」"
+
+
+def _ev(category, term, *, reason, requested=2000.0, farthest=None, returned=0):
+    return pc.TermEvidence(category=category, term=term, requested_radius_m=requested,
+                            pages_fetched=1, returned=returned, total=returned,
+                            stop_reason=reason, farthest_m=farthest)
+
+
+class TestEvidenceToDiscConverter:
+    """T-P0-4（计划 v5.6）：`TermEvidence → EvidenceDisc` 的唯一转换器与逐类原因表。
+
+    第 0 步实测脚本原本自带一份等价构造（那份是本次要收掉的第二实现），转换里三个判断
+    都各有容易抄错的取向：穷尽深度取 `frontier_m` 而不是 `farthest_m`、锚点由调用方给、
+    完整性由 `stop_reason` 派生。
+    """
+
+    def test_complete_row_projects_request_as_exhausted_not_farthest(self):
+        """查全的语意是「请求范围内都干净」⇒ 盘深取**请求值**，哪怕最远实测点很近。"""
+        ev = _ev("pharmacy", "药店", reason=pc.STOP_COMPLETE, requested=2000.0, farthest=300.0)
+        disc = ev.as_disc((107.9758, 26.5734))
+        assert disc.exhausted_radius_m == 2000.0, "查全行必须把请求半径当证据边界"
+        assert disc.stop_reason == pc.STOP_COMPLETE and disc.complete is True
+        assert disc.anchor == (107.9758, 26.5734)
+
+    def test_truncated_row_projects_farthest_and_is_not_complete(self):
+        ev = _ev("pharmacy", "药店", reason=pc.STOP_PAGE_CAP, requested=2000.0,
+                 farthest=1494.0, returned=20)
+        disc = ev.as_disc((107.9758, 26.5734))
+        assert disc.exhausted_radius_m == 1494.0
+        assert disc.complete is False and disc.cap_hit is False
+
+    def test_api_error_row_projects_zero_depth_missing_source(self):
+        """调用失败：盘深 0、不自称查全 —— 这类行由 T-P0-3 的不退款留痕路径产生。"""
+        ev = _ev("pharmacy", "药店", reason=pc.STOP_API_ERROR, requested=2000.0)
+        disc = ev.as_disc((107.9758, 26.5734))
+        assert disc.exhausted_radius_m == 0.0 and disc.complete is False
+
+
+class TestPerCategoryStopReason:
+    """逐类「为什么停」与逐类边界**同源**：都由决定边界的那一行（frontier 最小者）给。"""
+
+    def _pair(self, order):
+        full = _ev("market", "菜市场", reason=pc.STOP_COMPLETE, requested=2000.0, farthest=900.0)
+        cut = _ev("market", "农贸市场", reason=pc.STOP_PAGE_CAP, requested=2000.0,
+                  farthest=1494.0, returned=20)
+        rows = (full, cut) if order == "full_first" else (cut, full)
+        return pc.CollectionEvidence(requested_radius_m=2000.0, per_term=rows)
+
+    def test_reason_is_the_binding_row_not_the_first_row(self):
+        for order in ("full_first", "cut_first"):
+            ev = self._pair(order)
+            assert ev.frontier_m("market") == 1494.0, (
+                f"{order}：类边界应取各词最小值（保守合取）"
+            )
+            assert ev.stop_reason_by_category()["market"] == pc.STOP_PAGE_CAP, (
+                f"{order}：原因必须来自决定边界那一行，而不是行序 ⇒ 顺序能改变结论就是第二事实源"
+            )
+            # 同源自检：原因说截断，边界就必须是那个截断词给的
+            binding = min(ev.per_term, key=lambda t: t.frontier_m)
+            assert binding.stop_reason == ev.stop_reason_by_category()["market"]
+
+    def test_starved_category_has_no_row_and_therefore_no_reason(self):
+        """`starved` 的形态是**没有行**（0 次调用不生成举证）⇒ 原因表里根本不该出现它。
+
+        这条是复审 T-P0-4 的直接落点：映射表若按「读某行的 stop_reason==starved」来找缺口，
+        那一行并不存在 ⇒ 缺口再次隐形。判据因此落在「键在不在表里」。
+        """
+        ev = pc.CollectionEvidence(
+            requested_radius_m=2000.0,
+            per_term=(_ev("market", "菜市场", reason=pc.STOP_EMPTY, requested=2000.0),),
+            starved_terms=(("pharmacy", "药店"),),
+        )
+        reasons = ev.stop_reason_by_category()
+        assert "pharmacy" not in reasons, "被饿死的类没有行 ⇒ 无事实可报，不许凭空给原因"
+        assert reasons["market"] == pc.STOP_EMPTY
+        assert ev.frontier_m("pharmacy") == 0.0
+        assert "pharmacy:药店" in tuple(f"{c}:{t}" for c, t in ev.starved_terms)
+
+    def test_api_error_row_is_reported_as_missing_not_frontier(self):
+        ev = pc.CollectionEvidence(
+            requested_radius_m=2000.0,
+            per_term=(_ev("primary", "小学", reason=pc.STOP_API_ERROR, requested=2000.0),),
+        )
+        assert ev.bound_source_by_category()["primary"] == "missing", (
+            "有一行但一行里没有任何点位（调用失败）⇒ 那个「边界」不该被当作实测边界用"
+        )
+
+    def test_truncated_row_is_frontier_but_not_complete(self):
+        ev = self._pair("full_first")
+        assert ev.bound_source_by_category()["market"] == "frontier", (
+            "截断词的 1494m 确实是实测到的最远点，来源合法；不完整由 complete/capped 分职说"
+        )
+        assert ev.complete is False

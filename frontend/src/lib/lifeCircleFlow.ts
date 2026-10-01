@@ -2,7 +2,7 @@
  * 生活圈体检回落 SSE 流控制器（评审 P1 闭合语义 + D 单一事实源治理）。
  *
  * 生活圈体检从发起→报告全程**不再进入工作台**：本模块把「建任务 → 订阅 SSE
- * progress/message/report_ready/done → 报告就绪自动取回渲染」收敛为单一入口，
+ * progress/message/round/report_ready/done → 报告就绪自动取回渲染」收敛为单一入口，
  * 供 HomePage 与 LifeCirclePage 复用。SSE 断连/error/取消均强制 close，绝不挂起。
  *
  * ## 单一事实源（taskRegistry）
@@ -17,7 +17,7 @@
 import { createLivingCircleTask, fetchLifeCircleReport, openTaskStream } from './api'
 import { useTaskRegistry } from '../store/taskRegistry'
 import type { CoordSys } from './geo'
-import type { LngLat, LifeCircleMode, LivingCircleReport } from '../types'
+import type { ForensicRoundRow, LngLat, LifeCircleMode, LivingCircleReport } from '../types'
 
 export interface LifeCircleLaunchInput {
   query: string
@@ -31,6 +31,9 @@ export interface LifeCircleLaunchInput {
 export interface LifeCircleFlowCallbacks {
   /** SSE progress 推近；message 文本经 message 参数透出。 */
   onProgress?: (stage: string, percent: number, message?: string) => void
+  /** `round`：一个取证扩容回合派发完了。文案**取事件自带的 `text`**（后端是唯一措辞出处），
+   *  行对象同时给出 —— 页面要显示「额度还剩多少」这类派生量时不必再拼一遍句子。 */
+  onRound?: (round: ForensicRoundRow, text: string) => void
   /** 任务失败 / SSE 断网降级，交由页面渲染 banner（不重新导航）。 */
   onError?: (message: string) => void
   /** report_ready：自动取回完整体检报告后回调，由页面写入渲染层。 */
@@ -51,6 +54,7 @@ type Ev = {
   reportId?: string
   report_id?: string
   message?: string
+  round?: ForensicRoundRow
 }
 
 /** 终端报告 id：report_ready/done 统一取 reportId → report_id 的任一非空。 */
@@ -67,6 +71,12 @@ function onFlowEvent(type: string, data: unknown, cb: LifeCircleFlowCallbacks) {
   }
   if (type === 'message' && d.text) {
     cb.onProgress?.('', 0, d.text)
+    return
+  }
+  if (type === 'round' && d.round) {
+    // 刻意**不**进 taskRegistry：回合不改 stage/percent（后端那条分支明确不发 progress），
+    // 若在这里顺手 upsert，`stage_seq == 1..7` 那五处契约会被多出来的推进改写。
+    cb.onRound?.(d.round, d.text ?? '')
     return
   }
   if (type === 'report_ready' && reportIdOf(d)) {

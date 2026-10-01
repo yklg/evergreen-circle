@@ -19,8 +19,6 @@ import pytest
 from app.living_circle.caliber import get_caliber
 from app.living_circle.geo_utils import haversine_m, xy_to_lnglat
 from app.living_circle.scope import (
-    BLIND_RADIUS_M,
-    EVIDENCE_MARGIN_M,
     SCOPE_POLICY_VERSION,
     SpatialScope,
 )
@@ -97,20 +95,83 @@ def test_from_reach_zone_rejects_degenerate_ring():
         SpatialScope.from_reach_zone(CALIBER, CENTER, 2500.0, zone)
 
 
-# ── 3. 采集区 ⊇ 可达区 + 证据余量（构造即校验）────────────────────
-def test_evidence_margin_is_derived_from_blind_radius():
-    """采集余量由**证据需求**导出，不是可填的名义值（原「D2 口径锁定」用例的原地改造）。
+# ── 3. 采集区 ⊇ 可达区 + 采集留边（构造即校验，留边是**现算导出量**）──
+def test_collect_margin_is_derived_at_build_time_not_aliased():
+    """采集留边 = 外接圆 + 本次判定半径，在**构造时**算；那个别名常量必须不在。
 
-    这条用例本身曾是缺陷的**制度化载体**：它断言 `COLLECT_MARGIN_M == 0.0`，把「余量取 0」
-    当成口径锁定 —— 而取 0 让可判定面积实测只剩 5%（97 格里判 5 格），而它换来的东西
-    （「圈外点不进报告」）已由可达区过滤独立完整地保证 ⇒ 一个零收益的取舍。
-    现在锁定的不再是某个数，而是**关系**：余量就是判定半径本身。
+    这条用例曾是缺陷的制度化载体：它一度断言 `COLLECT_MARGIN_M == 0.0`，把「余量取 0」
+    当口径锁定 —— 取 0 让可判定面积实测只剩 5%（97 格里判 5 格），而它换来的东西（「圈外点
+    不进报告」）已由可达区过滤独立完整地保证 ⇒ 零收益的取舍。后来它改成断言
+    `EVIDENCE_MARGIN_M is BLIND_RADIUS_M`，钉的仍是**某个数**，于是把"两个概念恰好同值"
+    焊成了 import 期快照（第十五轮复审 P1-1）。现在锁的是**关系与其发生时点**：
+
+    ① 常量 `scope.EVIDENCE_MARGIN_M` 复活 ⇒ 红（外扩重新变成 import 期 walking 快照）；
+    ② 留边不再等于「外接圆 + 本档判定半径」⇒ 红（检索面盖不住判定圆，外沿只能标 unknown）；
+    ③ 未登记类被顺手外扩 ⇒ 红（D-1 最小必要越界）。
     """
-    assert EVIDENCE_MARGIN_M == BLIND_RADIUS_M
-    assert EVIDENCE_MARGIN_M is BLIND_RADIUS_M, "必须是同一个量，不是抄来的第二个 1000.0"
-    scope = SpatialScope.from_iso(CALIBER, CENTER, 2500.0, _iso(_zone(20.0, 1000.0)))
-    assert scope.collect_radius_m == pytest.approx(scope.reach_circumradius_m + BLIND_RADIUS_M)
-    assert scope.invariant() is None  # 不抛即通过
+    from app.living_circle import scope as scope_mod
+
+    ruler = get_caliber("walking").blind_radius_m
+    assert not hasattr(scope_mod, "EVIDENCE_MARGIN_M"), (
+        "`EVIDENCE_MARGIN_M` 又回来了：留边必须是现算导出量。常量形式必然在 import 期求值，"
+        "而判定链已按 `scope.travel_mode` 决议 ⇒ 分档那天两条链各吃一把尺、全量零红"
+    )
+    sc = SpatialScope.from_iso(CALIBER, CENTER, 2500.0, _iso(_zone(20.0, 1000.0)))
+    assert sc.collect_radius_m == pytest.approx(sc.reach_circumradius_m + ruler)
+    assert sc.required_radius_m("market") == pytest.approx(sc.reach_circumradius_m + ruler), (
+        "登记类（= 必达要素）必须外扩一整个判定圆"
+    )
+    assert sc.required_radius_m("bus_stop") == pytest.approx(sc.reach_circumradius_m), (
+        "未登记类一个字都不该越界（D-1 最小必要越界）"
+    )
+    assert sc.invariant() is None  # 不抛即通过
+
+
+def test_collect_margin_follows_this_runs_ruler(monkeypatch):
+    """**会红的那条**（计划 Q4/P0-3 欠的占位判据）：三档各给不同的尺，留边必须各跟各的。
+
+    为什么这条在改前代码上是红的：留边当时住在 `scope.EVIDENCE_MARGIN_M`，那是 import 期
+    对 walking 档的一次快照；本用例在测前才改 `DEFAULT_CALIBERS`，改前代码算出的留边仍是
+    **1000.0**，而 riding 档声明的是 1700m ⇒ 断言红。改后（构造时用手里那份 `caliber` 现算）
+    三档分别得 1300/1700/2100 ⇒ 绿。
+    ⚠️ 红的**种类**已用改前复放实测（不是推演）：把五处取用点临时改回旧写法跑本用例，得到的是
+    本条断言失败（`留边却算出 1000m`），**不是** `invariant()` 先抛 `ValueError` —— 因为改前那条
+    校验比的也是同一个常量（`collect ≥ 外接圆 + EVIDENCE_MARGIN_M`，两边都 1000）。
+    ⇒ "改前会炸"不能当本用例的判据，能当的只有"留边不等于本次档位声明的那把尺"这一条。
+    （第十六轮复审给的说法是"会先抛错、比断言更硬"，我回码核过并驳回。）
+    三档都给**不同**值，是为了灭掉"walking 特判、其余按 1000"这种只钉两档也能过的写法；
+    而 `==` / `is` 那两条旧断言在两种代码上都绿（值相等冒充同源），当不了这条判据 ——
+    这正是第十二轮复审 P0-3 点名的假闸。
+    """
+    from app.living_circle import caliber as caliber_mod
+
+    patched = {"walking": 1300.0, "riding": 1700.0, "driving": 2100.0}
+    assert set(patched) == set(caliber_mod.DEFAULT_CALIBERS), (
+        f"档位名册与登记口径不同源（{sorted(caliber_mod.DEFAULT_CALIBERS)}）"
+        " ⇒ 本用例少钉一档，漏掉的那一档可以怎么写都过"
+    )
+    for mode, value in patched.items():
+        monkeypatch.setitem(
+            caliber_mod.DEFAULT_CALIBERS, mode,
+            dataclasses.replace(caliber_mod.DEFAULT_CALIBERS[mode], blind_radius_m=value),
+        )
+    for mode, value in patched.items():
+        cal = caliber_mod.get_caliber(mode)
+        sc = SpatialScope.from_iso(
+            cal, CENTER, 2500.0, _iso(_zone(cal.reach_full_min, 1000.0))
+        )
+        got = sc.collect_radius_m - sc.reach_circumradius_m
+        assert got == pytest.approx(value), (
+            f"{mode} 档判定半径 {value:.0f}m，采集留边却算出 {got:.0f}m ⇒ "
+            "检索面盖不住判定圆（或留边根本不看这一档的尺）"
+        )
+        assert sc.required_radius_m("pharmacy") - sc.reach_circumradius_m == pytest.approx(value), (
+            f"{mode} 档的逐类检索半径没跟着本次判定半径走"
+        )
+        payload_margin = sc.payload(cal, {})["evidence_margin_m"]
+        assert payload_margin == pytest.approx(value), (
+            f"产物宣称的留边 {payload_margin} 与实际吃的尺 {value} 不符 ⇒ 报告里两把尺"
+        )
 
 
 def test_invariant_rejects_the_retired_zero_margin():

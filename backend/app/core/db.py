@@ -1,7 +1,8 @@
 """SQLite 持久化层（真实落盘，切页面/刷新/重启都在）。
 
 存储：调研任务 / 报告 / 证据溯源 / 目的地监控订阅 / 专家工作量
-      + 系统级运行时配置覆盖（settings 表）/ 用户级偏好（prefs 表）。
+      + 系统级运行时配置覆盖（settings 表）/ 用户级偏好（prefs 表）
+      + 用户指定信源的实例状态（user_sources 表）。
 所有读写都走这里，绝不再用内存 dict 当真相源。
 
 `settings` 与 `prefs` 是**两张表、两套语义**，不可互换：
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
+import hashlib
 import json
 import logging
 import os
@@ -141,7 +143,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT,
             last_run_at TEXT,
             last_report_id TEXT,
-            run_count INTEGER
+            run_count INTEGER,
+            source_urls TEXT
         );
         CREATE TABLE IF NOT EXISTS expert_stats (
             expert_id TEXT PRIMARY KEY,
@@ -203,6 +206,24 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             value TEXT,
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS user_sources (
+            uid TEXT PRIMARY KEY,
+            task_id TEXT,
+            seq INTEGER,
+            url TEXT,
+            url_canonical TEXT,
+            kind TEXT,
+            fetch_state TEXT,
+            evidence_id TEXT,
+            group_id TEXT,
+            cited_by TEXT,
+            attempt_reason TEXT,
+            bytes INTEGER,
+            ms INTEGER,
+            updated_at TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_user_sources_task_url
+            ON user_sources(task_id, url_canonical);
         """
     )
     conn.commit()
@@ -238,6 +259,16 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         ev_cols = [r[1] for r in conn.execute("PRAGMA table_info(evidences)").fetchall()]
         if "report_id" not in ev_cols:
             conn.execute("ALTER TABLE evidences ADD COLUMN report_id TEXT")
+            conn.commit()
+    except sqlite3.Error:
+        pass
+
+    # 迁移：存量库 subscriptions 表可能缺 source_urls 列（计划 v3 §二 B8）。
+    # 订阅复跑要靠它带上用户指定信源清单；缺列会让复跑悄悄少一批信源而界面看不出差别。
+    try:
+        sub_cols = [r[1] for r in conn.execute("PRAGMA table_info(subscriptions)").fetchall()]
+        if sub_cols and "source_urls" not in sub_cols:
+            conn.execute("ALTER TABLE subscriptions ADD COLUMN source_urls TEXT")
             conn.commit()
     except sqlite3.Error:
         pass
@@ -469,6 +500,90 @@ def clear_prefs() -> None:
     with _LOCK:
         c = _connect()
         c.execute("DELETE FROM prefs")
+        c.commit()
+
+
+# ── 用户指定信源（实例级运行时状态 · 计划 v3 §二 U0）────────────────
+# 语义分工：prefs 表存「默认引用列表」（用户偏好），本表存「某一次任务里这几条网址的
+# 运行时实例状态」（业务数据）。任务记录因此是**唯一可复现凭据**——复跑 / 精炼 / 简报
+# 都从这里重放同一份清单，派生报告不会丢信源。
+#
+# 状态机（fetch_state 的唯一合法取值集）—— **只描述"读没读到"**，不含引用情况：
+#   pending          已登记，尚未尝试
+#   fetched          抓取成功、已入证据链
+#   unread           抓取失败（404/403/超时…）；attempt_reason 分档记录
+#   blocked          被内网闸门拒绝（安全判定，不是抓取失败）
+#   gated_off_query  已抓取但正文与任务 query 不相关（仅诊断，仍入链）
+#   merged           内容与既有信源组同质，归并而非独立成行
+# 「有没有被引用」记在 `cited_by`（唯一写点是 audit 覆盖率计算），**不挤进这根列**：
+# fetch_state 由 collect 写、cited_by 由 audit 写，两个写者抢一列必然在返工轮/复跑时
+# 漂出"已引用却仍是 fetched"，而那种不一致没人报错。覆盖率是派生指标，不是第三种存储态。
+USER_SOURCE_STATES = (
+    "pending", "fetched", "unread", "blocked", "gated_off_query", "merged",
+)
+_USER_SOURCE_COLUMNS = (
+    "url", "url_canonical", "seq", "kind", "fetch_state", "evidence_id",
+    "group_id", "cited_by", "attempt_reason", "bytes", "ms",
+)
+
+
+def _user_source_uid(task_id: str, url_canonical: str) -> str:
+    """确定性 uid：同一 (任务, 归一化网址) 恒等 ⇒ 复跑/重放可幂等，且能给审计当 target。"""
+    digest = hashlib.sha1(f"{task_id}|{url_canonical}".encode("utf-8")).hexdigest()
+    return f"us_{digest[:16]}"
+
+
+def add_user_source(task_id: str, url: str, url_canonical: str, seq: int,
+                    kind: str = "user_supplied") -> str:
+    """登记一条用户指定网址（幂等：同任务同归一化网址只有一行，重复登记回落同一 uid）。"""
+    uid = _user_source_uid(task_id, url_canonical)
+    with _LOCK:
+        c = _connect()
+        c.execute(
+            "INSERT OR REPLACE INTO user_sources"
+            "(uid,task_id,seq,url,url_canonical,kind,fetch_state,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (uid, task_id, seq, url, url_canonical, kind, "pending", _now()),
+        )
+        c.commit()
+    return uid
+
+
+def update_user_source(uid: str, **fields: Any) -> None:
+    """按 uid 更新实例状态（写入单点收口：collect 写抓取态，audit 写引用态）。
+
+    未知列名与非法 fetch_state 直接抛错——状态词表是本表的契约，
+    写错必须当场炸，不能让一个拼错的态静默入库、再到覆盖率里凭空消失。
+    """
+    unknown = [k for k in fields if k not in _USER_SOURCE_COLUMNS]
+    if unknown:
+        raise ValueError(f"user_sources 无这些列：{unknown}")
+    state = fields.get("fetch_state")
+    if state is not None and state not in USER_SOURCE_STATES:
+        raise ValueError(f"非法 fetch_state：{state!r}（合法集见 USER_SOURCE_STATES）")
+    sets = ", ".join(f"{k}=?" for k in fields)
+    with _LOCK:
+        c = _connect()
+        c.execute(
+            f"UPDATE user_sources SET {sets}{', ' if fields else ''}updated_at=? WHERE uid=?",
+            (*fields.values(), _now(), uid),
+        )
+        c.commit()
+
+
+def list_user_sources(task_id: str) -> List[Dict[str, Any]]:
+    """读取某任务的全部用户指定信源，按登记顺序（seq）返回。"""
+    c = _connect()
+    return [dict(r) for r in c.execute(
+        "SELECT * FROM user_sources WHERE task_id=? ORDER BY seq", (task_id,)
+    ).fetchall()]
+
+
+def clear_user_sources() -> None:
+    """清空用户指定信源实例（供测试隔离使用；业务读路径不得调用）。"""
+    with _LOCK:
+        c = _connect()
+        c.execute("DELETE FROM user_sources")
         c.commit()
 
 
@@ -911,7 +1026,15 @@ def _delete_report_scoped_rows(c, report_id: str) -> None:
 
     不在此 commit：由调用方与主表删除同处一个 `_LOCK` 临界区、一次提交，保证
     「级联 + 主表」原子，中途失败不会留下半张表。
+
+    `user_sources` 按 **task_id** 归属（不在 `_REPORT_SCOPED_TABLES` 那套 report_id 列里），
+    所以必须先查 task_id 再删 tasks —— 顺序反过来就永远查不到归属，留下清不掉的孤儿行。
     """
+    task_ids = [r[0] for r in c.execute(
+        "SELECT task_id FROM tasks WHERE report_id=?", (report_id,)
+    ).fetchall()]
+    for tid in task_ids:
+        c.execute("DELETE FROM user_sources WHERE task_id=?", (tid,))
     for table in _REPORT_SCOPED_TABLES:
         c.execute(f"DELETE FROM {table} WHERE report_id=?", (report_id,))
 
@@ -1172,6 +1295,14 @@ def _agg_compute() -> Dict[str, Any]:
         "cards_truncated": len(cards) < reports,
         "destination_graph": graph,
         "platform_distribution": facets["by_type"],
+        # 口径变动必须可见：新类别一进库就改变整张饼图（全表实时聚合，不重算历史）。
+        # 说明行只在真有用户指定信源时出现 —— 没填清单的任务不该看到一句无关的话。
+        "user_source_evidence": facets["by_type"].get("user_supplied", 0),
+        "distribution_note": (
+            f"信源分布含用户指定信源 {facets['by_type'].get('user_supplied', 0)} 条"
+            "（由调研时手填的网址直接抓取入库，计入占比与可信度口径）。"
+            if facets["by_type"].get("user_supplied") else ""
+        ),
     }
     return {
         "dashboard": {
@@ -1202,14 +1333,22 @@ def intel_overview() -> Dict[str, Any]:
 
 # ── 目的地持续追踪订阅 ──────────────────────────────────
 def create_subscription(sub_id: str, query: str, destinations: List[str],
-                        research_type: str = DEFAULT_RESEARCH_TYPE) -> Dict[str, Any]:
+                        research_type: str = DEFAULT_RESEARCH_TYPE,
+                        source_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    """建一条订阅。
+
+    `source_urls` 是这条订阅的**用户指定信源清单**（计划 v3 §二 B8）：复跑必须带着它，
+    否则同一主题第二次跑出来的报告不含用户钉的文档，两次的口径就不可比 ——
+    而界面上看起来是同一个订阅。
+    """
     with _LOCK:
         c = _connect()
         c.execute(
             "INSERT OR REPLACE INTO subscriptions(sub_id,query,destinations,type,created_at,"
-            "last_run_at,last_report_id,run_count) VALUES(?,?,?,?,?,?,?,?)",
+            "last_run_at,last_report_id,run_count,source_urls) VALUES(?,?,?,?,?,?,?,?,?)",
             (sub_id, query, json.dumps(destinations, ensure_ascii=False),
-             research_type or DEFAULT_RESEARCH_TYPE, _now(), "", "", 0),
+             research_type or DEFAULT_RESEARCH_TYPE, _now(), "", "", 0,
+             json.dumps(list(source_urls or []), ensure_ascii=False)),
         )
         c.commit()
     return get_subscription(sub_id) or {}
@@ -1219,6 +1358,9 @@ def _row_to_subscription(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
     d["destinations"] = json.loads(d.get("destinations") or "[]")
     d["type"] = d.get("type") or DEFAULT_RESEARCH_TYPE
+    # 旧库这一列可能为 NULL（建列之前已有的订阅）：回落成空清单，语义是"这条订阅没填过清单"
+    raw = d.get("source_urls")
+    d["source_urls"] = json.loads(raw) if raw else []
     return d
 
 

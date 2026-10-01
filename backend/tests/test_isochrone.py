@@ -203,17 +203,18 @@ def test_u5_max_points_beyond_two_stage_restores_full():
 
 
 def test_u6_travel_modes_budget_invariant():
-    """U6：walking/riding/driving 各档 max_points 下不变式成立（点数 ≤ 上限、分块 ≤ mat_budget）。"""
+    """U6：walking/riding/driving 各档 max_points 下不变式成立（点数 ≤ 上限、分块 ≤ 矩阵额度）。"""
     from app.living_circle.caliber import get_caliber
-    from app.living_circle.quota import mat_budget, max_matrix_origins_for
+    from app.living_circle.quota import mat_budget_for, max_matrix_origins
 
     for tm in ("walking", "riding", "driving"):
         cal = get_caliber(tm)
-        mp = max_matrix_origins_for(tm)
+        mp = max_matrix_origins("standard", tm)
         chunk = cal.api.chunk or 25
         pts = build_sample_points(CENTER, cal.study_radius_m, 400, 150, max_points=mp)
         assert 0 < len(pts) <= mp, f"{tm}: {len(pts)} > {mp}"
-        assert math.ceil(len(pts) / chunk) <= mat_budget(), f"{tm}: 分块数超 mat_budget"
+        assert math.ceil(len(pts) / chunk) <= mat_budget_for("standard", tm), \
+            f"{tm}: 分块数超矩阵额度"
 
 
 # ── D1/D2（计划 v4 阶段 0）· fine_band 透传 与 降规格披露 ──────────
