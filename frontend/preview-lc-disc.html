@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>圈选联动四档对照（选中一个圈 ⇒ 同时突出这个圈和它对应的点位）</title>
+<style>
+  body { background:#f6f8f7 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px; line-height:1.5 }
+  .wrap { max-width:1460px; margin:0 auto; padding:18px 20px 120px }
+  .box { background:#fff; border:1px solid #e3e8e5; border-radius:10px; padding:14px 16px; margin:0 0 14px; font-size:13px; line-height:1.65; color:#1d211f }
+  .box b { color:#8a6420 }
+  .box code, .topbar code { background:#f1f5f2; border-radius:4px; padding:0 4px; font-size:12px; color:#1d211f }
+  .topbar code { background:rgba(217,239,228,.9); color:#11231c }
+  .fcp-change { position:relative; outline:3px solid #f59e0b; outline-offset:3px; border-radius:12px; background:rgba(245,158,11,.05); margin:14px 0; padding:4px }
+  .badge { position:absolute; top:-13px; left:10px; min-width:26px; height:24px; padding:0 7px; border-radius:999px; background:#f59e0b; color:#fff; font-size:12px; font-weight:700; display:inline-grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.22); z-index:9 }
+  .fcp-legend { position:static; z-index:auto; width:auto; max-height:none; overflow:visible; background:#11231c; color:#d9efe4; border-radius:12px; padding:14px 16px; margin:34px 0 0; font-size:11.5px; line-height:1.6; box-shadow:0 8px 26px rgba(0,0,0,.18) }
+  .fcp-legend ol { padding-left:0; list-style:none; columns:2; column-gap:26px }
+  .fcp-legend li { break-inside:avoid; border-top:1px solid rgba(217,239,228,.16); padding:7px 0 }
+  .fcp-legend li:first-child { border-top:none }
+  .fcp-legend b { color:#ffd591 }
+  .fcp-legend div { opacity:.86; margin-top:2px }
+  .fcp-legend code { background:rgba(217,239,228,.16); color:#eaf6ee; border-radius:3px; padding:0 3px }
+  .legend-title { font-size:12px; font-weight:700; margin-bottom:8px }
+  .legend-foot { margin-top:9px; padding-top:9px; border-top:1px solid rgba(217,239,228,.16); opacity:.75 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>圈选联动 · 四档对照（步骤 1 预览，不改生产组件）</h1>
+    <div class="sub">要拍的一件事：<b>选中一个圈之后，图上"亮了什么、亮的是哪颗点"</b>。数据 = 2026-09-30 两城<b>真打接口</b>落盘的 live 报告（北京 14 盘 / 凯里 5 盘），逐字节内嵌在 <code>src/dev/fixtures/lcDiscFocus.json</code>；画法 = 真 <code>LcMap</code> 组件 + 真出口（<code>evidenceDiscs</code> / <code>lcEvidenceDiscColor</code> / <code>evidenceDiscTitle</code> / 新增 <code>hitEvidenceDisc</code>）。参数：<code>?tier=a|b|c|d</code>、<code>?focus=disc:3|iso:15|blind:0</code>、<code>?disc_on=1</code>（headless 不能 hover ⇒ 选中态用 URL 烘进渲染）。</div>
+  </div>
+  <div class="wrap">
+    <div class="box">
+      四档读的是四种"对应关系"：<b>甲 A</b> 证据盘 ↔ 它的<b>取证锚点</b>（那颗点现在图上<b>不存在</b>，要新画）；<b>乙 B</b> 证据盘 ↔ 这一趟<b>检回来的设施点</b>（语义最强，但后端现在的 <code>EvidenceDisc</code> 只有 7 个字段、<b>不带点位清单</b> ⇒ 要动契约）；<b>丙 C</b> 等时圈 ↔ 圈内可达设施点；<b>丁 D</b> 盲区 ↔ 它的补点处方。
+      每栏右侧三行标注固定回答<b>图上亮了什么 / 点了哪颗点 / 文字念什么</b>，第三行是 <code>evidenceDiscTitle()</code> 的真产出、不是手写文案。最上面那栏是<b>降级画布对照</b>（无 AK 时你看到的那版）—— 它本来就有逐盘 <code>&lt;title&gt;</code>，<b>不是</b>你投诉的那个问题；你投诉发生在下面这版真地图上。
+    </div>
+    <div id="lc-disc-root"></div>
+  </div>
+  <script type="module" src="/src/dev/lcDiscFocusProbe.tsx"></script>
+</body>
+</html>

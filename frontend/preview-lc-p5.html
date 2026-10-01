@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生活圈片 5 · 前端三件（取证回合上屏 / 证据域图层 / partial 横幅）三档对照</title>
+<style>
+  body { background:#f6f8f7 }
+  .topbar { position:sticky; top:0; z-index:60; padding:12px 20px; background:#11231c; color:#d9efe4 }
+  .topbar h1 { font-size:15px; font-weight:600 }
+  .topbar .sub { font-size:12px; opacity:.82; margin-top:2px; line-height:1.5 }
+  .wrap { max-width:1180px; margin:0 auto; padding:18px 20px 120px }
+  .box { background:#fff; border:1px solid #e3e8e5; border-radius:10px; padding:14px 16px; margin:0 0 14px; font-size:13px; line-height:1.65; color:#1d211f }
+  .box b { color:#8a6420 }
+  .box code, .topbar code { background:#f1f5f2; border-radius:4px; padding:0 4px; font-size:12px; color:#1d211f }
+  .topbar code { background:rgba(217,239,228,.9); color:#11231c }
+
+  /* 闸口标注：彩色描边 + 编号徽标（与页内图例同源） */
+  .fcp-change { position:relative; outline:3px solid #f59e0b; outline-offset:3px; border-radius:12px; background:rgba(245,158,11,.05); margin:14px 0; padding:4px }
+  .badge { position:absolute; top:-13px; left:10px; min-width:26px; height:24px; padding:0 7px; border-radius:999px; background:#f59e0b; color:#fff; font-size:12px; font-weight:700; display:inline-grid; place-items:center; box-shadow:0 2px 6px rgba(0,0,0,.22); z-index:9 }
+
+  .fcp-legend { position:static; z-index:auto; width:auto; max-height:none; overflow:visible; background:#11231c; color:#d9efe4; border-radius:12px; padding:14px 16px; margin:34px 0 0; font-size:11.5px; line-height:1.6; box-shadow:0 8px 26px rgba(0,0,0,.18) }
+  .fcp-legend ol { padding-left:0; list-style:none; columns:2; column-gap:26px }
+  .fcp-legend li { break-inside:avoid; border-top:1px solid rgba(217,239,228,.16); padding:7px 0 }
+  .fcp-legend li:first-child { border-top:none }
+  .fcp-legend b { color:#ffd591 }
+  .fcp-legend div { opacity:.86; margin-top:2px }
+  .fcp-legend code { background:rgba(217,239,228,.16); color:#eaf6ee; border-radius:3px; padding:0 3px }
+  .legend-title { font-size:12px; font-weight:700; margin-bottom:8px }
+  .legend-foot { margin-top:9px; padding-top:9px; border-top:1px solid rgba(217,239,228,.16); opacity:.75 }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>生活圈片 5 · 前端三件三档对照（步骤 0 预览，不改生产码）</h1>
+    <div class="sub">数据源：<code>skip/tmp/lc_p5_dump.py</code> 现场装配的真实形状报告 —— 走生产 <code>live_forensic_steps</code> + <code>assemble_living_circle</code>，<b>零真实百度调用</b>（客户端为桩）。版式抄生产件：<code>LifeCirclePage</code> 进度横幅、<code>LcMap</code> 降级画布、<code>LifeCircleReportView</code> 体检单；文案一律出自 <code>lib/livingCircle.ts</code> 既有出口。参数：<code>?view=now|jia|yi|cmp</code>（默认 cmp = 现状 / 档甲 / 档乙 同宽三段）。</div>
+  </div>
+  <div class="wrap">
+    <div class="box">
+      这屏只拍一件事：<b>已经在线上发出去的四样东西（<code>round</code> 事件、<code>caliber.forensic</code>、<code>caliber.evidence_anchors</code>、<code>report.partial</code>）要不要上屏、上在哪、画多重</b>。
+      <b>档甲「只常驻」</b>=报告里补齐三件，体检进行中的那 10 秒仍只有进度条；
+      <b>档乙「常驻 + 实时」</b>=甲的全部，再加横幅里一行回合账与摘要条两颗 chip（推荐 —— <code>round</code> 事件目前是唯一"生产发了没人收"的那条线）。
+      地图那块画的是<b>勾选「证据域」之后</b>的样子（落地默认不画）：34 个 1.4km 举证盘叠在一起会不会糊，是这屏要你亲眼看的那个代价。
+      末尾「附 · 两种终态」对比"首轮就查全"与"额度不够铺完"，两种情况下小节说什么、横幅出不出。
+    </div>
+    <div id="lc-p5-root"></div>
+  </div>
+  <script type="module" src="/src/dev/lcP5Probe.tsx"></script>
+</body>
+</html>
