@@ -66,16 +66,48 @@ function covBasisText(c: FacilityCategoryStat | undefined): string {
  *  有可能只是我们自己先停了手。前端拿不到满分线的数值（`ideal_circle` 不在报告 payload 里），
  *  所以这句写成**条件句**，两边都印得出、也不需要第二把尺。
  *  ⚠️ 与后端 `diagnosis_templates._COV_STOP_LINE_NOTE` **逐字同源**，由
- *  `backend/tests/test_caliber_invariants.py` 的镜像判据钉住（两份物理副本不能靠我记得）。 */
+ *  `backend/tests/test_fixture_mirror.py` 的镜像判据钉住（两份物理副本不能靠我记得）。 */
 const COV_STOP_LINE_NOTE =
   '另需交代：采集的停止线按圈内点数算（点数达到该类满分线即停止扩词），而这里的分子按门槛项算' +
   ' ⇒ 若圈内点数已达满分线而门槛项仍不足，不排除是采集先停的手，不能只读成「社区没有」。'
 
+/* 片 R23-A（乙）：除「停止线先收手」外，让"门槛项不足"失真的还有两种成因 —— ①词因预算**一次都没
+   发起**（`evidence_starved_terms`）②词发了但**没查全**（`evidence_truncated_terms`）。
+   ⚠️ 下面五个常量与后端 `diagnosis_templates` 的同名件**逐字同源**，拼装规则也只许一份：
+      `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`（镜像判据见 `test_fixture_mirror.py`）。 */
+const GAP_LEAD = '另需交代：本次有 '
+const GAP_STARVED = '{n} 个{label}类检索词因预算未发起（{terms}）'
+const GAP_TRUNCATED = '{n} 个{label}类检索词发了但没查全（{terms}）'
+const GAP_JOIN = '、'
+const GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
+
+/** 本类「没查过 / 没查全」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
+ *  `evidence_*_terms` 是全类混合表 ⇒ 必须按 `{category}:` 前缀筛本类，否则别类的账会印到本节头上。
+ *  键缺席（换代前冻结的快照）与空表都算无话可说：前者是"不知道"、后者是"查全了"。 */
+function evidenceGapNote(
+  caliber: LivingCircleReport['caliber'],
+  category: string,
+  label: string,
+): string {
+  const clauses: string[] = []
+  for (const [tpl, key] of [
+    [GAP_STARVED, 'evidence_starved_terms'],
+    [GAP_TRUNCATED, 'evidence_truncated_terms'],
+  ] as const) {
+    const raw = caliber?.[key]
+    if (!Array.isArray(raw)) continue
+    const mine = raw.filter((t) => typeof t === 'string' && t.startsWith(`${category}:`))
+    if (mine.length) clauses.push(tpl.replace('{n}', `${mine.length}`).replace('{label}', label).replace('{terms}', mine.join('、')))
+  }
+  return clauses.length ? GAP_LEAD + clauses.join(GAP_JOIN) + GAP_TAIL : ''
+}
+
 /** 医疗节那句「达标 / 存在缺口」必须自证它判的是哪把尺（§十九 用户拍板"维持按分数 75%"换来的
  *  措辞义务）：达标 = 覆盖度 ≥75%，**不等于**"医疗不缺了"；存在缺口 = 门槛项未计满，
  *  **不等于**"圈内没有医疗设施"。两个分支各说各的真话，不许共用一句。
- *  名单走 payload 的 `scored_as`（后端 `sub_kind_rule_labels` 发的规则名单）。 */
-function medCoverageSentence(m: FacilityCategoryStat | undefined): string {
+ *  名单走 payload 的 `scored_as`（后端 `sub_kind_rule_labels` 发的规则名单）。
+ *  「未发起 / 没查全」那半句**只挂缺口分支**：达标说的是分子已计满，证据面不完整不会让它变成假话。 */
+function medCoverageSentence(m: FacilityCategoryStat | undefined, caliber: LivingCircleReport['caliber']): string {
   const cov = pct(m?.coverage ?? 0)
   const req = m?.required_in_circle
   if (req == null) return `覆盖度 ${cov} 按圈内点数计（这份快照出自门槛项口径之前）。`
@@ -85,18 +117,20 @@ function medCoverageSentence(m: FacilityCategoryStat | undefined): string {
   return `其中计入覆盖度分子的是基层医疗门槛项 ${req} 处${named}，另有 ${rest} 处不计入分子（含诊所等不计分形状与判不准的存疑项）。覆盖度 ${cov} ⇒ 本节${
     ok
       ? '写「达标」—— 这只指该覆盖度 ≥75%（门槛项已计满），不等于「医疗不缺了」。'
-      : `写「存在缺口」—— 这只指基层医疗门槛项未计满（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 ${m?.in_circle ?? 0} 处）。${COV_STOP_LINE_NOTE}`
+      : `写「存在缺口」—— 这只指基层医疗门槛项未计满（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 ${m?.in_circle ?? 0} 处）。${COV_STOP_LINE_NOTE}${evidenceGapNote(caliber, 'medical', m?.label ?? '医疗')}`
   }`
 }
 
 /** 教育节那句：把「圈内 15 处」与「覆盖度 33%」拆成两个口径各自的数 —— 旧写法把两句并排，
- *  读者按点数复算得 15÷3=100%，只能认定数据对不上（第 21 轮 P1-2 的现场形态）。 */
-function eduCoverageSentence(e: FacilityCategoryStat | undefined): string {
+ *  读者按点数复算得 15÷3=100%，只能认定数据对不上（第 21 轮 P1-2 的现场形态）。
+ *  「未发起 / 没查全」同样只在 <75% 时挂（本节没有分支句，闸门得显式写在这里）。 */
+function eduCoverageSentence(e: FacilityCategoryStat | undefined, caliber: LivingCircleReport['caliber']): string {
   const cov = pct(e?.coverage ?? 0)
   const req = e?.required_in_circle
   if (req == null) return `覆盖度 ${cov} 按圈内点数计（这份快照出自门槛项口径之前）；`
   const named = e?.scored_as?.length ? `「${e.scored_as.join(' / ')}」` : '门槛项'
-  return `但覆盖度的分子只取${named} ${req} 处，故为 ${cov} —— 「圈内 ${e?.in_circle ?? 0} 处」与「覆盖度 ${cov}」是两个口径各自的数，不是同一个数的两次说法；${COV_STOP_LINE_NOTE}`
+  const gap = (e?.coverage ?? 0) >= 0.75 ? '' : evidenceGapNote(caliber, 'education', e?.label ?? '教育')
+  return `但覆盖度的分子只取${named} ${req} 处，故为 ${cov} —— 「圈内 ${e?.in_circle ?? 0} 处」与「覆盖度 ${cov}」是两个口径各自的数，不是同一个数的两次说法；${COV_STOP_LINE_NOTE}${gap}`
 }
 
 function fmtMin(m: number | null): string {
@@ -150,7 +184,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `圈内医疗设施 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近 ${fmtMin(m?.min_minutes ?? null)}；社区医院/诊所/药店三类中${(ph?.nearest_name || m?.nearest_name) ? `最近为「${ph?.nearest_name ?? m?.nearest_name}」` : '尚无近端设施'}`,
     paragraphs: [
-      `对研究范围内医疗类 POI 按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，15 分钟步行圈内 ${m?.in_circle ?? 0} 处；${medCoverageSentence(m)}`,
+      `对研究范围内医疗类 POI 按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，15 分钟步行圈内 ${m?.in_circle ?? 0} 处；${medCoverageSentence(m, r.caliber)}`,
       `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一，圈内可达性为「${triad?.covered ? '可达' : '不可达'}」${triad?.nearest_minutes != null ? `（最近 ${triad.nearest_minutes}min）` : ''}。`,
     ],
     claims,
@@ -175,7 +209,7 @@ function secEducation(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `教育类圈内 ${e ? `${e.in_circle}/${e.total}` : '—'} 处；小学为盲区三要素之一，${triad?.covered ? `圈内可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'} `,
     paragraphs: [
-      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，15 分钟圈内 ${e?.in_circle ?? 0} 处；${eduCoverageSentence(e)}最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
+      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，15 分钟圈内 ${e?.in_circle ?? 0} 处；${eduCoverageSentence(e, r.caliber)}最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
       `就学通勤视角：小学接送是生活圈体检的高频痛点，本样区${triad?.covered ? `最近小学步行 ${triad.nearest_minutes}min，处于可接受范围` : '1km 内无小学，需重点关注跨区就学问题'}。`,
     ],
     claims: [

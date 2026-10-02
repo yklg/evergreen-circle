@@ -203,8 +203,43 @@ _COV_STOP_LINE_NOTE = (
     ' ⇒ 若圈内点数已达满分线而门槛项仍不足，不排除是采集先停的手，不能只读成「社区没有」。'
 )
 
+# 片 R23-A（乙）：除了「停止线先收手」，让"门槛项不足"失真的还有两种成因 ——
+# ①某词因预算**一次都没发起**（`evidence_starved_terms`）②某词发了但**没查全**
+# （`evidence_truncated_terms`，单页上限/收益止损）。两种都意味着"这一类的证据面不完整"，
+# 少交代一种，读者就只能把"不足"读成"社区没有"。
+# ⚠️ 下面五个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
+#    `tests/test_fixture_mirror.py` 的镜像判据钉住；拼装规则也只许一份：
+#    `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`。
+_GAP_LEAD = '另需交代：本次有 '
+_GAP_STARVED = '{n} 个{label}类检索词因预算未发起（{terms}）'
+_GAP_TRUNCATED = '{n} 个{label}类检索词发了但没查全（{terms}）'
+_GAP_JOIN = '、'
+_GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 
-def _med_cov_sentence(m: Optional[dict]) -> str:
+
+def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> str:
+    """本类「没查过 / 没查全」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
+
+    只读载荷、不重判：`evidence_*_terms` 是**全类混合表**，必须按 `{category}:` 前缀筛本类，
+    否则教育类的账会印到医疗节头上（与 §十九 那条同形）。键缺席（换代前冻结的快照）与空表
+    都算无话可说 —— 前者是「不知道」，后者是「查全了」，两种都不许印成「0 个」。
+    """
+    clauses: List[str] = []
+    for tpl, key in ((_GAP_STARVED, "evidence_starved_terms"),
+                     (_GAP_TRUNCATED, "evidence_truncated_terms")):
+        raw = (caliber or {}).get(key)
+        if not isinstance(raw, list):
+            continue
+        mine = [t for t in raw if isinstance(t, str) and t.startswith(f"{category}:")]
+        if mine:
+            clauses.append(tpl.format(n=len(mine), label=label, terms='、'.join(mine)))
+    if not clauses:
+        return ''
+    return _GAP_LEAD + _GAP_JOIN.join(clauses) + _GAP_TAIL
+
+
+
+def _med_cov_sentence(m: Optional[dict], caliber: Optional[dict]) -> str:
     """医疗节那句「达标 / 存在缺口」必须自证它判的是哪把尺（第 21 轮 P1-2 + §十九 措辞义务）。
 
     用户 10-01 拍板"维持按分数 75%" ⇒ 判据代码不动，但换来两条文字义务：
@@ -212,6 +247,8 @@ def _med_cov_sentence(m: Optional[dict]) -> str:
       不许说成"医疗不缺了"；②"存在缺口"只指门槛项未计满，**不许**说成"圈内没有医疗设施"。
     两个分支各说各的真话，不共用一句。名单与分子都取 payload（`scored_as`/`required_in_circle`），
     缺键（换代前冻结的存量快照）⇒ 照点数说，不挂门槛项文案。
+    「未发起 / 没查全」那半句（`_evidence_gap_note`）**只挂在缺口分支**：达标说的是分子已计满，
+    证据面不完整不会让它变成假话，硬加上去就是"达标了却说没查完"。
     """
     cov = _cov_score(m)
     req = (m or {}).get("required_in_circle")
@@ -227,16 +264,18 @@ def _med_cov_sentence(m: Optional[dict]) -> str:
             f"相当于圈内基层医疗 ≥{need} 家；不等于「医疗不缺了」。"
             if cov >= 0.75 else
             f"覆盖度 {_pct(cov)} ⇒ 本节写「存在缺口」—— 这只指基层医疗门槛项不足 {need} 家"
-            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。" + _COV_STOP_LINE_NOTE)
+            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。" + _COV_STOP_LINE_NOTE
+            + _evidence_gap_note(caliber, "medical", str((m or {}).get("label") or "医疗")))
     return head + tail
 
 
-def _edu_cov_sentence(e: Optional[dict]) -> str:
+def _edu_cov_sentence(e: Optional[dict], caliber: Optional[dict]) -> str:
     """教育节把「圈内 N 处」与「覆盖度 X%」拆成两个口径各自的数。
 
     旧写法两句并排（凯里：圈内 15 处 + 覆盖度 33.3%），读者按点数复算 15÷3=100% ⇒ 只能认定
     数据对不上。⚠️ 本节的「覆盖达标」判的是**小学 1km 三要素事实**、置信度判的是**这个覆盖度
     是否 ≥75%** —— 两把尺不同，所以"达标 + 置信度 medium"是合法组合，必须当场说圆。
+    「未发起 / 没查全」那半句同样**只在 <75% 时挂**（本节没有分支句，所以闸门得显式写在这里）。
     """
     cov = _cov_score(e)
     req = (e or {}).get("required_in_circle")
@@ -245,9 +284,10 @@ def _edu_cov_sentence(e: Optional[dict]) -> str:
         return f"覆盖度 {_pct(cov)} 按圈内点数计（这份快照出自门槛项口径之前）。"
     labels = (e or {}).get("scored_as") or []
     named = f"「{' / '.join(str(x) for x in labels)}」" if labels else "门槛项"
+    gap = '' if cov >= 0.75 else _evidence_gap_note(caliber, "education", str((e or {}).get("label") or "教育"))
     return (f"但覆盖度的分子只取{named} {req} 处 ÷ 满分线 {_ideal('education')} ⇒ {_pct(cov)} —— "
             f"「圈内 {in_circle} 处」与「覆盖度 {_pct(cov)}」是两个口径各自的数，"
-            f"不是同一个数的两次说法。" + _COV_STOP_LINE_NOTE)
+            f"不是同一个数的两次说法。" + _COV_STOP_LINE_NOTE + gap)
 
 
 def _chart_radar(lc: dict) -> dict:
@@ -331,7 +371,7 @@ def _sec_medical(lc: dict) -> dict:
         "level": 2,
         "key_takeaway": f"圈内医疗设施 {in_circle}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{'可达' if (triad or {}).get('covered') else '1km 内缺失'}",
         "paragraphs": [
-            f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，15 分钟圈内 {in_circle} 处；{_med_cov_sentence(m)}",
+            f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，15 分钟圈内 {in_circle} 处；{_med_cov_sentence(m, lc.get('caliber'))}",
             f"最近设施「{(m or {}).get('nearest_name') or '—'}」步行约 {_fmt_min((m or {}).get('min_minutes'))}。",
         ],
         "claims": [{
@@ -356,7 +396,7 @@ def _sec_education(lc: dict) -> dict:
         "id": "education", "title": "教育设施", "level": 2,
         "key_takeaway": f"教育类圈内 {(e or {}).get('in_circle', 0)}/{(e or {}).get('total', 0)} 处；小学三要素{('可达（最近 ' + _fmt_min((triad or {}).get('nearest_minutes')) + '）') if covered else '1km 内缺失'}",
         "paragraphs": [
-            f"小学/中学/幼儿园共检索 {(e or {}).get('total', 0)} 处，圈内 {(e or {}).get('in_circle', 0)} 处（三类都在这一类的检索范围内）；{_edu_cov_sentence(e)}",
+            f"小学/中学/幼儿园共检索 {(e or {}).get('total', 0)} 处，圈内 {(e or {}).get('in_circle', 0)} 处（三类都在这一类的检索范围内）；{_edu_cov_sentence(e, lc.get('caliber'))}",
             "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区" + ("最近小学步行在可接受范围" if covered else "1km 内无小学，需关注跨区就学问题") + "。",
         ],
         "claims": [{

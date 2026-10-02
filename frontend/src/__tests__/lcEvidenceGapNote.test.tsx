@@ -1,0 +1,142 @@
+// @vitest-environment jsdom
+/**
+ * 片 R23-A（乙）·「没查过 / 没查全」那半句在**演示态正文**里的上屏契约。
+ *
+ * 后端同一组判据在 `backend/tests/test_evidence_gap_note.py`，两端字面量逐字相同的守卫在
+ * `backend/tests/test_fixture_mirror.py::test_evidence_gap_note_is_one_text_on_both_ends`。
+ * 这份文件只管三件事：①那句话真的被拼进了 `sections[].paragraphs`（不是只活在函数里）；
+ * ②**别类的词不许印到本节**；③**达标分支不许说"没查完"**。外加一条回归网：两份出厂夹具今天
+ * 一个字都不许多出来。
+ *
+ * ⚠️ 期望串是**按规格手写的字面量**，不从实现回抄（回抄=恒真）。
+ * ⚠️ 注入只动内存里的演示件对象（`SAMPLE_COMMUNITIES[i].report`），磁盘夹具零改动，`finally` 还原；
+ *    走的是生产出口 `buildLivingCircleReport()`，不是直调私有函数。
+ */
+import { describe, it, expect } from 'vitest'
+import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
+import { buildLivingCircleReport } from '../mocks/livingCircleReports'
+import type { LivingCircleReport, Report } from '../types'
+
+const TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
+const NOTE_BOTH_MED =
+  '另需交代：本次有 2 个医疗类检索词因预算未发起（medical:社区医院、medical:社区卫生服务中心）、' +
+  '1 个医疗类检索词发了但没查全（medical:诊所）' + TAIL
+const NOTE_EDU = '另需交代：本次有 1 个教育类检索词因预算未发起（education:小学）' + TAIL
+
+/** 换内存里的演示件跑一次真构建，用完立刻还原（磁盘夹具一个字节都不动） */
+function buildWith(sceneId: string, mutate: (lc: LivingCircleReport) => void): Report {
+  const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
+  if (!sample) throw new Error(`缺演示件 ${sceneId}`)
+  const saved = sample.report
+  const clone = structuredClone(saved) as LivingCircleReport
+  mutate(clone)
+  sample.report = clone
+  try {
+    const r = buildLivingCircleReport(sceneId)
+    if (!r) throw new Error(`buildLivingCircleReport(${sceneId}) 返回 null`)
+    return r
+  } finally {
+    sample.report = saved
+  }
+}
+
+const setCaliber =
+  (patch: Record<string, unknown>) =>
+  (lc: LivingCircleReport) => {
+    lc.caliber = { ...(lc.caliber ?? {}), ...patch } as LivingCircleReport['caliber']
+  }
+/** 构造对照：把医疗类压成「门槛项未计满」⇒ 缺口分支才可达（两份演示件的医疗都是 100%） */
+const forceMedGap = (lc: LivingCircleReport) => {
+  const m = lc.poi.categories.find((c) => c.category === 'medical')
+  if (m) {
+    m.required_in_circle = 1
+    m.coverage = 1 / 3
+  }
+}
+const para = (r: Report, id: string) => (r.sections.find((s) => s.id === id)?.paragraphs ?? [''])[0]
+
+describe('演示态正文里「没查过 / 没查全」那句的上屏契约', () => {
+  it('前置：两份出厂夹具今天一个字都不许多出来（回归网）', () => {
+    for (const id of ['kaili', 'beijing-jinsong']) {
+      const r = buildLivingCircleReport(id) as Report
+      for (const sec of ['medical', 'education']) {
+        expect(para(r, sec), `${id}/${sec}：夹具数据没变却印出了新句 ⇒ 闸门失效`).not.toContain('因预算未发起')
+        expect(para(r, sec), `${id}/${sec}`)
+          .not.toContain('发了但没查全')
+      }
+    }
+  })
+
+  it('两种成因同时命中 ⇒ 医疗节一句里并列，计数与词名都来自载荷', () => {
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({
+        evidence_starved_terms: ['medical:社区医院', 'medical:社区卫生服务中心', 'education:小学'],
+        evidence_truncated_terms: ['medical:诊所', 'shopping:超市'],
+      })(lc)
+    })
+    expect(para(r, 'medical')).toContain(NOTE_BOTH_MED)
+    // 读感回归（落地看图才发现的缺陷）：新句不许把前一句的结尾整句重说一遍。
+    // 停止线那句以「…不能只读成「社区没有」。」收尾，新句尾再挂一次同一句 = 同段两遍。
+    // ⚠️ 前缀「另需交代：」在同段出现**两次是合法的**（一次归停止线、一次归本刀），不作断言。
+    expect(para(r, 'medical').split('不能只读成「社区没有」').length - 1).toBe(1)
+    // 顺序也是契约：先"停止线单位"，再"没查过/没查全"
+    expect(para(r, 'medical').indexOf('不排除是采集先停的手')).toBeGreaterThan(-1)
+    expect(para(r, 'medical').indexOf('不排除是采集先停的手'))
+      .toBeLessThan(para(r, 'medical').indexOf(NOTE_BOTH_MED))
+  })
+
+  it('教育节只看见教育自己的词（全类混合表必须按类别筛）', () => {
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({ evidence_starved_terms: ['medical:社区医院', 'education:小学'] })(lc)
+    })
+    expect(para(r, 'education')).toContain(NOTE_EDU)
+    // 插入点也是契约：教育节那句后面还跟着「最近设施…」，不许掉到段落末尾之后
+    const at = para(r, 'education').indexOf(NOTE_EDU)
+    expect(at).toBeGreaterThan(-1)
+    expect(para(r, 'education').slice(at + NOTE_EDU.length)).toContain('最近设施')
+  })
+
+  it('反向对照：只有别类有饿词 ⇒ 本节一个字都不加（不许拿别类的账冒充本类结论）', () => {
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({ evidence_starved_terms: ['education:小学'], evidence_truncated_terms: ['shopping:超市'] })(lc)
+    })
+    expect(para(r, 'medical')).not.toContain('另需交代：本次有')
+    expect(para(r, 'medical')).toContain('不排除是采集先停的手')   // 片 1c-β 那句仍在，未被牵连
+  })
+
+  it('达标分支不印：覆盖度 ≥75% 时，"没查全"不会让"分子已计满"变假话', () => {
+    const r = buildWith('beijing-jinsong', (lc) => {
+      setCaliber({
+        evidence_starved_terms: ['medical:社区医院', 'medical:社区卫生服务中心'],
+        evidence_truncated_terms: ['medical:诊所'],
+      })(lc)
+    })
+    expect(para(r, 'medical')).toContain('本节写「达标」')
+    expect(para(r, 'medical')).not.toContain('因预算未发起')
+    expect(para(r, 'medical')).not.toContain('发了但没查全')
+  })
+
+  it('门槛项口径之前的快照（缺 required_in_circle）⇒ 正文照点数说，不挂这句', () => {
+    const r = buildWith('kaili', (lc) => {
+      const m = lc.poi.categories.find((c) => c.category === 'medical')
+      if (m) delete (m as unknown as Record<string, unknown>).required_in_circle
+      setCaliber({ evidence_starved_terms: ['medical:社区医院'] })(lc)
+    })
+    expect(para(r, 'medical')).toContain('这份快照出自门槛项口径之前')
+    expect(para(r, 'medical')).not.toContain('因预算未发起')
+  })
+
+  it('空表与键缺席都不许回落成「0 个」（前者=查全了、后者=不知道）', () => {
+    for (const patch of [{ evidence_starved_terms: [] }, {}]) {
+      const r = buildWith('kaili', (lc) => {
+        forceMedGap(lc)
+        setCaliber(patch)(lc)
+      })
+      expect(para(r, 'medical')).not.toContain('0 个')
+      expect(para(r, 'medical')).not.toContain('另需交代：本次有')
+    }
+  })
+})

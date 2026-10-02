@@ -240,3 +240,40 @@ def test_cov_stop_line_note_is_one_text_on_both_ends():
         " ⇒ 常量还在、正文里已经没有它 = 假同源")
     assert ts_src.count("${COV_STOP_LINE_NOTE}") == 2, (
         f"前端插值处数 = {ts_src.count('${COV_STOP_LINE_NOTE}')}（应为 2，同上）")
+
+
+def test_evidence_gap_note_is_one_text_on_both_ends():
+    """片 R23-A（乙）：「没查过 / 没查全」那半句在两端是**五份物理字面量 + 一条拼装规则** ⇒ 逐条比。
+
+    与上面那条同一分工，只是对象换成一组常量：后端 `diagnosis_templates._GAP_*` 进生产正文，
+    前端 `mocks/livingCircleReports.ts` 的 `GAP_*` 进演示态正文。改一边忘另一边 ⇒ 同一个事实
+    两种说法，且今天没有任何东西会红。⚠️ 只比常量还不够 —— 常量在、正文没引用 = 假同源，
+    所以两条"消费者计数"断言必须在（各 3 处：定义 1 + 医疗节 1 + 教育节 1）。
+    """
+    import re
+
+    from app.core.pipeline import diagnosis_templates as dt
+
+    ts_path = PROJECT / "frontend" / "src" / "mocks" / "livingCircleReports.ts"
+    ts_src = ts_path.read_text(encoding="utf-8")
+    pairs = {
+        "GAP_LEAD": dt._GAP_LEAD,
+        "GAP_STARVED": dt._GAP_STARVED,
+        "GAP_TRUNCATED": dt._GAP_TRUNCATED,
+        "GAP_JOIN": dt._GAP_JOIN,
+        "GAP_TAIL": dt._GAP_TAIL,
+    }
+    for name, py_val in pairs.items():
+        assert py_val, f"后端常量 _{name} 是空串 ⇒ 本条对它是恒真"
+        block = re.search(rf"^const {name} = '([^']*)'$", ts_src, re.M)
+        assert block, f"前端常量 {name} 没了或不再是单行单引号字面量 ⇒ 镜像判据抽不到它"
+        assert py_val == block.group(1), (
+            f"{name} 两端已分叉：后端「{py_val[:16]}…」vs 前端「{block.group(1)[:16]}…」")
+
+    # 拼装规则也只许一份：两个消费者各引一次
+    py_src = (BACKEND_DIR / "app" / "core" / "pipeline" / "diagnosis_templates.py").read_text(encoding="utf-8")
+    for src, label, needle in ((py_src, "后端 _evidence_gap_note(", "_evidence_gap_note("),
+                               (ts_src, "前端 evidenceGapNote(", "evidenceGapNote(")):
+        assert src.count(needle) == 3, (
+            f"{label}出现 {src.count(needle)} 次（应为 3：定义 1 + 医疗节 1 + 教育节 1）"
+            " ⇒ 函数还在、正文里已经没有它 = 假同源")
