@@ -192,6 +192,12 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         # 片 4：取证回合账目。放进这份名单才有意义 —— 名册登记与产出核对是两条腿，
         # 少前者是"引用不到"，少后者是"登记了个不存在的键"。
         "report::forensic",
+        # R23-I · 成本账那一位同样必须两条腿都站住：只进口径名册而不进这份白名单，
+        # 就是第二十一轮 P0-1 点名的"登记了没人验"（删掉发射行时 0 条报警）。
+        # ⚠️ 它是**条件发射**的键（`scope.payload()` 只在采集明细带着 `pages_returned` 时才出），
+        # 所以下面那份 detail 必须带上这一位 —— 这里验的是"发射行还在不在"，
+        # 值对不对（逐词行求和、缺明细时不发）由 `tests/test_pages_returned.py` 走真链核。
+        "report::evidence_pages_returned",
     )
     missing = sorted(set(rev2_refs) - set(caliber_index.all_refs()))
     assert not missing, f"rev2 口径键未登记进 caliber_index：{missing}"
@@ -204,7 +210,11 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         study_radius_m=2500.0,
     ).with_evidence(
         {"market": 2367.2, "pharmacy": 1800.0, "primary": 2367.2},
-        complete=False, detail={"truncated_terms": ["药店"], "starved_terms": []},
+        # `pages_returned` 在这里给值，只为让下面那圈逐键核对拿到条件发射的载荷
+        # （发射点在 `scope.payload()` 里那个 `if "pages_returned" in …`）；它的取值对不对
+        # 不在本用例职责内 —— 见 `tests/test_pages_returned.py`。
+        complete=False,
+        detail={"truncated_terms": ["药店"], "starved_terms": [], "pages_returned": 2},
     )
     # 三态必须闭合：97 = 已判 5 + 无据 90 + 接口封顶 2（这条算式在此不是为了测 payload，
     # 是为了让上面那份逐键核对拿到**真出过数**的载荷，而不是一个恰好有键的样板）

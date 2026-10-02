@@ -284,6 +284,28 @@ class CollectionEvidence:
         return tuple(seen)
 
     @property
+    def pages_returned(self) -> int:
+        """本轮**成功返回**的 `place_search` 页数（计划 R23-I，欠账出处 §22⑧）。
+
+        ⚠️ 本位是"拿到手的页数"，**不是**"打出去几次外呼"：`pages_fetched` 只在响应正常
+        （`status == 0`）之后自增（`baidu_client.py:393`），失败那次当场 `break`、不留计数 ⇒
+        每一笔 `api_error` 词行至少欠一次未被计入的发送。要把发送次数记全得往
+        `PlaceSearchOut` 加字段 —— 那是客户端契约改动（十几处位置构造的测试替身都要连账），
+        不在本轮顺手做，留作独立一片。这里只报得住一个**下界**，但它正是核销用的那一头：
+        恒有 `pages_returned ≤ 预扣额度`，"预登记要打几次 / 实际到手几页"这对读数据此封顶。
+
+        为什么从 `per_term` 派生而不是取 `POIBudget.usage`：那是**预扣**掉的额度次数（按计划
+        要翻几页就扣几页）。两者在 v5.6「失败不退款 + 记 `api_error` 举证」这条政策下**本来
+        就该不等** —— 发出去没成的那次额度花掉了却没拿到点，翻到一半被 `empty`/`server_cap`
+        收住的那类也会少发。
+
+        为什么做成 property 而不是字段：`CollectionEvidence` 的构造点有十几处（含测试替身），
+        加必需字段会让没跟上的替身**静默带 0**，而 0 在这里是有含义的读数（"一次都没发"）——
+        那是把"没记账"伪装成"记了个零"。派生值伪造不了，也漏不掉。
+        """
+        return sum(int(t.pages_fetched) for t in self.per_term)
+
+    @property
     def complete(self) -> bool:
         """无词被截断、无词被饿死、未熔断 —— 三者齐备才敢声称证据面完整。"""
         return (
@@ -305,6 +327,9 @@ class CollectionEvidence:
             "expansion_out_of_budget_categories": list(self.expansion_out_of_budget),
             # 四种成因的并集（机器可读那份；措辞仍归读侧按成因给）
             "coverage_numerator_incomplete_categories": list(self.coverage_numerator_incomplete),
+            # 成本账（R23-I）：成功返回的页数。与上面那些"证据有没有查全"的位不同，这一位回答
+            # 的是"这次花掉的外呼到手了几页" —— 预登记的读数要有能核销的地方（语义边界见属性）。
+            "pages_returned": self.pages_returned,
             "aborted": self.aborted,
         }
 

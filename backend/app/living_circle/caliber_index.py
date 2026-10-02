@@ -262,6 +262,12 @@ def _populate_index() -> None:
         ("evidence_radius_m", "实测证据边界半径", "living_circle.caliber.evidence_radius_m"),
         ("evidence_frontier_m", "逐类实测证据边界", "living_circle.caliber.evidence_frontier_m"),
         ("evidence_complete", "证据完整性", "living_circle.caliber.evidence_complete"),
+        # R23-I · 成本账（欠账出处：计划 §22⑧，全链路真跑后"预登记了几次外呼"却无处核销）。
+        # 它是**逐词行求和**派生出来的实测位（不是预算声明），所以登记的必须是载荷里那个末段
+        # 键名本身 —— 指到 `poi_collector` 那侧就变成引用一个不发射在报告里的数。
+        # ⚠️ 档位名刻意写成"成功返回的页数"而不是"外呼次数"：失败那次不留计数（`pages_fetched`
+        # 只在响应正常后自增），报"次数"会让这一位替没发生的事说话（同 `forensic` 那条纪律）。
+        ("evidence_pages_returned", "成功返回的检索页数", "living_circle.caliber.evidence_pages_returned"),
         ("judge_radius_m", "可判定半径", "living_circle.caliber.judge_radius_m"),
         # 片 4：取证回合的账目（跑了几轮、打了几个锚点、为什么收手）。它是**嵌套对象**，
         # 而下面那条"ref 指向的键必须真在产出对象里"的核对只看顶层末段键名 ⇒ 登记的必须是

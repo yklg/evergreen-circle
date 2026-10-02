@@ -935,6 +935,14 @@ class SpatialScope:
             #    键 ⇒ `got is None` ⇒ 拒），成本却是零。见计划 §六 的"跳步理由"。
             "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
         }
+        # R23-I · 成本账（欠账出处：计划 §22⑧ —— 真跑那轮预登记了要发几次外呼，报告里却没有
+        # 任何一位能核销它）。值是 `CollectionEvidence.pages_returned`：**成功返回的页数**，
+        # 不是外呼次数（失败那次不留计数，见那位的 docstring）⇒ 它报的是下界。
+        # ⚠️ **没账可报时不发这个键**，与上面 `evidence_anchors` / 下面 `forensic` 同一条纪律：
+        # 离线估算与夹具从没走过采集，给它补一份 `0` 等于替一次没发生的外呼举证，而 0 在这里
+        # 是有含义的读数（"打了外呼、一页都没回来"）—— 把"没记账"洗成"记了个零"。
+        if "pages_returned" in self.evidence_detail:
+            out["evidence_pages_returned"] = int(self.evidence_detail["pages_returned"])
         # 逐锚点举证（计划 v4 阶段 2a · **追加**发射，无人绑定 region 时不出这个键）：
         # 报告要能回答「这片的证据是哪几个点撑起来的」，否则多锚点与单锚点在读数上无从
         # 区分 —— 而区分它们正是这次改造的全部理由。上面三个标量键一个都不删，
