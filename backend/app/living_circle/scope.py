@@ -890,6 +890,11 @@ class SpatialScope:
                 self.evidence_detail.get("expansion_unfunded_categories") or []),
             "evidence_expansion_out_of_budget_categories": list(
                 self.evidence_detail.get("expansion_out_of_budget_categories") or []),
+            # 上面那四种（除 capped）的**类别并集**：给机器读的那一份"这一类的覆盖度分子没查够"。
+            # 由 `CollectionEvidence.coverage_numerator_incomplete` 一处算出，读侧不许再并一次
+            # （防漂移的关系判据见 `tests/test_numerator_incomplete_union.py`）。
+            "coverage_numerator_incomplete_categories": list(
+                self.evidence_detail.get("coverage_numerator_incomplete_categories") or []),
             # T-P0-4（计划 v5.6）追加发射，读侧暂时无人消费 ⇒ 批次一零回归不受影响。
             # 逐类「为什么停」，与 `evidence_frontier_m` **同源**（都由决定边界的那一行给）：
             # 有了它，"边界 1494m" 才能区分是「药店截断在 20 条」还是「那一词我们没查成」。

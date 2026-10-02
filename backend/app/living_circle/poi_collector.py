@@ -221,6 +221,34 @@ class CollectionEvidence:
         return tuple(f"{t.category}:{t.term}" for t in self.per_term if t.cap_hit)
 
     @property
+    def coverage_numerator_incomplete(self) -> Tuple[str, ...]:
+        """**覆盖度的分子没查够**的类别（计划 §16 乙2）—— 四种成因的类别并集。
+
+        为什么要有这个数：那四种成因今天**只有字**（`diagnosis_templates._evidence_gap_note` 现场
+        拼给人看），而机器读的 `evidence_complete` 只看"发出去的词查全没查全"⇒ §15 那条链上实测到
+        同屏出现「这一类证据面不完整」+ `evidence_complete = True`。本位把"有没有这话"变成一个
+        有单一来源的数，将来谁要按它办事都读这里。
+
+        四样都在本对象身上 ⇒ 并集只在此处算一次；⚠️ **不去解析 `类:词` 字符串**（那是第二份判定）：
+        `truncated` 直接读 `per_term` 的完整性，与 `truncated_terms` 那个属性同一个谓词。
+        `capped`（百度自称还有货却断页）**不单独并入** —— 但它天然经 `truncated` 这条路进来：
+        `STOP_SERVER_CAP` 不是"已查全"（`is_exhausted` 只认 complete/empty），所以那一行本来就
+        算"没查够"。读侧那句「发了但没查全」同理会印它 ⇒ 两边一致，与 #71（capped 自己那一位
+        还没有屏上出口）不冲突。
+        """
+        seen: Dict[str, None] = {}
+        for cat, _term in self.starved_terms:
+            seen.setdefault(cat, None)
+        for t in self.per_term:
+            if not t.complete:
+                seen.setdefault(t.category, None)
+        for cat in self.expansion_unfunded:
+            seen.setdefault(cat, None)
+        for cat in self.expansion_out_of_budget:
+            seen.setdefault(cat, None)
+        return tuple(seen)
+
+    @property
     def capped_categories(self) -> Tuple[str, ...]:
         seen: Dict[str, None] = {}
         for t in self.per_term:
@@ -247,6 +275,8 @@ class CollectionEvidence:
             "capped_terms": list(self.capped_terms),
             "expansion_unfunded_categories": list(self.expansion_unfunded),
             "expansion_out_of_budget_categories": list(self.expansion_out_of_budget),
+            # 四种成因的并集（机器可读那份；措辞仍归读侧按成因给）
+            "coverage_numerator_incomplete_categories": list(self.coverage_numerator_incomplete),
             "aborted": self.aborted,
         }
 

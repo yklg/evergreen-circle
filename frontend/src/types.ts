@@ -1157,6 +1157,11 @@ export interface LivingCircleReport {
      *  unfunded 是排程没摊到，本条是摊到了但额度太薄 ⇒ 读者的判断不同，前端也不合并。
      *  ⚠️ 缺键 = 这份报告出自 R23-B3 之前，读作"不知道"，**不得**当成"没有类别扩到一半停了"。 */
     evidence_expansion_out_of_budget_categories?: string[]
+    /** 上面四种成因（不含 `capped`）的**类别并集** = "这一类的覆盖度分子没查够"。
+     *  后端一处算出（`CollectionEvidence.coverage_numerator_incomplete`），给机器读；
+     *  人读的那句「另需交代…」仍按成因各说各的 ⇒ 两者必须同步，由关系判据钉住。
+     *  ⚠️ 缺键 = 这份报告出自本位之前，读作"不知道"，**不得**当成"每类都查够了"。 */
+    coverage_numerator_incomplete_categories?: string[]
     /* ── 片 4/5 · 逐锚点举证与取证账目 ──
        两把尺并存这件事要说清：上面那批 `evidence_*` **标量**仍是旧口径（批次二才收敛），
        而下面这两块是逐盘/逐趟的明细 —— 由 `scope.payload(judged_region=/forensic=)` 跟着

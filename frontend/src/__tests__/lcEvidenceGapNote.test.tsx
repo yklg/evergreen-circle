@@ -184,6 +184,19 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
     expect(para(r, 'medical').split('另需交代：').length - 1).toBe(1)
   })
 
+  it('并集键（R23-C 新键）在场与否都不改演示态正文 ⇒ 本刀零行为变更', () => {
+    const base = { evidence_expansion_out_of_budget_categories: ['education'] }
+    const a = buildWith('kaili', setCaliber(base))
+    // 故意给一份"并集里写着别的类"的载荷：若措辞哪天改挂到并集上，这两段就会分叉
+    const b = buildWith('kaili', setCaliber({
+      ...base, coverage_numerator_incomplete_categories: ['medical', 'finance', 'shopping'],
+    }))
+    expect(para(a, 'education'), '比较两头都得有内容，否则是在比空串')
+      .toContain('这一类的扩词在到达标线之前')
+    expect(para(b, 'education')).toBe(para(a, 'education'))
+    expect(para(b, 'medical')).toBe(para(a, 'medical'))
+  })
+
   it('空表与键缺席都不许回落成「0 个」（前者=查全了、后者=不知道）', () => {
     for (const patch of [{ evidence_starved_terms: [] }, {}]) {
       const r = buildWith('kaili', (lc) => {
