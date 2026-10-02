@@ -29,6 +29,7 @@ from app.living_circle.baidu_client import (
 from app.living_circle.caliber import facility_merge_enabled
 from app.living_circle.category_rule import CATEGORY_RULES, TRIAD_RULES
 from app.living_circle.anchors import anchor_key
+from app.living_circle.poi import required_count_from_raw_points
 from app.living_circle.scope import TRIAD_KEYS, EvidenceDisc
 
 # ⚠️ 上面这几个 `STOP_*` 里，`STOP_COMPLETE/EMPTY/DUP_STOP/NOT_RUN` 在本模块已**无代码引用**
@@ -663,20 +664,17 @@ async def collect_poi(
             triads[key] = _dedupe(items, 50.0, "geometric")
 
     # ── B 阶段：S8 渐进式扩词（仅 under-target，吃剩余预算）──
-    # ⚠️ 这里的停止线吃的是**圈内点数**，而 `cov-1` 之后覆盖度的分子吃**门槛项数**
-    # （`poi.required_count_from_points`）—— 同一个 `ideal_circle` 在两处是两种单位
-    # （第 22 轮 R22-1）。后果不是算错分，而是**归因错**：一类只要点数够 3 颗就停止扩词，
-    # 之后报告可能写"门槛项不足 3 家"，读者会读成"社区没有"，而真实原因是我们自己先停的手。
-    # 本行刻意**不改判定**（改成按门槛项收手会多扩几轮词 = 多烧外呼配额，需单独拍板），
-    # 不对称改由上屏那两句显式交代：`diagnosis_templates._COV_STOP_LINE_NOTE`（停止线单位）
-    # 与 `_evidence_gap_note`（本类有词**没发起** / 有词**没查全** —— 读 `caliber.evidence_starved_terms`
-    # 与 `evidence_truncated_terms`），两者在前端 `mocks/livingCircleReports.ts` 各有逐字同源的副本，
-    # 由 `tests/test_fixture_mirror.py` 的两条镜像判据钉住。R23-B 换收手单位时要撤掉前一句。
+    # 收手单位（R23-B2，第 22 轮 R22-1 的正面处置）：**有门槛项口径就按门槛项数收手，
+    # 没有就沿用点数** —— 判据只住在 `_at_target` 一处，分子只读 `poi` 那一份实现。
+    # 改之前：一类只要**点数**够 3 颗就停止扩词，而覆盖度的分子自 `cov-1` 起数的是**门槛项**
+    # ⇒ 报告写"门槛项不足 3 家"时读者会读成"社区没有"，真实原因却是我们自己先停的手。
+    # 今天只有 `medical` / `education` 建了子类表 ⇒ 只有这两类会换单位，其余六类逐字不变；
+    # 而"该扩却没扩"在现实额度下仍然常发生（步行只剩 3 次 / 驾车 0 次），那半由
+    # `_evidence_gap_note` 的第三子句上屏（`expansion_unfunded`，片 R23-B1）。
     ideal = {cat: defn["ideal_circle"] for cat, defn in CATEGORY_RULES.items()}
     expansion_unfunded: List[str] = []
     for cat, defn in CATEGORY_RULES.items():
-        hits = _in_circle_count(per_category.get(cat, []), scope)
-        if hits >= ideal.get(cat, 1):
+        if _at_target(cat, per_category.get(cat, []), scope, ideal.get(cat, 1)):
             continue
         searched = 0          # 本类真正发出去的扩词次数（0 次才谈得上"整轮没跑"）
         no_vocab = False      # 词已榨干（`ctx.next` 返空）⇒ 停手的原因是"没词"，不是"没钱"
@@ -711,8 +709,8 @@ async def collect_poi(
                 budget.quench(cat)
             elif after - before < GAIN_STOP_THRESHOLD:
                 pass  # 圈内未达标但确有新增 ⇒ 继续换词，边际另由 ctx.next 收敛
-            elif after >= ideal.get(cat, 1):
-                break  # 达标停止
+            elif _at_target(cat, merged, scope, ideal.get(cat, 1)):
+                break  # 达标停止（单位由 `_at_target` 定：门槛项优先，点数兜底）
         # R23-B1：`while budget.remaining > 0` 这条守卫在额度归零时**静默退出** —— 既不记
         # `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
         # （`aborted` 要 `starved` 非空才为真）。于是"这一类整轮没扩过词"与"这一类不需要扩"
@@ -953,13 +951,35 @@ def _dedupe(
     return dedupe_pois(items, radius_m, policy, center)
 
 
-def _in_circle_count(items: List[Dict[str, Any]], scope: Any) -> int:
-    """圈内（可达区）设施数：复用 scope 的点在环判定；scope 为空时按原始条数保守近似。"""
+def _in_circle_items(items: List[Dict[str, Any]], scope: Any) -> List[Dict[str, Any]]:
+    """圈内（可达区）设施**清单**：复用 scope 的点在环判定；scope 为空时按原始条数保守近似。
+
+    点集是这一处的出口（R23-B2 的收手闸除了个数还要拿它算门槛项数），
+    `_in_circle_count` 只是它的 `len` —— 环判定不留第二份。
+    """
     if not items:
-        return 0
+        return []
     ring = getattr(scope, "reach_ring", None)
     if ring is None or not list(ring):
-        return len(items)
+        return list(items)
     from app.living_circle.geo_utils import point_in_ring  # 与 poi.to_points 同一判定
 
-    return sum(1 for it in items if point_in_ring((it["lng"], it["lat"]), ring))
+    return [it for it in items if point_in_ring((it["lng"], it["lat"]), ring)]
+
+
+def _in_circle_count(items: List[Dict[str, Any]], scope: Any) -> int:
+    return len(_in_circle_items(items, scope))
+
+
+def _at_target(cat: str, items: List[Dict[str, Any]], scope: Any, ideal: int) -> bool:
+    """收手判据（R23-B2）：**有门槛项口径就按门槛项数收手，没有就沿用点数**。
+
+    分子只读 `poi.required_count_from_raw_points` —— 与覆盖度同一个出处、同一份盖章
+    （`stamp_sub_kind`），采集侧不自写第二份判类。返回 `None` = 这一类没建子类表
+    （今天只有 `medical` / `education` 有）⇒ 其余六类的收手行为与改前逐字相同。
+    ⚠️ 边际止损（`quench` / `GAIN_STOP_THRESHOLD`）仍按**点数增益**判：它问的是"这个词
+    还带不带回新东西"，与"够不够数"是两件事（计划 §5 丙未拍，本批不动）。
+    """
+    in_circle = _in_circle_items(items, scope)
+    req = required_count_from_raw_points(in_circle, cat)
+    return (len(in_circle) if req is None else req) >= ideal

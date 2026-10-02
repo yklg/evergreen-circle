@@ -1,9 +1,12 @@
-"""片 R23-A（乙）·「没查过 / 没查全」那半句的判据。
+"""片 R23-A（乙）+ R23-B1 ·「没查过 / 没查全 / 整轮没扩词」那一句的判据。
 
-报告写「门槛项不足 / 存在缺口」时有三种真成因，本刀负责后两种：
-①采集停止线按点数先收手（片 1c-β 的 `_COV_STOP_LINE_NOTE`，本文件不重测）
+报告写「门槛项不足 / 存在缺口」时有**四种**真成因，本文件负责后三种：
+①采集**先按点数收了手**（而分子按门槛项）—— 已由 R23-B2 就地修掉：收手单位改到与分子同一个
+  （`poi_collector._at_target`），那句交代随之撤走，撤没撤干净由
+  `test_fixture_mirror.py::test_retired_stop_line_note_is_gone_from_both_ends` 全仓扫
 ②某词因预算**一次都没发起**（`caliber.evidence_starved_terms`）
 ③某词发了但**没查全**（`caliber.evidence_truncated_terms`）
+④这一类**整轮没轮到扩词**（`caliber.evidence_expansion_unfunded_categories`，见 `test_expansion_unfunded.py`）
 
 矩阵（每格断的都是**将来上屏的那句话**，预期值是按规格手写的字面量，不是从实现里回抄的）：
 
@@ -106,15 +109,16 @@ def test_prefix_filter_is_not_a_substring_match():
 
 # ───────────────────────── 6–7：分支真话 ─────────────────────────
 
-def test_medical_gap_branch_carries_the_note_and_keeps_the_stop_line_one():
+def test_medical_gap_branch_carries_the_note_and_not_the_retired_stop_line():
     s = dt._med_cov_sentence(_med(), CAL_BOTH)
     assert "本节写「存在缺口」" in s
-    assert "不排除是采集先停的手" in s          # 片 1c-β 那句仍在，且在前
     assert s.endswith(NOTE_BOTH), s[-120:]
-    assert s.index("不排除是采集先停的手") < s.index(NOTE_BOTH)   # 顺序：停止线 → 未发起/没查全
-    # 读感回归（落地看图才发现）：新句结尾原本又把前一句的「不能只读成「社区没有」。」重说了一遍
-    # ⇒ 同段两遍。这条钉住"只许一遍"，谁把尾句加回重复措辞就会红。
-    assert s.count("不能只读成「社区没有」") == 1, s[-200:]
+    # R23-B2 撤句之后，同段只许出现**一次**「另需交代：」（旧状态下"两次是合法的"那条豁免随之作废）。
+    # 这条不是形状洁癖：谁把"停止线按点数"那句加回来，段里就会长出第二个前缀 —— 而那句现在已是假话。
+    assert s.count(dt._GAP_LEAD) == 1, s[-200:]
+    # 读感回归（落地看图才发现）：新句结尾不许把前一句的收尾整句重说一遍。
+    assert s.count("不能只读成「社区没有」") == 0, (
+        f"撤走的收尾又回来了：{s[-200:]}")
 
 
 def test_medical_passing_branch_never_says_we_missed_terms():

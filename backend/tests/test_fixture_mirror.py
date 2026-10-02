@@ -207,39 +207,30 @@ def test_bad_input_flagged():
     assert assert_mirror_consistent({"data_origin": "x"}, _mk_report()) != []
 
 
-def test_cov_stop_line_note_is_one_text_on_both_ends():
-    """第 22 轮 R22-1 的连带：那句"停止线按点数、分子按门槛项"在两端是**两份物理字面量** ⇒ 得有人比。
+def test_retired_stop_line_note_is_gone_from_both_ends():
+    """R23-B2 撤句守卫：那句「停止线按点数、分子按门槛项」断言的是**两处单位不同** ——
+    收手单位一改（`poi_collector._at_target` 与覆盖度分子读同一份实现）它就变成假话，
+    所以撤句必须与换单位**同批**（计划 §4 B2 / §6 第 4 条）。
 
-    后端 `diagnosis_templates._COV_STOP_LINE_NOTE` 进生产正文，前端 `mocks/livingCircleReports.ts`
-    的同名常量进演示态正文（演示数字来自这里）。前端**拿不到满分线数值**（`ideal_circle` 不在报告
-    payload 里，§十九），所以两边都写成**条件句**才可能逐字相同。改一边忘另一边 ⇒ 同一个事实两种说法，
-    而今天没有任何东西会红 —— 本条就是补那只眼睛（与夹具双侧 md5 那条同一分工，只是对象换成文案）。
+    判据按**句子本身**扫，不按常量名：改名留句这种情况锚在标识符上看不见。
+    ⚠️ 同条内配活证人：同一次遍历必须看得见**仍在用**的那句（R23-B1 的第三子句），
+    否则"扫到 0 处"可能只是根本没走进文件。
     """
-    import re
+    dirs = [PROJECT / "backend" / "app", PROJECT / "frontend" / "src"]
+    files = [p for d in dirs for p in d.rglob("*") if p.is_file() and p.suffix in (".py", ".ts", ".tsx")]
+    assert len(files) > 100, f"只扫到 {len(files)} 个文件 ⇒ 遍历没走通，下面的 0 处不算数"
+    texts = {p: p.read_text(encoding="utf-8") for p in files}
 
-    from app.core.pipeline import diagnosis_templates as dt
+    def where(needle: str) -> list:
+        return sorted(str(p.relative_to(PROJECT)) for p, t in texts.items() if needle in t)
 
-    py_note = dt._COV_STOP_LINE_NOTE
-    ts_path = PROJECT / "frontend" / "src" / "mocks" / "livingCircleReports.ts"
-    ts_src = ts_path.read_text(encoding="utf-8")
-    block = re.search(r"const COV_STOP_LINE_NOTE =\s*(.*?)\n\n", ts_src, re.S)
-    assert block, f"前端那份常量没了（{ts_path.name}）⇒ 演示态那句交代静默消失"
-    ts_note = "".join(re.findall(r"'([^']*)'", block.group(1)))
-
-    assert py_note, "后端常量是空串 ⇒ 下面那句等值断言恒真"
-    for token in ("停止线", "圈内点数", "门槛项"):
-        assert token in py_note, f"抽到的不是那句话（缺「{token}」）⇒ 本条在比空串"
-    assert py_note == ts_note, (
-        f"两端已分叉：后端「{py_note[:18]}…」vs 前端「{ts_note[:18]}…」"
-        "⇒ 同一个事实在生产正文与演示正文里有两种说法")
-
-    # 常量存在 ≠ 正文用了它：两个消费者各引用一次才算真同源（否则只是两份没人读的字符串）
-    py_src = (BACKEND_DIR / "app" / "core" / "pipeline" / "diagnosis_templates.py").read_text(encoding="utf-8")
-    assert py_src.count("+ _COV_STOP_LINE_NOTE") == 2, (
-        f"后端引用该常量的正文处数 = {py_src.count('+ _COV_STOP_LINE_NOTE')}（应为 2：医疗缺口分支 + 教育那句）"
-        " ⇒ 常量还在、正文里已经没有它 = 假同源")
-    assert ts_src.count("${COV_STOP_LINE_NOTE}") == 2, (
-        f"前端插值处数 = {ts_src.count('${COV_STOP_LINE_NOTE}')}（应为 2，同上）")
+    retired = "不排除是采集先停的手"
+    live = "本轮没有额度为这一类扩词"
+    assert not where(retired), f"撤掉的句子还在 {where(retired)} ⇒ 换单位后这句话是假话"
+    assert len(where(live)) >= 2, (
+        f"活证人不足：「{live}」只见 {len(where(live))} 处（应 ≥2：后端常量 + 前端镜像）⇒ 这一屏扫不到正文")
+    for name in ("_COV_STOP_LINE_NOTE", "COV_STOP_LINE_NOTE"):
+        assert not where(name), f"常量名 {name} 仍被 {where(name)} 引用 ⇒ 撤得不干净"
 
 
 def test_evidence_gap_note_is_one_text_on_both_ends():

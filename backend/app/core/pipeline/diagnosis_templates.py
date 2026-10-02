@@ -194,19 +194,15 @@ def _ideal(cat: str) -> int:
     return int((CATEGORY_RULES.get(cat) or {}).get("ideal_circle") or 1)
 
 
-# 第 22 轮 R22-1：采集停止线按**点数**、覆盖度分子按**门槛项**，这两件事的单位不同
-# （停止线本身在 `poi_collector` 里刻意没改 —— 改它会多烧外呼配额，需单独拍板）。
-# 不对称不许只活在注释里：凡是把"门槛项不足"送上屏的地方，都附这句交代。
-# ⚠️ 这句与前端 `mocks/livingCircleReports.ts` 的 `_COV_STOP_LINE_NOTE` 逐字同源。
-_COV_STOP_LINE_NOTE = (
-    '另需交代：采集的停止线按圈内点数算（点数达到该类满分线即停止扩词），而这里的分子按门槛项算'
-    ' ⇒ 若圈内点数已达满分线而门槛项仍不足，不排除是采集先停的手，不能只读成「社区没有」。'
-)
-
-# 片 R23-A（乙）：除了「停止线先收手」，让"门槛项不足"失真的还有两种成因 ——
-# ①某词因预算**一次都没发起**（`evidence_starved_terms`）②某词发了但**没查全**
-# （`evidence_truncated_terms`，单页上限/收益止损）。两种都意味着"这一类的证据面不完整"，
-# 少交代一种，读者就只能把"不足"读成"社区没有"。
+# 「门槛项不足」这句话有**三种**真成因会让它失真，三种都只活在载荷里 ⇒ 各配一个子句上屏
+# （片 R23-A·乙 接前两种，片 R23-B1 接第三种）：
+# ①某词因预算**一次都没发起**（`caliber.evidence_starved_terms`）
+# ②某词发了但**没查全**（`evidence_truncated_terms`，单页上限 / 收益止损）
+# ③这一类**整轮没轮到扩词**（`evidence_expansion_unfunded_categories`，存的是裸类别名 ——
+#   那一轮连词名都还没产生）。少交代一种，读者就只能把"不足"读成"社区没有"。
+# ⚠️ 曾经还有**第四种**：采集按**点数**收手、分子按**门槛项**算，于是"点数够了就先停手"。
+#   它由 R23-B2 就地修掉（收手单位改到与分子同一个，见 `poi_collector._at_target`），
+#   所以那句"停止线按点数算"的交代**必须随之撤掉** —— 撤句与换单位同批，留着就是假话。
 # ⚠️ 下面六个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
 #    `tests/test_fixture_mirror.py` 的镜像判据钉住；拼装规则也只许一份：
 #    `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`。
@@ -273,7 +269,7 @@ def _med_cov_sentence(m: Optional[dict], caliber: Optional[dict]) -> str:
             f"相当于圈内基层医疗 ≥{need} 家；不等于「医疗不缺了」。"
             if cov >= 0.75 else
             f"覆盖度 {_pct(cov)} ⇒ 本节写「存在缺口」—— 这只指基层医疗门槛项不足 {need} 家"
-            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。" + _COV_STOP_LINE_NOTE
+            f"（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 {in_circle} 处）。"
             + _evidence_gap_note(caliber, "medical", str((m or {}).get("label") or "医疗")))
     return head + tail
 
@@ -284,7 +280,7 @@ def _edu_cov_sentence(e: Optional[dict], caliber: Optional[dict]) -> str:
     旧写法两句并排（凯里：圈内 15 处 + 覆盖度 33.3%），读者按点数复算 15÷3=100% ⇒ 只能认定
     数据对不上。⚠️ 本节的「覆盖达标」判的是**小学 1km 三要素事实**、置信度判的是**这个覆盖度
     是否 ≥75%** —— 两把尺不同，所以"达标 + 置信度 medium"是合法组合，必须当场说圆。
-    「未发起 / 没查全」那半句同样**只在 <75% 时挂**（本节没有分支句，所以闸门得显式写在这里）。
+    「没发起 / 没查全 / 整轮没扩词」那一句同样**只在 <75% 时挂**（本节没有分支句，所以闸门得显式写在这里）。
     """
     cov = _cov_score(e)
     req = (e or {}).get("required_in_circle")
@@ -296,7 +292,7 @@ def _edu_cov_sentence(e: Optional[dict], caliber: Optional[dict]) -> str:
     gap = '' if cov >= 0.75 else _evidence_gap_note(caliber, "education", str((e or {}).get("label") or "教育"))
     return (f"但覆盖度的分子只取{named} {req} 处 ÷ 满分线 {_ideal('education')} ⇒ {_pct(cov)} —— "
             f"「圈内 {in_circle} 处」与「覆盖度 {_pct(cov)}」是两个口径各自的数，"
-            f"不是同一个数的两次说法。" + _COV_STOP_LINE_NOTE + gap)
+            f"不是同一个数的两次说法。" + gap)
 
 
 def _chart_radar(lc: dict) -> dict:

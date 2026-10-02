@@ -257,6 +257,30 @@ def clean(items: List[Dict[str, Any]], dedupe_radius_m: float = 50.0) -> List[Di
     return dedupe_pois(out, dedupe_radius_m)
 
 
+def stamp_sub_kind(items: List[Dict[str, Any]], category: str) -> List[Dict[str, Any]]:
+    """给**采集侧原始点位**就地派生 `sub_kind`（唯一盖章点）；没建子类表的类别原样返回。
+
+    ⚠️ 传进来的名字必须是 `annotate_name` 加工**之前**的原始名（§二 规范句）：
+    被吸收子点拼进父名的「· 含大药房」一类后缀一旦参与，父点子类会被子点决定。
+    ⇒ 因此盖章只发生在两处：读侧 `to_stats`、采集侧收手闸（R23-B2），两处都在归并之前。
+    """
+    if category not in SUB_KIND_TABLE:
+        return items
+    return [{**it, "sub_kind": sub_kind_of(it, category)} for it in items]
+
+
+def required_count_from_raw_points(items_in_circle: List[Dict[str, Any]],
+                                   category: str) -> Optional[int]:
+    """门槛项数，但吃**还没盖章**的点位：盖章 + 计数一次做完（R23-B2 的采集侧收手闸用）。
+
+    存在理由：`required_count_from_points` 要求每颗点带 `sub_kind`，而采集侧的点位没有
+    —— 让调用方自己决定"要不要先盖章"就会留下第二份口径（忘了盖 ⇒ 恒 `None` ⇒ 收手闸
+    静默退回点数，看起来像"这一类没门槛口径"）。所以这里把两步焊成一个原子。
+    语义与 `required_count_from_points` 逐字相同（`None` = 这一类没有门槛项口径可言）。
+    """
+    return required_count_from_points(stamp_sub_kind(items_in_circle, category), category)
+
+
 def required_count_from_points(points: List[Dict[str, Any]],
                                category: str) -> Optional[int]:
     """门槛项数 = `cov-1` 的**分子**；返回 ``None`` = 这一批点位**没有门槛项口径可言**（走点数）。
@@ -325,10 +349,10 @@ def to_stats(
         in_circle = [it for it in items if point_in_ring((it["lng"], it["lat"]), reach_ring)]
         ideal = defn["ideal_circle"]
         # `to_stats` 吃的是**采集侧原始点位**（尚未被 `annotate_name` 拼过后缀）⇒ 在这里就地派生
-        # `sub_kind` 是安全的，也正是 §二 规范句要的"原始名那一侧"。没建表的类别不派生（省一次遍历，
-        # 且让 `coverage_from_points` 走它自己的"无表 ⇒ 点数"支，两支不在此重复)。
-        scored = ([{**it, "sub_kind": sub_kind_of(it, cat)} for it in in_circle]
-                  if cat in SUB_KIND_TABLE else in_circle)
+        # `sub_kind` 是安全的，也正是 §二 规范句要的"原始名那一侧"。盖章只住在 `stamp_sub_kind`
+        # 一处（采集侧收手闸 R23-B2 走同一处），没建表的类别原样返回 ⇒ 让
+        # `coverage_from_points` 走它自己的"无表 ⇒ 点数"支，两支不在此重复。
+        scored = stamp_sub_kind(in_circle, cat)
         coverage = coverage_from_points(scored, ideal, cat)
         labels = sub_kind_rule_labels(cat)
         nearest = None

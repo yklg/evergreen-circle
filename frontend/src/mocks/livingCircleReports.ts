@@ -62,19 +62,13 @@ function covBasisText(c: FacilityCategoryStat | undefined): string {
   return req == null ? '' : `（其中计入覆盖度分子的是门槛项 ${req} 处）`
 }
 
-/** 第 22 轮 R22-1：采集停止线按**圈内点数**、覆盖度分子按**门槛项**，单位不同 ⇒ "门槛项不足"
- *  有可能只是我们自己先停了手。前端拿不到满分线的数值（`ideal_circle` 不在报告 payload 里），
- *  所以这句写成**条件句**，两边都印得出、也不需要第二把尺。
- *  ⚠️ 与后端 `diagnosis_templates._COV_STOP_LINE_NOTE` **逐字同源**，由
- *  `backend/tests/test_fixture_mirror.py` 的镜像判据钉住（两份物理副本不能靠我记得）。 */
-const COV_STOP_LINE_NOTE =
-  '另需交代：采集的停止线按圈内点数算（点数达到该类满分线即停止扩词），而这里的分子按门槛项算' +
-  ' ⇒ 若圈内点数已达满分线而门槛项仍不足，不排除是采集先停的手，不能只读成「社区没有」。'
-
-/* 片 R23-A（乙）+ R23-B1：除「停止线先收手」外，让"门槛项不足"失真的还有三种成因 ——
+/* 「门槛项不足」这句话有**三种**真成因会让它失真，三种都只活在载荷里 ⇒ 各配一个子句上屏
+   （片 R23-A·乙 接前两种，R23-B1 接第三种）：
    ①词因预算**一次都没发起**（`evidence_starved_terms`）②词发了但**没查全**
    （`evidence_truncated_terms`）③这一类**整轮没跑过扩词**，额度在别的类上花完了
-   （`evidence_expansion_unfunded_categories`，R23-B1 新增）。
+   （`evidence_expansion_unfunded_categories`，存的是裸类别名 —— 那一轮连词名都还没产生）。
+   ⚠️ 曾经还有**第四种**：采集按点数收手、分子按门槛项算 ⇒ 那句"停止线按点数算"的交代由
+      R23-B2 随换单位一起撤掉（留着就是假话），两端同批，见 `poi_collector._at_target`。
    ⚠️ 下面六个常量与后端 `diagnosis_templates` 的同名件**逐字同源**，拼装规则也只许一份：
       `GAP_LEAD + 子句…(GAP_JOIN)… + GAP_TAIL`（镜像判据见 `test_fixture_mirror.py`）。
       「本次有 N 个…」写在**子句里**而不是前缀里，因为第③种不以计数开头。 */
@@ -112,7 +106,7 @@ function evidenceGapNote(
  *  措辞义务）：达标 = 覆盖度 ≥75%，**不等于**"医疗不缺了"；存在缺口 = 门槛项未计满，
  *  **不等于**"圈内没有医疗设施"。两个分支各说各的真话，不许共用一句。
  *  名单走 payload 的 `scored_as`（后端 `sub_kind_rule_labels` 发的规则名单）。
- *  「未发起 / 没查全」那半句**只挂缺口分支**：达标说的是分子已计满，证据面不完整不会让它变成假话。 */
+ *  「没发起 / 没查全 / 整轮没扩词」那一句**只挂缺口分支**：达标说的是分子已计满，证据面不完整不会让它变成假话。 */
 function medCoverageSentence(m: FacilityCategoryStat | undefined, caliber: LivingCircleReport['caliber']): string {
   const cov = pct(m?.coverage ?? 0)
   const req = m?.required_in_circle
@@ -123,20 +117,20 @@ function medCoverageSentence(m: FacilityCategoryStat | undefined, caliber: Livin
   return `其中计入覆盖度分子的是基层医疗门槛项 ${req} 处${named}，另有 ${rest} 处不计入分子（含诊所等不计分形状与判不准的存疑项）。覆盖度 ${cov} ⇒ 本节${
     ok
       ? '写「达标」—— 这只指该覆盖度 ≥75%（门槛项已计满），不等于「医疗不缺了」。'
-      : `写「存在缺口」—— 这只指基层医疗门槛项未计满（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 ${m?.in_circle ?? 0} 处）。${COV_STOP_LINE_NOTE}${evidenceGapNote(caliber, 'medical', m?.label ?? '医疗')}`
+      : `写「存在缺口」—— 这只指基层医疗门槛项未计满（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 ${m?.in_circle ?? 0} 处）。${evidenceGapNote(caliber, 'medical', m?.label ?? '医疗')}`
   }`
 }
 
 /** 教育节那句：把「圈内 15 处」与「覆盖度 33%」拆成两个口径各自的数 —— 旧写法把两句并排，
  *  读者按点数复算得 15÷3=100%，只能认定数据对不上（第 21 轮 P1-2 的现场形态）。
- *  「未发起 / 没查全」同样只在 <75% 时挂（本节没有分支句，闸门得显式写在这里）。 */
+ *  「没发起 / 没查全 / 整轮没扩词」同样只在 <75% 时挂（本节没有分支句，闸门得显式写在这里）。 */
 function eduCoverageSentence(e: FacilityCategoryStat | undefined, caliber: LivingCircleReport['caliber']): string {
   const cov = pct(e?.coverage ?? 0)
   const req = e?.required_in_circle
   if (req == null) return `覆盖度 ${cov} 按圈内点数计（这份快照出自门槛项口径之前）；`
   const named = e?.scored_as?.length ? `「${e.scored_as.join(' / ')}」` : '门槛项'
   const gap = (e?.coverage ?? 0) >= 0.75 ? '' : evidenceGapNote(caliber, 'education', e?.label ?? '教育')
-  return `但覆盖度的分子只取${named} ${req} 处，故为 ${cov} —— 「圈内 ${e?.in_circle ?? 0} 处」与「覆盖度 ${cov}」是两个口径各自的数，不是同一个数的两次说法；${COV_STOP_LINE_NOTE}${gap}`
+  return `但覆盖度的分子只取${named} ${req} 处，故为 ${cov} —— 「圈内 ${e?.in_circle ?? 0} 处」与「覆盖度 ${cov}」是两个口径各自的数，不是同一个数的两次说法；${gap}`
 }
 
 function fmtMin(m: number | null): string {

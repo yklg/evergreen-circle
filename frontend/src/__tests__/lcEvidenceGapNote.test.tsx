@@ -76,14 +76,11 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
       })(lc)
     })
     expect(para(r, 'medical')).toContain(NOTE_BOTH_MED)
-    // 读感回归（落地看图才发现的缺陷）：新句不许把前一句的结尾整句重说一遍。
-    // 停止线那句以「…不能只读成「社区没有」。」收尾，新句尾再挂一次同一句 = 同段两遍。
-    // ⚠️ 前缀「另需交代：」在同段出现**两次是合法的**（一次归停止线、一次归本刀），不作断言。
-    expect(para(r, 'medical').split('不能只读成「社区没有」').length - 1).toBe(1)
-    // 顺序也是契约：先"停止线单位"，再"没查过/没查全"
-    expect(para(r, 'medical').indexOf('不排除是采集先停的手')).toBeGreaterThan(-1)
-    expect(para(r, 'medical').indexOf('不排除是采集先停的手'))
-      .toBeLessThan(para(r, 'medical').indexOf(NOTE_BOTH_MED))
+    // R23-B2 撤句之后的读感契约：①那句"停止线按点数"的收尾必须**完全不在**（撤没撤干净
+    // 另有全仓扫的那条守卫，见 `test_fixture_mirror.py`）；②同段只许出现**一个**「另需交代：」
+    // —— 旧状态下"两次是合法的"那条豁免随撤句作废。
+    expect(para(r, 'medical')).not.toContain('不能只读成「社区没有」')
+    expect(para(r, 'medical').split('另需交代：').length - 1).toBe(1)
   })
 
   it('教育节只看见教育自己的词（全类混合表必须按类别筛）', () => {
@@ -104,7 +101,9 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
       setCaliber({ evidence_starved_terms: ['education:小学'], evidence_truncated_terms: ['shopping:超市'] })(lc)
     })
     expect(para(r, 'medical')).not.toContain('另需交代：本次有')
-    expect(para(r, 'medical')).toContain('不排除是采集先停的手')   // 片 1c-β 那句仍在，未被牵连
+    // 活证人：同一份载荷在教育节**确实印了** ⇒ 医疗节那句的缺席是"筛掉了"，不是"根本没产"。
+    // （撤掉停止线那句之后，医疗节这里再没有别的句子可以兼任这个证人。）
+    expect(para(r, 'education')).toContain(NOTE_EDU)
   })
 
   it('达标分支不印：覆盖度 ≥75% 时，"没查全"不会让"分子已计满"变假话', () => {
