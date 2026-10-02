@@ -451,6 +451,7 @@ def test_caliber_gap_literals_match_contract_fixture():
         _DIFF_DESC_CALIBER_GAP,
         _DIFF_DESC_COVERAGE_GAP,
         _CALIBER_GAP_ROWS,
+        _COVERAGE_GAP_ROWS,
     )
     from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
     from app.living_circle.scope import SCOPE_POLICY_VERSION
@@ -458,6 +459,14 @@ def test_caliber_gap_literals_match_contract_fixture():
     gap = CONTRACT["caliber_incomparable"]
     assert _DIFF_DESC_CALIBER_GAP == gap["desc"]
     assert list(_CALIBER_GAP_ROWS) == gap["applies_to"]
+    # #83：`applies_to` 是「受**某根**轴影响的行并集」，评分轴单独一行钉 ⇒ 并集与子集都由夹具
+    # 说话，代码里那两张表（`_GAP_AXES` 派生）不许再各抄一份行名。
+    assert list(_COVERAGE_GAP_ROWS) == gap["coverage_applies_to"], (
+        "评分轴的行级作用面与契约分叉 ⇒ 「只评分轴不同」那一档会重新拦掉它影响不到的行")
+    assert "服务盲区" not in _COVERAGE_GAP_ROWS, (
+        "盲区数只由判盲那把尺决定，评分轴拦不到它（这条就是 #83 本身）")
+    assert set(_COVERAGE_GAP_ROWS) <= set(_CALIBER_GAP_ROWS), (
+        "评分轴作用的行必须是「受口径影响行」的子集，否则并集键在说谎")
     assert SCOPE_POLICY_VERSION == gap["policy_version_current"], (
         "判盲口径版本换了却没改契约夹具 ⇒ 前端的「建议重新体检」提示会静默失灵")
     # 第二根轴（片 1c-β C3）：三句 + 版本各钉一次
@@ -472,15 +481,21 @@ def test_caliber_gap_literals_match_contract_fixture():
 
 
 def test_coverage_gap_blocks_only_the_verdict_rows():
-    """第二根轴：只有 `coverage_caliber_version` 不同 ⇒ 同样只拦那两行的**结论**。
+    """第二根轴：只有 `coverage_caliber_version` 不同 ⇒ 只拦**评分轴管得着的那些行**的结论。
 
     第 21 轮 P1-3 抓到的洞：判盲轴相同、评分轴一边缺键 ⇒ 旧实现判**可比**，而凯里那 3 分
     落差全部来自分子换代（圈内点数 → 门槛项数）。两根轴独立 ⇒ 三句结论句各说各的事。
+
+    ⚠️ #83 补的半边：上面那句"各说各的"当时只落在**横幅**上，行级仍是一把共用句喂两行 ⇒
+    「服务盲区」被评分轴拦下，而分子换代影响不到盲区数（10-03 真库三档配对实测现形）。
+    本用例因此改成**逐行**断言，并用"抹平评分轴后的同一对样本"当参照 —— 盲区行的结论
+    必须一字不变（不是"不等于某句"那种会被任意别的句子白送的断言）。
     """
     import copy
 
     from app.main import (
         _DIFF_DESC_BOTH_GAP,
+        _DIFF_DESC_CALIBER_GAP,
         _DIFF_DESC_COVERAGE_GAP,
         _lc_diff,
     )
@@ -488,7 +503,9 @@ def test_coverage_gap_blocks_only_the_verdict_rows():
     from app.living_circle.scope import SCOPE_POLICY_VERSION
 
     gap_rows = CONTRACT["caliber_incomparable"]["applies_to"]
+    cov_rows = CONTRACT["caliber_incomparable"]["coverage_applies_to"]
     plain_rows = ("15min 等时圈面积 (km²)", "可达采样点数", "POI 采集", "圈内 POI")
+    ALL_GAP_SENTENCES = (_DIFF_DESC_CALIBER_GAP, _DIFF_DESC_COVERAGE_GAP, _DIFF_DESC_BOTH_GAP)
 
     def stamp(fx: dict, ev, cov) -> dict:
         f = copy.deepcopy(fx)
@@ -508,10 +525,20 @@ def test_coverage_gap_blocks_only_the_verdict_rows():
         a = stamp(KAILI_FX, SCOPE_POLICY_VERSION, COVERAGE_CALIBER_VERSION)
         b = stamp(JINSONG_FX, SCOPE_POLICY_VERSION, legacy_cov)
         rows = by_metric(_lc_diff(a, b))
-        for metric in gap_rows:
+        # 参照：同一对样本、把评分轴抹平（两边都不声明）⇒ 除评分行外每行结论都必须相同
+        ref = by_metric(_lc_diff(stamp(KAILI_FX, SCOPE_POLICY_VERSION, None),
+                                 stamp(JINSONG_FX, SCOPE_POLICY_VERSION, None)))
+        for metric in cov_rows:
             assert rows[metric]["desc"] == _DIFF_DESC_COVERAGE_GAP, f"{legacy_cov}/{metric}"
             assert isinstance(rows[metric]["a_value"], (int, float)), (
                 f"{metric} 数值必须原样给出（拦结论不拦事实）")
+        for metric in gap_rows:
+            if metric in cov_rows:
+                continue
+            assert ref[metric]["desc"] not in ALL_GAP_SENTENCES, (
+                f"参照本身就被拦了 ⇒ 下面那条相等断言会恒真（{metric}）")
+            assert rows[metric]["desc"] == ref[metric]["desc"], (
+                f"{legacy_cov}/{metric}：评分轴不同，却改写了判盲轴才管得着的行（#83）")
         for metric in plain_rows:
             assert rows[metric]["desc"] != _DIFF_DESC_COVERAGE_GAP, metric
 
@@ -522,12 +549,19 @@ def test_coverage_gap_blocks_only_the_verdict_rows():
     for metric in gap_rows:
         assert rows[metric]["desc"] not in (_DIFF_DESC_COVERAGE_GAP, _DIFF_DESC_BOTH_GAP), metric
 
-    # ③ 两根轴同时不同 ⇒ 第三句（只报一半就是把评分账记到判盲头上）
+    # ③ 两根轴同时不同 ⇒ **两句不同**：评分行拿第三句，盲区行仍只拿判盲句
     a = stamp(KAILI_FX, SCOPE_POLICY_VERSION, COVERAGE_CALIBER_VERSION)
     b = stamp(JINSONG_FX, "ev-0-legacy", None)
     rows = by_metric(_lc_diff(a, b))
-    for metric in gap_rows:
+    for metric in cov_rows:
         assert rows[metric]["desc"] == _DIFF_DESC_BOTH_GAP, metric
+    for metric in gap_rows:
+        if metric in cov_rows:
+            continue
+        assert rows[metric]["desc"] == _DIFF_DESC_CALIBER_GAP, (
+            f"{metric} 在两轴都不同那档拿了第三句 ⇒ 把评分账记到了判盲头上")
+    assert rows["服务盲区"]["desc"] != rows["综合评分"]["desc"], (
+        "两行又共用一句 ⇒ 行级按轴分派没生效（#83 的机器形态）")
 
     # ④ 真数据自检（不合成）：出厂两份快照的评分轴关系决定第二句该不该亮
     shipped = by_metric(_lc_diff(copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)))
@@ -539,7 +573,7 @@ def test_coverage_gap_blocks_only_the_verdict_rows():
                 f"两份出厂快照评分轴相同（都是 "
                 f"{KAILI_FX['caliber'].get('coverage_caliber_version')}）却亮了评分句 ⇒ "
                 "守卫把「声明过」当成了「版本不同」")
-        else:
+        elif metric in cov_rows:
             assert shipped[metric]["desc"] in (_DIFF_DESC_COVERAGE_GAP, _DIFF_DESC_BOTH_GAP), (
                 f"两份出厂快照评分轴不同（{KAILI_FX['caliber'].get('coverage_caliber_version')}"
                 f" vs {JINSONG_FX['caliber'].get('coverage_caliber_version')}）却没拦结论")

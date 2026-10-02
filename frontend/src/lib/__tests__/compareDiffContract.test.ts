@@ -24,6 +24,7 @@ import {
   COMPARE_ROWS,
   COVERAGE_CALIBER_VERSION,
   COVERAGE_GAP_DESC,
+  COVERAGE_GAP_ROW_KEYS,
   caliberGapDesc,
   caliberPolicyGap,
   compareCaliberNotice,
@@ -69,6 +70,8 @@ interface Contract {
     coverage_desc: string
     both_desc: string
     coverage_stale_notice: string
+    // #83：评分轴的**行级**作用面（`applies_to` 是并集，不是"每行都吃满两根轴"）
+    coverage_applies_to: string[]
   }
 }
 
@@ -247,6 +250,15 @@ describe('P0-3 · 判盲口径版本守卫', () => {
     expect(SCOPE_POLICY_VERSION).toBe(GAP.policy_version_current)
     expect(CALIBER_GAP_DESC).toBe(GAP.desc)
     expect([...CALIBER_GAP_ROW_KEYS]).toEqual(GAP.applies_to)
+    // #83：`applies_to` 是「受**某根**轴影响的行**并集**」，评分轴的作用面单独一颗钉。
+    // 少了这条，「只评分轴不同」那一档会重新拦掉判盲轴才管得着的「服务盲区」行。
+    expect([...COVERAGE_GAP_ROW_KEYS]).toEqual(GAP.coverage_applies_to)
+    expect(COVERAGE_GAP_ROW_KEYS, '盲区数只由判盲那把尺决定，评分轴拦不到它').not.toContain(
+      '服务盲区',
+    )
+    for (const key of COVERAGE_GAP_ROW_KEYS) {
+      expect(CALIBER_GAP_ROW_KEYS, `${key} 不在并集里 ⇒ 并集在说谎`).toContain(key)
+    }
     // 受影响的行必须真存在于行定义表里（改名而忘了这里 ⇒ 守卫静默失灵）
     for (const key of CALIBER_GAP_ROW_KEYS) {
       expect(DEF_OF(key), `CALIBER_GAP_ROW_KEYS 里的 ${key} 不在 COMPARE_ROWS 中`).toBeTruthy()
@@ -371,7 +383,7 @@ describe('第二根轴 · 评分口径版本守卫', () => {
     expect(coverageCaliberVersionOf(JINSONG)).toBe(COV)
   })
 
-  it('只有评分轴不同（判盲轴两边相同）⇒ 那两行拦成第二句，其余行照常', () => {
+  it('只有评分轴不同（判盲轴两边相同）⇒ 只拦评分轴管得着的行，盲区行照常', () => {
     for (const covB of [null, 'cov-0']) {
       const a = stamp(KAILI, EV, COV)
       const b = stamp(JINSONG, EV, covB)
@@ -379,14 +391,26 @@ describe('第二根轴 · 评分口径版本守卫', () => {
       expect(coverageCaliberGap(a, b), `cov=${covB ?? '未声明'} 被判成同口径`).toBe(true)
       expect(caliberGapDesc(a, b)).toBe(COVERAGE_GAP_DESC)
       const rows = rowsOf(a, b)
-      for (const key of GAP.applies_to) {
+      // 参照：同一对样本、评分轴抹平 ⇒ 盲区行的结论必须**一字不变**（#83）。
+      // 不写死期望串，是因为它该等于 `compareDesc` 直出的那句 —— 而那句由行定义决定。
+      const plain = rowsOf(a, stamp(JINSONG, EV, COV))
+      for (const key of GAP.coverage_applies_to) {
         expect(rows[key].desc, `${key} 必须标注评分口径不可比`).toBe(COVERAGE_GAP_DESC)
+      }
+      for (const key of GAP.applies_to) {
+        if (GAP.coverage_applies_to.includes(key)) continue
+        expect(plain[key].desc, '参照本身就被拦了 ⇒ 下面那条相等断言会恒真').not.toBe(
+          COVERAGE_GAP_DESC,
+        )
+        expect(plain[key].desc).not.toBe(CALIBER_GAP_DESC)
+        expect(rows[key].desc, `${key}：评分轴不同，却改写了判盲轴才管得着的行`).toBe(
+          plain[key].desc,
+        )
       }
       for (const key of ['15min 等时圈面积 (km²)', '可达采样点数', 'POI 采集', '圈内 POI']) {
         expect(rows[key].desc).not.toBe(COVERAGE_GAP_DESC)
       }
       // 拦的是结论句不是数值：与"不拦"时逐字节相同
-      const plain = rowsOf(a, stamp(JINSONG, EV, COV))
       for (const key of GAP.applies_to) {
         expect([rows[key].a_value, rows[key].b_value]).toEqual([plain[key].a_value, plain[key].b_value])
       }
@@ -397,14 +421,19 @@ describe('第二根轴 · 评分口径版本守卫', () => {
     }
   })
 
-  it('两根轴同时不同 ⇒ 第三句（不许只报一半）', () => {
+  it('两根轴同时不同 ⇒ 评分行拿第三句、盲区行仍拿判盲句（不许两行共用一句）', () => {
     const a = stamp(KAILI, EV, COV)
     const b = stamp(JINSONG, 'ev-0-legacy', null)
     expect(caliberGapDesc(a, b)).toBe(BOTH_GAP_DESC)
     const rows = rowsOf(a, b)
-    for (const key of GAP.applies_to) {
+    for (const key of GAP.coverage_applies_to) {
       expect(rows[key].desc).toBe(BOTH_GAP_DESC)
     }
+    for (const key of GAP.applies_to) {
+      if (GAP.coverage_applies_to.includes(key)) continue
+      expect(rows[key].desc, `${key} 被第三句拦下 = 把评分账记到了判盲头上`).toBe(CALIBER_GAP_DESC)
+    }
+    expect(rows['服务盲区'].desc).not.toBe(rows['综合评分'].desc)
     // 单轴那两支必须各自仍可达到（否则第三句是吞掉前两句而不是并列）
     expect(caliberGapDesc(stamp(KAILI, EV, COV), stamp(JINSONG, 'ev-0-legacy', COV))).toBe(CALIBER_GAP_DESC)
     expect(caliberGapDesc(stamp(KAILI, EV, COV), stamp(JINSONG, EV, null))).toBe(COVERAGE_GAP_DESC)

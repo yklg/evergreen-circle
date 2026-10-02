@@ -665,7 +665,8 @@ class SpatialScope:
             # 后者今天只被 `bind_evidence` 填成**三要素那三类**（判定吃的是三类合取，
             # `degenerate_evidence_region` 也只遍历 `TRIAD_KEYS`），而封顶事实按**所有类**收集 ——
             # 拿前者的键集当"量过没有"的替身，等于让任何一个非三要素关键词类撞上接口封顶时
-            # 在绑定期抛错、整份报告失败（复现：`skip/tmp/repro_81.py`）。
+            # 在绑定期抛错、整份报告失败（复现判据：`tests/test_capped_category_gate.py` 里
+            # `test_live_chain_collect_then_bind_does_not_crash`，桩客户端、零真实调用）。
             # `stop_reasons` 与 `capped` **同源**（都由 `CollectionEvidence.per_term` 给），
             # 且区域路径下两者键集本来就相等 ⇒ 换对照面不松任何一道闸：类名写错、
             # 或在绑定之前就声明封顶（reasons 为空）照样红。

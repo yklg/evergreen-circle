@@ -922,7 +922,20 @@ _DIFF_DESC_CALIBER_GAP = "不可比 · 判盲口径已升级"
 # 由契约夹具钉住的常量。
 _DIFF_DESC_COVERAGE_GAP = "不可比 · 评分口径已升级（点数 → 门槛项）"
 _DIFF_DESC_BOTH_GAP = "不可比 · 判盲与评分口径都已升级"
-_CALIBER_GAP_ROWS: Tuple[str, ...] = ("服务盲区", "综合评分")
+# 每行**受哪几根口径轴影响**（`ev` = 判盲那把尺，`cov` = 覆盖度分子）。
+# ⚠️ #83：原来这里是一行 `_CALIBER_GAP_ROWS = ("服务盲区", "综合评分")` + 一把「任一根轴不同」
+# 的结论句喂给两行 —— 那会替评分轴撒谎。盲区数只由判盲尺决定（1km 内有无菜市场/药店/小学），
+# `cov-1` 换的是分子：两侧 `ev` 相同而 `cov` 不同那一档，盲区行其实**可比**
+# （10-03 真库实测：新报告 vs 09-30 那份，盲区 1 vs 1，屏上却写「不可比 · 评分口径已升级」）。
+# 计划 §22⑫ 与 `tmp/plan-r23h-row-axis.md`；前端 `lib/livingCircle.ts` 同形状同处置。
+_GAP_AXES: Dict[str, Tuple[str, ...]] = {
+    "服务盲区": ("ev",),
+    "综合评分": ("ev", "cov"),  # 分数两把尺都吃：证据域会变、分子也会变
+}
+# 受**某根**轴影响的行并集（契约夹具 `gap.applies_to` 钉的是这个集合与顺序）。
+_CALIBER_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if ax)
+# 评分轴拦得住的行（契约夹具 `gap.coverage_applies_to`）⇒ 盲区行**不在**其列，这条就是 #83。
+_COVERAGE_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "cov" in ax)
 
 
 def _as_num(x: Any) -> float:
@@ -951,6 +964,26 @@ def _diff_desc(better: str, template: str, na: float, nb: float,
     return f"{name_a if a_wins else name_b}{template}"
 
 
+def _row_gap_desc(metric: str, ev_gap: bool, cov_gap: bool) -> Optional[str]:
+    """**这一行**的口径不可比结论（None ⇒ 这一行可比），只看影响得到它的那几根轴（#83）。
+
+    与「两轴合起来那一句」分家是必须的：横幅问的是「这对报告整体能不能并排看」（那两句在
+    前端 `lib/livingCircle.compareCaliberNotices()` 由两份载荷现算，后端没有出口），行级问的是
+    「这一行的两个数是不是同一把尺量出来的」。两轴都不同那一档两者就不同 —— 评分行拿第三句、
+    盲区行仍只拿判盲句（分子换代不改盲区数，把第三句挂上去等于把评分账记到判盲头上）。
+    """
+    axes = _GAP_AXES.get(metric, ())
+    ev = ev_gap and "ev" in axes
+    cov = cov_gap and "cov" in axes
+    if ev and cov:
+        return _DIFF_DESC_BOTH_GAP
+    if ev:
+        return _DIFF_DESC_CALIBER_GAP
+    if cov:
+        return _DIFF_DESC_COVERAGE_GAP
+    return None
+
+
 def _lc_diff(a: dict, b: dict) -> List[dict]:
     """双样例指标差异表（对齐前端 diff 字段：metric / a_value / b_value / desc）。
 
@@ -969,6 +1002,11 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     第 21 轮 P1-3：同一对行还要看**第二根轴** `caliber.coverage_caliber_version`（覆盖度分子
     从圈内点数换成门槛项数）。两根轴独立 ⇒ 三句结论句各说各的事：只判盲不同 / 只评分不同 /
     两轴都不同。"判盲相同但评分轴一边缺键"这一支以前被判**可比**，而它的分差全部来自分子换代。
+
+    #83 补的那半：上面那句「同一对行」只对**判盲轴**成立。第二根轴接进来时行级守卫沿用了一把
+    「任一根轴不同」的共用结论句 ⇒ 只评分轴不同那一档，「服务盲区」也被写上「不可比 · 评分口径
+    已升级」，而分子换代影响不到盲区数（10-03 真库配对实测：两侧 `ev-2` 相同、盲区 1 vs 1）。
+    现在行级按 `_GAP_AXES` 分派：盲区行只吃 `ev`，评分行吃 `ev` + `cov`。
 
     实现形态：**一张行规格表 + 一个循环**。加一行只改这张表一处 —— 而不是在返回值里
     手工拼一行（那样行名/行序/句式会分散，与前端分叉时无人发现）。
@@ -995,14 +1033,10 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     b_cov = (b.get("caliber") or {}).get("coverage_caliber_version")
     ev_gap = a_pol != b_pol
     cov_gap = a_cov != b_cov
-    if ev_gap and cov_gap:
-        gap_desc = _DIFF_DESC_BOTH_GAP
-    elif ev_gap:
-        gap_desc = _DIFF_DESC_CALIBER_GAP
-    elif cov_gap:
-        gap_desc = _DIFF_DESC_COVERAGE_GAP
-    else:
-        gap_desc = None
+    # ⚠️ 这里**不再**先塌成一句「两轴合起来的结论句」（#83）：那把句在旧实现里同时喂给
+    # 「服务盲区」与「综合评分」两行，于是评分轴的差异会去拦一个它影响不到的行。两轴各自
+    # 传给 `_row_gap_desc()`，由它按行的轴归属决定拦不拦、说哪句。对比页**横幅**那两句不在
+    # 后端（前端 `lib/livingCircle.compareCaliberNotices()` 由两份载荷现算），故此处不留共用值。
     sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
     ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
     # 「可达采样点数」走 sampling_counts()（叙述文案的**唯一取值口径**）：汇总数缺失的历史快照
@@ -1041,10 +1075,9 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
         # 口径版本这档比的是「同一指标换了一把尺」，数值本身没坏，但差值没有意义。
         if off and off_desc:
             desc = off_desc
-        elif gap_desc and metric in _CALIBER_GAP_ROWS:
-            desc = gap_desc
         else:
-            desc = _diff_desc(better, template, na, nb)
+            # 行级按轴分派（#83）：这一行受哪几根轴影响，就只有那几根轴的差异拦得住它。
+            desc = _row_gap_desc(metric, ev_gap, cov_gap) or _diff_desc(better, template, na, nb)
         rows.append({"metric": metric, "a_value": va, "b_value": vb, "desc": desc})
     return rows
 

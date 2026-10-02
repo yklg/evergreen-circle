@@ -878,7 +878,6 @@ export function compareRows(
   nameA: string,
   nameB: string,
 ): CompareDiffRow[] {
-  const gapDesc = caliberGapDesc(lcA, lcB)
   return COMPARE_ROWS.map((def) => {
     const na = def.num(lcA)
     const nb = def.num(lcB)
@@ -886,10 +885,9 @@ export function compareRows(
       metric: def.key,
       a_value: na,
       b_value: nb,
-      desc:
-        gapDesc && (CALIBER_GAP_ROW_KEYS as readonly string[]).includes(def.key)
-          ? gapDesc
-          : compareDesc(def, na, nb, nameA, nameB),
+      // 行级按轴分派（#83）：横幅那一句是「两轴合起来」（`caliberGapDesc`），不能直接下发给
+      // 每一行 —— 那样评分轴的差异会去拦一个它影响不到的行。每行只吃 `GAP_AXES` 写着的那几根轴。
+      desc: rowGapDesc(def.key, lcA, lcB) ?? compareDesc(def, na, nb, nameA, nameB),
     }
   })
 }
@@ -999,9 +997,48 @@ export function caliberGapDesc(
   return null
 }
 
-/** 受口径版本影响的两行行名 —— 与 `COMPARE_ROWS` 的 `key`、后端 `_CALIBER_GAP_ROWS` 同源。
- *  「POI 采集」那类**事实计数**不在其列：换判盲尺子不改变采到多少设施。 */
-export const CALIBER_GAP_ROW_KEYS = ['服务盲区', '综合评分'] as const
+/** 每行**受哪几根口径轴影响**（`ev` = 判盲那把尺、`cov` = 覆盖度分子）—— 与后端
+ *  `app/main.py` 的 `_GAP_AXES` 同源，行名与轴归属由契约夹具 `gap.applies_to` /
+ *  `gap.coverage_applies_to` 在两侧各自钉住。
+ *
+ *  ⚠️ #83：这里原来只有「一行行名 + 一把共用结论句」，于是**只评分轴不同**那一档，
+ *  「服务盲区」也被写成「不可比 · 评分口径已升级（点数 → 门槛项）」—— 而分子换代影响不到
+ *  盲区数（10-03 真库配对实测：两侧 `ev-2` 相同、盲区 1 vs 1，本该「持平」）。横幅那两句
+ *  仍按「两轴合起来」说（`caliberGapDesc` 逐字不动），**行级**必须按轴分派。 */
+const GAP_AXES: Record<string, readonly ('ev' | 'cov')[]> = {
+  服务盲区: ['ev'],
+  综合评分: ['ev', 'cov'],
+}
+
+/** 受**某根**轴影响的行并集（契约 `gap.applies_to`）。「POI 采集」那类**事实计数**不在其列：
+ *  换判盲尺子不改变采到多少设施。 */
+export const CALIBER_GAP_ROW_KEYS: readonly string[] = Object.keys(GAP_AXES)
+
+/** 评分轴拦得住的行（契约 `gap.coverage_applies_to`）⇒ **盲区行不在其列**，这条就是 #83。 */
+export const COVERAGE_GAP_ROW_KEYS: readonly string[] = CALIBER_GAP_ROW_KEYS.filter((key) =>
+  GAP_AXES[key]?.includes('cov'),
+)
+
+/**
+ * **这一行**的口径不可比结论（null ⇒ 这一行可比），只看影响得到它的那几根轴。
+ *
+ * 与 `caliberGapDesc()`（两轴合起来那一句，供对比页横幅）分家是必须的：横幅问「这对报告
+ * 整体能不能并排看」，行级问「这一行的两个数是不是同一把尺量出来的」。两轴都不同那一档
+ * 两者就不同 —— 评分行拿第三句，盲区行仍只拿判盲句。
+ */
+export function rowGapDesc(
+  key: string,
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string | null {
+  const axes = GAP_AXES[key] ?? []
+  const ev = caliberPolicyGap(a, b) && axes.includes('ev')
+  const cov = coverageCaliberGap(a, b) && axes.includes('cov')
+  if (ev && cov) return BOTH_GAP_DESC
+  if (ev) return CALIBER_GAP_DESC
+  if (cov) return COVERAGE_GAP_DESC
+  return null
+}
 
 /** 判盲口径版本号安全取值：旧快照 / 离线骨架没这个键 ⇒ `null`（不是空串）。 */
 export function policyVersionOf(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
