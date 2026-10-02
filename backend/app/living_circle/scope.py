@@ -462,6 +462,14 @@ class SpatialScope:
     ``evidence_capped_categories`` 事后(举证)  哪些类撞了**接口自有**上限（≠ 我们没查）
     ============================  =========  =========================================
 
+    ⚠️ ``evidence_frontier_m`` 的**键集不是一张全类表**：区域路径下它是这块 region 的全部类别，
+    而标量路径（= 今天唯一的绑定点 ``bind_evidence``）只填**三要素那三类** —— 判定吃的是三类合取，
+    ``degenerate_evidence_region`` 也只遍历 ``TRIAD_KEYS``。所以"这一类量过没有"**不许**拿它的键集
+    当判据（那正是 #81 的形状：非三要素类撞封顶被读成"类名写错"，绑定期抛错、整份报告失败）；
+    要问"量过没有"读 ``evidence_stop_reasons``，它与 ``capped`` 同源。
+    反过来，``category_bound_m`` 对表里没有的类回 ``0.0`` —— 那是"没人问过"而不是"边界为 0"，
+    今天没有任何消费者问非三要素类，故未改；要改就连键集一起扩（计划 §21④ 甲档，未拍）。
+
     旧版只有前三行，于是「我请求了多大」被直接当成「我证明了多大」用 —— 分页饱和在类型
     上无处安放，只能被省略；而省略的收益（少写代码）不可见、代价（盲区少报）方向上让
     分数变好，缺陷于是被评分函数**奖励**。补上后三行，才是这次修复的正解。
@@ -651,14 +659,22 @@ class SpatialScope:
                     f"< 请求 {self.collect_radius_m:.0f}m —— 有词被截断/饿死/熔断时不得 complete=True"
                 )
         if self.evidence_capped_categories:
-            # 名单只认「这次真量过边界的那些类」。写错一个类名不会报错、只会让第三态
+            # 名单只认「这次真有过实测举证行的类」。写错一个类名不会报错、只会让第三态
             # 静默变 0 —— 而静默变 0 恰是本轮要消灭的形状（把没归因的缺口说成没有缺口）。
+            # ⚠️ 对照面是 `evidence_stop_reasons` 而**不是** `evidence_frontier_m`（#81）：
+            # 后者今天只被 `bind_evidence` 填成**三要素那三类**（判定吃的是三类合取，
+            # `degenerate_evidence_region` 也只遍历 `TRIAD_KEYS`），而封顶事实按**所有类**收集 ——
+            # 拿前者的键集当"量过没有"的替身，等于让任何一个非三要素关键词类撞上接口封顶时
+            # 在绑定期抛错、整份报告失败（复现：`skip/tmp/repro_81.py`）。
+            # `stop_reasons` 与 `capped` **同源**（都由 `CollectionEvidence.per_term` 给），
+            # 且区域路径下两者键集本来就相等 ⇒ 换对照面不松任何一道闸：类名写错、
+            # 或在绑定之前就声明封顶（reasons 为空）照样红。
             orphan = tuple(c for c in self.evidence_capped_categories
-                           if c not in self.evidence_frontier_m)
+                           if c not in self.evidence_stop_reasons)
             if orphan:
                 raise ValueError(
-                    f"封顶名单里的 {orphan} 没有对应的实测边界 ⇒ 类名写错，"
-                    "或在绑定边界之前就声明了封顶"
+                    f"封顶名单里的 {orphan} 没有对应的实测举证行 ⇒ 类名写错，"
+                    "或在绑定证据之前就声明了封顶"
                 )
         # 逐圆盘式（与上面的标量式**并存**校验；单圆盘下两者等价 ⇒ 批次一零回归可被证明）：
         # 每个锚点的请求都不得越过本次体检的采集半径。越过只有两种可能 —— 锚点用了另一套

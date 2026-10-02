@@ -1236,7 +1236,14 @@ def _thin_evidence_scope(bound_m: float, capped=(), bounds=None):
     `bounds` 可逐类给不同边界（缺省三类同为 `bound_m`）—— 用来造「稠密类被卡住、
     稀疏类却查全了」这种真实形状（`capability_manifest.json` 凯里实测：药店 60 条要 3 页，
     菜市场与小学一页就穷尽）。
+
+    ⚠️ #81 之后本助手必须**同时**给 `stop_reasons`：那道封顶闸的对照面从"有实测边界的类"
+    换成了"有实测举证行的类"（= `evidence_stop_reasons` 的键集，与 `capped` 同源），
+    只报封顶却不报原因的载荷在真接口上根本产不出来（`bind_evidence` 两件一起交）。
+    原因按本助手已声明的事实给，不新编：`capped` 里的类 = 接口断页，其余 = 我们页深不够
+    —— 正是上面那段分界说的两件事。
     """
+    from app.living_circle.baidu_client import STOP_PAGE_CAP, STOP_SERVER_CAP
     from app.living_circle.caliber import get_caliber
     from app.living_circle.geo_utils import xy_to_lnglat
     from app.living_circle.scope import TRIAD_KEYS, SpatialScope
@@ -1250,7 +1257,10 @@ def _thin_evidence_scope(bound_m: float, capped=(), bounds=None):
     zone = {"minutes": 20.0, "geojson": {"type": "Polygon", "coordinates": [[list(p) for p in ring]]}}
     scope = SpatialScope.from_reach_zone(get_caliber("walking"), KAILI_CENTER, 2500.0, zone)
     fr = dict(bounds) if bounds else {k: float(bound_m) for k in TRIAD_KEYS}
-    scope = scope.with_evidence(fr, complete=False, capped=tuple(capped))
+    capped = tuple(capped)
+    scope = scope.with_evidence(fr, complete=False, capped=capped,
+                                stop_reasons={k: (STOP_SERVER_CAP if k in capped
+                                                  else STOP_PAGE_CAP) for k in fr})
     scope.invariant()
     return scope
 

@@ -139,10 +139,12 @@ def test_server_capped_category_enters_via_capped_not_via_truncated():
     ②R23-D 之前这条断的是「truncated 里有它、正文说'发了但没查全'」—— 那是**归责错位**
     （读者会以为加预算能拿到），现在钉的是"该说的是接口断了页"。
 
-    ⚠️ 类别用 `pharmacy`（三要素键）而不是随手一个关键词类：`scope.py:653` 那道闸要求
-    "封顶名单 ⊆ 有实测边界的类"，而 `bind_evidence` 只把**三要素那三类**的边界交进去 ⇒
-    任何非三要素类撞封顶都会在这条链上抛 `ValueError`（本文件第 4 条改走真入口时现形，
-    另案 #81）。这里绕开它是为了不把两件事混在一批里，**不是**说它不存在。
+    ⚠️ 类别用 `pharmacy`（三要素键）而不是随手一个关键词类：本条断的是**并集归责**，
+    而 `bind_evidence` 只把三要素那三类的边界交进 `evidence_frontier_m`。历史上那与
+    `scope.invariant` 那道封顶闸的对照面混过一件事 —— 非三要素类撞封顶会在绑定期被
+    读成"类名写错"并抛 `ValueError`（#81，本文件第 4 条改走真入口时现形）。**#81 已修**
+    （闸改为比对 `evidence_stop_reasons`，判据见 `test_capped_category_gate.py`），
+    这里仍留 `pharmacy` 是因为换类不增加本条的覆盖面，只把它和新那批混成一件事。
     """
     ev = _ev(per_term=[_row("pharmacy", "药店", STOP_SERVER_CAP)])
     assert ev.capped_categories == ("pharmacy",)

@@ -661,10 +661,12 @@ function Legend() {
             ⇒ 存量 30 份报告<b>都没有这三个新键</b>（<code>out_of_budget</code> / <code>capped_terms</code> /
             <code>failed_terms</code>），一律读作"不知道"，而不是"没有类别扩到一半停了 / 没有词被断页 / 没有词没成"。
             <br />
-            ⚠️ 本刀<b>顺手挖出但没修</b>的一条（计划 §20⑦ / 台账 #81）：<code>scope.py:653</code> 那道
-            "封顶名单 ⊆ 有实测边界的类"闸，只认 <code>bind_evidence</code> 交进去的<b>三要素那三类</b>边界 ⇒
-            任何<b>非三要素</b>关键词类撞上 <code>server_cap</code>，live 路径会在绑定期抛
-            <code>ValueError</code>、整份报告失败。今天没现形只因为真跑那两次的 capped 都是<b>空</b>。
+            ⚠️ 本刀挖出、<b>下一刀已修</b>的一条（计划 §20⑦ / §21 / 台账 #81）：<code>scope.py</code> 那道
+            "封顶名单 ⊆ 有实测边界的类"闸拿错了对照面 —— 边界表只认 <code>bind_evidence</code> 交进去的
+            <b>三要素那三类</b>，而封顶事实按<b>所有类</b>收集 ⇒ 任何<b>非三要素</b>关键词类撞上
+            <code>server_cap</code>，live 路径会在绑定期抛 <code>ValueError</code>、整份报告失败。
+            今天没现形只因为真跑那两次的 capped 都是<b>空</b>。现已改为比对 <code>evidence_stop_reasons</code>
+            （与 <code>capped</code> 同源），判据 <code>tests/test_capped_category_gate.py</code>。
             <br />
             <b>本屏同批改掉的一处假话</b>：第三种成因那句原写「一个扩词词都没发起」，而一类<b>首次</b>扩词就撞
             接口失败、此时额度归零 ⇒ 它<b>发起过</b>（<code>_record_failure</code> 留了 <code>api_error</code> 行），
