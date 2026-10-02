@@ -1,20 +1,23 @@
-"""片 R23-A（乙）+ R23-B1 ·「没查过 / 没查全 / 整轮没扩词」那一句的判据。
+"""片 R23-A（乙）+ R23-B1/B3 ·「没查过 / 没查全 / 整轮没扩词 / 扩到一半没钱」那一句的判据。
 
-报告写「门槛项不足 / 存在缺口」时有**四种**真成因，本文件负责后三种：
-①采集**先按点数收了手**（而分子按门槛项）—— 已由 R23-B2 就地修掉：收手单位改到与分子同一个
-  （`poi_collector._at_target`），那句交代随之撤走，撤没撤干净由
+编号与生产注释同源（`diagnosis_templates` 那一段，改一处要改两处）：报告写「门槛项不足 /
+存在缺口」这句话，今天有**四种**真成因会让它失真，另有一种**已被修掉**的：
+①某词因预算**一次都没发起**（`caliber.evidence_starved_terms`）
+②某词发了但**没查全**（`caliber.evidence_truncated_terms`）
+③这一类**整轮没轮到扩词**（`caliber.evidence_expansion_unfunded_categories`，见 `test_expansion_unfunded.py`）
+④这一类**扩过词、却在额度见底时还没达标**（`evidence_expansion_out_of_budget_categories`，
+  见 `test_expansion_out_of_budget.py`；本文件只端到端钉它挂上教育节那一句）
+⚠️ 曾经的第五种「采集先按点数收手」由 R23-B2 就地修掉（收手单位改到与分子同一个，
+  `poi_collector._at_target`），那句交代随之撤走，撤没撤干净由
   `test_fixture_mirror.py::test_retired_stop_line_note_is_gone_from_both_ends` 全仓扫
-②某词因预算**一次都没发起**（`caliber.evidence_starved_terms`）
-③某词发了但**没查全**（`caliber.evidence_truncated_terms`）
-④这一类**整轮没轮到扩词**（`caliber.evidence_expansion_unfunded_categories`，见 `test_expansion_unfunded.py`）
 
 矩阵（每格断的都是**将来上屏的那句话**，预期值是按规格手写的字面量，不是从实现里回抄的）：
 
 | # | 输入 | 断言 |
 |---|---|---|
-| 1 | ②③同时命中 | 一句里并列，计数与词名都来自载荷 |
-| 2 | 只有 ② | 只出「未发起」那半 |
-| 3 | 只有 ③ | 只出「没查全」那半 |
+| 1 | ①②同时命中 | 一句里并列，计数与词名都来自载荷 |
+| 2 | 只有 ① | 只出「未发起」那半 |
+| 3 | 只有 ② | 只出「没查全」那半 |
 | 4 | 词全属**别类** | 空串（全类混合表必须按 `{category}:` 筛，否则拿别类的账冒充本类结论） |
 | 5 | 键缺席 / 空表 / 非列表 | 空串 —— 不印，也**不写「0 个」**（缺席=不知道，空表=查全了） |
 | 6 | 达标分支（≥75%） | 整句不挂（达标说的是分子已计满，证据面不完整不会让它变假话） |
@@ -144,7 +147,22 @@ def test_legacy_snapshot_without_numerator_key_prints_neither_note():
     assert dt._edu_cov_sentence(_edu(req=None), cal) == "覆盖度 33% 按圈内点数计（这份快照出自门槛项口径之前）。"
 
 
-# ───────────────────────── 8：两份演示夹具今天都不该印 ─────────────────────────
+# ───────────────────────── 8：④ 扩到一半没钱 ⇒ 挂到那一类的正文上 ─────────────────────────
+
+def test_out_of_budget_clause_rides_only_the_class_it_names():
+    """§11 实测那一格（教育扩了 4 轮、门槛项 1/3）将来上屏的形状。
+
+    反向对照是必须的：类别表若被读成"全类通用"，医疗节会印出教育那笔账。
+    """
+    cal = {"evidence_expansion_out_of_budget_categories": ["education"]}
+    hit = dt._edu_cov_sentence(_edu(), cal)
+    assert hit.endswith("另需交代：" + dt._GAP_OUT_OF_BUDGET + dt._GAP_TAIL), hit[-160:]
+    assert hit.count(dt._GAP_LEAD) == 1, hit[-200:]
+    miss = dt._med_cov_sentence(_med(), cal)
+    assert dt._GAP_OUT_OF_BUDGET not in miss, f"医疗节替教育交代了：{miss[-160:]}"
+
+
+# ───────────────────────── 9：两份演示夹具今天都不该印 ─────────────────────────
 
 def test_shipped_fixtures_still_print_nothing():
     """夹具读数没变 ⇒ 落地当天演示报告正文与今天逐字相同（这半是回归网，不是新行为）。

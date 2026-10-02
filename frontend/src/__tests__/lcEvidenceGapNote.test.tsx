@@ -152,6 +152,38 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
       '另需交代：本次有 1 个医疗类检索词因预算未发起（medical:社区医院）；本轮没有额度为这一类扩词（一个扩词词都没发起）')
   })
 
+  it('第四种成因（R23-B3 新键）：扩到一半没额度的类才印，别类不印', () => {
+    const OUT = '另需交代：这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）' + TAIL
+    // §11 实测那一格的形状：教育扩了 4 轮、门槛项 1/3，之前四个键都是空的 ⇒ 这句话今天才第一次有主
+    const r = buildWith('kaili', (lc) => {
+      setCaliber({ evidence_expansion_out_of_budget_categories: ['education'] })(lc)
+    })
+    expect(para(r, 'education')).toContain(OUT)
+    expect(para(r, 'education').split('另需交代：').length - 1, `前缀长了：${para(r, 'education')}`).toBe(1)
+    // 反向对照：把医疗也压成缺口分支（否则它本来就因达标不印，否证恒真），类别筛一坏它就会印
+    const med = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({ evidence_expansion_out_of_budget_categories: ['education'] })(lc)
+    })
+    expect(para(med, 'medical'), '教育的账印到了医疗节头上')
+      .not.toContain('这一类的扩词在到达标线之前')
+    expect(para(med, 'medical')).not.toContain('另需交代：这一类的扩词')
+  })
+
+  it('第三、四种成因并列：两条都在、共用一个前缀（顺序即键序）', () => {
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({
+        evidence_expansion_unfunded_categories: ['medical'],
+        evidence_expansion_out_of_budget_categories: ['medical'],
+      })(lc)
+    })
+    expect(para(r, 'medical')).toContain(
+      '另需交代：本轮没有额度为这一类扩词（一个扩词词都没发起）'
+      + '；这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）')
+    expect(para(r, 'medical').split('另需交代：').length - 1).toBe(1)
+  })
+
   it('空表与键缺席都不许回落成「0 个」（前者=查全了、后者=不知道）', () => {
     for (const patch of [{ evidence_starved_terms: [] }, {}]) {
       const r = buildWith('kaili', (lc) => {

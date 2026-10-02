@@ -1153,6 +1153,10 @@ export interface LivingCircleReport {
      *  这里连词都没被推导出来（额度在别的类上花完了）⇒ 只能报到**类**这一级。
      *  ⚠️ 缺键 = 这份报告出自 R23-B1 之前，读作"不知道"，**不得**当成"没有类别被落下"。 */
     evidence_expansion_unfunded_categories?: string[]
+    /** **扩过词、却在本类额度见底时仍未达标**的类别（R23-B3）。与上一条的分界是"跑没跑过"：
+     *  unfunded 是排程没摊到，本条是摊到了但额度太薄 ⇒ 读者的判断不同，前端也不合并。
+     *  ⚠️ 缺键 = 这份报告出自 R23-B3 之前，读作"不知道"，**不得**当成"没有类别扩到一半停了"。 */
+    evidence_expansion_out_of_budget_categories?: string[]
     /* ── 片 4/5 · 逐锚点举证与取证账目 ──
        两把尺并存这件事要说清：上面那批 `evidence_*` **标量**仍是旧口径（批次二才收敛），
        而下面这两块是逐盘/逐趟的明细 —— 由 `scope.payload(judged_region=/forensic=)` 跟着

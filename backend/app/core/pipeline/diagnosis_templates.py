@@ -194,35 +194,40 @@ def _ideal(cat: str) -> int:
     return int((CATEGORY_RULES.get(cat) or {}).get("ideal_circle") or 1)
 
 
-# 「门槛项不足」这句话有**三种**真成因会让它失真，三种都只活在载荷里 ⇒ 各配一个子句上屏
-# （片 R23-A·乙 接前两种，片 R23-B1 接第三种）：
+# 「门槛项不足」这句话有**四种**真成因会让它失真，四种都只活在载荷里 ⇒ 各配一个子句上屏
+# （片 R23-A·乙 接前两种，片 R23-B1 接第三种，片 R23-B3 接第四种）：
 # ①某词因预算**一次都没发起**（`caliber.evidence_starved_terms`）
 # ②某词发了但**没查全**（`evidence_truncated_terms`，单页上限 / 收益止损）
 # ③这一类**整轮没轮到扩词**（`evidence_expansion_unfunded_categories`，存的是裸类别名 ——
-#   那一轮连词名都还没产生）。少交代一种，读者就只能把"不足"读成"社区没有"。
-# ⚠️ 曾经还有**第四种**：采集按**点数**收手、分子按**门槛项**算，于是"点数够了就先停手"。
+#   那一轮连词名都还没产生）。
+# ④这一类**扩过词、却在额度见底时还没达标**（`evidence_expansion_out_of_budget_categories`，
+#   同样存裸类别名）。③④ 是"钱不够"的两种形状：③是排程没摊到，④是摊到了但额度太薄 ——
+#   合并就看不出该怪排程还是怪额度。少交代一种，读者就只能把"不足"读成"社区没有"。
+# ⚠️ 曾经还有**第五种**：采集按**点数**收手、分子按**门槛项**算，于是"点数够了就先停手"。
 #   它由 R23-B2 就地修掉（收手单位改到与分子同一个，见 `poi_collector._at_target`），
 #   所以那句"停止线按点数算"的交代**必须随之撤掉** —— 撤句与换单位同批，留着就是假话。
-# ⚠️ 下面六个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
+# ⚠️ 下面七个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
 #    `tests/test_fixture_mirror.py` 的镜像判据钉住；拼装规则也只许一份：
 #    `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`。
-#    「本次有 N 个…」写在**子句里**而不是前缀里，是因为第三种子句（整轮没扩词）不以计数开头。
+#    「本次有 N 个…」写在**子句里**而不是前缀里，是因为第三、四种子句（都没扩够）不以计数开头。
 _GAP_LEAD = '另需交代：'
 _GAP_STARVED = '本次有 {n} 个{label}类检索词因预算未发起（{terms}）'
 _GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（{terms}）'
 _GAP_UNFUNDED = '本轮没有额度为这一类扩词（一个扩词词都没发起）'
+_GAP_OUT_OF_BUDGET = '这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）'
 _GAP_JOIN = '；'
 _GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 
 
 def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> str:
-    """本类「没查过 / 没查全 / 整轮没扩词」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
+    """本类「没查过 / 没查全 / 整轮没扩词 / 扩到一半没钱」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
 
-    只读载荷、不重判。三个来源是**三种不同缺陷**（`scope.py` 那处注释分职），所以各读各的键：
+    只读载荷、不重判。四个来源是**四种不同缺陷**（`scope.py` 那处注释分职），所以各读各的键：
     - `evidence_starved_terms` / `evidence_truncated_terms` 是**全类混合表**，形如 `类:词`，
       必须按 `{category}:` 前缀筛本类，否则教育类的账会印到医疗节头上；
-    - `evidence_expansion_unfunded_categories` 是**类别表**（R23-B1），按类名整等判定 ——
-      它没有"词"可指（那一轮的词根本没被推导出来）。
+    - `evidence_expansion_unfunded_categories`（R23-B1）/ `evidence_expansion_out_of_budget_categories`
+      （R23-B3）是**类别表**，按类名整等判定 —— 它们没有"词"可指（前者词根本没被推导出来，
+      后者是词跑到一半额度没了）。
     键缺席（换代前冻结的快照）与空表都算无话可说 —— 前者是「不知道」，后者是「查全了」，
     两种都不许印成「0 个」。
     """
@@ -235,9 +240,11 @@ def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> st
         mine = [t for t in raw if isinstance(t, str) and t.startswith(f"{category}:")]
         if mine:
             clauses.append(tpl.format(n=len(mine), label=label, terms='、'.join(mine)))
-    unfunded = (caliber or {}).get("evidence_expansion_unfunded_categories")
-    if isinstance(unfunded, list) and category in unfunded:
-        clauses.append(_GAP_UNFUNDED)
+    for tpl, key in ((_GAP_UNFUNDED, "evidence_expansion_unfunded_categories"),
+                     (_GAP_OUT_OF_BUDGET, "evidence_expansion_out_of_budget_categories")):
+        hit = (caliber or {}).get(key)
+        if isinstance(hit, list) and category in hit:
+            clauses.append(tpl)
     if not clauses:
         return ''
     return _GAP_LEAD + _GAP_JOIN.join(clauses) + _GAP_TAIL

@@ -138,6 +138,14 @@ class CollectionEvidence:
     # 为什么也不并进 `complete`：`evidence_complete` 管的是**证据边界可不可信**（判盲吃它），
     # 本项管的是**分子的召回**（覆盖度吃它）；并进去会让一次扩词没钱去降级整份盲区结论。
     expansion_unfunded: Tuple[str, ...] = ()
+    # **扩过词、但额度在达标之前见底** 的类别（R23-B3，计划 §7 丁 → §14）。
+    # 上面那一位要求 `searched == 0`（整轮一次没跑），本位要求 `searched ≥ 1` —— 两者是
+    # **同一笔钱不够的两种形状**，但读者要做的判断不同：前者是"这一类本轮无人管"，
+    # 后者是"这一类查了一半就停了，剩下的没查"。合成一位就分不出该怪谁（是排程没摊到，
+    # 还是额度本身太薄）。
+    # 与 `no_vocab`/`quench`/`api_error`/达标 四种收手原因**互斥**（谓词见 B 阶段那一行）；
+    # 同样刻意**不**并进 `complete`（理由与上面那一位逐字相同）。
+    expansion_out_of_budget: Tuple[str, ...] = ()
     # 逐锚点**证据盘**（计划 v5.8 回合函数的产物）。默认 `()` = 首轮采集的形状，此时判盲仍走
     # 标量视图（与今天逐字相同）；回合函数填它，调用方才能把「A ∪ 本轮」合成一个 region。
     # 盘只由 `TermEvidence.as_disc(anchor)` 这一个转换器产出 —— 这里不留第二个构造点，
@@ -238,6 +246,7 @@ class CollectionEvidence:
             "starved_terms": [f"{c}:{t}" for c, t in self.starved_terms],
             "capped_terms": list(self.capped_terms),
             "expansion_unfunded_categories": list(self.expansion_unfunded),
+            "expansion_out_of_budget_categories": list(self.expansion_out_of_budget),
             "aborted": self.aborted,
         }
 
@@ -670,14 +679,18 @@ async def collect_poi(
     # ⇒ 报告写"门槛项不足 3 家"时读者会读成"社区没有"，真实原因却是我们自己先停的手。
     # 今天只有 `medical` / `education` 建了子类表 ⇒ 只有这两类会换单位，其余六类逐字不变；
     # 而"该扩却没扩"在现实额度下仍然常发生（步行首轮后只剩 4 次 / 驾车 0 次），那半由
-    # `_evidence_gap_note` 的第三子句上屏（`expansion_unfunded`，片 R23-B1）。
+    # `_evidence_gap_note` 的第三子句上屏（`expansion_unfunded`，片 R23-B1）；
+    # **摊到了却没扩够**的那半由第四子句上屏（`expansion_out_of_budget`，片 R23-B3）。
     ideal = {cat: defn["ideal_circle"] for cat, defn in CATEGORY_RULES.items()}
     expansion_unfunded: List[str] = []
+    expansion_out_of_budget: List[str] = []
     for cat, defn in CATEGORY_RULES.items():
         if _at_target(cat, per_category.get(cat, []), scope, ideal.get(cat, 1)):
             continue
         searched = 0          # 本类真正发出去的扩词次数（0 次才谈得上"整轮没跑"）
         no_vocab = False      # 词已榨干（`ctx.next` 返空）⇒ 停手的原因是"没词"，不是"没钱"
+        reached = False       # 达标 break ⇒ 这一类本来就该停，两种缺口都不算
+        failed = False        # 调用失败 break ⇒ 由 `api_error` 行披露，不是"没钱"
         while budget.remaining > 0 and not budget.frozen(cat):
             term = ctx.next(confirmed=per_category.get(cat, []), rule=defn, existing={cat: per_category.get(cat, [])})
             if term is None:
@@ -695,6 +708,7 @@ async def collect_poi(
                 # 的扩词是"中途失败"还是"到量收手"在报告里完全同形，无从归因。
                 # 仍然 `break`（本类不再继续扩词）：失败不代表该停的是**别的类**，那由外层循环各判。
                 _record_failure(cat, term, _term_radius(scope, cat, radius_m))
+                failed = True
                 break
             searched += 1
             new_items = _record(cat, term, _term_radius(scope, cat, radius_m), raw)
@@ -710,6 +724,7 @@ async def collect_poi(
             elif after - before < GAIN_STOP_THRESHOLD:
                 pass  # 圈内未达标但确有新增 ⇒ 继续换词，边际另由 ctx.next 收敛
             elif _at_target(cat, merged, scope, ideal.get(cat, 1)):
+                reached = True
                 break  # 达标停止（单位由 `_at_target` 定：门槛项优先，点数兜底）
         # R23-B1：`while budget.remaining > 0` 这条守卫在额度归零时**静默退出** —— 既不记
         # `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
@@ -719,6 +734,16 @@ async def collect_poi(
         # （实测见 tests/test_expansion_unfunded.py）。
         if searched == 0 and not no_vocab and not budget.frozen(cat) and budget.remaining <= 0:
             expansion_unfunded.append(cat)
+        # R23-B3（计划 §7 丁 → §14）：同一个 while 守卫的**另一种**形状 —— 这一类**扩过词**
+        # 却在额度见底时仍未达标。凯里现场实测（§11）：`education` 拿到全部 4 个扩词单位、
+        # 门槛项仍 1/3，而四个既有键全是空的 ⇒ 报告上屏那句话是**空串**，读者只能读成
+        # "这个社区只有 1 所小学"。真实情况是"查了一半没钱了"。
+        # 四种收手原因在此分净：达标（`reached`）、调用失败（`failed`，另有 `api_error` 行 +
+        # `complete=False` 披露）、零增益冻结（`frozen`，≈词表收敛）都不算额度问题。
+        # ⚠️ 不写 `not no_vocab`：`remaining == 0` 时 while 守卫先进不去，`ctx.next` 永远不会
+        # 被调用 ⇒ `no_vocab` 与本位在结构上互斥，写上就是一条恒真的多余条件。
+        if searched and budget.remaining <= 0 and not (reached or failed or budget.frozen(cat)):
+            expansion_out_of_budget.append(cat)
 
     # ── C 阶段：合并去重（sort 统一交给 to_points，本模块不排）──
     merged_cat = merge_all(per_category, 50.0, facility_policy, center, on_absorb=_credit)
@@ -727,6 +752,7 @@ async def collect_poi(
         per_term=tuple(evidence),
         starved_terms=tuple(starved),
         expansion_unfunded=tuple(expansion_unfunded),
+        expansion_out_of_budget=tuple(expansion_out_of_budget),
         aborted=budget.remaining <= 0 and bool(starved),
     )
     merged_out = tuple(
