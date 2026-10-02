@@ -30,7 +30,8 @@ from app.living_circle.scope import SpatialScope
 CENTER = (102.75000, 25.01800)
 RING_HALF = 2000.0
 N_KEYWORDS = sum(len(d["keywords"]) for d in CATEGORY_RULES.values())
-A_PLUS_TRIAD = N_KEYWORDS + 3
+# 三要素只发 2 次（`market` 复用类目通道）⇒ 首轮实花 27，扩词头寸 4。
+A_PLUS_TRIAD = N_KEYWORDS + 2
 # 三颗点各在东向 300/400/500m ⇒ 都在可达区内，又不会互相被 50m 去重吃掉。
 OFFSETS = (300.0, 400.0, 500.0)
 # 每个类都要跑到"没词可扩"才谈得上比"闸"，所以额度给到宽（首跑按 +40 被这条拦下过）。

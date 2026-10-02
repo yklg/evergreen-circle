@@ -669,7 +669,7 @@ async def collect_poi(
     # 改之前：一类只要**点数**够 3 颗就停止扩词，而覆盖度的分子自 `cov-1` 起数的是**门槛项**
     # ⇒ 报告写"门槛项不足 3 家"时读者会读成"社区没有"，真实原因却是我们自己先停的手。
     # 今天只有 `medical` / `education` 建了子类表 ⇒ 只有这两类会换单位，其余六类逐字不变；
-    # 而"该扩却没扩"在现实额度下仍然常发生（步行只剩 3 次 / 驾车 0 次），那半由
+    # 而"该扩却没扩"在现实额度下仍然常发生（步行首轮后只剩 4 次 / 驾车 0 次），那半由
     # `_evidence_gap_note` 的第三子句上屏（`expansion_unfunded`，片 R23-B1）。
     ideal = {cat: defn["ideal_circle"] for cat, defn in CATEGORY_RULES.items()}
     expansion_unfunded: List[str] = []
@@ -714,8 +714,9 @@ async def collect_poi(
         # R23-B1：`while budget.remaining > 0` 这条守卫在额度归零时**静默退出** —— 既不记
         # `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
         # （`aborted` 要 `starved` 非空才为真）。于是"这一类整轮没扩过词"与"这一类不需要扩"
-        # 在账面上同形。现实额度下这是**常态**：步行 standard 的 31 次里 A 阶段 25 + 三要素 3，
-        # 扩词只剩 3 次 ⇒ 多数类别一个扩词都拿不到（实测见 tests/test_expansion_unfunded.py）。
+        # 在账面上同形。现实额度下这是**常态**：步行 standard 的 31 次里 A 阶段 25 + 三要素 2
+        # （`market` 复用类目通道，另两个才是真调用），扩词只剩 4 次 ⇒ 多数类别一个扩词都拿不到
+        # （实测见 tests/test_expansion_unfunded.py）。
         if searched == 0 and not no_vocab and not budget.frozen(cat) and budget.remaining <= 0:
             expansion_unfunded.append(cat)
 

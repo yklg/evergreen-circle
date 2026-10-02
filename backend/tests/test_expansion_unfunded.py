@@ -1,7 +1,9 @@
 """R23-B1 · 「这一类整轮没跑过扩词」必须留痕（现实额度下这是**常态**，不是边角）。
 
 现场读数（stub 客户端，零真实调用）：步行 standard 的 POI 首轮额度是 31 次，
-A 阶段 25 词 × 页深 1 = 25，三要素 3 ⇒ **剩给 S8 扩词只有 3 次**。八类里点数未达标的往往有
+A 阶段 25 词 × 页深 1 = 25，三要素 **2** 次（`market` 复用类目通道、只 pharmacy/primary 另检索，
+见 `poi_collector.py` 的「三要素（盲区硬判）：market 复用类目」）⇒ **剩给 S8 扩词只有 4 次**。
+八类里点数未达标的往往有
 四到六类，3 次根本摊不到它们 —— 而旧写法在额度归零时是 `while budget.remaining > 0` 静默退出：
 既不记 `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
 （它要 `starved` 非空才为真）。于是"这一类整轮没扩"与"这一类不需要扩"在账面上同形。
@@ -22,9 +24,12 @@ from app.living_circle.scope import SpatialScope
 
 CENTER = (102.75000, 25.01800)
 RING_HALF = 2000.0
-# A 阶段按"每词一页"预扣 ⇒ 这一步花掉的就是类目关键词总数；三要素固定再 3 次。
+# A 阶段按"每词一页"预扣 ⇒ 这一步花掉的就是类目关键词总数；三要素**只发 2 次**
+# （`market` 复用类目通道，见 `poi_collector.py` 里「三要素：market 复用类目」那段）。
+# 这个字面值不许"顺手改"：它错了下面每条的前置 `stub.n == A_PLUS_TRIAD` 就会红 ——
+# 前置就是它的活证人（第一版写 3，把"扩词 0 额度"那一档悄悄让成了 1 额度）。
 N_KEYWORDS = sum(len(d["keywords"]) for d in pc.CATEGORY_RULES.values())
-N_TRIAD = 3
+N_TRIAD = 2
 A_PLUS_TRIAD = N_KEYWORDS + N_TRIAD
 
 
@@ -133,13 +138,21 @@ def test_partial_funding_only_lists_the_ones_that_got_nothing():
 # ───────────────────────── 3. 「没词可扩」与「被冻结」都不是「没钱」 ─────────────────────────
 
 def test_exhausted_vocabulary_is_not_reported_as_unfunded(monkeypatch):
-    """`ctx.next()` 返空 ⇒ 停手的原因是"没词"，绝不能记成"没钱"（两种缺陷分名分职）。"""
+    """`ctx.next()` 返空 ⇒ 停手的原因是"没词"，绝不能记成"没钱"（两种缺陷分名分职）。
+
+    ⚠️ 额度必须是 `A_PLUS_TRIAD + 1`（扩词头寸**恰好 1**）而不是 `A_PLUS_TRIAD`（0）：
+    0 头寸时 `while budget.remaining > 0` 根本不进循环，`ctx.next` 一次都没被调用 ⇒
+    "没词"这个原因**无从发生**，这条测的就成了守卫而不是归因。第一版写成 0 额度也能绿，
+    是因为那时 `A_PLUS_TRIAD` 算错成 28（三要素按 3 次记，实际只发 2 次）⇒ 恰好还剩 1。
+    """
+    budget = A_PLUS_TRIAD + 1
     # 正半**先**跑（`monkeypatch` 一上就撤不干净）：同一额度下不补丁时表非空 ⇒ 下面的否证不是恒真
-    untouched, _, _ = _run(A_PLUS_TRIAD)
+    untouched, _, _ = _run(budget)
     assert untouched.evidence.expansion_unfunded, (
         "不打补丁时表也是空的 ⇒ 两半都在比空集，这条测不到任何东西")
     monkeypatch.setattr(pc.ExpansionCtx, "next", lambda self, **kw: None)
-    col, _, _ = _run(A_PLUS_TRIAD)      # 同时把额度也归零：两条原因并存时只许认"没词"
+    col, stub, _ = _run(budget)
+    assert stub.n == A_PLUS_TRIAD, f"打了补丁后仍发了 {stub.n - A_PLUS_TRIAD} 次扩词 ⇒ 前置不成立"
     assert col.evidence.expansion_unfunded == (), (
         "词都推导不出来，却被记成「没钱扩词」：" + str(col.evidence.expansion_unfunded))
 
