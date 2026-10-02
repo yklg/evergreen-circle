@@ -208,11 +208,11 @@ def test_report_prints_the_third_clause_only_for_categories_in_the_list():
     cal = {"evidence_expansion_unfunded_categories": ["medical"]}
     med = dt._evidence_gap_note(cal, "medical", "医疗")
     edu = dt._evidence_gap_note(cal, "education", "教育")
-    assert med == "另需交代：本轮没有额度为这一类扩词（一个扩词词都没发起）" + dt._GAP_TAIL, med
+    assert med == "另需交代：本轮没有额度为这一类扩词（一次都没扩成）" + dt._GAP_TAIL, med
     assert edu == "", f"教育类不在这张表里却印了句子：{edu}"
     # 与前两种成因并列时，分隔符与顺序也是契约（三种缺陷各说各的，不许互相吞）
     both = dt._evidence_gap_note(
         {"evidence_starved_terms": ["medical:社区医院"],
          "evidence_expansion_unfunded_categories": ["medical"]}, "medical", "医疗")
     assert both == ("另需交代：本次有 1 个医疗类检索词因预算未发起（medical:社区医院）"
-                    "；本轮没有额度为这一类扩词（一个扩词词都没发起）" + dt._GAP_TAIL), both
+                    "；本轮没有额度为这一类扩词（一次都没扩成）" + dt._GAP_TAIL), both

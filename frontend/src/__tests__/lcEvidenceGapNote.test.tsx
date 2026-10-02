@@ -129,7 +129,7 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
   })
 
   it('第三种成因（R23-B1 新键）：整轮没跑过扩词的类才印，别类不印', () => {
-    const UNFUNDED = '另需交代：本轮没有额度为这一类扩词（一个扩词词都没发起）' + TAIL
+    const UNFUNDED = '另需交代：本轮没有额度为这一类扩词（一次都没扩成）' + TAIL
     const r = buildWith('kaili', (lc) => {
       forceMedGap(lc)
       setCaliber({ evidence_expansion_unfunded_categories: ['medical'] })(lc)
@@ -149,12 +149,14 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
       })(lc)
     })
     expect(para(both, 'medical')).toContain(
-      '另需交代：本次有 1 个医疗类检索词因预算未发起（medical:社区医院）；本轮没有额度为这一类扩词（一个扩词词都没发起）')
+      '另需交代：本次有 1 个医疗类检索词因预算未发起（medical:社区医院）；本轮没有额度为这一类扩词（一次都没扩成）')
   })
 
   it('第四种成因（R23-B3 新键）：扩到一半没额度的类才印，别类不印', () => {
     const OUT = '另需交代：这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）' + TAIL
-    // §11 实测那一格的形状：教育扩了 4 轮、门槛项 1/3，之前四个键都是空的 ⇒ 这句话今天才第一次有主
+    // 形状照 §11 真跑那一格（教育扩满 4 个扩词单位、门槛项仍 1/3）。⚠️ 但真跑重测核出那一格
+    // **同时**有 2 个教育类词落在 truncated 里 ⇒ "只有第四种命中"是本例的构造（凯里演示件另三个键**缺席**），
+    // 不是 §11 的读数；原先这里写"之前四个键都是空的"是假的（脚本绕过了 bind_evidence 那个唯一注入点）。
     const r = buildWith('kaili', (lc) => {
       setCaliber({ evidence_expansion_out_of_budget_categories: ['education'] })(lc)
     })
@@ -170,18 +172,19 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
     expect(para(med, 'medical')).not.toContain('另需交代：这一类的扩词')
   })
 
-  it('第三、四种成因并列：两条都在、共用一个前缀（顺序即键序）', () => {
-    const r = buildWith('kaili', (lc) => {
-      forceMedGap(lc)
-      setCaliber({
-        evidence_expansion_unfunded_categories: ['medical'],
-        evidence_expansion_out_of_budget_categories: ['medical'],
-      })(lc)
-    })
-    expect(para(r, 'medical')).toContain(
-      '另需交代：本轮没有额度为这一类扩词（一个扩词词都没发起）'
+  it('第二、四种成因并列：两条都在、共用一个前缀（顺序即键序）', () => {
+    // 载荷形状 = §19 真跑那一格（教育：2 个词没查全 + 扩词额度见底），屏上这句话是真会印的。
+    // ⚠️ 这里不用「unfunded + out_of_budget」凑一对：那两位按 `searched` 是否为 0 分家，
+    //    同一类不可能都占（后端 `test_expansion_out_of_budget.py` 第 1 节钉着互斥）⇒
+    //    拿永不可达的载荷验"将来上屏的那句话"等于没验（探针 G 档同注）。
+    const r = buildWith('kaili', setCaliber({
+      evidence_truncated_terms: ['education:幼儿园', 'education:博南高级中学'],
+      evidence_expansion_out_of_budget_categories: ['education'],
+    }))
+    expect(para(r, 'education')).toContain(
+      '另需交代：本次有 2 个教育类检索词发了但没查全（education:幼儿园、education:博南高级中学）'
       + '；这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）')
-    expect(para(r, 'medical').split('另需交代：').length - 1).toBe(1)
+    expect(para(r, 'education').split('另需交代：').length - 1).toBe(1)
   })
 
   it('并集键（R23-C 新键）在场与否都不改演示态正文 ⇒ 本刀零行为变更', () => {

@@ -1,8 +1,11 @@
 """R23-B3 · 「这一类扩过词、却在额度见底时仍没达标」必须留痕（计划 §7 丁 → §14）。
 
-现场读数（§11，凯里老街，31 次真实调用）：`education` 拿到**全部 4 个**扩词单位、门槛项仍 1/3，
-而 `starved`/`truncated`/`capped`/`unfunded` 四个键**全是空的** ⇒ 报告上屏那句话是**空串**，
-读者只能读成"这个社区只有 1 所小学"，真实情况是"查了一半没钱了"。
+现场读数（§18④ 那次重跑，凯里老街，31 次真实调用）：`education` 拿到**全部 4 个**扩词单位、门槛项仍 1/3，
+而当时它只被 `truncated` 那一位交代（「有 2 个教育类词发了但没查全」）⇒ 屏上看得到"没翻完"，
+看不到"扩词额度也用光了"。真实情况是两件事叠在一起。
+⚠️ 本文件第一版这里写的是"四个键全空、上屏是空串"—— **那是错的**：取证脚本绕过了唯一绑定点
+`data_source.bind_evidence`，而 `truncated_terms` 只在绑定点注入 ⇒ 那一位在脚本产物里结构性恒空
+（计划 §17①）。本位该不该有，不依赖那句错话。
 
 本位与 R23-B1 那一位（`expansion_unfunded`）的分界是 **`searched` 是否为 0**：前者是排程没摊到，
 本位是摊到了但额度太薄。B 阶段那条 while 有五种出口，本文件把五种各自的披露归属钉住
@@ -281,10 +284,47 @@ def test_report_prints_the_fourth_clause_only_for_categories_in_the_list():
     absent = dt._evidence_gap_note({"evidence_expansion_unfunded_categories": ["education"]},
                                    "education", "教育")
     assert absent == "另需交代：" + dt._GAP_UNFUNDED + dt._GAP_TAIL, absent
-    # 一类同时缺两种成因 ⇒ 两个子句并列、共用**一个**前缀
+    # 同一类**两种成因同时命中** ⇒ 两个子句并列、共用**一个**前缀。
+    # ⚠️ 载荷取自 §19 真跑那一格（教育：2 个词没查全 + 扩词额度见底）。这里**不**用
+    # 「unfunded + out_of_budget」凑一对 —— 那两位按 `searched` 是否为 0 分家，同一类不可能都占
+    # （本文件第 1 节那条互斥扫就是钉这个的），拿永不可达的载荷验"将来上屏那句话"等于没验。
     together = dt._evidence_gap_note(
-        {"evidence_expansion_unfunded_categories": ["medical"],
-         "evidence_expansion_out_of_budget_categories": ["medical"]}, "medical", "医疗")
-    assert together == ("另需交代：" + dt._GAP_UNFUNDED + "；" + dt._GAP_OUT_OF_BUDGET
-                        + dt._GAP_TAIL), together
+        {"evidence_truncated_terms": ["education:幼儿园", "education:博南高级中学"],
+         "evidence_expansion_out_of_budget_categories": ["education"]}, "education", "教育")
+    assert together == ("另需交代："
+                        + dt._GAP_TRUNCATED.format(n=2, label="教育",
+                                                   terms="education:幼儿园、education:博南高级中学")
+                        + "；" + dt._GAP_OUT_OF_BUDGET + dt._GAP_TAIL), together
     assert together.count("另需交代：") == 1
+
+
+# ──────── 9. §14⑤.3 边角：首次扩词就失败的那一类，那句话必须仍然为真 ────────
+
+def test_a_class_that_failed_its_first_attempt_is_labeled_truthfully():
+    """这一类**发起过**一次扩词（只是接口没成），且此时额度归零 ⇒ 它进"整轮没跑成"那一位。
+
+    旧措辞写的是「一个扩词词都没发起」—— 在这一档是**假话**；已改成「一次都没扩成」
+    （两种分支都为真）。这条判据同时钉住"它确实发起过"这个事实，免得下次有人把措辞"优化"回去。
+    """
+    col, _, _ = _run(1, FailOnNth(1))
+    ev = col.evidence
+    failed = _failed_categories(ev)
+    assert len(failed) == 1, f"没造出'首次扩词即失败'那一格：{sorted(failed)}"
+    cat = next(iter(failed))
+    assert cat in ev.expansion_unfunded, f"{cat} 一分钱没跑成却没进'整轮没跑成'那一位"
+    assert cat not in ev.expansion_out_of_budget, "一次都没跑成，不该记成'跑到一半'"
+    note = dt._evidence_gap_note({"evidence_expansion_unfunded_categories": [cat]}, cat, cat)
+    assert "一次都没扩成" in note, note
+    assert "一个扩词词都没发起" not in note, f"说假话的旧措辞回来了：{note}"
+
+
+# ──────── 10. 并集（乙2）与本位同源：本位记到的类必须一个不落地进并集 ────────
+
+def test_out_of_budget_class_also_lands_in_the_numerator_union():
+    col, _, _ = _run(1)
+    ev = col.evidence
+    assert ev.expansion_out_of_budget, "这一档没记到任何类 ⇒ 下面那条包含关系恒真"
+    union = ev.as_detail()["coverage_numerator_incomplete_categories"]
+    assert set(ev.expansion_out_of_budget) <= set(union), f"{ev.expansion_out_of_budget} 不在 {union}"
+    # 并集只有一份实现：`as_detail()` 不许自己再算一遍（第二份就会有一处漏）
+    assert union == list(ev.coverage_numerator_incomplete), f"{union} != {ev.coverage_numerator_incomplete}"

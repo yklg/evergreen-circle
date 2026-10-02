@@ -765,9 +765,12 @@ async def collect_poi(
         if searched == 0 and not no_vocab and not budget.frozen(cat) and budget.remaining <= 0:
             expansion_unfunded.append(cat)
         # R23-B3（计划 §7 丁 → §14）：同一个 while 守卫的**另一种**形状 —— 这一类**扩过词**
-        # 却在额度见底时仍未达标。凯里现场实测（§11）：`education` 拿到全部 4 个扩词单位、
-        # 门槛项仍 1/3，而四个既有键全是空的 ⇒ 报告上屏那句话是**空串**，读者只能读成
-        # "这个社区只有 1 所小学"。真实情况是"查了一半没钱了"。
+        # 却在额度见底时仍未达标。凯里现场实测（§18④ 那次重跑）：`education` 拿到全部 4 个扩词
+        # 单位、门槛项仍 1/3，而它当时**只**被 `truncated` 那一位交代（「有 2 个词发了但没查全」）
+        # ⇒ 读者看到"我们翻到一半没翻完"，看不到"扩词的额度也用光了"这另一半。
+        # ⚠️ 本注释第一版写的是"四个键全空、上屏是空串"—— **那句是错的**：当时的取证脚本绕过了
+        #    `data_source.bind_evidence`，而 `truncated_terms` 只在绑定点注入 ⇒ 那一位结构性恒空
+        #    （计划 §17① / §18④）。本位的必要性不依赖那句错话：两种成因归责不同、要改的东西不同。
         # 四种收手原因在此分净：达标（`reached`）、调用失败（`failed`，另有 `api_error` 行 +
         # `complete=False` 披露）、零增益冻结（`frozen`，≈词表收敛）都不算额度问题。
         # ⚠️ 不写 `not no_vocab`：`remaining == 0` 时 while 守卫先进不去，`ctx.next` 永远不会

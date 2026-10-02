@@ -255,7 +255,7 @@ const G = buildWith('kaili', (lc) => {
   })(lc)
 })
 /** 片 R23-B3：第四种成因**单独**命中 —— 照 §11 真跑那一格造（教育扩了 4 轮、门槛项 1/3，
- *  而当时四个键全空 ⇒ 教育节上屏是**空串**；这一档就是"那一格将来长这样"） */
+ *  而当时它只被 truncated 那一位交代 ⇒ 「扩到一半没钱」这半句没人说；这一档就是"那一格将来长这样"） */
 const H = buildWith('kaili', setCaliber({
   evidence_starved_terms: [],
   evidence_truncated_terms: [],
@@ -375,7 +375,7 @@ const TIERS: { id: string; node: ReactNode }[] = [
           <>
             <b>这一档是本刀新增那一种：整轮扩词一次都没发起。</b>前两个键<b>在场且都是空表</b>（= 首轮那 25
             个词全查完了、也没被预算拒绝），只有 <code>evidence_expansion_unfunded_categories: ['medical']</code>
-            ⇒ 医疗节印「本轮没有额度为这一类扩词（一个扩词词都没发起）」，而<b>教育节一个字都不印</b>
+            ⇒ 医疗节印「本轮没有额度为这一类扩词（一次都没扩成）」，而<b>教育节一个字都不印</b>
             —— 这一档同时是筛类别的反向对照：那个键里只有 <code>medical</code>。
             <br />
             它为什么不能并进前两种：<code>starved</code> 是「<b>某个词</b>被预算拒了、别词还在跑」，
@@ -428,9 +428,11 @@ const TIERS: { id: string; node: ReactNode }[] = [
             而<b>医疗节一个字都不印</b>（它覆盖度 100% 走达标分支 ⇒ 这一档同时是达标闸的反向对照）。
             <br />
             <b>为什么非造这一档不可</b>：§11 那次真跑（凯里老街，31 次真实调用）里
-            <code>education</code> 拿到全部 4 个扩词单位、门槛项仍 1/3，而当时四个键<b>全是空的</b> ⇒
-            教育节那句「另需交代」是<b>空串</b>，屏上只剩「门槛项 1/3」，读起来就是"这个社区只有 1 所小学"。
-            真实情况是我们查到一半没额度了 —— 与"社区没有"是两件事。
+            <code>education</code> 拿到全部 4 个扩词单位、门槛项仍 1/3。重测（走 <code>bind_evidence</code>
+            的那一版）核出那一位里有 <b>2 个教育类词"发了但没查全"</b>
+            （<code>education:幼儿园</code>、<code>education:博南高级中学</code>）⇒ 教育节那句「另需交代」
+            当时印的是<b>半个交代</b>：说了"没查全"，没说"扩词的额度也用光了"，而后者当时<b>还没有键能装</b>
+            （本刀才加）。真实情况是我们查到一半没额度了 —— 与"社区没有"是两件事。
             <br />
             它为什么不并进第三种：第三种是「<b>排程没摊到</b>」（一次都没发起），这一种是「摊到了但<b>额度太薄</b>」——
             读者要做的判断不同（改排程 vs 加额度），合并就分不出该怪谁。也<b>不</b>并进
@@ -510,8 +512,9 @@ function Legend() {
             闸与覆盖度<b>逐格等值</b>）、
             <code>test_fixture_mirror.py::test_retired_stop_line_note_is_gone_from_both_ends</code>
             （全仓扫那句撤走的交代，配"仍在用的那句必须扫得到"作活证人）、
-            <b>新</b> <code>test_expansion_out_of_budget.py</code>（8 条：0..4 头寸扫"只收跑过扩词的类 + 与第三位互斥" +
+            <b>新</b> <code>test_expansion_out_of_budget.py</code>（10 条：0..4 头寸扫"只收跑过扩词的类 + 与第三位互斥" +
             钱够反向对照 + 零头寸只进第三位 + 达标/冻结/调用失败三种收手各做<b>换桩差分</b> +
+            "首轮就失败"的类不许被说成扩到一半 + ⑤ 同时进分子并集 +
             <code>as_detail()</code>→<code>scope.payload()</code> 同源 + 第四子句只为本类印）。
             前端 <code>lcEvidenceGapNote.test.tsx</code>（走真出口，含位置契约、"别类不印"与"同段只许一个另需交代"的反向对照）。
           </div>
@@ -529,21 +532,29 @@ function Legend() {
         <li>
           <b>本刀没做</b>
           <div>
-            不动 <code>evidence_complete</code>（丙′ 那笔仍欠）· 不动边际止损单位（丙未拍）·
+            不动 <code>evidence_complete</code>（乙2 只<b>加了键</b>
+            <code>coverage_numerator_incomplete_categories</code>，三处消费点仍读老判据 ⇒ 丙′ 那笔仍欠；
+            屏上这句话也<b>不读</b>那个键，它只管分子召回不管边界）· 不动边际止损单位（丙未拍）·
             不删 <code>poi_collector.py:686</code> 那条不可达的 <code>consume</code> 分支（它兼任扣款的返回值检查，§14⑤.2）·
-            不改第三种成因那句措辞（"首次扩词就撞 api 失败"时它仍会说"一个都没发起"，§14⑤.3）·
-            不碰 <code>evidence_capped_categories</code>（#71 仍欠：没有屏上出口）· 不加新契约键 · 不动缓存键 · 不回填夹具
+            不碰 <code>evidence_capped_categories</code>（#71 仍欠：没有屏上出口）· 不动缓存键 · 不回填夹具
             ⇒ 存量 30 份报告<b>都没有这个新键</b>，读作"不知道"而不是"没有类别扩到一半停了"。
-            真跑对照<b>已做过一次</b>（§11，凯里老街 31 次真实调用 —— 本刀那一格的成因就是它抓出来的），
-            新键的兑现点是下一次真体检。
+            <br />
+            <b>本屏同批改掉的一处假话</b>：第三种成因那句原写「一个扩词词都没发起」，而一类<b>首次</b>扩词就撞
+            接口失败、此时额度归零 ⇒ 它<b>发起过</b>（<code>_record_failure</code> 留了 <code>api_error</code> 行），
+            那句在这一档是假话 ⇒ 改「一次都没扩成」（两种分支都为真，判据
+            <code>test_a_class_that_failed_its_first_attempt_is_labeled_truthfully</code>）。
+            <br />
+            真跑对照<b>已做过两次</b>（§11 与 §18④ 重测，凯里老街各 31 次真实调用 —— 本刀那一格的成因就是它抓出来的，
+            而"四个键全空"那句也是重测推翻的），新键的兑现点是下一次真体检。
           </div>
         </li>
       </ol>
       <div className="legend-foot">
         读数交代：库里 30 份存量报告<b>没有一份</b>带 <code>required_in_circle</code>（= <code>cov-1</code> 之后还没产过报告）
         ⇒ 这一屏的 B/C/D/F/G/H 六档都是<b>构造载荷</b>，兑现点是下一次真体检。
-        其中 <b>H 档的载荷形状不是编的</b>：§11 那次真跑里 <code>education</code> 就是这个死法（扩了 4 轮、门槛项 1/3、
-        四个键全空 ⇒ 那句话当时是空串），这一档印的是"同一格将来该说的话"。
+        其中 <b>H 档那一格的死法不是编的</b>：§18④ 那次真跑重测里 <code>education</code> 就是它（扩了 4 轮、门槛项 1/3，
+        而当时只被"没查全"那一位交代）。⚠️ 但"<b>只有</b>⑤命中"是构造 —— 真实那一格 ③⑤ <b>两位同时</b>命中，
+        拼装形状见 <b>G</b>；这一档印的是"同一格将来该说全的话"。
       </div>
     </div>
   )

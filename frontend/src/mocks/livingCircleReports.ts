@@ -77,7 +77,9 @@ function covBasisText(c: FacilityCategoryStat | undefined): string {
 const GAP_LEAD = '另需交代：'
 const GAP_STARVED = '本次有 {n} 个{label}类检索词因预算未发起（{terms}）'
 const GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（{terms}）'
-const GAP_UNFUNDED = '本轮没有额度为这一类扩词（一个扩词词都没发起）'
+// ⚠️ "一次都没扩成"不是笔误：一类首次扩词就撞接口失败且额度归零时它**发起过**，
+//    写"一个词都没发起"会是假话（后端 `diagnosis_templates` 同注，计划 §14⑤.3）
+const GAP_UNFUNDED = '本轮没有额度为这一类扩词（一次都没扩成）'
 const GAP_OUT_OF_BUDGET = '这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）'
 const GAP_JOIN = '；'
 const GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'

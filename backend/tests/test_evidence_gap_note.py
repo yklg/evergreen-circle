@@ -150,8 +150,10 @@ def test_legacy_snapshot_without_numerator_key_prints_neither_note():
 # ───────────────────────── 8：④ 扩到一半没钱 ⇒ 挂到那一类的正文上 ─────────────────────────
 
 def test_out_of_budget_clause_rides_only_the_class_it_names():
-    """§11 实测那一格（教育扩了 4 轮、门槛项 1/3）将来上屏的形状。
+    """本条对应 §11 真跑那一格（教育扩满 4 个扩词单位、门槛项仍 1/3）。
 
+    ⚠️ 那一格**真跑重测**的实际读数里还有第②位（2 个教育类词落在 truncated），所以这里造的是
+    "只有④命中"的构造载荷，不是重测载荷的原样（见计划 §19）。
     反向对照是必须的：类别表若被读成"全类通用"，医疗节会印出教育那笔账。
     """
     cal = {"evidence_expansion_out_of_budget_categories": ["education"]}
