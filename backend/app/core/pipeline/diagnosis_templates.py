@@ -207,22 +207,28 @@ _COV_STOP_LINE_NOTE = (
 # ①某词因预算**一次都没发起**（`evidence_starved_terms`）②某词发了但**没查全**
 # （`evidence_truncated_terms`，单页上限/收益止损）。两种都意味着"这一类的证据面不完整"，
 # 少交代一种，读者就只能把"不足"读成"社区没有"。
-# ⚠️ 下面五个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
+# ⚠️ 下面六个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
 #    `tests/test_fixture_mirror.py` 的镜像判据钉住；拼装规则也只许一份：
 #    `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`。
-_GAP_LEAD = '另需交代：本次有 '
-_GAP_STARVED = '{n} 个{label}类检索词因预算未发起（{terms}）'
-_GAP_TRUNCATED = '{n} 个{label}类检索词发了但没查全（{terms}）'
-_GAP_JOIN = '、'
+#    「本次有 N 个…」写在**子句里**而不是前缀里，是因为第三种子句（整轮没扩词）不以计数开头。
+_GAP_LEAD = '另需交代：'
+_GAP_STARVED = '本次有 {n} 个{label}类检索词因预算未发起（{terms}）'
+_GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（{terms}）'
+_GAP_UNFUNDED = '本轮没有额度为这一类扩词（一个扩词词都没发起）'
+_GAP_JOIN = '；'
 _GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 
 
 def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> str:
-    """本类「没查过 / 没查全」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
+    """本类「没查过 / 没查全 / 整轮没扩词」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
 
-    只读载荷、不重判：`evidence_*_terms` 是**全类混合表**，必须按 `{category}:` 前缀筛本类，
-    否则教育类的账会印到医疗节头上（与 §十九 那条同形）。键缺席（换代前冻结的快照）与空表
-    都算无话可说 —— 前者是「不知道」，后者是「查全了」，两种都不许印成「0 个」。
+    只读载荷、不重判。三个来源是**三种不同缺陷**（`scope.py` 那处注释分职），所以各读各的键：
+    - `evidence_starved_terms` / `evidence_truncated_terms` 是**全类混合表**，形如 `类:词`，
+      必须按 `{category}:` 前缀筛本类，否则教育类的账会印到医疗节头上；
+    - `evidence_expansion_unfunded_categories` 是**类别表**（R23-B1），按类名整等判定 ——
+      它没有"词"可指（那一轮的词根本没被推导出来）。
+    键缺席（换代前冻结的快照）与空表都算无话可说 —— 前者是「不知道」，后者是「查全了」，
+    两种都不许印成「0 个」。
     """
     clauses: List[str] = []
     for tpl, key in ((_GAP_STARVED, "evidence_starved_terms"),
@@ -233,6 +239,9 @@ def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> st
         mine = [t for t in raw if isinstance(t, str) and t.startswith(f"{category}:")]
         if mine:
             clauses.append(tpl.format(n=len(mine), label=label, terms='、'.join(mine)))
+    unfunded = (caliber or {}).get("evidence_expansion_unfunded_categories")
+    if isinstance(unfunded, list) and category in unfunded:
+        clauses.append(_GAP_UNFUNDED)
     if not clauses:
         return ''
     return _GAP_LEAD + _GAP_JOIN.join(clauses) + _GAP_TAIL

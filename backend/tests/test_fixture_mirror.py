@@ -243,7 +243,7 @@ def test_cov_stop_line_note_is_one_text_on_both_ends():
 
 
 def test_evidence_gap_note_is_one_text_on_both_ends():
-    """片 R23-A（乙）：「没查过 / 没查全」那半句在两端是**五份物理字面量 + 一条拼装规则** ⇒ 逐条比。
+    """片 R23-A（乙）+ R23-B1：「没查过 / 没查全 / 整轮没扩词」那半句在两端是**六份物理字面量 + 一条拼装规则** ⇒ 逐条比。
 
     与上面那条同一分工，只是对象换成一组常量：后端 `diagnosis_templates._GAP_*` 进生产正文，
     前端 `mocks/livingCircleReports.ts` 的 `GAP_*` 进演示态正文。改一边忘另一边 ⇒ 同一个事实
@@ -260,6 +260,7 @@ def test_evidence_gap_note_is_one_text_on_both_ends():
         "GAP_LEAD": dt._GAP_LEAD,
         "GAP_STARVED": dt._GAP_STARVED,
         "GAP_TRUNCATED": dt._GAP_TRUNCATED,
+        "GAP_UNFUNDED": dt._GAP_UNFUNDED,
         "GAP_JOIN": dt._GAP_JOIN,
         "GAP_TAIL": dt._GAP_TAIL,
     }

@@ -31,8 +31,8 @@ CAL_BOTH = {
     "evidence_truncated_terms": ["medical:诊所", "shopping:超市"],
 }
 NOTE_BOTH = (
-    "另需交代：本次有 2 个医疗类检索词因预算未发起（medical:社区医院、medical:社区卫生服务中心）、"
-    "1 个医疗类检索词发了但没查全（medical:诊所）"
+    "另需交代：本次有 2 个医疗类检索词因预算未发起（medical:社区医院、medical:社区卫生服务中心）"
+    "；本次有 1 个医疗类检索词发了但没查全（medical:诊所）"
     " ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。"
 )
 CAL_STARVED_ONLY = {"evidence_starved_terms": ["medical:社区医院"]}

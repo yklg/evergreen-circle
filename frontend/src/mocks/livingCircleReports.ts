@@ -71,18 +71,22 @@ const COV_STOP_LINE_NOTE =
   '另需交代：采集的停止线按圈内点数算（点数达到该类满分线即停止扩词），而这里的分子按门槛项算' +
   ' ⇒ 若圈内点数已达满分线而门槛项仍不足，不排除是采集先停的手，不能只读成「社区没有」。'
 
-/* 片 R23-A（乙）：除「停止线先收手」外，让"门槛项不足"失真的还有两种成因 —— ①词因预算**一次都没
-   发起**（`evidence_starved_terms`）②词发了但**没查全**（`evidence_truncated_terms`）。
-   ⚠️ 下面五个常量与后端 `diagnosis_templates` 的同名件**逐字同源**，拼装规则也只许一份：
-      `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`（镜像判据见 `test_fixture_mirror.py`）。 */
-const GAP_LEAD = '另需交代：本次有 '
-const GAP_STARVED = '{n} 个{label}类检索词因预算未发起（{terms}）'
-const GAP_TRUNCATED = '{n} 个{label}类检索词发了但没查全（{terms}）'
-const GAP_JOIN = '、'
+/* 片 R23-A（乙）+ R23-B1：除「停止线先收手」外，让"门槛项不足"失真的还有三种成因 ——
+   ①词因预算**一次都没发起**（`evidence_starved_terms`）②词发了但**没查全**
+   （`evidence_truncated_terms`）③这一类**整轮没跑过扩词**，额度在别的类上花完了
+   （`evidence_expansion_unfunded_categories`，R23-B1 新增）。
+   ⚠️ 下面六个常量与后端 `diagnosis_templates` 的同名件**逐字同源**，拼装规则也只许一份：
+      `GAP_LEAD + 子句…(GAP_JOIN)… + GAP_TAIL`（镜像判据见 `test_fixture_mirror.py`）。
+      「本次有 N 个…」写在**子句里**而不是前缀里，因为第③种不以计数开头。 */
+const GAP_LEAD = '另需交代：'
+const GAP_STARVED = '本次有 {n} 个{label}类检索词因预算未发起（{terms}）'
+const GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（{terms}）'
+const GAP_UNFUNDED = '本轮没有额度为这一类扩词（一个扩词词都没发起）'
+const GAP_JOIN = '；'
 const GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 
-/** 本类「没查过 / 没查全」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
- *  `evidence_*_terms` 是全类混合表 ⇒ 必须按 `{category}:` 前缀筛本类，否则别类的账会印到本节头上。
+/** 本类「没查过 / 没查全 / 整轮没扩词」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
+ *  前两个键是 `{类}:{词}` 形状的**全类混合表** ⇒ 必须按前缀筛本类；第三个是**类别表**，按类名整等判定。
  *  键缺席（换代前冻结的快照）与空表都算无话可说：前者是"不知道"、后者是"查全了"。 */
 function evidenceGapNote(
   caliber: LivingCircleReport['caliber'],
@@ -99,6 +103,8 @@ function evidenceGapNote(
     const mine = raw.filter((t) => typeof t === 'string' && t.startsWith(`${category}:`))
     if (mine.length) clauses.push(tpl.replace('{n}', `${mine.length}`).replace('{label}', label).replace('{terms}', mine.join('、')))
   }
+  const unfunded = caliber?.evidence_expansion_unfunded_categories
+  if (Array.isArray(unfunded) && unfunded.includes(category)) clauses.push(GAP_UNFUNDED)
   return clauses.length ? GAP_LEAD + clauses.join(GAP_JOIN) + GAP_TAIL : ''
 }
 

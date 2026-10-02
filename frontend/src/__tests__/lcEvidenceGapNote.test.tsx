@@ -19,8 +19,8 @@ import type { LivingCircleReport, Report } from '../types'
 
 const TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 const NOTE_BOTH_MED =
-  '另需交代：本次有 2 个医疗类检索词因预算未发起（medical:社区医院、medical:社区卫生服务中心）、' +
-  '1 个医疗类检索词发了但没查全（medical:诊所）' + TAIL
+  '另需交代：本次有 2 个医疗类检索词因预算未发起（medical:社区医院、medical:社区卫生服务中心）' +
+  '；本次有 1 个医疗类检索词发了但没查全（medical:诊所）' + TAIL
 const NOTE_EDU = '另需交代：本次有 1 个教育类检索词因预算未发起（education:小学）' + TAIL
 
 /** 换内存里的演示件跑一次真构建，用完立刻还原（磁盘夹具一个字节都不动） */
@@ -127,6 +127,30 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
     })
     expect(para(r, 'medical')).toContain('这份快照出自门槛项口径之前')
     expect(para(r, 'medical')).not.toContain('因预算未发起')
+  })
+
+  it('第三种成因（R23-B1 新键）：整轮没跑过扩词的类才印，别类不印', () => {
+    const UNFUNDED = '另需交代：本轮没有额度为这一类扩词（一个扩词词都没发起）' + TAIL
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({ evidence_expansion_unfunded_categories: ['medical'] })(lc)
+    })
+    expect(para(r, 'medical')).toContain(UNFUNDED)
+    // ⚠️ 反向对照必须拿**真句子的片段**去否：原先写的「本轮没跑过任何扩词」在生产件里
+    // 根本不存在 ⇒ 类别筛坏掉了它也照样绿。
+    expect(para(r, 'education'), '教育类不在这张表里却印了句子 ⇒ 类别筛失效')
+      .not.toContain('本轮没有额度为这一类扩词')
+    expect(para(r, 'education'), '同上：整段都不许出现').not.toContain('另需交代：本轮没有')
+    // 与前两种成因并列时，各条自己完整（分号连接，不许互相吞掉计数）
+    const both = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({
+        evidence_starved_terms: ['medical:社区医院'],
+        evidence_expansion_unfunded_categories: ['medical'],
+      })(lc)
+    })
+    expect(para(both, 'medical')).toContain(
+      '另需交代：本次有 1 个医疗类检索词因预算未发起（medical:社区医院）；本轮没有额度为这一类扩词（一个扩词词都没发起）')
   })
 
   it('空表与键缺席都不许回落成「0 个」（前者=查全了、后者=不知道）', () => {

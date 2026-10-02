@@ -130,6 +130,13 @@ class CollectionEvidence:
     per_term: Tuple[TermEvidence, ...] = ()
     starved_terms: Tuple[Tuple[str, str], ...] = ()   # (category, term)：预算拒绝 ⇒ 0 次调用
     aborted: bool = False                             # 熔断 / 日预算耗尽
+    # **本轮一个扩词都没发起、且不是因为"没词可扩"也不是因为"已达标"** 的类别（R23-B1）。
+    # 为什么不并进 `starved_terms`：那张表说的是「某个**具体的词**被预算拒了」，本项说的是
+    # 「这一类整轮没跑」—— 后者的词甚至没被推导出来，合并就会丢掉"哪一类"与"哪一阶段"，
+    # 与 `capped`（百度不给）/`truncated`（我们没接着翻）分名分职是同一条纪律。
+    # 为什么也不并进 `complete`：`evidence_complete` 管的是**证据边界可不可信**（判盲吃它），
+    # 本项管的是**分子的召回**（覆盖度吃它）；并进去会让一次扩词没钱去降级整份盲区结论。
+    expansion_unfunded: Tuple[str, ...] = ()
     # 逐锚点**证据盘**（计划 v5.8 回合函数的产物）。默认 `()` = 首轮采集的形状，此时判盲仍走
     # 标量视图（与今天逐字相同）；回合函数填它，调用方才能把「A ∪ 本轮」合成一个 region。
     # 盘只由 `TermEvidence.as_disc(anchor)` 这一个转换器产出 —— 这里不留第二个构造点，
@@ -229,6 +236,7 @@ class CollectionEvidence:
             "terms": [t.as_row() for t in self.per_term],
             "starved_terms": [f"{c}:{t}" for c, t in self.starved_terms],
             "capped_terms": list(self.capped_terms),
+            "expansion_unfunded_categories": list(self.expansion_unfunded),
             "aborted": self.aborted,
         }
 
@@ -665,13 +673,17 @@ async def collect_poi(
     # 与 `evidence_truncated_terms`），两者在前端 `mocks/livingCircleReports.ts` 各有逐字同源的副本，
     # 由 `tests/test_fixture_mirror.py` 的两条镜像判据钉住。R23-B 换收手单位时要撤掉前一句。
     ideal = {cat: defn["ideal_circle"] for cat, defn in CATEGORY_RULES.items()}
+    expansion_unfunded: List[str] = []
     for cat, defn in CATEGORY_RULES.items():
         hits = _in_circle_count(per_category.get(cat, []), scope)
         if hits >= ideal.get(cat, 1):
             continue
+        searched = 0          # 本类真正发出去的扩词次数（0 次才谈得上"整轮没跑"）
+        no_vocab = False      # 词已榨干（`ctx.next` 返空）⇒ 停手的原因是"没词"，不是"没钱"
         while budget.remaining > 0 and not budget.frozen(cat):
             term = ctx.next(confirmed=per_category.get(cat, []), rule=defn, existing={cat: per_category.get(cat, [])})
             if term is None:
+                no_vocab = True
                 break
             if not budget.consume(cat):
                 break
@@ -686,6 +698,7 @@ async def collect_poi(
                 # 仍然 `break`（本类不再继续扩词）：失败不代表该停的是**别的类**，那由外层循环各判。
                 _record_failure(cat, term, _term_radius(scope, cat, radius_m))
                 break
+            searched += 1
             new_items = _record(cat, term, _term_radius(scope, cat, radius_m), raw)
             before = _in_circle_count(per_category.get(cat, []), scope)
             merged = _dedupe_cat(cat, per_category.get(cat, []) + new_items)
@@ -700,6 +713,13 @@ async def collect_poi(
                 pass  # 圈内未达标但确有新增 ⇒ 继续换词，边际另由 ctx.next 收敛
             elif after >= ideal.get(cat, 1):
                 break  # 达标停止
+        # R23-B1：`while budget.remaining > 0` 这条守卫在额度归零时**静默退出** —— 既不记
+        # `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
+        # （`aborted` 要 `starved` 非空才为真）。于是"这一类整轮没扩过词"与"这一类不需要扩"
+        # 在账面上同形。现实额度下这是**常态**：步行 standard 的 31 次里 A 阶段 25 + 三要素 3，
+        # 扩词只剩 3 次 ⇒ 多数类别一个扩词都拿不到（实测见 tests/test_expansion_unfunded.py）。
+        if searched == 0 and not no_vocab and not budget.frozen(cat) and budget.remaining <= 0:
+            expansion_unfunded.append(cat)
 
     # ── C 阶段：合并去重（sort 统一交给 to_points，本模块不排）──
     merged_cat = merge_all(per_category, 50.0, facility_policy, center, on_absorb=_credit)
@@ -707,6 +727,7 @@ async def collect_poi(
         requested_radius_m=float(radius_m),
         per_term=tuple(evidence),
         starved_terms=tuple(starved),
+        expansion_unfunded=tuple(expansion_unfunded),
         aborted=budget.remaining <= 0 and bool(starved),
     )
     merged_out = tuple(
