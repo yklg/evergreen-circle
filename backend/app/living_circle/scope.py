@@ -869,9 +869,10 @@ class SpatialScope:
             "evidence_bound_source": self.evidence_bound_source,
             "judge_radius_m": round(self.judge_radius_m(), 1),
             # 五种「证据不够」是**不同的缺陷**，不得合并成一个键：
-            #   truncated = 发了请求但被单页上限截断（我们没接着翻 ⇒ 我们的失职）
+            #   truncated = 发了请求、**我们没接着翻完**（单页上限截断 / 收益止损收页 ⇒ 我们的失职）
             #   starved   = 预算拒绝，一次请求都没发（连边界都没有 ⇒ 还是我们的失职）
             #   capped    = 服务端自称还有货却断了页（再多的预算也拿不到 ⇒ 百度的天花板）
+            #   failed    = 请求没成（没发出去或返回失败 ⇒ 这一词**一无所知**，不是"查了没查全"）
             #   expansion_unfunded = 这一类**整轮没跑过扩词**，因为额度在别的类上花完了
             #     （R23-B1）。它与 starved 的区别不是"大小"而是"形状"：starved 指得出一个
             #     被拒的**词**，这里连词都没被推导出来 —— 合并就丢掉"哪一类、哪一阶段"。
@@ -883,8 +884,13 @@ class SpatialScope:
             # 前两种喂 `unknown`，第三种喂 `unjudgeable_by_cap`：混起来就是把外部限制写成
             # 自己的漏查，或把自己的没查洗成天经地义。与 `poi.truncated`（展示上限）
             # 刻意不复用同一个词是同一纪律。
+            # ⚠️ R23-D（#71）：`truncated` 的谓词从 `not complete` 收窄成"排除 capped/failed"。
+            #    换代前那份报告的这一位里**可能混着**后两种词，而读侧无从事后重算（两份演示件
+            #    都没有逐词明细）⇒ 换代信号就是"下面两个新键在不在"（缺键 = 不知道，见 §20⑥ 丁档）。
             "evidence_truncated_terms": list(self.evidence_detail.get("truncated_terms") or []),
             "evidence_starved_terms": list(self.evidence_detail.get("starved_terms") or []),
+            "evidence_capped_terms": list(self.evidence_detail.get("capped_terms") or []),
+            "evidence_failed_terms": list(self.evidence_detail.get("failed_terms") or []),
             "evidence_capped_categories": sorted(self.evidence_capped_categories),
             "evidence_expansion_unfunded_categories": list(
                 self.evidence_detail.get("expansion_unfunded_categories") or []),

@@ -234,12 +234,16 @@ def test_retired_stop_line_note_is_gone_from_both_ends():
 
 
 def test_evidence_gap_note_is_one_text_on_both_ends():
-    """片 R23-A（乙）+ R23-B1/B3：「没查过 / 没查全 / 整轮没扩词 / 扩到一半没钱」那半句在两端是**七份物理字面量 + 一条拼装规则** ⇒ 逐条比。
+    """片 R23-A（乙）+ R23-B1/B3/D：「没查过 / 没查全 / 它不给 / 没查成 / 整轮没扩词 / 扩到一半没钱」
+    那半句在两端是**九份物理字面量 + 一条拼装规则** ⇒ 逐条比。
 
     与上面那条同一分工，只是对象换成一组常量：后端 `diagnosis_templates._GAP_*` 进生产正文，
     前端 `mocks/livingCircleReports.ts` 的 `GAP_*` 进演示态正文。改一边忘另一边 ⇒ 同一个事实
     两种说法，且今天没有任何东西会红。⚠️ 只比常量还不够 —— 常量在、正文没引用 = 假同源，
     所以两条"消费者计数"断言必须在（各 3 处：定义 1 + 医疗节 1 + 教育节 1）。
+
+    ⚠️ R23-D 起**名单不再手写**：以前是一张固定字典，加一端子集就漏检（本文件当年靠我记得加条目）。
+    现在两端各自枚举、再比**名字集合相等** ⇒ 任何一端单独多一个 `GAP_*` 都会红。
     """
     import re
 
@@ -247,21 +251,22 @@ def test_evidence_gap_note_is_one_text_on_both_ends():
 
     ts_path = PROJECT / "frontend" / "src" / "mocks" / "livingCircleReports.ts"
     ts_src = ts_path.read_text(encoding="utf-8")
-    pairs = {
-        "GAP_LEAD": dt._GAP_LEAD,
-        "GAP_STARVED": dt._GAP_STARVED,
-        "GAP_TRUNCATED": dt._GAP_TRUNCATED,
-        "GAP_UNFUNDED": dt._GAP_UNFUNDED,
-        "GAP_OUT_OF_BUDGET": dt._GAP_OUT_OF_BUDGET,
-        "GAP_JOIN": dt._GAP_JOIN,
-        "GAP_TAIL": dt._GAP_TAIL,
-    }
-    for name, py_val in pairs.items():
+
+    py_side = {name[1:]: value for name, value in vars(dt).items() if name.startswith("_GAP_")}
+    ts_side = dict(re.findall(r"^const (GAP_\w+) = '([^']*)'$", ts_src, re.M))
+    assert py_side, "后端一个 `_GAP_*` 都没抽到 ⇒ 本条对它是恒真"
+    assert set(py_side) == set(ts_side), (
+        f"两端常量名集合已分叉：只有后端有 {sorted(set(py_side) - set(ts_side))}、"
+        f"只有前端有 {sorted(set(ts_side) - set(py_side))}")
+    # 抽不到 = 有人把它改成多行/双引号 ⇒ 判据会静默少比一条，必须当场报
+    ts_declared = len(re.findall(r"^const GAP_\w+ =", ts_src, re.M))
+    assert ts_declared == len(ts_side), (
+        f"前端声明了 {ts_declared} 个 `GAP_*` 而正则只抽到 {len(ts_side)} 个"
+        " ⇒ 有常量不再是「单行 + 单引号字面量」，本条对它失效")
+    for name, py_val in py_side.items():
         assert py_val, f"后端常量 _{name} 是空串 ⇒ 本条对它是恒真"
-        block = re.search(rf"^const {name} = '([^']*)'$", ts_src, re.M)
-        assert block, f"前端常量 {name} 没了或不再是单行单引号字面量 ⇒ 镜像判据抽不到它"
-        assert py_val == block.group(1), (
-            f"{name} 两端已分叉：后端「{py_val[:16]}…」vs 前端「{block.group(1)[:16]}…」")
+        assert py_val == ts_side[name], (
+            f"{name} 两端已分叉：后端「{py_val[:16]}…」vs 前端「{ts_side[name][:16]}…」")
 
     # 拼装规则也只许一份：两个消费者各引一次
     py_src = (BACKEND_DIR / "app" / "core" / "pipeline" / "diagnosis_templates.py").read_text(encoding="utf-8")

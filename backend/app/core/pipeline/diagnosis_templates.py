@@ -194,22 +194,28 @@ def _ideal(cat: str) -> int:
     return int((CATEGORY_RULES.get(cat) or {}).get("ideal_circle") or 1)
 
 
-# 「门槛项不足」这句话有**四种**真成因会让它失真，四种都只活在载荷里 ⇒ 各配一个子句上屏
-# （片 R23-A·乙 接前两种，片 R23-B1 接第三种，片 R23-B3 接第四种）：
+# 「门槛项不足」这句话有**六种**真成因会让它失真，六种都只活在载荷里 ⇒ 各配一个子句上屏
+# （片 R23-A·乙 接前两种，片 R23-B1 接第三种，片 R23-B3 接第四种，片 R23-D 接第五、六种）：
 # ①某词因预算**一次都没发起**（`caliber.evidence_starved_terms`）
-# ②某词发了但**没查全**（`evidence_truncated_terms`，单页上限 / 收益止损）
+# ②某词发了、**我们没接着翻完**（`evidence_truncated_terms`，单页上限 / 收益止损）
 # ③这一类**整轮没轮到扩词**（`evidence_expansion_unfunded_categories`，存的是裸类别名 ——
 #   那一轮连词名都还没产生）。
 # ④这一类**扩过词、却在额度见底时还没达标**（`evidence_expansion_out_of_budget_categories`，
 #   同样存裸类别名）。③④ 是"钱不够"的两种形状：③是排程没摊到，④是摊到了但额度太薄 ——
 #   合并就看不出该怪排程还是怪额度。少交代一种，读者就只能把"不足"读成"社区没有"。
-# ⚠️ 曾经还有**第五种**：采集按**点数**收手、分子按**门槛项**算，于是"点数够了就先停手"。
+# ⑤某词**接口自称还有货却断了页**（`evidence_capped_terms`）：再怎么加预算也拿不到这一截。
+# ⑥某词**请求没成**（`evidence_failed_terms`）：这一词一无所知，不是"查了没查全"。
+#   ⚠️ ⑤⑥ 在 R23-D 之前**混在②里**（那一位的谓词是 `not complete`，五种停法全落进来）⇒
+#   对⑥是**假话**（根本没成）、对⑤是**归责错位**（读者会以为加预算能拿到）。
+#   编号按**落地顺序**排，屏上顺序按**归责由近及远**排（①②⑤⑥③④，见下面两处循环）——
+#   两套序不同是有意的：读者要先看到"我们的失职"，再看到"额度怎么排的"。
+# ⚠️ 曾经还有**第七种**：采集按**点数**收手、分子按**门槛项**算，于是"点数够了就先停手"。
 #   它由 R23-B2 就地修掉（收手单位改到与分子同一个，见 `poi_collector._at_target`），
 #   所以那句"停止线按点数算"的交代**必须随之撤掉** —— 撤句与换单位同批，留着就是假话。
-# ⚠️ 下面七个常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
+# ⚠️ 下面**九个**常量与前端 `mocks/livingCircleReports.ts` 的同名件**逐字同源**，由
 #    `tests/test_fixture_mirror.py` 的镜像判据钉住；拼装规则也只许一份：
 #    `_GAP_LEAD + 子句…(_GAP_JOIN)… + _GAP_TAIL`。
-#    「本次有 N 个…」写在**子句里**而不是前缀里，是因为第三、四种子句（都没扩够）不以计数开头。
+#    「本次有 N 个…」写在**子句里**而不是前缀里，是因为③④两种子句（都没扩够）不以计数开头。
 _GAP_LEAD = '另需交代：'
 _GAP_STARVED = '本次有 {n} 个{label}类检索词因预算未发起（{terms}）'
 _GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（{terms}）'
@@ -218,15 +224,21 @@ _GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（{term
 #    说"没发起"就是假话；"没扩成"两种分支都为真。（计划 §14⑤.3）
 _GAP_UNFUNDED = '本轮没有额度为这一类扩词（一次都没扩成）'
 _GAP_OUT_OF_BUDGET = '这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）'
+# R23-D（#71）：从②里移出来的两种归责各说各的。⚠️ 措辞里**不许**出现"我们没翻"或"再查就有"：
+# ⑤是接口自己断的页（加预算也拿不到），⑥是这一词压根没成（一无所知，连"翻过"都说不出口）。
+_GAP_CAPPED = '本次有 {n} 个{label}类检索词接口自称还有货却断了页（{terms}）'
+_GAP_FAILED = '本次有 {n} 个{label}类检索词请求没成（{terms}）'
 _GAP_JOIN = '；'
 _GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 
 
 def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> str:
-    """本类「没查过 / 没查全 / 整轮没扩词 / 扩到一半没钱」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
+    """本类「没查过 / 没查全 / 它不给 / 没查成 / 整轮没扩词 / 扩到一半没钱」那半句；
+    无话可说时返回**空串**（不印，也不硬编「0 个」）。
 
-    只读载荷、不重判。四个来源是**四种不同缺陷**（`scope.py` 那处注释分职），所以各读各的键：
-    - `evidence_starved_terms` / `evidence_truncated_terms` 是**全类混合表**，形如 `类:词`，
+    只读载荷、不重判。六个来源是**六种不同缺陷**（`scope.py` 那处注释分职），所以各读各的键：
+    - `evidence_starved_terms` / `evidence_truncated_terms` / `evidence_capped_terms`（R23-D）/
+      `evidence_failed_terms`（R23-D）是**全类混合表**，形如 `类:词`，
       必须按 `{category}:` 前缀筛本类，否则教育类的账会印到医疗节头上；
     - `evidence_expansion_unfunded_categories`（R23-B1）/ `evidence_expansion_out_of_budget_categories`
       （R23-B3）是**类别表**，按类名整等判定 —— 它们没有"词"可指（前者词根本没被推导出来，
@@ -236,7 +248,9 @@ def _evidence_gap_note(caliber: Optional[dict], category: str, label: str) -> st
     """
     clauses: List[str] = []
     for tpl, key in ((_GAP_STARVED, "evidence_starved_terms"),
-                     (_GAP_TRUNCATED, "evidence_truncated_terms")):
+                     (_GAP_TRUNCATED, "evidence_truncated_terms"),
+                     (_GAP_CAPPED, "evidence_capped_terms"),
+                     (_GAP_FAILED, "evidence_failed_terms")):
         raw = (caliber or {}).get(key)
         if not isinstance(raw, list):
             continue

@@ -62,16 +62,19 @@ function covBasisText(c: FacilityCategoryStat | undefined): string {
   return req == null ? '' : `（其中计入覆盖度分子的是门槛项 ${req} 处）`
 }
 
-/* 「门槛项不足」这句话有**四种**真成因会让它失真，四种都只活在载荷里 ⇒ 各配一个子句上屏
-   （片 R23-A·乙 接前两种，R23-B1 接第三种，R23-B3 接第四种）：
-   ①词因预算**一次都没发起**（`evidence_starved_terms`）②词发了但**没查全**
+/* 「门槛项不足」这句话有**六种**真成因会让它失真，六种都只活在载荷里 ⇒ 各配一个子句上屏
+   （片 R23-A·乙 接前两种，R23-B1 接第三种，R23-B3 接第四种，R23-D 接第五、六种）：
+   ①词因预算**一次都没发起**（`evidence_starved_terms`）②词发了、**我们没接着翻完**
    （`evidence_truncated_terms`）③这一类**整轮没跑过扩词**，额度在别的类上花完了
    （`evidence_expansion_unfunded_categories`，存的是裸类别名 —— 那一轮连词名都还没产生）
    ④这一类**扩过词、却在额度见底时还没达标**（`evidence_expansion_out_of_budget_categories`）。
    ③④ 分名分职：③是排程没摊到、④是摊到了但额度太薄，合并就看不出该怪谁。
-   ⚠️ 曾经还有**第五种**：采集按点数收手、分子按门槛项算 ⇒ 那句"停止线按点数算"的交代由
+   ⑤词**接口自称还有货却断了页**（`evidence_capped_terms`）⑥词**请求没成**（`evidence_failed_terms`）。
+   ⑤⑥ 在 R23-D 之前混在②里 ⇒ 对⑥「发了但没查全」是假话、对⑤是归责错位（读者会以为加预算能拿到）。
+   ⚠️ 编号按**落地顺序**排，屏上顺序按**归责由近及远**排（①②⑤⑥③④）—— 两套序不同是有意的。
+   ⚠️ 曾经还有**第七种**：采集按点数收手、分子按门槛项算 ⇒ 那句"停止线按点数算"的交代由
       R23-B2 随换单位一起撤掉（留着就是假话），两端同批，见 `poi_collector._at_target`。
-   ⚠️ 下面七个常量与后端 `diagnosis_templates` 的同名件**逐字同源**，拼装规则也只许一份：
+   ⚠️ 下面**九个**常量与后端 `diagnosis_templates` 的同名件**逐字同源**，拼装规则也只许一份：
       `GAP_LEAD + 子句…(GAP_JOIN)… + GAP_TAIL`（镜像判据见 `test_fixture_mirror.py`）。
       「本次有 N 个…」写在**子句里**而不是前缀里，因为第③④种不以计数开头。 */
 const GAP_LEAD = '另需交代：'
@@ -81,11 +84,15 @@ const GAP_TRUNCATED = '本次有 {n} 个{label}类检索词发了但没查全（
 //    写"一个词都没发起"会是假话（后端 `diagnosis_templates` 同注，计划 §14⑤.3）
 const GAP_UNFUNDED = '本轮没有额度为这一类扩词（一次都没扩成）'
 const GAP_OUT_OF_BUDGET = '这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了）'
+// R23-D：从②里移出来的两种归责。措辞里不许出现"我们没翻"或"再查就有"（后端同注）
+const GAP_CAPPED = '本次有 {n} 个{label}类检索词接口自称还有货却断了页（{terms}）'
+const GAP_FAILED = '本次有 {n} 个{label}类检索词请求没成（{terms}）'
 const GAP_JOIN = '；'
 const GAP_TAIL = ' ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。'
 
-/** 本类「没查过 / 没查全 / 整轮没扩词 / 扩到一半没钱」那半句；无话可说时返回**空串**（不印，也不硬编「0 个」）。
- *  前两个键是 `{类}:{词}` 形状的**全类混合表** ⇒ 必须按前缀筛本类；后两个是**类别表**，按类名整等判定。
+/** 本类「没查过 / 没查全 / 它不给 / 没查成 / 整轮没扩词 / 扩到一半没钱」那半句；
+ *  无话可说时返回**空串**（不印，也不硬编「0 个」）。
+ *  前四个键是 `{类}:{词}` 形状的**全类混合表** ⇒ 必须按前缀筛本类；后两个是**类别表**，按类名整等判定。
  *  键缺席（换代前冻结的快照）与空表都算无话可说：前者是"不知道"、后者是"查全了"。 */
 function evidenceGapNote(
   caliber: LivingCircleReport['caliber'],
@@ -96,6 +103,8 @@ function evidenceGapNote(
   for (const [tpl, key] of [
     [GAP_STARVED, 'evidence_starved_terms'],
     [GAP_TRUNCATED, 'evidence_truncated_terms'],
+    [GAP_CAPPED, 'evidence_capped_terms'],
+    [GAP_FAILED, 'evidence_failed_terms'],
   ] as const) {
     const raw = caliber?.[key]
     if (!Array.isArray(raw)) continue

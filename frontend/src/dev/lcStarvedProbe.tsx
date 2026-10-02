@@ -1,9 +1,10 @@
 /**
- * 片 R23-A（乙）+ R23-B1 + R23-B2 + R23-B3 · 「没查过 / 没查全 / 整轮没扩词 / 扩到一半没钱」—— 落地后的整页成图
+ * 片 R23-A（乙）+ R23-B1 + R23-B2 + R23-B3 + R23-C + R23-D ·
+ * 「没查过 / 没查全 / 它不给 / 没查成 / 整轮没扩词 / 扩到一半没钱」—— 落地后的整页成图
  *
  * 打开：`http://localhost:3400/preview-lc-starved.html`
- * 参数：`?tier=a1|a2|b|c|d|f|g|h|all`
- * 同源计划：`skip/tmp/plan-r23-starved-preview.md`（R23-A）、`skip/tmp/plan-r23-b-stopline.md`（R23-B1/B2/B3）
+ * 参数：`?tier=a1|a2|b|c|d|f|g|h|i|j|all`
+ * 同源计划：`skip/tmp/plan-r23-starved-preview.md`（R23-A）、`skip/tmp/plan-r23-b-stopline.md`（R23-B1/B2/B3、R23-C、R23-D）
  *
  * ⚠️ 这一版探针不再自带任何拟稿：屏上每一个字 —— 包括橙底那半 —— 都是
  * `buildLivingCircleReport()` 现产的（`mocks/livingCircleReports.ts::evidenceGapNote` ← `secMedical` / `secEducation`）。
@@ -21,6 +22,8 @@
  *  ④ R23-B3 的第四种成因同样不以计数开头，且开头是「这一类的扩词…」⇒ 锚点<b>必须再加一条</b>：
  *     少了它，H 档（只有第四种命中）整段橙底会<b>消失</b>，而生产正文确实多印了一句 —— 这正是
  *     F 档当年踩过的同一个坑（见上面第 ③ 条）。
+ *  ⑤（R23-D 记的正面一条）新拆出来的两位<b>都以「本次有 N 个」开头</b> ⇒ 锚点<b>不用再加</b>。
+ *     这不是巧合，是第 ③ 条那条纪律的副产品：计数写在子句里，凡是"指得出词"的成因就共用同一种开头。
  */
 import { createRoot } from 'react-dom/client'
 import type { ReactNode } from 'react'
@@ -64,42 +67,51 @@ function whyLine(lc: LivingCircleReport, category: string, printed: boolean): st
     return Array.isArray(v) ? (v.filter((t) => typeof t === 'string') as string[]) : null
   }
   const [st, tr] = [raw('evidence_starved_terms'), raw('evidence_truncated_terms')]
-  // ⚠️ 后两个键存的是**裸类别名**（`medical`），前两个存的是 `类:词` ⇒ 筛法不同。
+  // R23-D 拆出来的两位（都是 `类:词` 形状，与前两位同一筛法）
+  const [cp, fl] = [raw('evidence_capped_terms'), raw('evidence_failed_terms')]
+  // ⚠️ 后两个键存的是**裸类别名**（`medical`），前四个存的是 `类:词` ⇒ 筛法不同。
   // 拿前缀去筛它们，说明文字会在医疗格上谎报「没有一条属于本类」，而生产代码确实会印。
   const un = raw('evidence_expansion_unfunded_categories')
   const ob = raw('evidence_expansion_out_of_budget_categories')
   const ofMine = (v: string[] | null) => (v ?? []).filter((t) => t.startsWith(`${category}:`))
   const ofCat = (v: string[] | null) => ((v ?? []).includes(category) ? [category] : [])
-  const [s, t, u, o] = [ofMine(st), ofMine(tr), ofCat(un), ofCat(ob)]
+  const [s, t, k, f, u, o] = [ofMine(st), ofMine(tr), ofMine(cp), ofMine(fl), ofCat(un), ofCat(ob)]
   const c = lc.poi.categories.find((x) => x.category === category)
   const cov = Math.round(Number(c?.coverage ?? 0) * 100)
   if (printed) {
     const parts = [
       s.length ? `${s.length} 个没发起` : '',
       t.length ? `${t.length} 个没查全` : '',
+      k.length ? `${k.length} 个被接口断了页` : '',
+      f.length ? `${f.length} 个请求没成` : '',
       u.length ? '整轮没扩词' : '',
       o.length ? '扩到一半没钱' : '',
     ].filter(Boolean)
     return `载荷里本类有 ${parts.join('、')}，且该类覆盖度 ${cov}% <75%（缺口分支）、门槛项键在 ⇒ 印`
   }
-  const absent = [
+  const KEYS: [string, string[] | null][] = [
     ['evidence_starved_terms', st],
     ['evidence_truncated_terms', tr],
+    ['evidence_capped_terms', cp],
+    ['evidence_failed_terms', fl],
     ['evidence_expansion_unfunded_categories', un],
     ['evidence_expansion_out_of_budget_categories', ob],
-  ].filter(([, v]) => v === null).map(([k]) => k)
-  if (absent.length === 4) return '载荷里四个键都没有（换代前冻结的快照 = "不知道"）⇒ 不印，也不写「0 个」'
+  ]
+  const absent = KEYS.filter(([, v]) => v === null).map(([key]) => key)
+  if (absent.length === 6) return '载荷里六个键都没有（换代前冻结的快照 = "不知道"）⇒ 不印，也不写「0 个」'
   const others =
-    [...(st ?? []), ...(tr ?? [])].filter((x) => !x.startsWith(`${category}:`)).length +
+    [...(st ?? []), ...(tr ?? []), ...(cp ?? []), ...(fl ?? [])]
+      .filter((x) => !x.startsWith(`${category}:`)).length +
     (un ?? []).filter((x) => x !== category).length +
     (ob ?? []).filter((x) => x !== category).length
   if (others)
-    return `键里有 ${others} 条账（${absent.length ? `另有 ${absent.length} 个键缺席=不知道` : '四键都在'}），但没有一条属于本类 ⇒ 不印：那是别类的账`
+    return `键里有 ${others} 条账（${absent.length ? `另有 ${absent.length} 个键缺席=不知道` : '六键都在'}），但没有一条属于本类 ⇒ 不印：那是别类的账`
   if (c?.required_in_circle == null)
     return '本类有账，但该类没有 required_in_circle（门槛项口径之前的快照）⇒ 正文没有"门槛项不足"那句话，这句也不印'
+  const termCount = s.length + t.length + k.length + f.length
   if (cov >= 0.75)
-    return `本类确实有 ${s.length + t.length} 个词${u.length ? '、且整轮没扩词' : ''}${o.length ? '、且扩到一半没钱' : ''}，但该类覆盖度 ${cov}% ≥75%（达标分支）⇒ 不印：证据面不完整不会让"分子已计满"变假话`
-  return '四个键都在、本类四条都是空 ⇒ 不印（这一类查全了，扩词也真跑到达标）'
+    return `本类确实有 ${termCount} 个词${u.length ? '、且整轮没扩词' : ''}${o.length ? '、且扩到一半没钱' : ''}，但该类覆盖度 ${cov}% ≥75%（达标分支）⇒ 不印：证据面不完整不会让"分子已计满"变假话`
+  return '六个键都在、本类六条都是空 ⇒ 不印（这一类查全了，扩词也真跑到达标）'
 }
 
 /* ───────────── 输入载荷的拼装（换内存件，不改磁盘夹具） ───────────── */
@@ -262,6 +274,29 @@ const H = buildWith('kaili', setCaliber({
   evidence_expansion_unfunded_categories: [],
   evidence_expansion_out_of_budget_categories: OUT_OF_BUDGET_EDU,
 }))
+/** 片 R23-D：⑤**接口断页**单独命中。词名取自 §19 那次真跑里教育类那两位（它们当时的停因是
+ *  `page_cap`，这里换成 `server_cap` 的形状只为看"这一档将来长这样"⇒ 载荷是构造的，屏上写明）。
+ *  六键全给（其余留空表）⇒ 这一档同时是"缺键 vs 空表"两种读法的分界证人：这里全是"有键且为空"。 */
+const I = buildWith('kaili', setCaliber({
+  evidence_starved_terms: [],
+  evidence_truncated_terms: [],
+  evidence_capped_terms: ['education:幼儿园', 'education:博南高级中学'],
+  evidence_failed_terms: [],
+  evidence_expansion_unfunded_categories: [],
+  evidence_expansion_out_of_budget_categories: [],
+}))
+/** 片 R23-D：⑥**请求没成**单独命中（医疗节，覆盖度被压成缺口分支才可达） */
+const J = buildWith('kaili', (lc) => {
+  forceMedGap(lc)
+  setCaliber({
+    evidence_starved_terms: [],
+    evidence_truncated_terms: [],
+    evidence_capped_terms: [],
+    evidence_failed_terms: ['medical:诊所'],
+    evidence_expansion_unfunded_categories: [],
+    evidence_expansion_out_of_budget_categories: [],
+  })(lc)
+})
 
 const TIERS: { id: string; node: ReactNode }[] = [
   {
@@ -442,6 +477,58 @@ const TIERS: { id: string; node: ReactNode }[] = [
       />
     ),
   },
+  {
+    id: 'i',
+    node: (
+      <Tier
+        id="i"
+        title="片 R23-D · 第五种成因单独命中：接口自称还有货却断了页（构造）"
+        sceneLabel="凯里老街（教育节，覆盖度 33% 未动过）"
+        report={I}
+        badge="本刀新增"
+        why={
+          <>
+            <b>这一档是"再多的预算也拿不到那一截"。</b>六键都在、只有
+            <code>evidence_capped_terms</code> 有货 ⇒ 教育节印「本次有 2 个教育类检索词接口自称还有货却断了页
+            （education:幼儿园、education:博南高级中学）」，而<b>医疗节一个字都不印</b>（达标分支 ⇒ 反向对照）。
+            <br />
+            <b>为什么它以前不印</b>：那两位词今天混在 <code>evidence_truncated_terms</code> 里
+            （那一位的谓词是 <code>not complete</code>，五种停法全落进来）⇒ 报告只会说
+            「发了但没查全」，读者以为<b>多翻页深就能拿到</b>，而实际是百度自己断的页。
+            <br />
+            ⚠️ 载荷是<b>构造</b>：词名取自 §19 真跑那一格，但那两位当时的停因是 <code>page_cap</code>
+            （我们没接着翻），不是 <code>server_cap</code>。今天真跑里 <code>capped</code> 是空的 ⇒
+            这一档的兑现点仍是下一次真体检。
+          </>
+        }
+      />
+    ),
+  },
+  {
+    id: 'j',
+    node: (
+      <Tier
+        id="j"
+        title="片 R23-D · 第六种成因单独命中：请求没成（构造）"
+        sceneLabel="凯里老街（医疗类被压成缺口）"
+        report={J}
+        badge="本刀新增"
+        why={
+          <>
+            <b>这一档是"这一词我们一无所知"。</b>只有 <code>evidence_failed_terms</code> 有货 ⇒
+            医疗节印「本次有 1 个医疗类检索词请求没成（medical:诊所）」；教育节不印（本类没账）。
+            <br />
+            <b>这一位是从旧那句里救出来的假话</b>：那一行由 <code>_api_error_row</code> 造，
+            它自己的 docstring 写着"一次<b>没发出去</b>/发出去没成的检索" —— 而旧谓词把它算进
+            <code>truncated</code>，于是屏上那句是「<b>发了</b>但没查全」。对没发出去的那一半，
+            "发了"两个字不成立 ⇒ 本刀把它单列。
+            <br />
+            ⚠️ §19 那次真跑里 <code>api_error</code> 也是 <b>0 实例</b>（31 次全成）⇒ 这一档同样是构造。
+          </>
+        }
+      />
+    ),
+  },
 ]
 
 function Legend() {
@@ -453,7 +540,7 @@ function Legend() {
           <b>后端生产正文</b>
           <div>
             <code>diagnosis_templates.py</code>：新增 <code>_evidence_gap_note(caliber, category, label)</code> 一处实现 +
-            七个 <code>_GAP_*</code> 常量；<code>_med_cov_sentence</code> / <code>_edu_cov_sentence</code> 各多收一个
+            九个 <code>_GAP_*</code> 常量；<code>_med_cov_sentence</code> / <code>_edu_cov_sentence</code> 各多收一个
             <code>caliber</code> 参数，只在<b>缺口分支</b>挂这句（教育节本节没有分支，闸门显式写在函数里）。
           </div>
         </li>
@@ -471,10 +558,11 @@ function Legend() {
         <li>
           <b>前端演示态镜像</b>
           <div>
-            <code>mocks/livingCircleReports.ts</code>：<code>evidenceGapNote</code> + 七个同名常量，
+            <code>mocks/livingCircleReports.ts</code>：<code>evidenceGapNote</code> + 九个同名常量，
             <code>medCoverageSentence</code> / <code>eduCoverageSentence</code> 多收 <code>caliber</code>。
             措辞与后端<b>逐字同源</b>，由 <code>test_fixture_mirror.py::test_evidence_gap_note_is_one_text_on_both_ends</code>
-            钉住（七条常量各比一次 + 两条"正文真的引用了它 3 次"计数）。
+            钉住（R23-D 起<b>名单不再手写</b>：两端各自枚举 <code>GAP_*</code> 再比<b>名字集合相等</b>
+            + 两条"正文真的引用了它 3 次"计数 ⇒ 任何一端单独多一个常量都会红）。
           </div>
         </li>
         <li>
@@ -502,6 +590,26 @@ function Legend() {
           </div>
         </li>
         <li>
+          <b>本刀（R23-D · #71）把「发了但没查全」那一位按归责拆成三位</b>
+          <div>
+            <code>poi_collector.py</code>：<code>truncated_terms</code> 的谓词从 <code>not complete</code> 收窄成
+            <b>排除式</b>（去掉 <code>cap_hit</code> 与 <code>api_error</code>）+ 新增 <code>failed_terms</code>；
+            <code>capped_terms</code> 早就在算，只是<b>算了没发射</b>（<code>as_detail()</code> 有、
+            <code>scope.payload()</code> 只取类级那份）⇒ 这就是「capped 没有屏上出口」的确切成因。
+            <code>scope.py</code> 发射 <code>evidence_capped_terms</code> / <code>evidence_failed_terms</code>；
+            <code>types.ts</code> 声明两键（缺键 = 读作<b>不知道</b>，且它同时是换代标记）。
+            <br />
+            ⚠️ 谓词写成"排除已归责的两档"而不是"枚举 <code>page_cap</code>/<code>dup_stop</code>"：
+            未知或将来新增的停止原因<b>默认留在 truncated</b> ⇒ 最坏表现是多交代一句，绝不会让一个词
+            从披露里静默消失。三位的并集与旧谓词<b>逐词相等</b>那条是主防线。
+            ⚠️ <code>not_run</code> <b>不配拥有键</b>：四条通道页深全 ≥1（AST 扫 <code>max_pages=</code> 实参钉住），
+            它进不了 <code>per_term</code> ⇒ 为结构上恒空的位造披露位 = 造一条没人能跑的假防线。
+            ⚠️ 刻意<b>不升</b> <code>coverage_caliber_version</code>：那把键驱动的句子是
+            「评分口径已升级…不可与新报告直接比 —— 建议重新体检」，而本刀一个分都没改 ⇒ 升它会让那句说假话
+            并把用户推向花配额。换代信号由"两个新键在不在"承担（计划 §20⑥ 丁档）。
+          </div>
+        </li>
+        <li>
           <b>判据</b>
           <div>
             后端 <code>test_evidence_gap_note.py</code>（拼装 + 分支真话 + 撤句后"同段只许一个另需交代"）、
@@ -516,7 +624,16 @@ function Legend() {
             钱够反向对照 + 零头寸只进第三位 + 达标/冻结/调用失败三种收手各做<b>换桩差分</b> +
             "首轮就失败"的类不许被说成扩到一半 + ⑤ 同时进分子并集 +
             <code>as_detail()</code>→<code>scope.payload()</code> 同源 + 第四子句只为本类印）。
-            前端 <code>lcEvidenceGapNote.test.tsx</code>（走真出口，含位置契约、"别类不印"与"同段只许一个另需交代"的反向对照）。
+            <b>新</b> <code>test_truncated_attribution.py</code>（8 条：<b>守恒主防线</b>"三位并起来恰好等于旧谓词
+            且两两互斥" + 每种停法各归各位 + <b>未知停止原因默认落 truncated</b>（反向对照：查全的两种永远不进任何一位）+
+            两位新子句各说各的话、不许互相冒充 + 一类四种子句并列仍只一个前缀 + 两个新键从唯一发射点到 <code>payload()</code> +
+            页深地板（含 <b>AST 扫</b> <code>max_pages=</code> 实参，第一版用正则把注释里的 <code>max_pages=3</code>
+            当成调用点、伪装成一条在跑的判据））。
+            <code>test_numerator_incomplete_union.py</code> 的 <code>_caliber()</code> 从<b>手抄键名映射</b>改成走
+            <code>bind_evidence → payload()</code> —— 手抄那份在本刀加两个键时静默少发两位、把"正文印不印 ⇔ 并集有没有"
+            测成反向，这条关系判据当场红；红的是判据的取证面，不是并集。
+            前端 <code>lcEvidenceGapNote.test.tsx</code>（走真出口，含位置契约、"别类不印"与"同段只许一个另需交代"的反向对照，
+            本刀 +3 条：⑤单独 / ⑥单独 / 四类同段）。
           </div>
         </li>
         <li>
@@ -527,6 +644,9 @@ function Legend() {
             ⚠️ 锚点必须三条都在：少了哪一条，<b>只有那一种成因命中</b>的那一档整段橙底会消失
             （F 档当年红过一次，H 档是同一坑的第二遍）。原先那块"灰框 = R23-B2 会撤走的那半"
             的示意机关已随撤句删除 —— 现在每段只剩<b>一个</b>「另需交代：」。
+            <br />
+            ✅ R23-D 新拆的两位<b>不需要</b>第四条锚点：它们指得出词 ⇒ 沿用「本次有 N 个…」开头，
+            正好落在第一条锚上（这是"计数写在子句里、不写进前缀"那条纪律的副产品）。
           </div>
         </li>
         <li>
@@ -536,8 +656,15 @@ function Legend() {
             <code>coverage_numerator_incomplete_categories</code>，三处消费点仍读老判据 ⇒ 丙′ 那笔仍欠；
             屏上这句话也<b>不读</b>那个键，它只管分子召回不管边界）· 不动边际止损单位（丙未拍）·
             不删 <code>poi_collector.py:686</code> 那条不可达的 <code>consume</code> 分支（它兼任扣款的返回值检查，§14⑤.2）·
-            不碰 <code>evidence_capped_categories</code>（#71 仍欠：没有屏上出口）· 不动缓存键 · 不回填夹具
-            ⇒ 存量 30 份报告<b>都没有这个新键</b>，读作"不知道"而不是"没有类别扩到一半停了"。
+            不动<b>类级</b>那份 <code>evidence_capped_categories</code>（它喂 <code>unjudgeable_by_cap</code> 判定，
+            与措辞无关 ⇒ 本刀只是把<b>词级</b>那份也发射出去，没换它的用途）· 不动缓存键 · 不回填夹具
+            ⇒ 存量 30 份报告<b>都没有这三个新键</b>（<code>out_of_budget</code> / <code>capped_terms</code> /
+            <code>failed_terms</code>），一律读作"不知道"，而不是"没有类别扩到一半停了 / 没有词被断页 / 没有词没成"。
+            <br />
+            ⚠️ 本刀<b>顺手挖出但没修</b>的一条（计划 §20⑦ / 台账 #81）：<code>scope.py:653</code> 那道
+            "封顶名单 ⊆ 有实测边界的类"闸，只认 <code>bind_evidence</code> 交进去的<b>三要素那三类</b>边界 ⇒
+            任何<b>非三要素</b>关键词类撞上 <code>server_cap</code>，live 路径会在绑定期抛
+            <code>ValueError</code>、整份报告失败。今天没现形只因为真跑那两次的 capped 都是<b>空</b>。
             <br />
             <b>本屏同批改掉的一处假话</b>：第三种成因那句原写「一个扩词词都没发起」，而一类<b>首次</b>扩词就撞
             接口失败、此时额度归零 ⇒ 它<b>发起过</b>（<code>_record_failure</code> 留了 <code>api_error</code> 行），

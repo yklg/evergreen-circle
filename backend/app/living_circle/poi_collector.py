@@ -204,12 +204,33 @@ class CollectionEvidence:
 
     @property
     def truncated_terms(self) -> Tuple[str, ...]:
-        """发了请求但**没查全**的词（被单页上限截断 / 收益止损提前收页）。
+        """发了请求但**我们没查全**的词（被单页上限截断 / 收益止损提前收页）。
 
         与 `starved_terms`（一次都没发）刻意分名：两者是不同的缺陷，合成一个词
         「截断」就会被稀释成噪声 —— 与 `poi.truncated`（展示上限）不复用同词同理。
+
+        **R23-D（#71）**：谓词从 `not complete` 收窄成**排除式** —— 把两种"不归我们失职"的
+        停法各自移出去（`server_cap` → `capped_terms`、`api_error` → `failed_terms`）。
+        旧谓词把四种归责混在一位，那句「发了但没查全」对 `api_error` 是**假话**
+        （`_api_error_row` 的 docstring 自己写着"一次**没发出去**/发出去没成"），
+        对 `server_cap` 是**归责错位**（读者会以为加预算能拿到，实际是接口断页）。
+        ⚠️ 写成"排除已归责的两档"而不是"枚举 `page_cap`/`dup_stop`"：**未知或将来新增的
+        停止原因默认留在本位**（宁可多交代一句，也不让一个词从披露里静默消失）。
+        三位的并集与旧谓词**逐词相等**这条由 `tests/test_truncated_attribution.py` 钉住。
         """
-        return tuple(f"{t.category}:{t.term}" for t in self.per_term if not t.complete)
+        return tuple(f"{t.category}:{t.term}" for t in self.per_term
+                     if not t.complete and not t.cap_hit and t.stop_reason != STOP_API_ERROR)
+
+    @property
+    def failed_terms(self) -> Tuple[str, ...]:
+        """**请求没成**的词（`api_error`：没发出去，或发出去返回失败）。
+
+        与 `truncated_terms` 的分界是"我们对这一词知道多少"：截断是**知道一部分、边界外还有货**，
+        失败是**一无所知**（`bound_source_by_category` 因此把它归成 `missing` 而不是 `frontier`）。
+        合并成一句就会把"这一词压根没查到东西"说成"查了没查全"。
+        """
+        return tuple(f"{t.category}:{t.term}" for t in self.per_term
+                     if t.stop_reason == STOP_API_ERROR)
 
     @property
     def capped_terms(self) -> Tuple[str, ...]:
@@ -217,6 +238,11 @@ class CollectionEvidence:
 
         取「任一词触顶即算该类触顶」：一个词查不全，整个类别的召回就永远差一截 ——
         这是全称结论（「这一圈没有」）的合取前提被破坏，与 `frontier_m` 取 min 同理。
+
+        R23-D 之前本位**算了没发射**（`as_detail()` 里有，`scope.payload()` 只取类级那份
+        `evidence_capped_categories`）⇒ 读侧那句「发了但没查全」顺带替它说了话，
+        这就是「capped 没有屏上出口」的确切成因。现在词级也发射（`evidence_capped_terms`），
+        类级那份**照旧保留** —— 它喂的是 `unjudgeable_by_cap` 判定，与措辞无关。
         """
         return tuple(f"{t.category}:{t.term}" for t in self.per_term if t.cap_hit)
 
@@ -230,11 +256,12 @@ class CollectionEvidence:
         有单一来源的数，将来谁要按它办事都读这里。
 
         四样都在本对象身上 ⇒ 并集只在此处算一次；⚠️ **不去解析 `类:词` 字符串**（那是第二份判定）：
-        `truncated` 直接读 `per_term` 的完整性，与 `truncated_terms` 那个属性同一个谓词。
-        `capped`（百度自称还有货却断页）**不单独并入** —— 但它天然经 `truncated` 这条路进来：
-        `STOP_SERVER_CAP` 不是"已查全"（`is_exhausted` 只认 complete/empty），所以那一行本来就
-        算"没查够"。读侧那句「发了但没查全」同理会印它 ⇒ 两边一致，与 #71（capped 自己那一位
-        还没有屏上出口）不冲突。
+        这里直接遍历 `per_term` 读完整性，与 `truncated_terms` 那个属性**同一个谓词、不同一条路**。
+        `capped`（百度自称还有货却断页）与 `failed`（请求没成）**不单独并入** —— 但它们天然在：
+        本位判的是 `not t.complete`，而 `STOP_SERVER_CAP` / `STOP_API_ERROR` 都不是"已查全"
+        （`is_exhausted` 只认 complete/empty）。⇒ R23-D 把这两位从 `truncated_terms` 里移出去时
+        **本位一个类都没少**（那条守恒由 `tests/test_truncated_attribution.py` 钉住，
+        移错方向就会露出"分子账上少了一类"）。
         """
         seen: Dict[str, None] = {}
         for cat, _term in self.starved_terms:
@@ -273,6 +300,7 @@ class CollectionEvidence:
             "terms": [t.as_row() for t in self.per_term],
             "starved_terms": [f"{c}:{t}" for c, t in self.starved_terms],
             "capped_terms": list(self.capped_terms),
+            "failed_terms": list(self.failed_terms),
             "expansion_unfunded_categories": list(self.expansion_unfunded),
             "expansion_out_of_budget_categories": list(self.expansion_out_of_budget),
             # 四种成因的并集（机器可读那份；措辞仍归读侧按成因给）

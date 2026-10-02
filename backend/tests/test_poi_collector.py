@@ -204,8 +204,10 @@ class TestCollectPOIConvergence:
            「点位凭空消失」在账上变成「钱没花」⇒ 花掉的额度与真实调用数对不上，缺口不可见。
            判据取 `spend == calls`：退款会令 spend 少 1。
         2. **留痕**：必须有一行 `stop_reason=api_error`、`complete=False` 的举证，于是
-           `truncated_terms` 里有 `pharmacy:药店`，报告能说「这一类我们没查成」，
+           `failed_terms` 里有 `pharmacy:药店`，报告能说「这一词请求没成」，
            而不是「这一圈没有药店」。
+           ⚠️ R23-D 之前这一位混在 `truncated_terms` 里，报告那句是"发了但没查全" —— 对
+           「根本没发出去/没成」的词是**假话**；本条按归责重指，不是放宽（断的还是"必须有位可归"）。
         这条也是 S-P0-2（`bound_source` 派生）的原料 —— 没有这行，派生无从谈起。
         """
         import asyncio
@@ -241,8 +243,11 @@ class TestCollectPOIConvergence:
         assert failed.stop_reason == pc.STOP_API_ERROR
         assert failed.returned == 0 and failed.pages_fetched == 0
         assert failed.complete is False, "调用失败绝不等于「这一圈没有药店」"
-        assert "pharmacy:药店" in collected.evidence.truncated_terms, (
-            "缺口必须可归因：没查成的词要出现在 truncated_terms（发了请求但没查全）"
+        assert "pharmacy:药店" in collected.evidence.failed_terms, (
+            "缺口必须可归因：没查成的词要出现在 failed_terms（请求没成 = 一无所知）"
+        )
+        assert "pharmacy:药店" not in collected.evidence.truncated_terms, (
+            "回到 truncated 就等于对没成的词说「发了但没查全」——那是本刀要消灭的假话"
         )
         # 边界保守合取：这一类没证据 ⇒ 边界 0，不许把「一无所知」洗成「查全了」
         assert collected.evidence.frontier_m("pharmacy") == 0.0

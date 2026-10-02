@@ -60,9 +60,11 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
     for (const id of ['kaili', 'beijing-jinsong']) {
       const r = buildLivingCircleReport(id) as Report
       for (const sec of ['medical', 'education']) {
-        expect(para(r, sec), `${id}/${sec}：夹具数据没变却印出了新句 ⇒ 闸门失效`).not.toContain('因预算未发起')
-        expect(para(r, sec), `${id}/${sec}`)
-          .not.toContain('发了但没查全')
+        for (const frag of ['因预算未发起', '发了但没查全', '接口自称还有货却断了页', '请求没成',
+                            '本轮没有额度', '扩词在到达标线之前']) {
+          expect(para(r, sec), `${id}/${sec}：夹具数据没变却印出了「${frag}」⇒ 闸门失效`).not.toContain(frag)
+        }
+        expect(para(r, sec), `${id}/${sec}`).not.toContain('另需交代：')
       }
     }
   })
@@ -198,6 +200,53 @@ describe('演示态正文里「没查过 / 没查全」那句的上屏契约', (
       .toContain('这一类的扩词在到达标线之前')
     expect(para(b, 'education')).toBe(para(a, 'education'))
     expect(para(b, 'medical')).toBe(para(a, 'medical'))
+  })
+
+  it('⑤接口断页单独命中：只印「断了页」，那一句「发了但没查全」不许出现', () => {
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({ evidence_capped_terms: ['medical:诊所'] })(lc)
+    })
+    expect(para(r, 'medical')).toContain(
+      '另需交代：本次有 1 个医疗类检索词接口自称还有货却断了页（medical:诊所）' + TAIL)
+    expect(para(r, 'medical'), '断页的词又被说成我们没翻完 ⇒ 归责错位回来了')
+      .not.toContain('发了但没查全')
+    // 反向对照：教育节达标分支 + 载荷里没有教育类 ⇒ 一个字都不许印
+    expect(para(r, 'education')).not.toContain('另需交代：')
+  })
+
+  it('⑥请求没成单独命中：只印「请求没成」，也不许说「发了」', () => {
+    const r = buildWith('kaili', setCaliber({ evidence_failed_terms: ['education:小学'] }))
+    expect(para(r, 'education')).toContain(
+      '另需交代：本次有 1 个教育类检索词请求没成（education:小学）' + TAIL)
+    // 「发了但没查全」对这一档是假话（那一行可能压根没发出去）⇒ 必须不出现
+    expect(para(r, 'education')).not.toContain('发了但没查全')
+    expect(para(r, 'education')).not.toContain('断了页')
+    expect(para(r, 'medical')).not.toContain('另需交代：')
+  })
+
+  it('同一类四种词级成因并列：四条子句共用一个前缀、各报各的数', () => {
+    const r = buildWith('kaili', (lc) => {
+      forceMedGap(lc)
+      setCaliber({
+        evidence_starved_terms: ['medical:社区医院'],
+        evidence_truncated_terms: ['medical:诊所'],
+        evidence_capped_terms: ['medical:药房'],
+        evidence_failed_terms: ['medical:医药公司'],
+      })(lc)
+    })
+    const p = para(r, 'medical')
+    expect(p.split('另需交代：').length - 1, `前缀长了：${p}`).toBe(1)
+    // 只数**那半句**里的分号：整段正文自己就带一个（"圈内 25 处；其中计入分子…"），
+    // 拿整段数会把它算进来 ⇒ 判据测的就不再是拼装规则。
+    const note = p.slice(p.indexOf('另需交代：'))
+    expect(note.split('；').length - 1, `分号数不对：${note}`).toBe(3)
+    for (const frag of ['因预算未发起', '发了但没查全', '接口自称还有货却断了页', '请求没成']) {
+      expect(note, `${frag} 没上屏：${note}`).toContain(frag)
+    }
+    // 词名各归各位：断页那句里不许混进"没翻完"的那个词
+    expect(p).toContain('断了页（medical:药房）')
+    expect(p).toContain('没查全（medical:诊所）')
   })
 
   it('空表与键缺席都不许回落成「0 个」（前者=查全了、后者=不知道）', () => {
