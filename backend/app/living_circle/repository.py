@@ -9,8 +9,9 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import json
+import logging
+import os
 import sqlite3
 import threading
 import time
@@ -26,6 +27,20 @@ logger = logging.getLogger(__name__)
 # 默认缓存 TTL（T2：实时报告 30 天 → 任意地区离线可查；采样/POI 7 天）
 DEFAULT_REPORT_TTL_S = 30 * 24 * 3600.0
 DEFAULT_AUX_TTL_S = 7 * 24 * 3600.0
+
+# 缓存库落盘位置：默认 `app/lc_cache.db`（现役行为），可用 LC_CACHE_PATH 指向别处。
+# 为什么要有这颗开关 —— 报告缓存的键只含「场景名 + 中心 + 半径 + 档位 + 出行方式」，
+# **不含检索词表**，所以改 `CATEGORY_RULES` 的词表不会让它自动失效：同参重跑必命中 30 天
+# 内的旧载荷（`snapshot_live` 重采演示夹具时就撞上过：一次外呼都不发、把补词前的数据写回夹具）。
+# 空串按「没设」处理，与 `core.db` 的 VERDA_DB_PATH 同形状。
+CACHE_PATH_ENV = "LC_CACHE_PATH"
+DEFAULT_CACHE_PATH = Path(__file__).resolve().parent.parent / "lc_cache.db"
+
+
+def resolve_cache_path() -> Path:
+    """本次进程该用哪个缓存库文件（不设 `LC_CACHE_PATH` 时 = :data:`DEFAULT_CACHE_PATH`）。"""
+    override = os.environ.get(CACHE_PATH_ENV)
+    return Path(override) if override else DEFAULT_CACHE_PATH
 
 
 class CacheBackend(ABC):

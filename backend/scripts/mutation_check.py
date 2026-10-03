@@ -258,6 +258,21 @@ MUTATIONS: list[Mutation] = [
         new='else "养老配置覆盖正常（属显著缺口已补齐）"',
         test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
     ),
+    # ── U5（#94 重采前置）：缓存落点那颗保护型开关的两条复发形状 ──
+    Mutation(
+        label="U5 复发：pipeline 把缓存文件名写回死路径 ⇒ 只有接线腿能红（开关对真实链路失效）",
+        rel="app/core/pipeline/living_circle.py",
+        old="SqliteCache(resolve_cache_path())",
+        new='SqliteCache(Path(__file__).resolve().parents[2] / "lc_cache.db")',
+        test="tests/test_repository.py::test_u5_4_pipeline_takes_its_cache_location_from_the_resolver",
+    ),
+    Mutation(
+        label="U5 复发：resolver 读不到 LC_CACHE_PATH（当成没设）⇒ 只有两态对照那条腿能红",
+        rel="app/living_circle/repository.py",
+        old="    override = os.environ.get(CACHE_PATH_ENV)",
+        new='    override = ""',
+        test="tests/test_repository.py::test_u5_2_env_redirects_every_write",
+    ),
 ]
 
 

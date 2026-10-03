@@ -1,12 +1,23 @@
 """M1 · 缓存仓库：data_mode 前缀防串 / TTL / 三种缓存读写 / SqliteCache 落盘并发（U4）。
 T2 · 后端介质可互换契约（MemoryCache ≡ SqliteCache）+ 落盘边界（I11/I9）。"""
+import inspect
+import re
 import sqlite3
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from app.living_circle.repository import MemoryCache, Repository, SqliteCache
+import app as _app_pkg
+from app.living_circle.repository import (
+    CACHE_PATH_ENV,
+    DEFAULT_CACHE_PATH,
+    MemoryCache,
+    Repository,
+    SqliteCache,
+    resolve_cache_path,
+)
 
 
 def test_memory_cache_ttl_expiry():
@@ -231,3 +242,65 @@ def test_t2_9_non_serializable_value_escapes_set_currently(tmp_path):
     m = MemoryCache()
     m.set("k", {"obj": object()}, ttl_s=60)  # 内存实现不抛 → 契约不对称
     assert m.get("k")["obj"] is not None
+
+
+# ──────── U5 · 缓存落点可换（重采演示夹具要绕开「键不含检索词表」的旧载荷） ────────
+#
+# 为什么有这一格：报告缓存的键 = 场景名 + 中心 + 半径 + 档位 + 出行方式，**不含检索词表**
+# （`data_source.caliber_payload_key`）⇒ 改了 `CATEGORY_RULES` 的词表不会让它失效，同参再跑
+# 必命中 30 天内的旧载荷。`scripts/snapshot_live` 撞的就是这个：一次外呼都不发、把补词前的
+# 数据写回夹具，而它自己那道「必须是本场景当前口径」的门也只校 ev/cov 两把键 ⇒ 全绿放行。
+
+
+def test_u5_1_default_cache_path_is_the_shipped_file(monkeypatch):
+    """不设变量时落点必须**还是**现役那份 `app/lc_cache.db`。
+
+    这颗开关是保护型的：默认值 = 加它之前的行为。期望值从 `app` 包位置现算，不抄
+    `DEFAULT_CACHE_PATH`（那等于问常量"你等于你自己吗"）。
+    """
+    monkeypatch.delenv(CACHE_PATH_ENV, raising=False)
+    expected = Path(_app_pkg.__file__).resolve().parent / "lc_cache.db"
+    got = resolve_cache_path()
+    assert got == expected, f"默认落点挪了：{got} ≠ {expected}"
+    assert got == DEFAULT_CACHE_PATH, "resolver 与默认常量分叉 ⇒ 调用方各自认账"
+
+
+def test_u5_2_env_redirects_every_write(tmp_path, monkeypatch):
+    """设了 LC_CACHE_PATH ⇒ 建库、写、读全落在那颗新文件上。
+
+    两态对照才有信息量：换两个目标各写各的，若 resolver 忽略环境变量，两次都会落到同一个
+    文件、后一次覆盖前一次 ⇒ 第一条断言当场红。sqlite 不会替调用方建父目录，故路径落在
+    tmp_path 本身。
+    """
+    a, b = tmp_path / "cache-a.db", tmp_path / "cache-b.db"
+    monkeypatch.setenv(CACHE_PATH_ENV, str(a))
+    ca = SqliteCache(resolve_cache_path())
+    ca.set("live:report:u5", {"report": {"n": 1}}, ttl_s=600)
+    monkeypatch.setenv(CACHE_PATH_ENV, str(b))
+    cb = SqliteCache(resolve_cache_path())
+    cb.set("live:report:u5", {"report": {"n": 2}}, ttl_s=600)
+    assert ca.get("live:report:u5") == {"report": {"n": 1}}, "写 b 把 a 覆盖了 ⇒ 落点根本没换"
+    assert cb.get("live:report:u5") == {"report": {"n": 2}}
+    assert a.is_file() and b.is_file()
+
+
+def test_u5_3_empty_env_means_unset(monkeypatch):
+    """空串按「没设」处理（与 `core.db` 的 VERDA_DB_PATH 同形状）。
+
+    不这么做，一个 `LC_CACHE_PATH=` 会把库指到空路径 —— 比默认更糟：当场炸或写到 cwd。
+    """
+    monkeypatch.setenv(CACHE_PATH_ENV, "")
+    assert resolve_cache_path() == DEFAULT_CACHE_PATH
+
+
+def test_u5_4_pipeline_takes_its_cache_location_from_the_resolver():
+    """接线腿：pipeline 不得再自己写死缓存文件名，否则这颗开关对真实链路无效。
+
+    先剥注释再扫 —— 那段注释**必须**提到默认落点是什么，算进判据就等于把"把话说清楚"判成违规。
+    """
+    from app.core.pipeline import living_circle as pipe
+
+    src = inspect.getsource(pipe)
+    code = "\n".join(re.sub(r"#.*", "", line) for line in src.splitlines())
+    assert "resolve_cache_path(" in code, "pipeline 没走 resolver ⇒ 换不了落点"
+    assert "lc_cache.db" not in code, "pipeline 里还留着写死的缓存文件名"

@@ -19,7 +19,6 @@ import datetime as _dt
 import logging
 import uuid
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, TypedDict
 
 from app.core import db
@@ -152,11 +151,12 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     ak = get_settings().baidu_server_ak
 
     from app.living_circle.data_source import get_data_source
-    from app.living_circle.repository import Repository, SqliteCache
+    from app.living_circle.repository import Repository, SqliteCache, resolve_cache_path
 
-    # v2：实时结果持久落盘（SqliteCache，独立 backend/lc_cache.db）——同中心 30 天秒开 + 无 AK 离线可查
-    cache_path = Path(__file__).resolve().parent.parent.parent / "lc_cache.db"
-    repo = Repository(backend=SqliteCache(cache_path))
+    # v2：实时结果持久落盘（SqliteCache，独立 `app/lc_cache.db`）——同中心 30 天秒开 + 无 AK 离线可查。
+    # 落点由 `resolve_cache_path()` 决定（默认即上面那份；`LC_CACHE_PATH` 可整份换掉，
+    # 用途见那里的注释：重采要绕开一份「键不含检索词表」的 30 天旧载荷）。
+    repo = Repository(backend=SqliteCache(resolve_cache_path()))
     source = get_data_source(data_mode or "fixture", ak=ak, repo=repo)
 
     # 中心点解析（v2 统一链）：显式坐标 > live 地理编码 > 离线区划定位 > fixture 样例匹配 > 凯里兜底
