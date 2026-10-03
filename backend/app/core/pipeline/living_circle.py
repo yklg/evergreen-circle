@@ -328,7 +328,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     # ── measure（测时采样 + IDW 等时圈）────────────────────
     # CachingDataSource 透传 .client 但可能为 None（内层离线源）——判 None 决定 live/offline 分支
     live_client = getattr(source, "client", None)
-    yield _ev("message", {"stage": "measure", "percent": 30, "text": "粗扫 400m 网格 → 15min 边界带加密 → 批量距离矩阵测时中…"})
+    yield _ev("message", {"stage": "measure", "percent": 30, "text": "批量距离矩阵测时采样中…（生效采样规格随档位与本次预算，产出那一步如实披露）"})
 
     if live_client is not None:
         # 取证编排走**全项目唯一实现** `live_forensic_steps`（计划 v6.1 片 0）。此前这段
@@ -345,10 +345,17 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 n_timed = iso["sampling"]["timed_count"]
                 n_in_reach = iso["sampling"]["in_reach_count"]
                 _spec = iso["sampling"]["spec"]
-                _degraded = "；**预算受限已降规格**：放弃边界加密带，插值格距 " \
-                            f"{_spec['grid_step_m']:g}m vs 采样间距 {_spec['sample_step_m']:g}m" \
-                            if _spec["degraded"] else ""
-                yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取{_degraded}"})
+                # 生效规格只此一处出处（`isochrone.compute` 产出的 `spec`）：文案不抄档位常数（#86）。
+                # 降级那支**不能说"放弃边界加密带"**：`fine_m` 为 None 有两种成因，而 quick 档
+                # 的名义加密步长本就等于粗扫步长（且上限恒 200 ⇒ 任何预算下都被削）—— 它没放弃过什么。
+                if _spec["degraded"]:
+                    _spec_note = "；**预算受限已降规格**：退回单阶段粗网格，插值格距 " \
+                                 f"{_spec['grid_step_m']:g}m vs 采样间距 {_spec['sample_step_m']:g}m"
+                else:
+                    _band_lo, _band_hi = _spec["fine_band"]
+                    _spec_note = f"（粗扫 {_spec['coarse_m']:g}m + 边界带 {_band_lo:g}–{_band_hi:g}m 内加密 " \
+                                 f"{_spec['fine_m']:g}m）"
+                yield _ev("message", {"stage": "measure", "text": f"IDW 插值生成耗时场：采样 {iso['sample_count']} 点（已测时 {n_timed} · ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach}），5/10/15/20 分钟等值线族已提取{_spec_note}"})
                 yield _ev("evidence", {"stage": "measure", "evidence": {
                     "evidence_id": f"ev-{task_id}-measure", "source_url": "live://measure", "source_type": "api_measure",
                     "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_timed} 条耗时，其中 ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach} 条",
