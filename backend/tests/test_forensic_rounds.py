@@ -319,6 +319,45 @@ def test_judging_reads_the_union_while_the_display_stays_first_round(monkeypatch
         "（`judge_points`/`region` 被就地丢弃了）")
 
 
+def test_evidence_anchors_are_the_union_the_judgement_actually_ate(monkeypatch):
+    """P0-3 的主链判据（#32 的判据半）：逐锚点明细必须由**判定真正吃的那块并集**发射。
+
+    上一条钉的是「并集进了判定」，本条钉的是「报告替那次举证的那份明细，吃的是同一块区域」。
+    两者分家的方式是真实存在的：`assemble.py:331` 交 `judged_region=judgement.region`，而
+    `scope.payload()` 的缺省出路是 `self.evidence_region` —— 取证路径上 scope 走的是**标量绑定**
+    （`bind_evidence` 不绑 region，`judge_region` 那条注释写明了参数通道的适用面），所以缺省值是
+    `None` ⇒ 那一行一旦传丢，`evidence_anchors` 整块**静默消失**，而 B12 那道门禁按「键缺席就跳过」
+    的纪律放行 ⇒ 全量绿、报告却不再回答「这片的证据是哪几个点撑起来的」。
+    此前这条链在**生产主链**上零断言（`test_evidence_region.py:978` 只在 `payload()` 那一层量参数，
+    `assemble` 之下），只有能跑出回合的这台架碰得到它。
+
+    两臂同桩、只差 `MAX_FORENSIC_ROUNDS`（0 ⇒ 一个回合都派不出去），三条判据方向各异：
+      ① 0 回合臂的锚点集**恰是中心那一块**，且都是合成盘（`stop_reason` 为 null ⇒ 不自称查全）；
+      ② 1 回合臂的锚点集**严格更多**，多出来的那些带真原因（补算的盘上了屏）；
+      ③ 中心那块盘仍在 1 回合的名单里（并集**只增**，不是被换成另一块区域）。
+    """
+    _s1, r1 = _drive(_LoopStub(hub_truncated=True))
+    _s0, r0 = _drive(_LoopStub(hub_truncated=True), rounds=0, monkeypatch=monkeypatch)
+
+    a0 = r0["caliber"]["evidence_anchors"]
+    a1 = r1["caliber"]["evidence_anchors"]
+    hub = (round(CENTER[0], 6), round(CENTER[1], 6))
+
+    assert r0["caliber"]["forensic"]["rounds"] == 0, "对照臂本该一个回合都派不出去"
+    assert {tuple(a["anchor"]) for a in a0} == {hub}, (
+        f"0 回合的明细不该只有中心这块盘：{sorted({tuple(a['anchor']) for a in a0})}")
+    assert all(a["stop_reason"] is None for a in a0), (
+        "退化盘是合成的，只允许带「撞过接口自有上限」那一种原因 ⇒ 有原因就说明这块盘不是合成的")
+
+    assert r1["caliber"]["forensic"]["rounds"] == 1, "前置：这一臂真派出了一个回合"
+    set1 = {tuple(a["anchor"]) for a in a1}
+    assert {hub} < set1, (
+        "跑了回合、明细却仍只有中心那块盘 ⇒ 判定吃并集而举证吃首轮，结论与明细分家（P0-3）")
+    extra = [a for a in a1 if tuple(a["anchor"]) != hub]
+    assert all(a["stop_reason"] is not None for a in extra), (
+        f"补算那些块盘上了屏却没有实测原因：{[(a['category'], a['stop_reason']) for a in extra]}")
+
+
 def test_quota_short_forensic_pool_discloses_not_run_and_lands_partial(monkeypatch):
     """池子只给 4 次 ⇒ `not_run` 是**字段**不是注释，且 partial 归因到「取证额度不足」。
 
