@@ -130,7 +130,15 @@ zone  = {minutes, geojson: Polygon(ring_lnglat), area_km2}
 
 ## 3. 实测结果（真实 AK · M5）
 
-> 下表在 `backend/` 下运行 `python scripts/snapshot_live.py` 生成（真实 `data_mode=live`，串行限流），快照覆写 `backend/app/living_circle/fixtures/` 与 `frontend/src/mocks/fixtures/livingCircle/`。数据可离线一键复现。
+> 下表那一批读数在 `backend/` 下运行 `python scripts/snapshot_live.py` 跑出（真实 `data_mode=live`，串行限流），
+> 该脚本覆写的是 `backend/app/living_circle/fixtures/` 与 `frontend/src/mocks/fixtures/livingCircle/`
+> 两处**快照数据**（可离线一键复现）；本张 markdown 表是当时手抄的，脚本不回写它。
+
+> ⚠️ **下表是 M5（2026-09-19）那一批的实测读数，与当前演示快照不同步** —— 仓里没有任何代码回写这张表
+> （`<!-- M5 实测回填 -->` 只是当时手填的标记）。当前两份夹具（`backend/app/living_circle/fixtures/` 与
+> `frontend/src/mocks/fixtures/livingCircle/`，两份内容一致）是 **1049** 个采样点、15min 圈 凯里 **1.562** / 劲松 **1.758** km²、
+> 综合评分 **65.4 / 65.8**、POI 217（圈内 98）/ 206（圈内 150）。要引当前值请读报告载荷本身
+> （`living_circle.isochrones[].area_km2`、`scores.total`、`sampling.spec`），别把这张表当现值引用。
 
 <!-- M5 实测回填 -->
 | 社区 | 5min/km² | 10min/km² | 15min/km² | 20min/km² | POI 采集 | 圈内 POI | 盲区 | 综合评分 | 采样可达 |
