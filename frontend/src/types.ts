@@ -1121,6 +1121,11 @@ export interface LivingCircleReport {
     cells_judged?: number
     /** 其中**不可判定**的格数（数据不足，既不算有盲区也不算没盲区） */
     cells_unknown?: number
+    /** 其中因**接口自有上限**（服务端自称还欠一整页却断了货）而判不动的格数。
+     *  与 `cells_unknown` 分名分职：那一位是「我们没查到」，这一位是「再多的额度也拿不到」。
+     *  分账恒等式 `cells_inside = cells_judged + cells_unknown + 这一位`。
+     *  ⚠️ 可选：第三态落地前冻结的快照与离线骨架不带 ⇒ 读侧必须 `?? 0`，不得无条件解构。 */
+    cells_unjudgeable_by_cap?: number
     /* ── rev2 · 证据相（「实际查到哪儿」与「请求了多大」并列可查）──
        全部可选：判盲口径升级**前**冻结的快照与离线骨架不带这些键。前端一律经
        `lib/livingCircle.ts` 的安全取值读，**不得**无条件解构 —— 否则演示链（内嵌夹具

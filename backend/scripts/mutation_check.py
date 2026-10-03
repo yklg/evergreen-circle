@@ -158,11 +158,18 @@ MUTATIONS: list[Mutation] = [
         test="tests/test_report_contract.py::test_judge_radius_not_derived_from_evidence_is_flagged",
     ),
     Mutation(
-        label="丢掉「未判格必须全记未定」判据（B10：判不了冒充不盲）",
+        label="丢掉「未判格必须全有归因」判据（B10：判不了冒充不盲）",
         rel="app/living_circle/report_contract.py",
-        old="        if judged == 0 and unknown != inside:",
+        old="        if judged == 0 and gap != 0:",
         new="        if False:",
-        test="tests/test_report_contract.py::test_zero_judged_cells_must_all_be_unknown",
+        test="tests/test_report_contract.py::test_zero_judged_cells_must_all_be_accounted",
+    ),
+    Mutation(
+        label="B10 退回按两态算（把接口封顶那一位从归因面里丢掉）⇒ 纯封顶自洽报告被自家门拒发",
+        rel="app/living_circle/report_contract.py",
+        old="        accounted = unknown + (capped or 0.0)",
+        new="        accounted = unknown",
+        test="tests/test_report_contract.py::test_zero_judged_with_the_cap_accounted_is_issuable",
     ),
     Mutation(
         label="丢掉「低覆盖率不得称 full」判据（B11 降档方向）",

@@ -565,11 +565,50 @@ def test_b10_cannot_see_the_declared_ruler_yet():
     assert issues.ok, f"该键今天不该有读者；若 B10 已开始读它，请把上一条红的那起改名：{issues.reason}"
 
 
-def test_zero_judged_cells_must_all_be_unknown():
-    """一格未判却有 5 格没记未定 ⇒ 「判不了」正在被当成「不盲」。"""
-    lc = _ev1()
-    _set_coverage(lc, judged=0, capped=5)      # 三态闭合：inside = 0 判 + (inside−5) 未定 + 5 封顶
-    assert any("判不了」被当成「不盲" in v for v in assess_geometry(lc).violations), assess_geometry(lc).reason
+def test_zero_judged_with_the_cap_accounted_is_issuable():
+    """**本刀的靶（P1-5）**：一格都没判成、但缺口全部记在第三态 ⇒ 门不许假红，报告必须能签发。
+
+    `assess_geometry` 是写路径的签发条件（本文件 :231「不自洽 → 同样不签发」），所以 B10 那支
+    按两态算的旧判据会让一份**自洽**的纯封顶报告直接发不出去 —— 而那句指控恰好说反了：
+    未判成的格**正是**被记成了"判不了"，只是记在 `cells_unjudgeable_by_cap` 那一位
+    （分账恒等式 `inside = judged + unknown + unjudgeable_by_cap`，A5/`test_degrade_chain.py:1293` 钉着）。
+
+    前置先跑一遍：三态闭合、且这份载荷除了 B10 那一支以外没有别的违规 —— 否则"红了"
+    可能红在无关的支上，那条判据就不测本刀要测的东西（改前它应当红在 B10 那句上）。
+    """
+    lc = _set_coverage(_ev1(), judged=0, capped=5)
+    _rescore(lc)
+    cal = lc["caliber"]
+    inside = int(cal["cells_inside"])
+    assert int(cal["cells_unknown"]) + int(cal["cells_unjudgeable_by_cap"]) == inside, (
+        "前置不成立：三态账没闭合，下面那句'该放行'就不成立")
+
+    issues = assess_geometry(lc)
+    joined = " ".join(issues.violations)
+    assert "判不了」被当成「不盲" not in joined, (
+        f"三态闭合的纯封顶报告被 B10 误判：{issues.reason}")
+    assert issues.ok, f"仍有其它违规 ⇒ 报告不会签发：{issues.reason}"
+
+
+def test_zero_judged_cells_must_all_be_accounted():
+    """反向对照（原意一条不许松）：一格未判时，缺口必须**全部有归因** —— 未定 或 接口封顶。
+
+    本条与上一条 `test_zero_judged_with_the_cap_accounted_is_issuable` 是一对：那条钉"账闭合就
+    不许拦"，这条钉"账不闭合必须拦"。名字原本叫 `…must_all_be_unknown`（P1-5 之前判定面只有两态），
+    第三态落地后"未判成"合法地可以归因到接口封顶 ⇒ 判据从"全记未定"改成"全有归因"，样本也随之
+    改成**真少记 3 格**的形状 —— 改前它构造的其实是三态闭合的自洽载荷，却断言违规发生，
+    也就是把 B10 的那次假红钉成了期望（计划 §4③）。
+
+    已知重叠、不当噪声处理：这份样本 B13 会一起报「顶层 `cells_unknown` 与台账复算对不上」——
+    少记格子在台账侧同样是错。所以本条只断 B10 那一支的**种类 + 差额**，不断"只有它在叫"。
+    """
+    lc = _set_coverage(_ev1(), judged=0, capped=5)
+    inside = int(lc["caliber"]["cells_inside"])
+    lc["caliber"]["cells_unknown"] = inside - 5 - 3      # 三格既没判成、也没记成封顶
+    _rescore(lc)                                          # 份额/置信度跟着判定面走，排除无关支
+    hit = [v for v in assess_geometry(lc).violations if "判不了」被当成「不盲" in v]
+    assert len(hit) == 1, assess_geometry(lc).reason
+    assert "差 3 格" in hit[0] and "接口封顶 5 格" in hit[0], hit[0]
 
 
 def test_judged_mask_cannot_survive_zero_judge_radius():

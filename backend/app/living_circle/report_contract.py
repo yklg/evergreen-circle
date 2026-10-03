@@ -288,7 +288,8 @@ def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
     judge = _num(cal.get("judge_radius_m"))
     source = cal.get("evidence_bound_source")
     complete = cal.get("evidence_complete")
-    inside, judged, unknown = (_num(cal.get(k)) for k in ("cells_inside", "cells_judged", "cells_unknown"))
+    inside, judged, unknown, capped = (_num(cal.get(k)) for k in (
+        "cells_inside", "cells_judged", "cells_unknown", "cells_unjudgeable_by_cap"))
 
     # B5 · 证据相的键必须齐（版本号与键集同批发布，缺一即无从举证）
     absent = [
@@ -381,9 +382,19 @@ def _evidence_phase_violations(lc: Dict[str, Any]) -> List[str]:
                 )
 
     if None not in (inside, judged, unknown):
-        if judged == 0 and unknown != inside:
+        # P1-5：判定面有**三态**之后（阶段 3-f 把「接口自有上限」从「我们没查」里分出来），
+        # 分账恒等式是 `inside = judged + unknown + unjudgeable_by_cap`。这一支原本按两态算
+        # （`unknown != inside`），于是一份自洽的纯封顶报告（一格没判成、缺口全记在第三态）
+        # 会被判成「判不了被当成不盲」而**不予签发** —— 指控恰好说反了。
+        # ⚠️ 第三态缺席（旧 ev-2 件没这键）按 `0` 算：那时确实没有格被记为封顶，
+        # 判定与两态时代逐字相同，不是新造一条放行面（对比 R23-I 那条"发射侧不许把不知道写成 0"——
+        # 那里是把未知量落成数字，这里是门禁复算一个恒等式，缺声明就是"这一位没有格"）。
+        accounted = unknown + (capped or 0.0)
+        gap = inside - accounted
+        if judged == 0 and gap != 0:
             out.append(
-                f"一格未判（cells_judged=0）却只把 {unknown:g}/{inside:g} 记为未定 —— "
+                f"一格未判（cells_judged=0）而「未定 {unknown:g} 格 + 接口封顶 {capped or 0:g} 格」"
+                f"对不上可达区 {inside:g} 格（差 {abs(gap):g} 格既没判也没记）—— "
                 "「判不了」被当成「不盲」"
             )
         if judged is not None and judge is not None and judge <= 0.0 and judged > 1:

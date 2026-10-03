@@ -87,8 +87,10 @@ describe('LivingCircleReport fixture 契约', () => {
       expect(cal!.collect_radius_m!).toBeGreaterThanOrEqual(cal!.reach_circumradius_m! * 0.999)
       // 采集半径 = 外接圆 + 余量
       expect(cal!.collect_radius_m!).toBeCloseTo(cal!.reach_circumradius_m! + cal!.collect_margin_m!, 3)
-      // 判盲格数分账必须闭合（可判定 + 不可判定 = 可达区内总格数）
-      expect(cal!.cells_judged! + cal!.cells_unknown!).toBe(cal!.cells_inside!)
+      // 判盲格数分账必须闭合 —— **三态**（P1-5）：可判定 + 数据不足未判 + 接口封顶未判 = 总格数。
+      // 原本只加前两项（那时代只有两态），第三态落地后纯封顶报告会被后端 B10 误判成不自洽；
+      // 后端那道门已改，这里两份镜像若继续按两态写，将来带 capped 的夹具一刷就红在测试自己身上。
+      expect(cal!.cells_judged! + cal!.cells_unknown! + (cal!.cells_unjudgeable_by_cap ?? 0)).toBe(cal!.cells_inside!)
       // 实测外接圆不应小于理论下界（更小 ⇒ 测时或圈层提取出了问题）
       expect(cal!.reach_circumradius_m!).toBeGreaterThanOrEqual(cal!.reach_radius_bound_m! * 0.9)
     }
@@ -139,8 +141,14 @@ describe('LivingCircleReport fixture 契约', () => {
       expect(cal.evidence_margin_m).toBeGreaterThan(0)
       const bound = cal.evidence_bound_source === 'measured' ? cal.evidence_radius_m! : cal.collect_radius_m!
       expect(cal.judge_radius_m).toBeCloseTo(Math.max(0, bound - 1000), 1)
-      // B10 的分账：一格未判 ⇒ 全部都得记未定
-      if (cal.cells_judged === 0) expect(cal.cells_unknown).toBe(cal.cells_inside)
+      // B10 的分账：一格未判 ⇒ 每一格都要**有归因**（未定 或 接口封顶），而不是"全记未定"。
+      // 原本写死两态（`unknown === inside`），与后端 B10 同形状 —— 后端那支已经把纯封顶报告
+      // 误判成不自洽（P1-5），这里跟着改到三态；两态旧件 `capped` 缺席 ⇒ `?? 0` 后逐字不变。
+      // ⚠️ 效力上限：今天这两份快照都没有 `cells_judged === 0` 的 ⇒ 这一支走不到，它守的是
+      // 将来带纯封顶件的夹具；真正每天在跑的是上面那条三态恒等式。
+      if (cal.cells_judged === 0) {
+        expect(cal.cells_unknown! + (cal.cells_unjudgeable_by_cap ?? 0)).toBe(cal.cells_inside)
+      }
     }
 
     // ⚠️ 上面那支对两份内置快照：凯里走 `v === null`、劲松走「声明了但已落后」（`ev-1` ≠ 当前）
