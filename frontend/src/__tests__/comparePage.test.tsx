@@ -8,7 +8,7 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom'
 
 import ComparePage from '../pages/ComparePage'
-import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
+import { SAMPLE_COMMUNITIES, demoCompareSamples } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
 import {
@@ -25,8 +25,14 @@ vi.mock('../lib/api', () => ({
   fetchLifeCircleCompare: vi.fn(),
 }))
 
-const kailiReport = SAMPLE_COMMUNITIES[0].report
-const jinsongReport = SAMPLE_COMMUNITIES[1].report
+// 一律按 id 取，不按位置：名册第 0 位是"演示默认打开的那份"，它会随演示口径移动；
+// 名册里现在有两份同中心的凯里（台账上线前的冻结件 + ev-2 那份），按下标取会悄悄把
+// "凯里 vs 北京"的跨城断言变成"凯里 vs 凯里"。演示态那一对直接调页面的同一个出口，
+// 不在测试里重写一遍挑法。
+const byId = (id: string) => SAMPLE_COMMUNITIES.find((c) => c.id === id)!
+const [demoA, demoB] = demoCompareSamples()
+const kailiReport = byId('kaili').report
+const jinsongReport = byId('beijing-jinsong').report
 // 与凯里相距约 0.002°（≈0.2km）的「近邻」，用于触发同图真实叠加
 const nearKailiReport = {
   ...kailiReport,
@@ -111,10 +117,13 @@ describe('ComparePage（演示态 · fixture）', () => {
         <ComparePage />
       </MemoryRouter>,
     )
-    expect(screen.getAllByText('凯里老街').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('北京劲松').length).toBeGreaterThan(0)
-    expect(screen.getAllByText(String(SAMPLE_COMMUNITIES[0].report.scores.total)).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(String(SAMPLE_COMMUNITIES[1].report.scores.total)).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(demoA.title).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(demoB.title).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(String(demoA.report.scores.total)).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(String(demoB.report.scores.total)).length).toBeGreaterThan(0)
+    // 这一对必须**跨城**（页面按跨城走双图 + 归一化示意）；同城两份并存是允许的，
+    // 所以挑完还得验一次城市不同，否则名册再插一份同城样区会让本条静默失去判别力。
+    expect(demoA.city).not.toBe(demoB.city)
   })
 
   it('关键差异表的行名集合与行序与行定义表逐项相同（收紧：不再只证「这行在」）', () => {
@@ -185,10 +194,10 @@ describe('ComparePage（演示态 · fixture）', () => {
     // 用自带载体守；本页只守「演示态与真实态共用同一出口」这一条架构约束 —— 出厂快照的
     // 盲区数/口径代际会随重刷变化，页面断言不该挂在那上面。
     const want = compareRows(
-      SAMPLE_COMMUNITIES[0].report,
-      SAMPLE_COMMUNITIES[1].report,
-      SAMPLE_COMMUNITIES[0].title,
-      SAMPLE_COMMUNITIES[1].title,
+      demoA.report,
+      demoB.report,
+      demoA.title,
+      demoB.title,
     )
     render(
       <MemoryRouter>
@@ -202,7 +211,7 @@ describe('ComparePage（演示态 · fixture）', () => {
       ).toBeGreaterThan(0)
     }
     // 出厂对目前版本错配（kaili 未声明 / jinsong ev-1）⇒ 顶部提示必须出现；同代际后自动收起
-    const notice = compareCaliberNotice(SAMPLE_COMMUNITIES[0].report, SAMPLE_COMMUNITIES[1].report)
+    const notice = compareCaliberNotice(demoA.report, demoB.report)
     if (notice) expect(screen.getAllByText(notice).length).toBeGreaterThan(0)
     else expect(screen.queryByText(CALIBER_GAP_DESC)).toBeNull()
   })

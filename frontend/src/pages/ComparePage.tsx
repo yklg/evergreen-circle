@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeftRight, ArrowUpRight, GitCompare, Inbox } from 'lucide-react'
-import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
+import { demoCompareSamples } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
 import { COMPARE_ROWS, compareCaliberNotices, compareRows, planComparisonOverlay, poiConservationNote } from '../lib/livingCircle'
@@ -26,6 +26,9 @@ import type { LivingCircleReport, LifeCircleCompare, LifeCircleRecord } from '..
  * **显示串**交给 `>` 比较（JS 字符串走逐字符字典序）⇒ 盲区行 `'0 处' > '1 处'` 为 false，
  * 输出「北京劲松盲区更少」= **事实相反**。现在行名 / 取值 / 方向 / 句式都收在 `COMPARE_ROWS`。
  */
+
+/** 演示态默认的一对对比样区：挑法收在 mock 层那一处出口，页面不自己写规则。 */
+const [DEMO_A, DEMO_B] = demoCompareSamples()
 
 /** 对比对象下拉（原生 select，风格随项目，A/B 不可相同）。 */
 function SceneSelect({ label, value, taken, options, onChange }: {
@@ -128,7 +131,11 @@ export default function ComparePage() {
     }
   }, [isFixture, selA, selB])
 
-  const [a, b] = SAMPLE_COMMUNITIES
+  // 演示态这一对 = 名册首项 + 第一个**不同城**的样区。不能写死"取前两份"：名册里现在有
+  // 两份同中心的凯里（台账上线前的冻结件 + ev-2 那份），按位置取会把这页配成同城一对，
+  // 北京劲松直接从对比页消失（10-03 插样区那天实测红 5 条）。
+  const a = DEMO_A
+  const b = DEMO_B
   const ra: LivingCircleReport = a.report
   const rb: LivingCircleReport = b.report
 

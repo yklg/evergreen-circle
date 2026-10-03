@@ -115,6 +115,8 @@ def _pair_mirror_check(backend_f: Path, front_f: Path) -> List[str]:
 
 def test_living_circle_fixtures_mirror_frontend():
     pairs = [
+        (BACKEND_DIR / "app" / "living_circle" / "fixtures" / "kaili-ev2.json",
+         FRONTEND_FIXTURES / "kaili-ev2.json"),
         (BACKEND_DIR / "app" / "living_circle" / "fixtures" / "kaili.json",
          FRONTEND_FIXTURES / "kaili.json"),
         (BACKEND_DIR / "app" / "living_circle" / "fixtures" / "beijing-jinsong.json",

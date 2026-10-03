@@ -6,6 +6,7 @@
  * fixture 只读不写，M5 阶段由真实百度 API 快照替换（保持同契约）。
  */
 import type { LivingCircleReport, LngLat } from '../types'
+import kailiEv2Json from './fixtures/livingCircle/kaili-ev2.json'
 import kailiJson from './fixtures/livingCircle/kaili.json'
 import jinsongJson from './fixtures/livingCircle/beijing-jinsong.json'
 
@@ -19,6 +20,16 @@ export interface SampleCommunity {
 }
 
 export const SAMPLE_COMMUNITIES: SampleCommunity[] = [
+  {
+    // 排在 [0] 是有意的：`getLifeCircleMock` 对未知 id 回退首个样例，首页图标也按
+    // `i === 0` 取 MapPin ⇒ 第 0 位就是演示档默认打开的那份。选它是因为只有这一份带
+    // `caliber.cells_ledger`（逐格台账 + 1 处盲区），另两份是台账上线前的冻结件。
+    id: 'kaili-ev2',
+    title: '凯里老街 · 逐格台账口径',
+    city: '贵州·凯里',
+    blurb: '09-30 那一批 ev-2 真跑件（#87 词表之前）· 1 处服务盲区 · 逐格台账判盲 8 格',
+    report: kailiEv2Json as unknown as LivingCircleReport,
+  },
   {
     id: 'kaili',
     title: '凯里老街',
@@ -34,6 +45,19 @@ export const SAMPLE_COMMUNITIES: SampleCommunity[] = [
     report: jinsongJson as unknown as LivingCircleReport,
   },
 ]
+
+/**
+ * 演示态默认对比的一对样区：名册首项 + 第一个**不同城**的样区。
+ *
+ * 为什么不写死"取前两份"：名册允许同一城市并存多份冻结件（台账上线前那份 + ev-2 这份），
+ * 按位置取会把对比页配成同城一对，另一座城市直接从那一页消失。
+ * 出口只这一处 —— 页面与它的测试都调它，免得两边各写一遍挑法然后互相漂。
+ */
+export function demoCompareSamples(): [SampleCommunity, SampleCommunity] {
+  const first = SAMPLE_COMMUNITIES[0]
+  const other = SAMPLE_COMMUNITIES.find((c) => c.city !== first.city) ?? SAMPLE_COMMUNITIES[1]
+  return [first, other]
+}
 
 /** 按样例 id 取体检报告（fixture 态即静态返回；真实态走后端，见 M3） */
 export function getLifeCircleMock(sceneId: string | null): LivingCircleReport | null {

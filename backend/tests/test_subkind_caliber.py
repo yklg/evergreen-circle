@@ -829,6 +829,13 @@ def test_name_roster_golden_on_in_repo_fixtures():
     预期值来源：10-01 用本仓 venv 直接调生产 `evaluate_category` 现算出来的（探针
     `skip/tmp/lc_roster_golden_probe.py`），**不是我照规则表推的** —— 规则与样本同时新写会互相迁就。
 
+    10-03 重钉（样本面 248 → 356）：新增演示样区 `fixtures/kaili-ev2.json`（108 颗，
+    09-30 那一批 ev-2 真跑件、#87 词表之前）。三个前置都实测过才敢改这两个数：
+      ① 只取旧两份夹具复算，读数与 10-01 那份 golden **一字不差** ⇒ 只有样本面在动，判类实现没漂；
+      ② 新读数减旧读数的逐类差值，恰好等于新样区 108 颗各自的归类 ⇒ 归因干净，没有连带位移；
+      ③ 下面 6 颗锚点全部仍在名册里且判类不变。
+    ⚠️ `market` / `elderly` 重钉后**仍计 0** ⇒ 这份新样区没给那两类增加任何覆盖，别把样本变大读成覆盖面变大。
+
     为什么值得留：拍板 ①（名称级 reject 进共用实现）落地那天，本条**必须变红并被重指**，
     它就是"其余 6 类有没有被误伤"的漂移检测网。今天它绿，是给那次红留的基线。
 
@@ -848,17 +855,17 @@ def test_name_roster_golden_on_in_repo_fixtures():
     """
     cr = __import__("app.living_circle.category_rule", fromlist=["CATEGORY_RULES"])
     pts = _fixture_points()
-    assert len(pts) == 248, (
-        f"夹具名册读到 {len(pts)} 颗，不是 248 ⇒ 样本面变了（夹具被增删或键路径改了），"
+    assert len(pts) == 356, (
+        f"夹具名册读到 {len(pts)} 颗，不是 356 ⇒ 样本面变了（夹具被增删或键路径改了），"
         "下面的逐类计数全部失去基线，本条须先重指样本面再重取读数")
     tally: Dict[str, int] = {k: 0 for k in list(cr.CATEGORY_RULES) + ["other"]}
     for it in pts:
         tally[cr.evaluate_category(it)[0]] += 1
-    assert tally == {"medical": 23, "education": 28, "shopping": 46, "finance": 27,
-                     "recreation": 11, "service": 10, "other": 103,
+    assert tally == {"medical": 37, "education": 45, "shopping": 69, "finance": 39,
+                     "recreation": 13, "service": 14, "other": 139,
                      "market": 0, "elderly": 0}, (
-        f"逐类命中计数变为 {tally} ⇒ 判类实现相对 10-01 基线漂移。"
-        "若这是 ① 落地造成的：按计划 §二 逐颗核对漂掉的点位，重指本条并把差值写进交付说明")
+        f"逐类命中计数变为 {tally} ⇒ 判类实现相对基线漂移。"
+        "若这是判类改动造成的：按计划 §二 逐颗核对漂掉的点位，重指本条并把差值写进交付说明")
     anchors = {"万博新时代诊所": "medical", "凯里市第十三小学": "education",
                "佳惠超市(佳和店)": "shopping", "中国人民银行(黔东南州分行)": "finance",
                "劲松五区公园": "recreation", "北京市公安局朝阳分局潘家园派出所": "service"}

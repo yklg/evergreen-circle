@@ -5,9 +5,11 @@ import { render, screen } from '@testing-library/react'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
 import { SAMPLE_COMMUNITIES } from '../mocks/livingCircleMock'
 
-const [kai_, jin] = SAMPLE_COMMUNITIES
-const a = kai_.report
-const b = jin.report
+// 按 id 取，不按位置：名册第 0 位现在是演示默认样区（凯里 ev-2），按位置解构会让本条
+// 悄悄变成"凯里 vs 凯里"的同城对比 —— 而它测的是**跨城**时两圈各居其城。
+const byId = (id: string) => SAMPLE_COMMUNITIES.find((c) => c.id === id)!.report
+const a = byId('kaili')
+const b = byId('beijing-jinsong')
 
 describe('NormalizedOverlay', () => {
   it('渲染 A/B 社区名、归一化说明与 banner（两圈中心归一对齐）', () => {
