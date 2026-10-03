@@ -20,7 +20,7 @@
 
 | 接口 | 用途 | 频度（单次体检·标准档） |
 |---|---|---|
-| `routematrix/v2/walking` | **批量距离矩阵**（等时圈主路径，R2 决策） | ~20 次（每块 25 起源 × 1 目的地） |
+| `routematrix/v2/walking` | **批量距离矩阵**（等时圈主路径，R2 决策） | 标准档实测 **11 次**（1049 点 ÷ 每块 100 起源 × 1 目的地；次数随档位与预算变） |
 | `place/v2/search` | 8 类 POI + 三要素检索 | ~27 次（多关键词查全） |
 | `geocoding/v3` | 纯地名输入 → 中心点 | ≤1 次 |
 | `directionlite/v1/walking` | 单点步行测时（**批量失败兜底**） | 0–200 次（仅降级） |
@@ -38,8 +38,8 @@
 
 ```
 调用链：rue: pipeline/measure
-  IsochroneEngine.compute(498 采样点)
-    └─ BaiduClient.route_matrix_walking（按 25/块 分批）
+  IsochroneEngine.compute(N 采样点，规格随档位与预算 ⇒ 逐份见报告 sampling.spec)
+    └─ BaiduClient.route_matrix_walking（按 capability_manifest 登记的块上限分批：步行/骑行 100、驾车 25）
           ├─ 块成功 → 解析 duration.value → 分钟
           └─ 块不足/失败 → direction_walking 逐点兜底（guard 限速）
 ```
@@ -65,7 +65,7 @@
 生成逻辑：
 
 1. **粗网格**：以中心为原点、`half=2500m` 的对称方格（奇数点数使中心恰落在格点），仅保留圆内点；
-2. **边界带加密**：对 `fine_band=(800,1600)`m 环带按极坐标（半径分级 + 角度均匀，`n_angle≥12`）加密——15min 等时圈（步行约 75m/min × 15min ≈ 1125m）恰好落在这个环带里，加密保证等值线细节；
+2. **边界带加密**：环带 `fine_band` **不写死，由口径派生** —— `(max(最内圈理论半径, 400m), study_radius)`（式在 `caliber.py` 的 `fine_band`）。三档实测：步行 `(400, 2500)`m、骑行 `(833, 5000)`m、驾车 `(2174, 9000)`m。对环带按极坐标（半径分级 + 角度均匀，`n_angle≥12`）加密——15min 等时圈（步行速度基准 80 m/min、绕行系数 1.3 ⇒ 理论直线半径 ≈923m）恰好落在这个环带里，加密保证等值线细节；
 3. **去重**：粗/细网格重叠点按 5 位小数去重。
 
 ```python
@@ -80,7 +80,7 @@ for r in linspace(lo, hi, n_fine):
 
 ### 2.2 批量测时
 
-对全部采样点一次 `routematrix/v2/walking`（N×1：N 个采样点 → 中心），每块 25 起源。返回 `result` 行数组，`duration.value`（秒）→ 分钟；`restrictions_status!=0` 记不可达（None）。步行速度基准 `WALK_SPEED=75 m/min` 仅用于合成场与最坏情形估算，真实测时以 API 返回为唯一口径。
+对全部采样点一次 `routematrix/v2/walking`（N×1：N 个采样点 → 中心），每块上限由 `capability_manifest.json` 实测登记（步行/骑行 **100** 起源/块，驾车仍是 25 —— 50 起即 401，非早期文档一律写的 25）。返回 `result` 行数组，`duration.value`（秒）→ 分钟；`restrictions_status!=0` 记不可达（None）。步行速度基准住在 `caliber.py`（现值 **80 m/min**，`R7` 由 75 上调），合成场与最坏情形估算都从这**同一份**读数（`data_source.py` 取 `caliber.speed_m_per_min`），真实测时以 API 返回为唯一口径。
 
 ### 2.3 IDW 反距离加权插值（`idw_from_local`）
 
