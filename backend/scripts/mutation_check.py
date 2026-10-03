@@ -223,6 +223,41 @@ MUTATIONS: list[Mutation] = [
         new="                db.get_latest_report_id_for_scene(scene_key)",
         test="tests/test_intake_and_shell.py::test_nearby_cache_hit_persists_the_served_content",
     ),
+    Mutation(
+        label="片 E 复发：后端「未检出」尾句被改一字 ⇒ 两端值分叉（判据第一条腿必须红）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old='_LC_ELDERLY_UNDETECTED_TAIL = "，现役检索词表未检出（读作“未检出”，不等于“不存在”）"',
+        new='_LC_ELDERLY_UNDETECTED_TAIL = "，现役检索词表未检出（读作“未检出”，不等于“不缺”）"',
+        test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
+    ),
+    Mutation(
+        label="片 E 复发：前端演示态那份常量单独改一字 ⇒ 同一个事实两种说法（必须红，证明前端也被比着）",
+        rel="../frontend/src/mocks/livingCircleReports.ts",
+        old="const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，现役词表不含社区级命名）'",
+        new="const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，现役词表已含社区级命名）'",
+        test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
+    ),
+    Mutation(
+        label="片 E 复发：后端正文不引常量、把「属显著缺口」那句抄回字面量 ⇒ 假同源（必须红在使用处数那条腿）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old="{(_LC_ELDERLY_UNDETECTED_TAIL if missing else '')}",
+        new="{('，属显著缺口，适老化优先级最高' if missing else '')}",
+        test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
+    ),
+    Mutation(
+        label="片 E 复发：前端正文不引常量、把旧那句「缺少机构养老资源」抄回演示态",
+        rel="../frontend/src/mocks/livingCircleReports.ts",
+        old="${missing ? LC_ELDERLY_UNDETECTED_CAUSE : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}",
+        new="${missing ? '该样区老年群体步行可达范围内缺少机构养老资源，需在整改建议中列为 P0 项。' : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}",
+        test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
+    ),
+    Mutation(
+        label="片 E 复发：把退役的「属显著缺口」说法抄回「覆盖正常」那支 ⇒ 只有退役短语那条腿能红（证明第 ④ 条腿在承重）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old='else "养老配置覆盖正常"',
+        new='else "养老配置覆盖正常（属显著缺口已补齐）"',
+        test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
+    ),
 ]
 
 
