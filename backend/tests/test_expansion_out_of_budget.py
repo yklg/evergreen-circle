@@ -30,14 +30,17 @@ from app.living_circle.scope import SpatialScope
 
 CENTER = (102.75000, 25.01800)
 RING_HALF = 2000.0
-# 与 `test_expansion_unfunded.py` 同一算法：A 阶段每词一页 ⇒ 25 次；三要素**只发 2 次**
-# （`market` 复用类目通道）。这个字面值错了，下面每条的 `stub.n` 前置就会红。
+# 与 `test_expansion_unfunded.py` 同一算法：A 阶段每词一页 ⇒ 词数那么多；三要素**只发 2 次**
+# （`market` 复用类目通道）。数错了下面每条的 `stub.n` 前置就会红。
+# 10-03 甲-B 起三要素那颗数从生产派生（`triad_search_keys()` = 三要素循环与保底共用的同一键集合）。
 N_KEYWORDS = sum(len(d["keywords"]) for d in pc.CATEGORY_RULES.values())
-N_TRIAD = 2
+N_TRIAD = len(pc.triad_search_keys())
 A_PLUS_TRIAD = N_KEYWORDS + N_TRIAD
 IDEAL = {cat: defn["ideal_circle"] for cat, defn in pc.CATEGORY_RULES.items()}
 
-# 扩词头寸 0..4：POI 首轮额度 31 − 27 = 4，正是今天真跑的那一档（§12）。
+# 扩词头寸 0..4：覆盖"现实那一档"（步行 standard 首轮 31 − A 阶段 − 三要素）——
+# 10-03 甲补两颗社区养老词前那是 31 − 27 = 4，之后是 31 − 29 = **2**；区间留着往上扫，
+# 因为本文件测的是"头寸大小怎么改变归因形状"，不是"今天剩几次"。
 HEADROOMS = (0, 1, 2, 3, 4)
 
 
@@ -112,14 +115,25 @@ class FailOnNth(FixedPoint):
         return await FixedPoint.place_search(self, query, center, **kw)
 
 
-def _run(headroom: int, stub=None):
+def _run(headroom: int, stub=None, total=None):
     scope = _scope()
     s = stub or FixedPoint()
+    # ⚠️ `headroom` 是**名义**头寸 = "总预算减去 A_PLUS_TRIAD"，不等于 S8 真拿得到的单位数：
+    # A 阶段每词耗的是**页深** `poi_page_depth(n_terms, total)`（clamp 到 [1,3]），词多/钱多时会 >1。
+    # 10-03 甲把词数从 25 抬到 27 之后，`_run(40)` 那一档的真实 B 头寸从 15 掉到 13 单位，
+    # "钱多而词少"的前提当场不成立 ⇒ 需要字面头寸的用例请显式传 `total`（见下面 GENEROUS_TOTAL）。
+    budget_total = A_PLUS_TRIAD + headroom if total is None else total
+    budget = pc.POIBudget(total=budget_total)
     col = asyncio.run(pc.collect_poi(s, CENTER, 2000.0, scope=scope,
-                                     budget_snapshot=pc.POIBudget(total=A_PLUS_TRIAD + headroom)))
-    assert s.n <= A_PLUS_TRIAD + headroom, (
-        f"发了 {s.n} 次，超过额度 {A_PLUS_TRIAD + headroom} ⇒ 扣款与调用不闭合，下面的读数都不可信")
+                                     budget_snapshot=budget))
+    s.budget_remaining = budget.remaining
+    assert s.n <= budget_total, (
+        f"发了 {s.n} 次，超过额度 {budget_total} ⇒ 扣款与调用不闭合，下面的读数都不可信")
     return col, s, scope
+
+
+# 充裕档要用**字面**头寸：页深被 clamp 到 3 ⇒ A 恰耗 `3 * N_KEYWORDS`，剩下的才是 B 的头寸。
+GENEROUS_TOTAL = 3 * N_KEYWORDS + N_TRIAD + 40
 
 
 def _expanded_categories(ev: pc.CollectionEvidence) -> Set[str]:
@@ -174,9 +188,16 @@ def test_generous_budget_records_neither_expansion_key():
     """额度充裕 ⇒ 每类都能扩到"没词/达标/冻结"之一而停，两位都必须是空的。
 
     这条同时是"没词"那一种出口的证人：它钱多而词少，若本位把"词榨干了"也说成"没钱"就会红。
+
+    ⚠️ 前置证人（10-03 补词那天补上的）：**跑完钱必须还有剩**。本条要的是"钱多而词少"，
+    而"钱多"以前只是名义值 —— 页深随 `total/n_terms` 跳到 2 之后，名义 40 单位里 A 阶段
+    实际吃掉 54，留给 S8 的只有 13，购物那一类真就被切在半路（本条就是这样红的）。
+    没有这条前置，"两位都是空"和"额度其实不够、只是恰好没人被记"两种形状长得一样。
     """
-    col, _, _ = _run(40)
+    col, stub, _ = _run(0, total=GENEROUS_TOTAL)
     ev = col.evidence
+    assert stub.budget_remaining > 0, (
+        f"额度花到剩 {stub.budget_remaining} ⇒ '钱多'这个前提不成立，下面的空表什么都不是")
     assert _expanded_categories(ev), "钱给足了却没跑过任何扩词 ⇒ 前置不成立，下面的空表说明不了事"
     assert ev.expansion_out_of_budget == (), f"额度充裕却记了跑到一半：{ev.expansion_out_of_budget}"
     assert ev.expansion_unfunded == (), f"额度充裕却记了整轮没跑：{ev.expansion_unfunded}"

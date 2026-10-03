@@ -76,3 +76,48 @@ class TestRuleSelfConsistency:
         for key, defn in cr.CATEGORY_RULES.items():
             overlap = set(defn["accept_tags"]) & set(defn["reject_tags"])
             assert not overlap, f"{key} 预设词既 accept 又 reject: {overlap}"
+
+
+class TestElderlyCommunityNaming:
+    """甲（#87）· 两颗社区级养老命名的**名称通道**，以及它救不了的那一支。
+
+    读码账目（同文件顶部原则）：标签通道先裁、名称通道只在**没有任何类 accept_tag 命中**时才走到，
+    且要求**唯一命中**。所以"补词就把社区养老认下"这句话只在 tag 不撞车时成立 ——
+    本类把成立与不成立两支**分开钉**，不共用一句（共用必有一支说谎）。
+    """
+
+    STATION = "北京市朝阳区团结湖街道社区养老服务驿站"
+    CENTER_ = "朝阳区八里庄街道养老服务中心"
+    KAILI = "凯里市和谐社区居家养老服务站"
+
+    def test_new_terms_are_registered_once_in_elderly_only(self):
+        for term in ("养老服务驿站", "养老服务中心"):
+            homes = [k for k, d in cr.CATEGORY_RULES.items() if term in d["keywords"]]
+            assert homes == ["elderly"], f"「{term}」出现在 {homes} ⇒ 一颗检索词喂给多个大类"
+
+    def test_community_naming_is_recognized_via_name_channel(self):
+        """tag 不撞车时：名称含这两颗词 ⇒ `elderly`，且只中"弱先验"那一档（0.6，不是 0.9）。"""
+        for name in (self.STATION, self.CENTER_):
+            for tag in ("", "生活服务:社区服务中心", "医疗保健:卫生院", "地名地址信息:门牌信息"):
+                cat, conf = cr.evaluate_category({"name": name, "lng": 0, "lat": 0, "tag": tag, "type": ""})
+                assert cat == "elderly", f"{name} / tag={tag!r} 判成 {cat} ⇒ 补词没被认下"
+                assert conf == cr.CONFIDENCE["mid"], f"{name} 走的是名称弱先验，不该给高置信"
+
+    def test_service_tag_still_wins_and_that_is_yi_not_jia(self):
+        """现状钉（**不是** xfail）：`tag` 含「社区服务站」时政务在标签通道先赢，补词救不了它。
+
+        甲只改名称通道；这条形状属乙（通道优先级），本批刻意不修。写成断言现状而不是挂 xfail，
+        是因为"没修"在这里不是缺陷未修，而是**已拍板的范围边界** —— 挂 xfail 会让乙落地那天
+        必须来摘标，而那一天真正要改的是这条断言的**方向**（改成 elderly 优先），不是它的存在。
+        """
+        for name in (self.KAILI, self.STATION):
+            for tag in ("社区服务站", "生活服务:社区服务站"):
+                cat, conf = cr.evaluate_category({"name": name, "lng": 0, "lat": 0, "tag": tag, "type": ""})
+                assert cat == "service", f"{name} / tag={tag!r} 判成 {cat} ⇒ 通道优先级已被改动，先复核乙"
+                assert conf >= cr.CONFIDENCE["high"]
+
+    def test_kaili_style_naming_still_needs_a_third_term(self):
+        """「居家养老服务站」不含这两颗词 ⇒ 甲**没**把它认下（第 3 颗词待凯里侧取证）。"""
+        cat, _ = cr.evaluate_category({"name": self.KAILI, "lng": 0, "lat": 0, "tag": "", "type": ""})
+        assert cat == "other", f"{self.KAILI} 判成 {cat} ⇒ 第 3 颗词已落地，本条该改写"
+        assert "居家养老" not in cr.CATEGORY_RULES["elderly"]["keywords"]

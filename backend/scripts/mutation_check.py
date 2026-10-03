@@ -233,8 +233,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         label="片 E 复发：前端演示态那份常量单独改一字 ⇒ 同一个事实两种说法（必须红，证明前端也被比着）",
         rel="../frontend/src/mocks/livingCircleReports.ts",
-        old="const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，现役词表不含社区级命名）'",
-        new="const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，现役词表已含社区级命名）'",
+        old="const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，按现役名称词表检索无命中）'",
+        new="const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，按现役名称词表检索有命中）'",
         test="tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends",
     ),
     Mutation(

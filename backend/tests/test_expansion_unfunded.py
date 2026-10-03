@@ -1,10 +1,11 @@
 """R23-B1 · 「这一类整轮没跑过扩词」必须留痕（现实额度下这是**常态**，不是边角）。
 
 现场读数（stub 客户端，零真实调用）：步行 standard 的 POI 首轮额度是 31 次，
-A 阶段 25 词 × 页深 1 = 25，三要素 **2** 次（`market` 复用类目通道、只 pharmacy/primary 另检索，
-见 `poi_collector.py` 的「三要素（盲区硬判）：market 复用类目」）⇒ **剩给 S8 扩词只有 4 次**。
+A 阶段 27 词 × 页深 1 = 27（10-03 甲给 `elderly` 补进两颗社区养老命名后从 25 涨到 27），
+三要素 **2** 次（`market` 复用类目通道、只 pharmacy/primary 另检索，
+见 `poi_collector.py` 的「三要素（盲区硬判）：market 复用类目」）⇒ **剩给 S8 扩词只有 2 次**。
 八类里点数未达标的往往有
-四到六类，3 次根本摊不到它们 —— 而旧写法在额度归零时是 `while budget.remaining > 0` 静默退出：
+四到六类，2 次根本摊不到它们 —— 而旧写法在额度归零时是 `while budget.remaining > 0` 静默退出：
 既不记 `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
 （它要 `starved` 非空才为真）。于是"这一类整轮没扩"与"这一类不需要扩"在账面上同形。
 
@@ -26,10 +27,12 @@ CENTER = (102.75000, 25.01800)
 RING_HALF = 2000.0
 # A 阶段按"每词一页"预扣 ⇒ 这一步花掉的就是类目关键词总数；三要素**只发 2 次**
 # （`market` 复用类目通道，见 `poi_collector.py` 里「三要素：market 复用类目」那段）。
-# 这个字面值不许"顺手改"：它错了下面每条的前置 `stub.n == A_PLUS_TRIAD` 就会红 ——
+# 这个数不许"顺手改"：它错了下面每条的前置 `stub.n == A_PLUS_TRIAD` 就会红 ——
 # 前置就是它的活证人（第一版写 3，把"扩词 0 额度"那一档悄悄让成了 1 额度）。
+# 10-03 甲-B 起它**从生产那一处派生**（`triad_search_keys()` 就是三要素循环与保底共用的
+# 同一个键集合）⇒ 加/减一颗硬判要素时这里自动跟上，不再是我手抄的第二份账。
 N_KEYWORDS = sum(len(d["keywords"]) for d in pc.CATEGORY_RULES.values())
-N_TRIAD = 2
+N_TRIAD = len(pc.triad_search_keys())
 A_PLUS_TRIAD = N_KEYWORDS + N_TRIAD
 
 

@@ -472,15 +472,20 @@ def _sec_market(lc: dict) -> dict:
 # ⚠️ 这四段只替换**存在性断言**（显著缺口 / 缺少资源 / 严重不足 / 0 覆盖）；
 # 数值句（`圈内 0/2 处`、`覆盖度 0%`）由数据现算，一位不动。
 _LC_ELDERLY_UNDETECTED_TAIL = "，现役检索词表未检出（读作“未检出”，不等于“不存在”）"
+# ⚠️ 这四句一律**不列举具体检索词**（10-03 甲把 `elderly` 的名称词从 2 颗补到 4 颗，
+# 上一版那句"点名了是哪两颗词"的写法当场变成假话）。列举式措辞只要词表一动就失效，而词表是会动的
+# ⇒ 措辞只说"这张词表"这件事；哪几颗词的真源在 `category_rule.CATEGORY_RULES`。
+# ⚠️ 注释里也不要原样复述被退役判据断言的短语 —— 镜像判据扫的是**源码文本**，不剥注释，
+#   把旧句子抄进注释就会把自家守卫判成红（10-03 实测踩过一次）。
 _LC_ELDERLY_UNDETECTED_CAUSE = (
-    "本维的 0 出在检索面而非资源面：养老一类现役名称词只有「养老院／日间照料中心」，"
-    "社区级命名（养老服务驿站、居家养老服务站等）既不在检索词内、也不被本类判表认下"
-    " ⇒ 这一维应读作“未检出”，下一步是先补词重采、再谈补建。"
+    "这一维的 0 出在检索面而非资源面：现役名称词表已含机构级与社区级两类命名，"
+    "圈内仍零命中只能说明“按这张词表没查到”。若本地设施的命名形状与词表不同形，漏的就仍在检索面"
+    " —— 所以本维读作“未检出”，下一步是先按本地命名复核词表、再谈补建。"
 )
-_LC_ELDERLY_UNDETECTED_CLAIM = "未检出（圈内 0 处，现役词表不含社区级命名）"
+_LC_ELDERLY_UNDETECTED_CLAIM = "未检出（圈内 0 处，按现役名称词表检索无命中）"
 _LC_ELDERLY_UNDETECTED_ADVICE = (
-    "· 养老配置未检出（覆盖 0%）：先按社区级命名补词重采，"
-    "补词后仍无再提补建日间照料中心/助老驿站，优先级 P0。"
+    "· 养老配置未检出（覆盖 0%）：先按本地实际命名复核检索词表，"
+    "复核后仍零命中再提补建日间照料中心/助老驿站，优先级 P0。"
 )
 
 
@@ -489,7 +494,7 @@ def _sec_elderly(lc: dict) -> dict:
     missing = not el or el.get("in_circle", 0) == 0
     return {
         "id": "elderly", "title": "养老配置", "level": 2,
-        "key_takeaway": f"养老(养老院/日间照料)圈内 {(el or {}).get('in_circle', 0)}/{(el or {}).get('total', 0)} 处{(_LC_ELDERLY_UNDETECTED_TAIL if missing else '')}",
+        "key_takeaway": f"养老(含社区级命名)圈内 {(el or {}).get('in_circle', 0)}/{(el or {}).get('total', 0)} 处{(_LC_ELDERLY_UNDETECTED_TAIL if missing else '')}",
         "paragraphs": [
             f"养老托育类设施共 {(el or {}).get('total', 0)} 处，15 分钟圈内 {(el or {}).get('in_circle', 0)} 处，覆盖度 {_pct(_cov_score(el))}。",
             (_LC_ELDERLY_UNDETECTED_CAUSE if missing

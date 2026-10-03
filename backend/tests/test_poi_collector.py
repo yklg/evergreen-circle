@@ -13,8 +13,10 @@ from app.living_circle.baidu_client import PlaceSearchOut
 
 
 def budget():
-    # quota 产出的分配快照（27 = 免费档 poi 预算）。纯工厂：刻意非 pytest fixture，
+    # quota 产出的分配快照（27 = precise 档的 poi 预算）。纯工厂：刻意非 pytest fixture，
     # 便于在各用例内手动实例化独立快照做记账断言。
+    # ⚠️ 10-03 甲之后 27 **不再等于"A 阶段 + 三要素"**（现需 27 + 2）：拿它跑整条采集会饿死 2 颗展示词，
+    #   所以这里的用例只把它当"一个有额度的快照"用，别当"够用"的基线。
     return pc.POIBudget(total=27)
 
 
@@ -119,10 +121,15 @@ class TestCollectPOIConvergence:
     def test_u38_budget_tight_admission_set_under_concurrency(self):
         """U38（延迟优化 B2）：预算紧张时准入集合与串行一致 —— 并发 A 阶段不漂移。
 
-        budget=2 → `poi_page_depth(30+, 2)=1`，每词恰耗 1 额度。8 类关键词并发
-        `asyncio.gather` 下，consume 是同步原子操作、按任务创建顺序先到先得：
-        恰好前 2 词获批、其余拒绝 → **总调用恰 2 次**，预算耗尽后三要素/B 阶段
-        同样零调用。这正是「并发只改墙钟、不改预算数学」的锁定（B2 契约）。
+        budget=2 → `poi_page_depth(27+, 2)=1`，每词恰耗 1 额度。8 类关键词并发
+        `asyncio.gather` 下，consume 是同步原子操作、按任务创建顺序先到先得 ⇒
+        **总调用恰 2 次**，预算耗尽后 B 阶段同样零调用。这正是「并发只改墙钟、不改预算数学」
+        的锁定（B2 契约）。
+
+        ⚠️ 10-03 甲-B 加了盲区三要素的额度保底。它**没有**改变本条的落点：保底带一条退让地板
+        （`remaining` 连"每类一颗首词"都不够时让位，见 `poi_collector` 里那一段），
+        而 `total=2 < 8 类` 正落在地板里 ⇒ 2 个单位仍归 A 阶段的头两颗词。
+        保底真正咬得动的是真实档位（27/31/40），那半边由 `tests/test_triad_reserve.py` 钉。
         """
         import asyncio
 
@@ -140,13 +147,24 @@ class TestCollectPOIConvergence:
             self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
         )
         assert stub.calls == 2, f"预算紧张应恰好 2 次调用（准入集合不漂移），实际 {stub.calls}"
-        assert b.remaining == 0, "预算必须被恰好花完（2 词 × 1 页）"
+        assert b.remaining == 0, "预算必须被恰好花完（2 个单位 = 2 词 × 1 页）"
         assert isinstance(collected.per_category, dict) and isinstance(collected.triads, dict)
         # 预算饿死的词必须**可见**：0 次调用不能悄悄等于「该类没有设施」（P0-2）
-        # 25 个展示词准入 2 ⇒ 23 饿死；三要素 pharmacy/primary 各差 1 额度 ⇒ +2（market 复用类目，不占额度）
-        assert len(collected.evidence.starved_terms) == 25, (
-            f"应记 25 个饿死词（23 展示 + 2 三要素），实际 {collected.evidence.starved_terms}"
-        )
+        # 计数从判表现算，不背字面量（10-03 甲补两颗社区养老词后，25 这个数当场过期过一次）。
+        # ⚠️ `total=2` 落在保底的**退让区**：保底不得推翻"每类至少一颗首词"那条更老的契约
+        #   （`test_forensic_rounds.py::test_u38c_starvation_lands_on_category_tails`），
+        #   所以 `earmark = min(颗数, max(0, remaining − 类别数))` 在这里算出 0 ⇒ 落点回到旧形状：
+        #   A 阶段拿到那 2 个单位，三要素整组饿死。保底在真实档位（27/31/40）才咬得动。
+        n_display = sum(len(d["keywords"]) for d in pc.CATEGORY_RULES.values())
+        n_triad = len(pc.triad_search_keys())
+        starved = list(collected.evidence.starved_terms)
+        got_display = {x for x in starved if x[0] in pc.CATEGORY_RULES}
+        got_triad = {x for x in starved if x[0] not in pc.CATEGORY_RULES}
+        assert len(got_display) == n_display - 2, (
+            f"budget=2 应摊开 2 颗词、其余 {n_display - 2} 颗饿死（退让区=旧形状），实际 {len(got_display)}")
+        assert len(got_triad) == n_triad, (
+            f"退让区里三要素整组该饿死（{n_triad} 颗）⇒ 若它们反而拿到了额度，说明保底压过了'每类一颗'")
+        assert n_triad == 2, f"三要素另检索键数变了（{n_triad}）⇒ 本条上方的账要重算"
         assert not collected.evidence.complete
 
     def test_server_capped_term_collapses_its_own_frontier(self):
@@ -225,7 +243,7 @@ class TestCollectPOIConvergence:
                 return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
 
         stub = Stub()
-        b = pc.POIBudget(total=40)        # 页深 = floor(40/25 词) = 1 ⇒ 每次调用恰耗 1 单位
+        b = pc.POIBudget(total=40)        # 页深 = floor(40/27 词) = 1 ⇒ 每次调用恰耗 1 单位
         collected = asyncio.run(
             self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
         )
@@ -282,7 +300,7 @@ class TestCollectPOIConvergence:
                 return PlaceSearchOut([], None, 1, pc.STOP_EMPTY)
 
         stub = Stub()
-        b = pc.POIBudget(total=40)        # 页深 = floor(40/25 词) = 1 ⇒ 每次调用恰耗 1 单位
+        b = pc.POIBudget(total=40)        # 页深 = floor(40/27 词) = 1 ⇒ 每次调用恰耗 1 单位
         collected = asyncio.run(
             self._run(stub, center=(107.9758, 26.5734), radius_m=2000, scope=object(), budget_snapshot=b)
         )

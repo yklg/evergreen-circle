@@ -282,9 +282,9 @@ function secMarket(r: LivingCircleReport): ReportSection {
 // （比名字集合 + 比值 + 比使用处数）。改一边忘另一边 = 同一个事实两种说法，今天没有任何东西会红。
 // ⚠️ 声明形状是判据的一部分：单行 + 单引号字面量，抽不到就报错（不许改成多行或双引号）。
 const LC_ELDERLY_UNDETECTED_TAIL = '，现役检索词表未检出（读作“未检出”，不等于“不存在”）'
-const LC_ELDERLY_UNDETECTED_CAUSE = '本维的 0 出在检索面而非资源面：养老一类现役名称词只有「养老院／日间照料中心」，社区级命名（养老服务驿站、居家养老服务站等）既不在检索词内、也不被本类判表认下 ⇒ 这一维应读作“未检出”，下一步是先补词重采、再谈补建。'
-const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，现役词表不含社区级命名）'
-const LC_ELDERLY_UNDETECTED_ADVICE = '· 养老配置未检出（覆盖 0%）：先按社区级命名补词重采，补词后仍无再提补建日间照料中心/助老驿站，优先级 P0。'
+const LC_ELDERLY_UNDETECTED_CAUSE = '这一维的 0 出在检索面而非资源面：现役名称词表已含机构级与社区级两类命名，圈内仍零命中只能说明“按这张词表没查到”。若本地设施的命名形状与词表不同形，漏的就仍在检索面 —— 所以本维读作“未检出”，下一步是先按本地命名复核词表、再谈补建。'
+const LC_ELDERLY_UNDETECTED_CLAIM = '未检出（圈内 0 处，按现役名称词表检索无命中）'
+const LC_ELDERLY_UNDETECTED_ADVICE = '· 养老配置未检出（覆盖 0%）：先按本地实际命名复核检索词表，复核后仍零命中再提补建日间照料中心/助老驿站，优先级 P0。'
 
 function secElderly(r: LivingCircleReport): ReportSection {
   const el = cat(r, 'elderly')
@@ -294,9 +294,9 @@ function secElderly(r: LivingCircleReport): ReportSection {
     id: 'elderly',
     title: '养老配置',
     level: 2,
-    key_takeaway: `养老(养老院/日间照料)圈内 ${el ? `${el.in_circle}/${el.total}` : '0/0'} 处${missing ? LC_ELDERLY_UNDETECTED_TAIL : ''}；文体类 ${rec ? `${rec.in_circle}/${rec.total}` : '—'} 处`,
+    key_takeaway: `养老(含社区级命名)圈内 ${el ? `${el.in_circle}/${el.total}` : '0/0'} 处${missing ? LC_ELDERLY_UNDETECTED_TAIL : ''}；文体类 ${rec ? `${rec.in_circle}/${rec.total}` : '—'} 处`,
     paragraphs: [
-      `养老托育类设施（养老院/日间照料中心）共 ${el?.total ?? 0} 处，15 分钟圈内 ${el?.in_circle ?? 0} 处，覆盖度 ${pct(el?.coverage ?? 0)}。${missing ? LC_ELDERLY_UNDETECTED_CAUSE : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}`,
+      `养老托育类设施共 ${el?.total ?? 0} 处，15 分钟圈内 ${el?.in_circle ?? 0} 处，覆盖度 ${pct(el?.coverage ?? 0)}。${missing ? LC_ELDERLY_UNDETECTED_CAUSE : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}`,
       `文体(公园/健身) ${rec?.total ?? 0} 处（圈内 ${rec?.in_circle ?? 0}），作为全龄友好配套的补充观测项${rec?.min_minutes != null ? `，最近「${rec.nearest_name}」${fmtMin(rec.min_minutes)}` : ''}。`,
     ],
     claims: [

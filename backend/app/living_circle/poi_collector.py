@@ -424,20 +424,36 @@ class POIBudget:
     remaining: int = field(init=False)
     usage: Dict[str, int] = field(default_factory=dict)
     frozen_cats: set = field(default_factory=set)
+    # **只许 `triad-*` 消费者动用**的单位数（甲-B，#87 计划 §6）。为什么默认 0 而不是必需：
+    # `POIBudget` 的构造点有二十多处（含逐条测饥饿/回合的替身），加**必需**字段会让没跟上的
+    # 那些当场报错、跟上的那些反而显得"行为变了"；默认 0 = "不保底" = 本字段引入之前的语义，
+    # 而**生产路径由 `collect_poi` 现设**（不是由调用方记得传）⇒ 没有"忘了设就静默不保底"这条洞。
+    earmark: int = 0
 
     def __post_init__(self) -> None:
         self.remaining = self.total
+
+    def _earmarked(self, category: str) -> bool:
+        return category.startswith(TRIAD_CONSUME_PREFIX)
 
     def consume(self, category: str, units: int = 1) -> bool:
         """预扣 `units` 次调用额度；额度不足或类别已冻结则拒绝（原子，不部分扣减）。
 
         按页/翻页分账时 `units` 可为 >1，保证预算与真实 HTTP 调用在数量上对齐。
+
+        甲-B 的一条优先序：**盲区三要素是硬判输入，不许被展示类检索词挤掉**。非 `triad-*`
+        消费者能用的只有 `remaining - earmark`；`triad-*` 自己能用满额（它要花的正是被留出来的那几颗）。
+        饿死仍然**可见** —— 让位的那几颗展示词会进 `starved_terms`，记成"这一词我们根本没查"，
+        不是"这一类没有设施"。
         """
         if units < 1:
             return False
-        if self.remaining < units or category in self.frozen_cats:
+        available = self.remaining if self._earmarked(category) else self.remaining - self.earmark
+        if available < units or category in self.frozen_cats:
             return False
         self.remaining -= units
+        if self._earmarked(category):
+            self.earmark = max(0, self.earmark - units)
         self.usage[category] = self.usage.get(category, 0) + units
         return True
 
@@ -471,6 +487,7 @@ class POIBudget:
         child.remaining = self.remaining
         child.usage = dict(self.usage)
         child.frozen_cats = set(self.frozen_cats)
+        child.earmark = self.earmark      # 保底随快照走：漏带就是"子池里没有三要素头寸"
         return child
 
 
@@ -582,6 +599,18 @@ def _term_radius(scope: Any, category: str, fallback_m: float) -> float:
     return float(fallback_m)
 
 
+TRIAD_CONSUME_PREFIX = "triad-"
+
+
+def triad_search_keys() -> Tuple[str, ...]:
+    """需要**各自发一次检索**的盲区要素键（`market` 复用类目通道 ⇒ 不在内）。
+
+    两处共用它，不留第二份"三要素是几次"：三要素循环按它逐颗检索，`collect_poi` 按它的
+    长度设保底额度。以后加第四个硬判要素只改 `TRIAD_RULES`，保底自动跟着涨。
+    """
+    return tuple(k for k in TRIAD_RULES if not k.startswith("_") and k != "market")
+
+
 async def collect_poi(
     client: Any,
     center: Tuple[float, float],
@@ -638,6 +667,19 @@ async def collect_poi(
         evidence.append(_api_error_row(category, term, req_radius))
 
     # ── A 阶段：S1 + S2 + S3 初始检索（budget-derived 页深驱动）──
+    # 甲-B（#87 §6）：先给三要素留保底，再让展示词去抢剩下的。为什么不在 quota 层直接分成两个池：
+    # 池子还是一个（`total_calls_hard_ceiling` 那套恒等式与熔断账不动），只是**准入资格**加了优先序 ——
+    # 分成两个对象会让二十多处 `POIBudget(...)` 构造点全部要跟着改，而它们里绝大多数测的正是饥饿。
+    #
+    # ⚠️ 保底**不得推翻一条更早就在服役的契约**（`tests/test_forensic_rounds.py::test_u38c…`：
+    # 「预算再紧也不整类蒸发」）⇒ 两级优先序：①每类至少一颗首词 ②三要素保底 ③展示词尾部。
+    # `len(CATEGORY_RULES)` 就是①那一层要占住的单位数，所以 `total` 小到连"每类一颗"都摊不满时，
+    # 保底自动退让（`max(0, …)` 那半边），落点回到旧形状 —— 而不是让两类彻底没证据换两颗三要素。
+    # 真实档位（27/31/40）远大于 8+2，这一层 floor 不改变本次要救的那一幕：precise 档 27 单位下
+    # 保底照旧是 2，让位的是 `shopping` 的两颗**尾部**词，八类首词全活（实测见计划 §3）。
+    # 保底数由 `triad_search_keys()` 现算，不写死 2。
+    budget.earmark = min(len(triad_search_keys()),
+                         max(0, budget.remaining - len(CATEGORY_RULES)))
     all_keywords: List[str] = []
     for cat, defn in CATEGORY_RULES.items():
         all_keywords.extend(defn["keywords"])
@@ -659,7 +701,7 @@ async def collect_poi(
         return raw, "ok"
 
     # 准入顺序 = **按词序号转置**（阶段 3 的确定性修复）。旧顺序沿 `CATEGORY_RULES` 字典序
-    # 逐类摊开 ⇒ 预算一紧就**整类蒸发**（北京实测：42 总额里 POI 只分到 27、25 词 ⇒ 页深 1、
+    # 逐类摊开 ⇒ 预算一紧就**整类蒸发**（北京实测：42 总额里 POI 只分到 27、当年那批 25 词 ⇒ 页深 1、
     # 三要素只剩 2 单位、S8 扩词进不去，谁饿死完全取决于字典序）。转置后饿死落在
     # 「每类尾部若干词」—— 每类都还剩证据，缺失不再偏袒字典序靠后的那一类。
     # ⚠️ 必须 `sorted()`：dict 的插入序会随定义顺序改动而漂移，而「同输入必同准入集」
@@ -728,9 +770,7 @@ async def collect_poi(
     triads: Dict[str, list] = {
         "market": _dedupe(raw_by_cat.get("market", []) or [], 50.0, "geometric")
     }
-    for key, ref in TRIAD_RULES.items():
-        if key.startswith("_") or key == "market":
-            continue
+    for key in triad_search_keys():
         # 词表解析只住在 `triad_keywords`（第四轮复审 P1-5：这里原本自己抄了一份
         # `ref if isinstance(ref, dict) else {"keywords": [ref]}`，与回合函数那份是第二实现）
         kws = triad_keywords(key)
@@ -738,7 +778,7 @@ async def collect_poi(
         triad_r = _term_radius(scope, key, radius_m)
         if not kw:
             continue
-        if not budget.consume(f"triad-{key}"):
+        if not budget.consume(f"{TRIAD_CONSUME_PREFIX}{key}"):
             starved.append((key, kw))
             continue
         raw = await client.place_search(kw, center, radius_m=triad_r, max_pages=1)
@@ -754,6 +794,10 @@ async def collect_poi(
         if items:
             # 显式写死 geometric：三要素是盲区 1km 硬判的输入，绝不跟随类目通道的归并策略。
             triads[key] = _dedupe(items, 50.0, "geometric")
+
+    # 保底只保到"三要素发完"为止：它们没花掉的那几颗立刻交回池子，B 阶段照旧能全用。
+    # 不交回去会把"没花出去的钱"变成"谁也花不着的钱"——那是少查，不是保底。
+    budget.earmark = 0
 
     # ── B 阶段：S8 渐进式扩词（仅 under-target，吃剩余预算）──
     # 收手单位（R23-B2，第 22 轮 R22-1 的正面处置）：**有门槛项口径就按门槛项数收手，
@@ -812,9 +856,10 @@ async def collect_poi(
         # R23-B1：`while budget.remaining > 0` 这条守卫在额度归零时**静默退出** —— 既不记
         # `starved`（没有"某个词被拒"这件事，词甚至没被推导出来），也不动 `aborted`
         # （`aborted` 要 `starved` 非空才为真）。于是"这一类整轮没扩过词"与"这一类不需要扩"
-        # 在账面上同形。现实额度下这是**常态**：步行 standard 的 31 次里 A 阶段 25 + 三要素 2
-        # （`market` 复用类目通道，另两个才是真调用），扩词只剩 4 次 ⇒ 多数类别一个扩词都拿不到
-        # （实测见 tests/test_expansion_unfunded.py）。
+        # 在账面上同形。现实额度下这是**常态**：步行 standard 的 31 次里 A 阶段 27 + 三要素 2
+        # （`market` 复用类目通道，另两个才是真调用），扩词只剩 2 次 ⇒ 多数类别一个扩词都拿不到
+        # （实测见 tests/test_expansion_unfunded.py；27 = 10-03 甲补进两颗社区养老命名后的词数，
+        #   补词之前是 25 + 2 ⇒ 剩 4 次，那批读数见 `test_poi_collector.py` 的 U38 那条）。
         if searched == 0 and not no_vocab and not budget.frozen(cat) and budget.remaining <= 0:
             expansion_unfunded.append(cat)
         # R23-B3（计划 §7 丁 → §14）：同一个 while 守卫的**另一种**形状 —— 这一类**扩过词**
