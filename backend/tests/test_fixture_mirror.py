@@ -275,3 +275,47 @@ def test_evidence_gap_note_is_one_text_on_both_ends():
         assert src.count(needle) == 3, (
             f"{label}出现 {src.count(needle)} 次（应为 3：定义 1 + 医疗节 1 + 教育节 1）"
             " ⇒ 函数还在、正文里已经没有它 = 假同源")
+
+def test_elderly_undetected_notes_are_one_text_on_both_ends():
+    """片 E（#87 丙档）：养老那一维那四句「未检出」措辞在两端必须逐字同一份。
+
+    后端 `diagnosis_templates._LC_ELDERLY_*` 进生产正文，前端 `mocks/livingCircleReports.ts`
+    的 `LC_ELDERLY_*` 进演示态正文 —— 同一个事实两份物理字面量，改一边忘另一边不会有任何东西红。
+    与 `test_evidence_gap_note_is_one_text_on_both_ends` 同一套三条腿：
+    ① 名字集合相等（任何一端单独多一条就红）；② 值相等且期望值**从后端模块 import**（不是我抄的）；
+    ③ 使用处数各 == 2（定义 1 + 正文 1）—— 常量还在而正文没引用 = 假同源。
+    第 ④ 条是本刀特有的**退役断言**：那四句被撤掉的存在性说法不许再从任何一端漏回来。
+    """
+    import re
+
+    from app.core.pipeline import diagnosis_templates as dt
+
+    ts_path = PROJECT / "frontend" / "src" / "mocks" / "livingCircleReports.ts"
+    py_path = BACKEND_DIR / "app" / "core" / "pipeline" / "diagnosis_templates.py"
+    ts_src = ts_path.read_text(encoding="utf-8")
+    py_src = py_path.read_text(encoding="utf-8")
+
+    py_side = {name[1:]: value for name, value in vars(dt).items() if name.startswith("_LC_ELDERLY_")}
+    ts_side = dict(re.findall(r"^const (LC_ELDERLY_\w+) = '([^']*)'$", ts_src, re.M))
+    assert py_side, "后端一个 `_LC_ELDERLY_*` 都没抽到 ⇒ 本条对它是恒真"
+    assert set(py_side) == set(ts_side), (
+        f"两端常量名集合已分叉：只有后端有 {sorted(set(py_side) - set(ts_side))}、"
+        f"只有前端有 {sorted(set(ts_side) - set(py_side))}")
+    # 抽不到 = 有人把声明改成多行/双引号 ⇒ 判据会静默少比一条，必须当场报（同 GAP 那条的纪律）
+    ts_declared = len(re.findall(r"^const LC_ELDERLY_\w+ =", ts_src, re.M))
+    assert ts_declared == len(ts_side), (
+        f"前端声明了 {ts_declared} 个 `LC_ELDERLY_*` 而正则只抽到 {len(ts_side)} 个"
+        " ⇒ 有常量不再是「单行 + 单引号字面量」，本条对它失效")
+    for name, py_val in py_side.items():
+        assert py_val, f"后端常量 _{name} 是空串 ⇒ 本条对它是恒真"
+        assert py_val == ts_side[name], (
+            f"{name} 两端已分叉：后端「{py_val[:18]}…」vs 前端「{ts_side[name][:18]}…」")
+        for src, label in ((py_src, "后端"), (ts_src, "前端")):
+            used = src.count(f"_{name}" if label == "后端" else name)
+            assert used == 2, (
+                f"{label} {name} 出现 {used} 次（应为 2：定义 1 + 正文 1）"
+                " ⇒ 常量还在、正文里没有它 = 假同源")
+
+    for retired in ("缺少机构养老资源", "严重不足（圈内 0 处）", "属显著缺口", "0 覆盖：建议引入"):
+        for src, label in ((py_src, "后端"), (ts_src, "前端")):
+            assert retired not in src, f"{label}又漏回退役的存在性说法「{retired}」"

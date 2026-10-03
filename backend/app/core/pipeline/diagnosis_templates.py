@@ -465,20 +465,39 @@ def _sec_market(lc: dict) -> dict:
     }
 
 
+# 养老那一维的「未检出」措辞（#87 丙档）。**四段各有后端一份、前端一份**，
+# 镜像判据 = `tests/test_fixture_mirror.py::test_elderly_undetected_notes_are_one_text_on_both_ends`
+# （比名字集合、比值、比使用处数）。为什么做成常量而不是就地写字符串：
+# 这四句今天同时进生产正文与演示态正文，改一边忘另一边 = 同一个事实两种说法且没有任何东西会红。
+# ⚠️ 这四段只替换**存在性断言**（显著缺口 / 缺少资源 / 严重不足 / 0 覆盖）；
+# 数值句（`圈内 0/2 处`、`覆盖度 0%`）由数据现算，一位不动。
+_LC_ELDERLY_UNDETECTED_TAIL = "，现役检索词表未检出（读作“未检出”，不等于“不存在”）"
+_LC_ELDERLY_UNDETECTED_CAUSE = (
+    "本维的 0 出在检索面而非资源面：养老一类现役名称词只有「养老院／日间照料中心」，"
+    "社区级命名（养老服务驿站、居家养老服务站等）既不在检索词内、也不被本类判表认下"
+    " ⇒ 这一维应读作“未检出”，下一步是先补词重采、再谈补建。"
+)
+_LC_ELDERLY_UNDETECTED_CLAIM = "未检出（圈内 0 处，现役词表不含社区级命名）"
+_LC_ELDERLY_UNDETECTED_ADVICE = (
+    "· 养老配置未检出（覆盖 0%）：先按社区级命名补词重采，"
+    "补词后仍无再提补建日间照料中心/助老驿站，优先级 P0。"
+)
+
+
 def _sec_elderly(lc: dict) -> dict:
     el = _cat(lc, "elderly")
     missing = not el or el.get("in_circle", 0) == 0
     return {
         "id": "elderly", "title": "养老配置", "level": 2,
-        "key_takeaway": f"养老(养老院/日间照料)圈内 {(el or {}).get('in_circle', 0)}/{(el or {}).get('total', 0)} 处{('，属显著缺口，适老化优先级最高' if missing else '')}",
+        "key_takeaway": f"养老(养老院/日间照料)圈内 {(el or {}).get('in_circle', 0)}/{(el or {}).get('total', 0)} 处{(_LC_ELDERLY_UNDETECTED_TAIL if missing else '')}",
         "paragraphs": [
             f"养老托育类设施共 {(el or {}).get('total', 0)} 处，15 分钟圈内 {(el or {}).get('in_circle', 0)} 处，覆盖度 {_pct(_cov_score(el))}。",
-            ("该样区老年群体步行可达范围内缺少机构养老资源，需在整改建议中列为 P0 项。" if missing
+            (_LC_ELDERLY_UNDETECTED_CAUSE if missing
              else f"最近「{(el or {}).get('nearest_name')}」{_fmt_min((el or {}).get('min_minutes'))}。"),
         ],
         "claims": [{
             "claim_id": "c-lc-elderly-1",
-            "text": f"养老配置{'严重不足（圈内 0 处）' if missing else '覆盖正常'}",
+            "text": f"养老配置{_LC_ELDERLY_UNDETECTED_CLAIM}" if missing else "养老配置覆盖正常",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-elderly"],
             "confidence": "high" if missing else "medium", "cross_validated": False, "author": _expert_name("L2-003"),
         }],
@@ -615,7 +634,7 @@ def _build_suggestions(lc: dict) -> List[str]:
         out.append(f"· 盲区缺位「{f}」：建议{plan.get(f, '补建/补充供给')}。")
     el = _cat(lc, "elderly")
     if el and el.get("in_circle", 0) == 0:
-        out.append("· 养老配置 0 覆盖：建议引入日间照料中心或助老驿站，优先级 P0。")
+        out.append(_LC_ELDERLY_UNDETECTED_ADVICE)
     if not out:
         out.append("· 无显著整改项。")
     return out
