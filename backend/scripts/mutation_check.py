@@ -185,6 +185,30 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         test="tests/test_report_contract.py::test_penalty_reverted_to_count_only_is_flagged",
     ),
+    # ── 片 A（#86）：measure 那两句话的规格必须来自 `sampling.spec`，不是抄来的档位常数 ──
+    # 这三条不是"防别人手滑"，是防**我自己下轮重构时把它抄回去**（旧写法读起来更顺，
+    # 而全仓此前零测试锚这两句 ⇒ 抄回去没人报警；详见 skip/tmp/plan-a-measure-copy.md）。
+    Mutation(
+        label="片 A 复发：发起句重新抄上「粗扫 400m → 边界带加密」（此刻规格还没产出）",
+        rel="app/core/pipeline/living_circle.py",
+        old='    yield _ev("message", {"stage": "measure", "percent": 30, "text": "批量距离矩阵测时采样中…（生效采样规格随档位与本次预算，产出那一步如实披露）"})',
+        new='    yield _ev("message", {"stage": "measure", "percent": 30, "text": "粗扫 400m 网格 → 15min 边界带加密 → 批量距离矩阵测时中…"})',
+        test="tests/test_measure_copy.py::test_a_t1_lead_message_carries_no_spacing_number_at_all",
+    ),
+    Mutation(
+        label="片 A 复发：生效句把加密步长抄回档位常数（standard 的 150m 冒充一切档位）",
+        rel="app/core/pipeline/living_circle.py",
+        old="f\"{_spec['fine_m']:g}m）\"",
+        new="f\"150m）\"",
+        test="tests/test_measure_copy.py::test_a_t2_two_stage_note_reads_the_spec_not_the_profile_constant",
+    ),
+    Mutation(
+        label="片 A 复发：降级句改回「放弃边界加密带」（quick 从没带可放弃 ⇒ 对 quick 说谎）",
+        rel="app/core/pipeline/living_circle.py",
+        old='"；**预算受限已降规格**：退回单阶段粗网格，插值格距 "',
+        new='"；**预算受限已降规格**：放弃边界加密带，插值格距 "',
+        test="tests/test_measure_copy.py::test_a_t3_degraded_note_reads_both_step_numbers_from_spec",
+    ),
     Mutation(
         label="G1 复发：「最近 X 分钟」退回只卡时间、不卡可达多边形",
         rel="app/living_circle/assemble.py",
