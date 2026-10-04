@@ -242,6 +242,40 @@ src/
 **不含产品名**：令牌里一旦编进品牌名，每次改名都要重命名一遍整个 CSS 面，而漏改的那一处
 不报错、不警告，只是静默丢色（2026-09-28 由 `--verda-*` 迁到 `--c-*`，见 §12 的 CSS 变量守卫）。
 
+### 页面滚动所有权与舞台契约
+
+同一个应用里并存**三种滚动模型**，各自都成立，但**必须有主人**——否则"控件随滚动消失"
+这类症状会在每个新页面重犯（2026-10-04 生活圈体检台就是这么把图例弄丢的：地图被
+`align-items: stretch` 拉到 1627px，锚在它顶边的图例一下滑就出屏）。
+
+| 模型 | 谁在滚 | 用在哪 | 写法要点 |
+|---|---|---|---|
+| 整页滚 | `AppLayout` 的 `<main>`（`layout/AppLayout.tsx:8`） | 报告中心、首页等文档式页 | 页根 `min-h-full`，不接管滚动 |
+| 面板内滚 | 每个面板自己 | 工作台三栏（`WorkspacePage.tsx:98`） | 三栏 `min-h-0` + 各栏 `overflow-y-auto` |
+| 舞台式（体检台） | 只有右槽滚，地图与图例不进滚动链 | 生活圈体检台（`LcStage`） | 页根 `lg:h-full lg:overflow-hidden` + 两栏 `lg:grid-rows-[minmax(0,1fr)]` |
+
+契约的**唯一真源**是 `components/lifecircle/stageContract.ts`（五组 utility + 为什么），
+DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）持有，
+页面只写 `<LcStage>` 与 `LC_PAGE_ROOT`。三条硬规矩：
+
+1. **地图高度不许由内容决定。** BMapGL canvas 按父容器**像素高**撑开（`ComparePage.tsx:341`
+   的注释记下过这条），所以两栏那一行必须锁成容器高（`minmax(0,1fr)`）；否则右栏越长地图越高。
+2. **尺寸跟随交给 SDK。** 建图时调一次 `map.resize()`（GL 源码即 `this._watchSize()`）即可，
+   **不要**再自建 `ResizeObserver` 做双份订阅。⚠ 厂商 API 的存在性只认厂商运行时：
+   社区类型包 `@types/bmapgl` 里没有 `resize`，而 v1.0 的 `Map.prototype` 上确实有——
+   凭类型包判"不存在"曾让我们撤掉一条真修复。
+3. **图例浮层的 `z-10` 不是装饰。** 百度 GL 往容器注入 `.BMap_mask`（`z-index:9; pointer-events:auto`），
+   压在它上面的浮层点不动；真机实测过 `elementFromPoint` 返回的是 mask。
+
+新增同类"地图 + 侧栏"页时：套 `LcStage`，**并先给自己采一份结构基线**
+（手法见 `__tests__/lcStageStructure.test.tsx` 文件头——它把"有没有多包一层"变成树形等式，
+因为 jsdom 没有排版引擎、`lg:h-full` 这类百分比高度按父层解析，改层级在像素层不可验证）。
+
+**为什么这类改动必须有成文的验证边界**：jsdom 不排版，而内置浏览器面板可能整页不出帧
+（实测 `requestAnimationFrame` 3.6 秒 0 帧），此时"画布没跟随容器变高"这类观察
+**既不能证实也不能证伪**。凡此均记在未验清单上（见 `生活圈-体检台布局落地计划-B-v1.md` §2.2），
+不得拿单元全绿冒充已验。
+
 ---
 
 ## 11. 专家团与域包
