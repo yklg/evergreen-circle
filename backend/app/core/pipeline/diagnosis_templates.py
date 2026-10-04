@@ -130,6 +130,87 @@ def _cat(lc: dict, key: str) -> Optional[dict]:
     return None
 
 
+# 哪些类别的**专项章**携带「没查过 / 没查全」那半句（`_evidence_gap_note` 的消费者名单）。
+#
+# 为什么要有这张表：此前该函数的调用点数量被测试用魔数 3 钉死
+# （定义 1 + 医疗 1 + 教育 1）⇒ 第 5 个类别想挂缺口注记必须先来改测试，于是
+# 「谁能讲没查全」退化成手工点取白名单，与它要防的「章节靠手工点取」是同一种病。
+# 现在名单是契约：加一个专项章消费者 = 往这里加一项，测试按 `1 + len(本表)` 校验，
+# 两边任一侧单独动就红（既防"函数还在正文没它"的假同源，也防"表里有正文没它"）。
+# ⚠️ 本文件内**任何注释都不许写出这个函数名紧跟左括号**的形态：那条镜像判据
+#    按源码全文计数（含注释），写了就会被当成多一个消费者而变红（实测踩过）。
+#
+# ⚠️ 概览的设施全景段**读这张表来避免重复交代**：表内类别的缺口注记只出现在自己的
+# 专项章里，全景段只报数 —— 同一句"没查全"在两章各说一遍，读者会当成两件事。
+GAP_NOTE_CATEGORIES: Tuple[str, ...] = ("medical", "education")
+
+# 类目 → 专项章归属。**不在这张表里的类目，由概览的「设施全景」段遍历产句。**
+#
+# 为什么必须有这张表：正文此前靠 `_cat(lc, "medical")` 这类手工点取取数，只覆盖 5 类；
+# 而 `CATEGORY_RULES` 有 8 类、雷达图与 `scores.bars` 也都是 8 类 ⇒ **图 8 类、文 5 类**。
+# 凯里 live 实测：金融（检索 17 / 圈内 12 / 最近 6.2min）、文体（22 / 11 / 7.1min）、
+# 政务（9 / 6 / 13.9min）三类有完整真实数据，正文却一个字没写 —— 这不是疏忽一次，
+# 是"章节集合与数据类目集合没有映射"的结构性漏写。
+# 加一类设施时只往这里登记「要不要单独成章」；不登记就自动进全景，漏写这条路被堵死。
+CATEGORY_CHAPTER: Dict[str, str] = {
+    "medical": "medical",
+    "education": "education",
+    "market": "market",
+    "shopping": "market",
+    "elderly": "elderly",
+}
+
+# 补建策略 → 中文。原先是 `_sec_blindspot` 里的局部字典，图件也要用就得上移，
+# 否则同一个 `reroute` 在表和图里会是两种说法（前端 `LC_BLIND_FIX_STRATEGY` 是第三份，
+# 由 livingCircleContract 对齐）。
+STRATEGY_LABEL: Dict[str, str] = {
+    "mobile_service": "流动服务",
+    "reroute": "移动点/改道补充",
+    "build": "补建站点",
+}
+
+
+def _panorama_sentence(lc: dict) -> str:
+    """概览章「设施全景」段：遍历 `poi.categories` 逐类交代取数。
+
+    专项章已细谈的类别在这里只报数并指向专项章；**没有专项章的类别必须带上最近点与耗时**，
+    否则它们仍然等于没被写进报告。无类目则空串（离线骨架走这一支）。
+    """
+    cats = (lc.get("poi") or {}).get("categories") or []
+    if not cats:
+        return ""
+    parts = []
+    for c in cats:
+        key = c.get("category") or ""
+        seg = (f"{c.get('label', key)}检索 {int(c.get('total') or 0)} 处、圈内 {int(c.get('in_circle') or 0)} 处"
+               f"（覆盖度 {_pct(_cov_score(c))}")
+        if key in CATEGORY_CHAPTER:
+            parts.append(seg + "，本类另有专项章细谈）")
+            continue
+        nm, mm = c.get("nearest_name"), c.get("min_minutes")
+        if nm:
+            parts.append(seg + f"，最近「{nm}」步行约 {_fmt_min(mm)}）")
+        else:
+            parts.append(seg + "，圈内无可达点）")
+    zero = [c.get("label", "") for c in cats if int(c.get("in_circle") or 0) == 0]
+    # 中文与变量之间不留空格（f-string 拼中文句最容易漏的就是这个，读起来像机器贴的）
+    tail = (f"其中「{'、'.join(zero)}」圈内一颗未得，是本样区唯一无可达设施的类别。"
+            if zero else "各类设施圈内均有可达点。")
+    return "设施全景（逐类交代取数）：" + "；".join(parts) + "。" + tail
+
+
+def _score_note_sentence(lc: dict) -> str:
+    """把 `scores.note` 的评分口径自证写进概览。
+
+    这条 note 由 `scoring.compute_scores` 产出，讲的是最该被读者看见的事（哪一维被抬高、
+    盲区外推扣了多少分），但此前只被事件流消费，报告正文没引 —— 等于把最有信息量的一句
+    留在了没人看的地方。**逐字复制，不改写**：它的四条子分格式是承重结构
+    （`eventFlowNumbersMatchFixture.test.ts` 与 `test_living_circle_scoring.py` 都在解析它）。
+    """
+    note = ((lc.get("scores") or {}).get("note") or "").strip()
+    return f"评分构成与口径：{note}" if note else ""
+
+
 def _grade(total: float) -> str:
     if total >= 85:
         return "优"
@@ -336,13 +417,105 @@ def _chart_radar(lc: dict) -> dict:
 
 
 def _chart_coverage(lc: dict) -> dict:
+    """各类别覆盖度横向条形 + 75% 达标线（计划笔 3 的「设施分级对比」）。
+
+    为什么不另起一张图：概览已有 2 张图，再加一张就撞本仓新立的「每章 ≤2 图」约束，
+    而它与既有覆盖度柱**是同一份 `scores.bars`** —— 该做的是把这张图升级：
+    横向条让 8 个中文类名读得下，补一根达标线把"数"变成"判断"。
+    """
     bars = (lc.get("scores") or {}).get("bars", [])
     return {
         "tooltip": {},
-        "xAxis": {"type": "category", "data": [b["label"] for b in bars]},
-        "yAxis": {"type": "value", "max": 100},
-        "series": [{"type": "bar", "data": [b["value"] for b in bars],
-                    "itemStyle": {"color": "#5F7B69", "borderRadius": [2, 2, 0, 0]}, "barWidth": "52%"}],
+        "grid": {"left": 76, "right": 34, "top": 18, "bottom": 28},
+        "xAxis": {"type": "value", "max": 100, "name": "%"},
+        "yAxis": {"type": "category", "data": [b["label"] for b in bars][::-1]},
+        "series": [{
+            "type": "bar",
+            "data": [bars[i]["value"] for i in range(len(bars) - 1, -1, -1)],
+            "itemStyle": {"color": "#5F7B69", "borderRadius": [0, 2, 2, 0]},
+            "barWidth": "58%",
+            "markLine": {
+                "silent": True, "symbol": "none",
+                "data": [{
+                    "xAxis": 75,
+                    "label": {"formatter": "达标线 75%", "color": "#9AA39C"},
+                    "lineStyle": {"color": "#9AA39C", "type": "dashed"},
+                }],
+            },
+        }],
+    }
+
+
+def _chart_minutes(lc: dict) -> dict:
+    """各类别最近可达耗时（分钟）—— 覆盖度说"有没有"，这张说"要走多久"。"""
+    cats = [c for c in ((lc.get("poi") or {}).get("categories") or []) if c.get("min_minutes") is not None]
+    cats = sorted(cats, key=lambda c: c["min_minutes"])
+    return {
+        "tooltip": {},
+        "grid": {"left": 76, "right": 44, "top": 18, "bottom": 28},
+        "xAxis": {"type": "value", "name": "分钟"},
+        "yAxis": {"type": "category", "data": [c["label"] for c in cats][::-1]},
+        "series": [{
+            "type": "bar", "barWidth": "52%",
+            "data": [cats[i]["min_minutes"] for i in range(len(cats) - 1, -1, -1)],
+            "itemStyle": {"color": "#8a9c8f", "borderRadius": [0, 2, 2, 0]},
+            "label": {"show": True, "position": "right", "color": "#6B746C"},
+        }],
+    }
+
+
+def _blind_distribution_formable(bs: list) -> bool:
+    """盲区是否多到能构成"分布"——决定出散点还是退回逐处画像。
+
+    判据不写成魔数：孤点不构成分布。凯里 live 实测只有 1 处盲区，散点会退化成一个点，
+    读者看不出任何"分布"，还不如把那一处说透。要求样本量与离散度同时成立。
+    """
+    if len(bs) < 3:
+        return False
+    sevs = {b.get("severity") or "light" for b in bs}
+    gaps = [float(b.get("gap_score") or 0) for b in bs]
+    return len(sevs) >= 2 or (max(gaps) - min(gaps)) >= 0.2
+
+
+def _chart_blind_scatter(lc: dict) -> dict:
+    """盲区严重度 × 最近设施距离散点（仅在能构成分布时出）。"""
+    bs = lc.get("blindspots") or []
+    return {
+        "tooltip": {},
+        "grid": {"left": 56, "right": 30, "top": 20, "bottom": 44},
+        "xAxis": {"type": "value", "name": "最近设施距离 m"},
+        "yAxis": {"type": "value", "name": "缺口指数", "max": 1},
+        "series": [{
+            "type": "scatter", "symbolSize": 22,
+            "data": [[int(((b.get("nearest") or [{}])[0]).get("distance_m") or 0),
+                      b.get("gap_score"), b["id"]] for b in bs],
+            "itemStyle": {"color": "#E0B775"},
+        }],
+    }
+
+
+def _fix_rows(lc: dict) -> List[Tuple[dict, dict]]:
+    """全部补点处方按优先级排序（同一份取数喂图与喂结论章文字，不各算一遍）。"""
+    rows = [(fx, b) for b in (lc.get("blindspots") or []) for fx in (b.get("fixes") or [])]
+    return sorted(rows, key=lambda r: (r[0].get("priority") if r[0].get("priority") is not None else 9))
+
+
+def _chart_fix_priority(lc: dict) -> dict:
+    """整改优先级看板：各处方能服务多少采样点（取 `fixes[].served`）。"""
+    rows = _fix_rows(lc)
+    return {
+        "tooltip": {},
+        "grid": {"left": 132, "right": 40, "top": 18, "bottom": 30},
+        "xAxis": {"type": "value", "name": "可服务采样点"},
+        "yAxis": {"type": "category", "data": [
+            f"{fx.get('facility')}·{STRATEGY_LABEL.get(fx.get('strategy'), fx.get('strategy'))}·P{fx.get('priority')}"
+            for fx, _ in rows][::-1]},
+        "series": [{
+            "type": "bar", "barWidth": "52%",
+            "data": [rows[i][0].get("served", 0) for i in range(len(rows) - 1, -1, -1)],
+            "itemStyle": {"color": "#1f9e63", "borderRadius": [0, 2, 2, 0]},
+            "label": {"show": True, "position": "right", "color": "#6B746C"},
+        }],
     }
 
 
@@ -381,7 +554,12 @@ def _sec_overview(lc: dict, ev_id: str) -> dict:
             f"中心点「{scene.get('name', '')}」（{scene.get('city', '')} · {scene.get('address', '')}）。",
             f"数据口径：{lc.get('data_origin')}；采样 {n} 点、已测时 {reachable}、圈内可达 {in_reach}；分级等时圈由"
             f"{(lc.get('sampling') or {}).get('interpolation')} 推导（M 阶段为 IDW 插值）。",
+            # 全景段与评分口径段追加在流水线/口径两句之后：前两句的位置没有契约依赖，
+            # 但保持"先说怎么做的、再说算出什么"的阅读顺序，读者不会一上来就撞数字。
+            *(s for s in (_panorama_sentence(lc), _score_note_sentence(lc),
+                          _impact_sentence(lc), _advice_sentence(lc)) if s),
         ],
+        "highlights": _build_highlights(lc),
         "charts": [{"chart_id": "chart-overview-radar", "type": "radar", "title": "生活圈维度评分雷达", "option": _chart_radar(lc)},
                    {"chart_id": "chart-overview-coverage", "type": "bar", "title": "各设施类别覆盖度（%）", "option": _chart_coverage(lc)}],
         "source_evidence_ids": [ev_id],
@@ -401,7 +579,9 @@ def _sec_medical(lc: dict) -> dict:
         "key_takeaway": f"圈内医疗设施 {in_circle}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{'可达' if (triad or {}).get('covered') else '1km 内缺失'}",
         "paragraphs": [
             f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，15 分钟圈内 {in_circle} 处；{_med_cov_sentence(m, lc.get('caliber'))}",
-            f"最近设施「{(m or {}).get('nearest_name') or '—'}」步行约 {_fmt_min((m or {}).get('min_minutes'))}。",
+            # 原第 2 段只有一句「最近设施 X 步行约 Y」；机理段含同一信息并交代它与分子的形状关系，
+            # 所以**替换**而非再加一段 —— 否则"最近是谁"这句话在正文里出现两遍。
+            _mechanism_sentence(lc, "medical") or f"最近设施「{(m or {}).get('nearest_name') or '—'}」步行约 {_fmt_min((m or {}).get('min_minutes'))}。",
         ],
         "claims": [{
             "claim_id": f"c-lc-medical-1",
@@ -421,11 +601,15 @@ def _sec_education(lc: dict) -> dict:
     covered = bool((triad or {}).get("covered"))
     cov = _cov_score(e)
     req = (e or {}).get("required_in_circle")
+    edu_mech = _mechanism_sentence(lc, "education")
     return {
         "id": "education", "title": "教育设施", "level": 2,
         "key_takeaway": f"教育类圈内 {(e or {}).get('in_circle', 0)}/{(e or {}).get('total', 0)} 处；小学三要素{('可达（最近 ' + _fmt_min((triad or {}).get('nearest_minutes')) + '）') if covered else '1km 内缺失'}",
         "paragraphs": [
             f"小学/中学/幼儿园共检索 {(e or {}).get('total', 0)} 处，圈内 {(e or {}).get('in_circle', 0)} 处（三类都在这一类的检索范围内）；{_edu_cov_sentence(e, lc.get('caliber'))}",
+            # 机理段插在**第 2 位**：第 1 位是缺口注记的落点，`lcEvidenceGapNote` 按 paragraphs[0]
+            # 读取，插到它前面会静默改变它读到的内容（段序即契约）。
+            *([edu_mech] if edu_mech else []),
             "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区" + ("最近小学步行在可接受范围" if covered else "1km 内无小学，需关注跨区就学问题") + "。",
         ],
         "claims": [{
@@ -454,6 +638,8 @@ def _sec_market(lc: dict) -> dict:
         "paragraphs": [
             "以菜市场/生鲜与超市/便利店/商场两组关键词独立检索并去重：",
             f"菜市场 {(mk or {}).get('total', 0)} 处（圈内 {(mk or {}).get('in_circle', 0)}，覆盖 {_pct(_cov_score(mk))}）；购物 {(sp or {}).get('total', 0)} 处（圈内 {(sp or {}).get('in_circle', 0)}，覆盖 {_pct(_cov_score(sp))}）。",
+            # 两类最近点此前从未在正文里点名 —— 机理段补的就是这一格信息。
+            *([s for s in (_mechanism_sentence(lc, "market"), _mechanism_sentence(lc, "shopping")) if s]),
         ],
         "claims": [{
             "claim_id": "c-lc-market-1",
@@ -527,15 +713,239 @@ def _sec_isochrone(lc: dict, ev_id: str) -> dict:
             "field": "reachability", "evidence_ids": [ev_id],
             "confidence": "high", "cross_validated": True, "author": _expert_name("L2-005"),
         }],
-        "charts": [{"chart_id": "chart-isochrone-area", "type": "bar", "title": "分级步行等时圈面积（km²）", "option": _chart_isochrone(lc)}],
+        "charts": [{"chart_id": "chart-isochrone-area", "type": "bar", "title": "分级步行等时圈面积（km²）", "option": _chart_isochrone(lc)},
+                   {"chart_id": "chart-isochrone-minutes", "type": "bar", "title": "各类别最近可达耗时（分钟）", "option": _chart_minutes(lc)}],
         "source_evidence_ids": [ev_id],
     }
+
+
+# 逐格台账读侧口径 —— 字符表与前端 `lib/livingCircle.ts:1165-1169` 逐字相同，
+# 真源是后端 `app/living_circle/blindspot.py:250-255`（`1` 是 / `0` 否 / `.` 无从知道）。
+# ⚠️ 这里只**读**三张位，绝不重算不对称判盲规则 —— 那条规则全仓只许 `_verdict_masks` 一处实现。
+_LEDGER_YES, _LEDGER_UNKN, _LEDGER_NODIST = "1", ".", "-"
+
+
+def _ledger_stats(lc: dict) -> Optional[Dict[str, Any]]:
+    """逐格台账的五档计数与尺距；台账缺失或验形不过 ⇒ None（**不印，也不印 0**）。
+
+    为什么宁可不印：`ev-2` 之前的快照根本没有 `cells_ledger`，那时"判了几格"根本无从知道；
+    印成 0 就是把「不知道」说成「一格都没有」，与前端 `cellsLedgerOf` 返回 null 同一立场。
+    """
+    led = (lc.get("caliber") or {}).get("cells_ledger")
+    if not isinstance(led, dict):
+        return None
+    n = led.get("n")
+    # 格阵恒为奇数（分析中心要恰好落在格心上），与前端同一验形；偶数/缺字段一律视为不可信
+    if not isinstance(n, int) or n <= 0 or n % 2 == 0:
+        return None
+    if led.get("grid") != "square" or led.get("schema_version") != 1:
+        return None
+    rows = {}
+    for key in ("inside", "blind", "verdict", "capped"):
+        v = led.get(key)
+        if not isinstance(v, list) or len(v) != n or any(
+            not isinstance(r, str) or len(r) != n for r in v
+        ):
+            return None
+        rows[key] = v
+
+    def bit(key: str, i: int, j: int) -> bool:
+        return rows[key][i][j] == _LEDGER_YES
+
+    counts = {"blind": 0, "clear": 0, "unknown": 0, "capped": 0, "inside": 0}
+    for i in range(n):
+        for j in range(n):
+            if not bit("inside", i, j):
+                continue
+            counts["inside"] += 1
+            if bit("blind", i, j):
+                counts["blind"] += 1
+            elif bit("verdict", i, j):
+                counts["clear"] += 1
+            elif bit("capped", i, j):
+                counts["capped"] += 1
+            else:
+                counts["unknown"] += 1
+    step, radius, scan = led.get("step_m"), led.get("radius_m"), led.get("scan_m")
+    if not all(isinstance(x, (int, float)) and x > 0 for x in (step, radius, scan)):
+        return None
+    return {"n": n, "step_m": step, "radius_m": radius, "scan_m": scan, **counts}
+
+
+def _ledger_sentence(lc: dict) -> str:
+    """盲区章的逐格台账段；无台账则空串（调用方负责不追加空段）。
+
+    ⚠️ 「出到结论」只算 判盲 + 确认不盲。未定（有类没查全）与判不动（接口封顶）都是
+    **没结论**，把它们算进"出结论"或合并成一句"没结论"，等于把失职洗成天经地义 ——
+    这两档必须各说一句话（与前端 `CellsLedgerCard` 的五档 `WORD` 表同一立场）。
+    """
+    st = _ledger_stats(lc)
+    if not st:
+        return ""
+    judged = st["blind"] + st["clear"]
+    return (
+        f"判定格阵 {st['n']}×{st['n']}（格距 {round(st['step_m'])}m、判定尺半径 {round(st['radius_m'])}m）："
+        f"{st['inside']} 格落在可达区内、其中 {judged} 格出到结论"
+        f"（判盲 {st['blind']} 格、确认不盲 {st['clear']} 格）；"
+        f"余下 {st['unknown']} 格未定（有类别没查全，属我们的取证缺口）、"
+        f"{st['capped']} 格判不动（接口能力封顶）—— 后两档与「不盲」不是一回事，"
+        "既不算进「出到结论」，也不合并成一句「没结论」。"
+    )
+
+
+def _mechanism_sentence(lc: dict, key: str) -> str:
+    """机理段：最近的那一颗，与达标判的那一颗，是不是同一颗。
+
+    ⚠️ 这句**只在数据支持时才下**。实测三份载荷的可用面差很多：
+      - `kaili.json` 98 点里 40 点带 `sub_kind`、8 类里 2 类带门槛项名单 ⇒ 可判；
+      - `kaili-ev2.json` `sub_kind` 全空、`scored_as` 全空 ⇒ **不可判**；
+      - 凯里 live 件 109 点里 39 点带 `sub_kind`、2 类带名单 ⇒ 可判。
+    所以四个分支各说各的：能判就判准，不能判就明说"不据此推断"。
+    把"最近是某某诊所"直接写成"所以它不计入分子"，在 ev-2 那份上就是编造。
+    """
+    c = _cat(lc, key)
+    if not c:
+        return ""
+    nm = c.get("nearest_name")
+    if not nm:
+        return ""
+    label = c.get("label", key)
+    mins = _fmt_min(c.get("min_minutes"))
+    scored = [str(x) for x in (c.get("scored_as") or [])]
+    unscored = [str(x) for x in (c.get("unscored_as") or [])]
+    if not scored:
+        # 没有门槛项名单 ⇒ 只报事实，不配免责声明：这一类本来就没有"计入分子"的说法可澄清，
+        # 硬加一句"因此不推断…"是给读者灌废话。
+        return f"{label}类最近点是「{nm}」（步行约 {mins}）。"
+    sub = next((p.get("sub_kind") for p in ((lc.get("poi") or {}).get("points") or [])
+                if p.get("name") == nm and p.get("category") == key), None)
+    only = "、".join(scored)
+    if sub and sub in unscored:
+        return (f"{label}类最近点是「{nm}」（步行约 {mins}），其形状属「{sub}」—— 而 {sub} **不计入**覆盖度分子。"
+                f"「走得到最近的一家」与「这一类达标」判的不是同一颗：分子只取 {only}。")
+    if sub and sub in scored:
+        return (f"{label}类最近点是「{nm}」（步行约 {mins}），其形状属「{sub}」，"
+                f"正是计入分子的那一类 ⇒ 就近可达与达标判据在这一颗上重合。")
+    return f"{label}类最近点是「{nm}」（步行约 {mins}）；该点形状标签未取到，不推断它计不计入分子（分子只取 {only}）。"
+
+
+def _impact_sentence(lc: dict) -> str:
+    """影响段：把可达与耗时分布折成「谁不方便」，数字全取自采样点与三要素。"""
+    tri = (lc.get("scores") or {}).get("triads") or []
+    pts = [p for p in ((lc.get("poi") or {}).get("points") or []) if p.get("minutes") is not None]
+    segs = []
+    if tri:
+        far = sorted(tri, key=lambda t: -(t.get("nearest_minutes") or 0))
+        segs.append(
+            f"三要素里最费脚程的是「{far[0].get('facility')}」（{_fmt_min(far[0].get('nearest_minutes'))}）"
+            + ("，其次 " + "、".join(f"{t.get('facility')} {_fmt_min(t.get('nearest_minutes'))}" for t in far[1:])
+               if len(far) > 1 else ""))
+    if pts:
+        slow = [p for p in pts if float(p.get("minutes") or 0) > 15]
+        if slow:
+            segs.append(
+                f"已展示的 {len(pts)} 个设施点里，实测步行超过 15 分钟的有 {len(slow)} 处 —— "
+                "这些点在圈内可达判定中落选，不是采漏了，是走得到但超时")
+    bs = lc.get("blindspots") or []
+    if bs:
+        res = sum(int(((b.get("affected") or {}).get("estimated_residents")) or 0) for b in bs)
+        if res:
+            segs.append(f"盲区合计受估 {res} 人（按规划基准折算，非真实人口数据）")
+    return "影响面：" + "；".join(segs) + "。" if segs else ""
+
+
+def _advice_sentence(lc: dict) -> str:
+    """建议取向段：短板类目 + 满分线口径下的缺口数量，取向是"先补就近可达再谈新建"。"""
+    bars = sorted((lc.get("scores") or {}).get("bars") or [], key=lambda b: b.get("value", 0))
+    if not bars:
+        return ""
+    lo = bars[0]
+    key = lo.get("category") or ""
+    c = _cat(lc, key) or {}
+    need = _ideal(key)
+    in_circle = int(c.get("in_circle") or 0)
+    gap = max(need - in_circle, 0)
+    return (
+        f"建议取向：得分最低的是「{lo.get('label')}」（{lo.get('value')}）。按满分线口径这一类需要圈内 "
+        f"{need} 处才计满，实际圈内 {in_circle} 处 ⇒ 差 {gap} 处。补给顺序上先判能否用移动点/改道把这 "
+        f"{gap} 处的就近可达补上，补不平再谈新建设施 —— 新建的周期与成本量级都高得多，而居民感知的是"
+        "走不走得到，不是有没有那一栋建筑。"
+    )
+
+
+def _blindspot_profile_sentence(lc: dict, b: dict) -> str:
+    """逐处盲区画像：面积/格数/缺失要素/最近可用点/受估人数/实测步行/处方与优先级。
+
+    凯里 live 实测这些字段全都有值，而盲区章此前只给一句 61 字 + 一张表 —— 数据带着，
+    正文没用。⚠️ 受估人数必须带「非真实人口数据」限定（`report_contract.py:781-785`
+    硬判据要求 `affected.provenance == "proxy"`，note 本身就写着这句，逐字引用不另造）。
+    """
+    aff = b.get("affected") or {}
+    reach = b.get("reach") or {}
+    fp = b.get("footprint_meta") or {}
+    near = (b.get("nearest") or [{}])[0]
+    sev = {"heavy": "重度", "medium": "中度", "light": "轻度"}.get(b.get("severity") or "light", "")
+    parts = [f"盲区 {b.get('id')} 判为{sev}级（缺口指数 {b.get('gap_score')}）"]
+    if fp.get("cells") is not None:
+        parts.append(f"涉及判定格 {fp['cells']} 格")
+    if fp.get("area_m2"):
+        parts.append(f"约 {(float(fp['area_m2']) / 1e6):.2f} km²")
+    if b.get("missing_facilities"):
+        parts.append(f"1km 内缺失「{'、'.join(b['missing_facilities'])}」")
+    if near.get("name"):
+        parts.append(f"该范围内最近的可用点是「{near['name']}」，直线 {int(near.get('distance_m') or 0)}m、方位{near.get('direction', '')}")
+    if aff.get("estimated_residents"):
+        parts.append(
+            f"范围内布有采样点 {int(aff.get('sampling_sites') or 0)} 处，受估 {int(aff.get('estimated_households') or 0)} 户、"
+            f"{int(aff['estimated_residents'])} 人（{aff.get('note') or '按规划基准估算，非真实人口数据'}）")
+    if reach.get("real_walk_min"):
+        parts.append(f"到该可用点的实测步行耗时约 {reach['real_walk_min']} 分钟")
+    fx = (b.get("fixes") or [{}])[0]
+    if fx.get("facility"):
+        parts.append(
+            f"处方：{fx['facility']} · {STRATEGY_LABEL.get(fx.get('strategy'), fx.get('strategy'))} · 优先级 P{fx.get('priority')}"
+            + (f"（距可借用的替代点 {int(fx['nearest_alt_m'])}m，可服务采样点 {int(fx.get('served') or 0)} 处）"
+               if fx.get("nearest_alt_m") is not None else ""))
+    return "；".join(parts) + "。"
+
+
+def _highlight_items(lc: dict) -> Dict[str, str]:
+    """跨章聚合的亮点句，**按主题返回**（各章按键取，不用字符串嗅探挑归属）。
+
+    取数全来自 payload；某主题无数据就不产该条 —— 宁可少一条，不写没据的判断。
+    """
+    out: Dict[str, str] = {}
+    bars = (lc.get("scores") or {}).get("bars") or []
+    if len(bars) >= 2:
+        lo = min(bars, key=lambda b: b.get("value", 0))
+        hi = max(bars, key=lambda b: b.get("value", 0))
+        if hi.get("value") != lo.get("value"):
+            out["spread"] = (f"最长板与短板差 {round(float(hi['value']) - float(lo['value']))} 分："
+                             f"「{hi['label']}」{hi['value']} 对「{lo['label']}」{lo['value']}")
+    bs = lc.get("blindspots") or []
+    if bs:
+        a = bs[0].get("affected") or {}
+        if a.get("estimated_residents"):
+            out["blindspot"] = (f"一处 1km 服务空洞压着受估 {int(a['estimated_residents'])} 人 —— "
+                                f"缺的是{'、'.join(bs[0].get('missing_facilities') or [])}")
+    tri = (lc.get("scores") or {}).get("triads") or []
+    if tri:
+        far = max(tri, key=lambda t: t.get("nearest_minutes") or 0)
+        if far.get("nearest_minutes"):
+            out["triad"] = (f"三要素都判可达，但「{far['facility']}」要走 {_fmt_min(far.get('nearest_minutes'))}"
+                            " —— 可达不等于方便")
+    return out
+
+
+def _build_highlights(lc: dict) -> List[str]:
+    """概览章的亮点列表：按 spread → blindspot → triad 的固定次序，最多 3 条。"""
+    items = _highlight_items(lc)
+    return [items[k] for k in ("spread", "blindspot", "triad") if k in items][:3]
 
 
 def _sec_blindspot(lc: dict) -> dict:
     bs = lc.get("blindspots", [])
     sev_label = {"heavy": "重度", "medium": "中度", "light": "轻度"}
-    strat_label = {"mobile_service": "流动服务", "reroute": "移动点/改道补充", "build": "补建站点"}
     sev_count = {"heavy": 0, "medium": 0, "light": 0}
     for b in bs:
         sev_count[b.get("severity") or "light"] += 1
@@ -543,7 +953,7 @@ def _sec_blindspot(lc: dict) -> dict:
     def _fix_short(fx: dict) -> str:
         if not fx:
             return "—"
-        strat = strat_label.get(fx.get("strategy"), fx.get("strategy") or "")
+        strat = STRATEGY_LABEL.get(fx.get("strategy"), fx.get("strategy") or "")
         return f"{fx.get('facility')}·{strat}·P{fx.get('priority')}" if fx.get("priority") is not None else f"{fx.get('facility')}·{strat}"
 
     rows = [
@@ -572,13 +982,40 @@ def _sec_blindspot(lc: dict) -> dict:
         }
         for r in rows
     ]
+    paras = (
+        ["按赛题口径（1km 内无菜市场/药店/小学即判盲）识别。下表为各盲区的缺失要素、严重度分级与补点建议（供整改优先级参考）。"]
+        if bs else
+        ["按赛题口径网格扫描：各网格点 1km 圆内三类必备设施均有覆盖。"]
+    )
+    # 逐格台账段追加在**口径句之后**：口径句是本章的第一句这一约定被
+    # `lcEvidenceGapNote` 一类的按位读取依赖着，插到前面会静默改变它读到的内容。
+    led_sentence = _ledger_sentence(lc)
+    if led_sentence:
+        paras.append(led_sentence)
+    # 逐处画像：正文最多展开 3 处，多出来的**在文字里明说去哪看**，不静默截断。
+    for b in bs[:3]:
+        prof = _blindspot_profile_sentence(lc, b)
+        if prof:
+            paras.append(prof)
+    if len(bs) > 3:
+        paras.append(f"其余 {len(bs) - 3} 处盲区的同口径读数见下表（正文只展开缺口最靠前的 3 处）。")
+    bs_charts = []
+    if _blind_distribution_formable(bs):
+        # 只有盲区多到能构成分布时才出散点；孤点不构成分布（判据见该函数注释）。
+        bs_charts.append({
+            "chart_id": "chart-blind-scatter", "type": "scatter",
+            "title": "盲区严重度 × 最近设施距离分布", "option": _chart_blind_scatter(lc),
+            "evidence_ids": [f"ev-lc-bs-{b['id']}" for b in bs],
+        })
     return {
         "id": "blindspot", "title": "服务盲区诊断", "level": 2,
         "key_takeaway": (
             f"识别 {len(bs)} 处 1km 服务盲区（重度 {sev_count['heavy']}／中度 {sev_count['medium']}／轻度 {sev_count['light']}）"
             if bs else "未发现 1km 服务盲区，三要素齐备"
         ),
-        "paragraphs": ["按赛题口径（1km 内无菜市场/药店/小学即判盲）识别。下表为各盲区的缺失要素、严重度分级与补点建议（供整改优先级参考）。"] if bs else ["按赛题口径网格扫描：各网格点 1km 圆内三类必备设施均有覆盖。"],
+        "paragraphs": paras,
+        "highlights": [h for h in (_highlight_items(lc).get("blindspot"),) if h],
+        "charts": bs_charts,
         "claims": claims,
         "data_grid": {
             "columns": ["盲区编号·严重度", "缺失设施", "最近设施", "补点建议"],
@@ -618,12 +1055,20 @@ def _sec_conclusion(lc: dict) -> dict:
         "key_takeaway": f"综合 {total} 分（{_grade(total)}）；共 {len(lc.get('blindspots', []))} 处服务盲区，整改优先级见下",
         "paragraphs": [f"本样区{('存在多处服务盲区，整改优先级如下：' if lc.get('blindspots') else '设施覆盖整体均衡，建议保持既有配置并动态复检。')}", *suggestions,
                        _origin_note(lc)],
+        # 整改优先级看板：处方按优先级排，条形长度是「可服务采样点」（`fixes[].served`）。
+        # 无处方 ⇒ 不出图（而不是出一张空图占位）。
+        "charts": ([{
+            "chart_id": "chart-fix-priority", "type": "bar",
+            "title": "整改处方优先级（按可服务采样点）", "option": _chart_fix_priority(lc),
+            "evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
+        }] if _fix_rows(lc) else []),
         "claims": [{
             "claim_id": "c-lc-conclusion-1",
             "text": f"样区综合 {total} 分（{_grade(total)}），首要整改方向：{suggestions[0].lstrip('· ') if suggestions else '持续监测'}",
             "field": "conclusion", "evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
             "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
         }],
+        "highlights": [h for h in (_highlight_items(lc).get("spread"),) if h],
         "source_evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
     }
 

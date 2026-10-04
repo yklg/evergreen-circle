@@ -270,13 +270,18 @@ def test_evidence_gap_note_is_one_text_on_both_ends():
         assert py_val == ts_side[name], (
             f"{name} 两端已分叉：后端「{py_val[:16]}…」vs 前端「{ts_side[name][:16]}…」")
 
-    # 拼装规则也只许一份：两个消费者各引一次
+    # 拼装规则也只许一份：定义 1 处 + 注册表里每一类一个消费者。
+    # 为什么不再钉魔数 3：那等于把"只有医教两类能讲没查全"钉成当前形态，第 5 类要挂
+    # 缺口注记必须先来改这条测试 ⇒ 名单退化成手工点取白名单。现在改由
+    # `diagnosis_templates.GAP_NOTE_CATEGORIES` 供给，两端任一侧单独动仍红。
     py_src = (BACKEND_DIR / "app" / "core" / "pipeline" / "diagnosis_templates.py").read_text(encoding="utf-8")
+    expect = 1 + len(dt.GAP_NOTE_CATEGORIES)
     for src, label, needle in ((py_src, "后端 _evidence_gap_note(", "_evidence_gap_note("),
                                (ts_src, "前端 evidenceGapNote(", "evidenceGapNote(")):
-        assert src.count(needle) == 3, (
-            f"{label}出现 {src.count(needle)} 次（应为 3：定义 1 + 医疗节 1 + 教育节 1）"
-            " ⇒ 函数还在、正文里已经没有它 = 假同源")
+        assert src.count(needle) == expect, (
+            f"{label}出现 {src.count(needle)} 次（应为 {expect}：定义 1 + "
+            f"注册表 {list(dt.GAP_NOTE_CATEGORIES)} 各 1）"
+            " ⇒ 函数还在、正文里已经没有它 = 假同源；或注册表与消费者已分叉")
 
 def test_elderly_undetected_notes_are_one_text_on_both_ends():
     """片 E（#87 丙档）：养老那一维那四句「未检出」措辞在两端必须逐字同一份。

@@ -52,6 +52,7 @@ def assert_chapter_invariants(report: Dict[str, Any]) -> None:
     assert sections, "报告没有任何章节 ⇒ 空壳产物，一律不接受"
     eids = {e["evidence_id"] for e in (report.get("evidence") or [])}
     assert eids, "报告无证据集 ⇒ 无从校验引用，检查器会空转"
+    chart_ids: set = set()
 
     for s in sections:
         missing = REQUIRED_SECTION_KEYS - set(s)
@@ -67,13 +68,32 @@ def assert_chapter_invariants(report: Dict[str, Any]) -> None:
             assert isinstance(paragraphs, list) and all(
                 isinstance(p, str) and p.strip() for p in paragraphs
             ), f"章节 {s['id']} 的 paragraphs 不是非空 str 列表（②）"
-        for chart in s.get("charts") or []:
+        highlights = s.get("highlights")
+        if highlights is not None:
+            assert isinstance(highlights, list) and all(
+                isinstance(h, str) and h.strip() for h in highlights
+            ), f"章节 {s['id']} 的 highlights 不是非空 str 列表（②）"
+        charts = s.get("charts") or []
+        # 每章 ≤2 图：这是**生产侧构造约束**，不在渲染层截断 —— 本仓已反复拆掉
+        # "渲染侧静默第二权威"（见 LifeCircleReportView.tsx:113-114 那段 cap 撤除记录），
+        # 所以超了就该红，而不是悄悄丢几张图让读者以为报告只有这些。
+        assert len(charts) <= 2, f"章节 {s['id']} 挂了 {len(charts)} 张图（>2）⇒ 单章图数失控"
+        for chart in charts:
             assert CHART_KEYS <= set(chart), f"图表缺字段 {sorted(CHART_KEYS - set(chart))}（②）"
+            # chart_id 是前端 React key（LifeCircleReportView.tsx:765）⇒ 重复会复用错图
+            cid = chart["chart_id"]
+            assert cid not in chart_ids, f"chart_id {cid!r} 重复（②）⇒ 渲染层 key 碰撞"
+            chart_ids.add(cid)
+            # 图的 evidence_ids 驱动 VChart.tsx:38-45 的「跳转证据」按钮，悬空即点了没反应
+            for bad in set(chart.get("evidence_ids") or []) - eids:
+                raise AssertionError(f"图表 {cid} 引用了不存在于证据集的 {bad!r}（④）")
         for bad in set(s.get("source_evidence_ids") or []) - eids:
             raise AssertionError(f"章节 {s['id']} 引用了不存在于证据集的 {bad!r}（④ 禁止内容）")
 
-        # ④ 禁止内容：编造指标名不得出现在正文
-        prose = " ".join(list(paragraphs or []) + [s.get("key_takeaway") or ""])
+        # ④ 禁止内容：编造指标名不得出现在正文。
+        # ⚠️ highlights 必须一起扫：它是报告新上的字段，漏在扫描外就等于亮点可以随便写
+        #    未授权指标名，而闸门对整份报告"全绿"（评审 P0-4）。
+        prose = " ".join(list(paragraphs or []) + [s.get("key_takeaway") or ""] + list(highlights or []))
         problems = caliber_index.validate_vocabulary(prose)
         assert not problems, f"章节 {s['id']} 含未授权指标术语（④）：{problems}"
 
