@@ -11,6 +11,11 @@
 #   `--with-deps` 装到 Chromium 的系统库（libnss3/fonts-noto 那一组）我在这台机器上验证不了，
 #   写一个从没跑通过的安装步骤当排版防线，等于把真源那 14 条断言换成一句"应该会绿"。
 #   接 Gitee 时先在一台真实 Gitee Runner 上跑通 `npx playwright install --with-deps chromium` 再补。
+# 2026-10-04 差异（同日第二条）：真源把 `lint` 从阻断降为**非阻断诊断**，阻断权交给 vitest 里的
+#   逐文件棘轮（`src/__tests__/lintRatchet.test.ts`）。本侧的 goals 串因此**去掉**了 `npm run lint`
+#   —— 它在这个链里只会让后面三道真闸门一行不跑；棘轮随 `npm run test` 执行，两侧同判据。
+#   与真源的残余差异：真源还额外跑一次 `npm run lint` 打印诊断清单，本侧没跑 —— 理由同上，
+#   Gitee Go 的 `npmbuild@1` 是否支持"步骤失败不中断"我无法在本机验证，不拿未验证的语法冒充。
 # 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
 # 配置入口：Gitee 仓库 → 流水线（Gitee Go）→ 新建流水线 → 选择本文件。
 version: '1.0'
@@ -49,8 +54,8 @@ stages:
       steps:
         - step: npmbuild@1
           name: frontend-ci
-          displayName: npm ci + lint + typecheck + test + build
+          displayName: npm ci + typecheck + test（含 lint 棘轮）+ build
           inputs:
             nodeVersion: '22'
             goals: |
-              cd frontend && npm ci && npm run lint && npm run typecheck && npm run test && npm run build
+              cd frontend && npm ci && npm run typecheck && npm run test && npm run build
