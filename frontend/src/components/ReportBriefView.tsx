@@ -5,9 +5,14 @@ import { VChart } from './VChart'
 import { ChapterContentMap } from './ChapterContentMap'
 import type { Report, ReportBrief } from '../types'
 
+/** 简报是摘要面，每章只取首图：8 章 × 多张 ECharts 实例在一列里会挂满屏。
+ *  ⚠️ 这个上限**只属于简报**：正文视图与数据层不截断（生产侧每章 ≤2 图由
+ *  `tests/test_chapter_invariants.py` 断言，渲染层静默截断是本仓已拆掉的反模式）。 */
+const BRIEF_MAX_CHARTS = 1
+
 /**
  * 简报视图（只读快览）：一页纸精炼（AI 生成四段）+ 逐节核心判断/亮点/图表 + 展开全文折叠。
- * 原则：纯文本渲染（禁 dangerouslySetInnerHTML，防注入）；空章节自动过滤；亮点 ≤4 条。
+ * 原则：纯文本渲染（禁 dangerouslySetInnerHTML，防注入）；空章节自动过滤；亮点 ≤4 条、图表 ≤1 张。
  * G7 演进：生成走 kind='brief' 后台任务（POST 得 taskId → SSE 订阅 progress/done/error），
  * done 信号触发父级重载（onBriefDone）以落地持久化 brief；失败显式展示原因，可立即重试。
  */
@@ -184,9 +189,9 @@ export default function ReportBriefView({
                   ))}
                 </ul>
               )}
-              {sec.charts && sec.charts.length > 0 && (
+              {(sec.charts ?? []).slice(0, BRIEF_MAX_CHARTS).length > 0 && (
                 <div className="mx-5 mt-3">
-                  {sec.charts.map((c) => (
+                  {(sec.charts ?? []).slice(0, BRIEF_MAX_CHARTS).map((c) => (
                     <VChart key={c.chart_id} spec={c} />
                   ))}
                 </div>
