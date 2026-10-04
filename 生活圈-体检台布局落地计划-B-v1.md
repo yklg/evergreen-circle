@@ -331,6 +331,72 @@ npm 脚本 `npm run test:e2e`；`webServer` 自起 vite（复用已开的 5199�
 
 ---
 
+## 1.12 「进 / 修 / 可以」三件事的结案（CLS 修复 · 真实态收手 · e2e 进 CI）（2026-10-04）
+
+§1.11 那条台账写的是 **7 例 × 2 档 = 14 例**；本轮之后是 **`lifeCircleStage` 8 例 × 2 档 = 16 例，另加 `lifeCircleRunning` 1 例 × 2 档（显式 fixme）**，套件总数 18 条。下面的数都是重跑过的。
+
+### 修 · 首屏 48px 跳动：改成字体 `display=optional`，并用 CLS 把它钉住
+
+- 落点：`frontend/index.html` 的 Google Fonts URL 由 `&display=swap` 改 `&display=optional`，注释里写明"别改回去"并指向回归网。
+- 新增 e2e 用例「首屏零布局跳动（CLS）」：用 `context.addInitScript` 从第一个脚本起装
+  `PerformanceObserver({type:'layout-shift', buffered:true})`，累计非输入的 shift 分数，阈值 **< 0.01**。
+  这比"采两个时刻比高度"严 —— 它覆盖首屏**所有**来源的跳动，不只是我们已知的那一次。
+- **变异测试验过这条守卫不是空判**：临时改回 `display=swap` ⇒ 1280×720 报
+  「首屏 CLS = 0.4584，超过 0.01」并红；**1440×900 照绿**（那一行不换行，没有跳动可测）。
+  由此把上一版写在注释里的估算"约 0.066"更正为实测 0.4584，并把"两档必须都跑"写进用例。
+- §1.11「首屏落定后不再抖」保留不动 —— 它管的是"落定后还在动"，这条管"落定前跳过"，两者不互相冒充。
+
+### 可以 · 真实态取证横幅那条（2.2c）：**收手并标 `fixme`，不留假绿也不留假红**
+
+`frontend/e2e/lifeCircleRunning.spec.ts` 走通了 `page.route` 那半段：POST `/api/tasks`（响应必须是
+camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败（HTTP 200）」，这是本轮踩的实测坑）
++ 5 个 `round` 命名事件的 SSE 流 + catch-all `**/api/**` 注册在前。
+但**横幅要求的是任务注册表进入 `running`**（`runActive` 不是"收到过 EventSource 事件"），
+纯 mock 到不了那个状态。按项目既有纪律标成 `test.fixme`，原因与两条收口路径写在码里：
+① CI 里起真后端；② 在 `lifeCircleFlow` 上开一个 registry 级注入口。
+**S1 那条限高目前仍只有源码钉（TC-11）在守** —— 这条不伪称已像素级验证。
+
+### 进 · e2e 接入 CI：`.github/workflows/ci.yml` 新增独立 `e2e` job
+
+- **为什么是独立 job 而不是塞进 `frontend`**：那条 job 在 `lint` 步骤就已是红的（HEAD 全仓 113 个
+  eslint error），step 按序终止 ⇒ 塞进去等于让排版防线**永远轮不到跑**。这条与"lint 是否该当闸门"
+  是两件事，后者仍未决（见 §2 新行 2.9）。
+- 步骤：checkout → setup-node 22（npm cache）→ `npm ci` → `npx playwright install --with-deps chromium`
+  → `npm run test:e2e`（`webServer` 自起 vite:5199）→ **失败时**上传 `test-results/` + `playwright-report/`。
+- **CI 条件已在本地复现过**（不是推断）：把 dev server 的 `VITE_PROXY_TARGET` 指向死端口模拟"无后端"，
+  全套 **exit=0，14 passed / 4 skipped**。那 4 条 skip 的成分要点明：2 条是「画布跟随容器变高」
+  在无 AK 时降级自跳、2 条是 `lifeCircleRunning` 的 fixme。
+  ⇒ **CI 绿不等于 live BMapGL 的 resize 被看守过**；那条只在有 AK 的本地态跑（§1.11 实测已跑通）。
+- 两份 YAML 用 `backend/.venv/bin/python` + pyyaml 解析校验通过；job 序 `backend / frontend / e2e / docker`。
+- Gitee 侧 `.workflow/ci.yml` **有意不跟**并按它的约定在头部记明差异：那仍是惰性配置（无 Gitee 远端），
+  且 `npmbuild@1` 镜像能否 `--with-deps` 装到 Chromium 系统库在这台机器上验证不了 ——
+  不拿从没跑通的安装步骤冒充防线。
+
+### 本轮我自己制造并当场抓到的两件事（不美化）
+
+1. **新 CLS 用例把 `typecheck` 打破了**：首版写 `e.value`，而 `list.getEntries()` 的基面是
+   `PerformanceEntry`（本档 lib.dom 不保证有 `LayoutShift`）⇒ `TS2339`。
+   于是 §1.11 里那句「`tsconfig.app.json` 加了 `e2e` ⇒ typecheck 也管它，e2e 0 错」**在新用例落地的那一刻就不成立了**，
+   是我自己写的账自己没复核。修法是不引 `@types` 也不 `as any`，就地声明观察者读到的那两个字段：
+   `const shift = e as unknown as { value?: number; hadRecentInput?: boolean }`。
+   修后 `npm run typecheck` = **8 错，全部在你 WIP 的 `eventFlowNumbersMatchFixture.test.ts`**（回到基线，e2e 0 错这条重新成立）。
+   纪律补一条：**新增 e2e/测试文件必须立刻跑 `npm run typecheck`**，只跑 Playwright 不够 —— 闸门是 tsc，不是浏览器。
+2. **变异重跑时 desktop 那档的红是"假红"，但不是产品假红**：`sed` 改 `index.html` 会让 vite 整站重启，
+   desktop 报的是 `page.goto: net::ERR_ABORTED`，**不是** CLS 超阈。laptop 档报的仍是
+   `首屏 CLS = 0.4584，超过 0.01` —— 与改写记账逻辑**前**逐字相同 ⇒ ① 记账等价、② 守卫非空判这两点都复核过了。
+   教训写死：**变异测试要看报错文本，不能只数红绿**；验法的副作用会伪装成功能回归。
+3. 复跑两态各一次并留数：**有后端 16 passed / 2 skipped**，**无后端（模拟 CI）14 passed / 4 skipped、exit=0**。
+
+### 一条新记下的未证风险（写在这里，免得 CI 首跑被当成"应该没问题"）
+
+所有像素阈值是在 **macOS Chromium 1.63** 量出来的，CI 跑的是 **Linux Chromium**，字体度量会变。
+逐条估过余量：④ 地图格实测 620–798px 而判据是 >45% 视口（324/405px），② 右栏 1398 vs 判据 client+200，
+① 与落定后 ≤2px 是结构性等式 ⇒ 不预期被字体打碎。但这是**估算**，本机 docker daemon 未起、
+我没跑成 Linux 容器实测，所以按未证处理：**第一次真实 CI 跑完要回来看这 6 条的数**，
+红了就按"换 OS 的度量差异"归因，不许先放松阈值。
+
+---
+
 ## 2. 待办（按顺序，逐项要证据）
 
 | # | 事项 | 完成判据 |
@@ -341,15 +407,18 @@ npm 脚本 `npm run test:e2e`；`webServer` 自起 vite（复用已开的 5199�
 | 2.0 **P1** | **GL 自愈能力真机验**（B 能否定稿就卡这条）：真 AK 下把窗口/容器改高，画布是否自动重绘、有无灰边 | 若不自愈：显式 `enableAutoResize()`，或把地图格改回定高（预览第 ⑤ 屏）。**不许**再造 `resize()` 调用 |
 | 2.0 ~~P0~~ **已完成** | resize 通道的最终形态与测试 | ✅ 建图时 `map.resize()` 一次（GL 源码 = `this._watchSize()`）；`lcMapResizeGuard.test.tsx` 3 例钉「恰调一次 + 源码不得出现 `new ResizeObserver`」；地图替身改记账版 |
 | 2.1 **已完成** | 跑测试 | 全量 **119 文件 / 1025 例绿**（起点 115 / 1005）。⚠ 这条绿**不覆盖排版主张**（jsdom 无排版引擎）；缺口与补案见 `生活圈-布局改动测试覆盖评估-v1.md` |
-| 2.2 ~~P0~~ **大部分完成（Playwright）** | 真机验 B 的五条主张 | ①整页不滚 ②右栏内滚 ③滚到底图例仍可见（含真指针点击）④容器变高画布跟随 —— 四条已在两档视口 **14 例全绿**（§1.11）。⑤真实模式 5 行 `roundLines` 不塌**仍未像素级验证**（e2e 走 fixture 态，喂不进 SSE），现只有源码钉 TC-11 + S1 的限高在守 |
-| 2.2b **P2（新发现）** | 首屏 CJK 字体交换造成 48px 布局跳动（仅 ≤1280 档：表头两行收回一行 ⇒ 地图格 572 → 620） | 修法三选一：表头预留两行 `min-h` / 让场景 chip 不随字宽重排 / 字体 `size-adjust` 预对齐。落定后的稳定性已由 e2e 钉住，修法不动回归网 |
-| 2.2c **P2** | 把 ⑤ 也做成像素级：e2e 里注入一段 `roundLines`（或 stub SSE）后量地图格与右栏仍可用 | 需要给 e2e 造一条可控的真实态数据流；比 2.2b 成本高，价值是把 S1 从"源码钉"升成"渲染钉" |
+| 2.2 ~~P0~~ **大部分完成（Playwright）** | 真机验 B 的五条主张 | ①整页不滚 ②右栏内滚 ③滚到底图例仍可见（含真指针点击）④容器变高画布跟随 —— 四条已在两档视口全绿（§1.11 时 14 例，加 CLS 与落定后不抖两条后为 **8 例 × 2 档 = 16 例**）。⑤真实模式 5 行 `roundLines` 不塌**仍未像素级验证**（见 2.2c 的 fixme），现只有源码钉 TC-11 + S1 的限高在守 |
+| 2.2b ~~P2~~ **已完成** | 首屏 CJK 字体交换造成 48px 布局跳动（仅 ≤1280 档：表头两行收回一行 ⇒ 地图格 572 → 620） | ✅ 选的是第四种解法：字体 URL 从 `display=swap` 改 **`optional`**（到位就用、没到这趟不换 ⇒ 一次定形）。新增 e2e「首屏零布局跳动 CLS<0.01」，**变异测试**验过非空判 —— 改回 swap 时 1280 档报 CLS=0.4584 红、1440 档照绿（详见 §1.12） |
+| 2.2c **停在 `fixme`（诚实收手）** | 把 ⑤ 也做成像素级：e2e 里注入一段 `roundLines`（或 stub SSE）后量地图格与右栏仍可用 | 半段已通（`page.route` 打 POST `/api/tasks` + 5 个 `round` 事件 SSE；响应必须 camelCase `taskId`）。卡住的是 `runActive` 要**任务注册表**进 `running`，纯 mock 到不了 ⇒ 标 `test.fixme` 并把两条收口路径写进码里。**S1 限高目前仍只有 TC-11 源码钉在守，别当成已渲染级验证** |
 | 2.3 ~~待办~~ **已完成** | 镜像页 / 对比页 / 探针的读数面：5 处私有实现全换成 `VStatLine`（`row` 面对旧消费方零像素变化） | `statLineSingleSource.test.ts` 3 例绿；`lifeCircleReportView.test.tsx` 10 例绿；`ComparePage` 相关用例绿 |
 | 2.4 **部分完成** | `ComparePage.tsx:333,346` 的**未定义** `className="card"` ✅ 已修（两块对比卡此前一直没有卡面）+ 裸 token 名守卫已补（§1.10）。**剩下的**：`:341` `h-[440px]`、`:356` `h-[400px]` 两处写死定高是否收成共享常量 | 定高收口需与用户确认（改了要重采 ComparePage 结构基线）；守卫断言"发货码零命中 + 探针 3 处只减不增"已绿 |
 | 2.4b ~~P2~~ **体检台侧已完成** | S4 完整抽件 `LcStage`（`.Canvas/.Legend/.Panel`）。阻塞被换掉的路子：像素量不了，但"有没有多包一层"是纯树形问题 ⇒ 先采**结构基线**再重构（见 §1.9） | `lcStageStructure.test.tsx`(2 例) 在重构前后都绿；全量 120 文件 / 1027 例绿。**剩下的**：`LifeCircleReportView` 与 `ComparePage` 采用前须各自采一份基线（树不同，拿体检台的基线比是空判） |
 | 2.5 | 更新预览与实现的一致性说明 | 五处偏差需改齐或登记：① summary 文案；② 折叠从"整块收起"改成"只收色块、勾选常在"（S3 结果，预览第 ③ 屏要跟着改）；③ label 全称 vs 预览缩写；④ 预览外壳顶栏上方缺那块可无界增长的横幅 ⇒ ③ 屏"不挤压"结论对真实模式不成立；⑤ 图例折叠用条件渲染 vs 预览的 CSS 隐藏 |
-| 2.6 | 提交划分 | 已提交 `8a4630a`（fix）+ `21f737e`（docs）。**本轮 S5 / S4 第一步 / 文档尚未提交**，等你批准 |
+| 2.6 | 提交划分 | 已提交到 `2ae415a`（七笔）。**本轮未提交，拟分四笔等你批**：① `fix(frontend): 字体 display=optional 修掉首屏 48px 跳动`（`index.html` + `e2e/lifeCircleStage.spec.ts` 的 CLS 例同笔，修复与它的判据不分离）② `test(e2e): 真实态取证横幅打通 route mock 后按纪律标 fixme`（`e2e/lifeCircleRunning.spec.ts`）③ `ci: 排版 e2e 接入独立 job`（`.github/workflows/ci.yml` + `.workflow/ci.yml`）④ `docs: §1.12 结案 + 覆盖评估 TC-23 + 架构文档 CI 分层纪律`（两份台账 + `docs/ARCHITECTURE.md`）。⚠ 你 WIP 的 8 处（`docs/多源POI…md`、`gen-living-circle-fixtures.mjs`、`eventFlow.json`、`livingCircleMock.ts`、删 `start.sh`、`preview-lc-hit.html`、`eventFlowNumbersMatchFixture.test.ts`、`lcHitSurfaceProbe.tsx`）我一向不 `git add` |
 | 2.7 ~~P2~~ **已完成** | `docs/ARCHITECTURE.md` §10 新增「页面滚动所有权与舞台契约」：三种滚动模型的适用面、契约唯一真源、三条硬规矩（高度不许由内容决定 / 尺寸跟随交给 SDK 且厂商 API 只认厂商运行时 / `z-10` 来由），并要求新页先自采结构基线 | 文档成文；末尾写明"没有渲染步时观察既不能证实也不能证伪，不得拿单元全绿冒充已验" |
+| 2.8 ~~待办~~ **已完成** | e2e 接入 CI：`.github/workflows/ci.yml` 新增独立 `e2e` job（`npm ci` → `playwright install --with-deps chromium` → `npm run test:e2e` → 失败时上传现场） | **独立成 job 的理由已写进 yml**：`frontend` job 在 `lint` 步就红，step 按序终止 ⇒ 塞进去的排版防线永远轮不到跑。CI 条件已本地复现（`VITE_PROXY_TARGET` 指死端口）：**exit=0 / 14 passed / 4 skipped**；Gitee 侧按它的约定在头部记明"有意不跟"的理由。两份 yml 用 pyyaml 解析校验过 |
+| 2.9 **未决（要你拍）** | `npm run lint`（HEAD 全仓 **113 error**）与 `npm run typecheck`（8 错，全在你 WIP 的两个文件里）现在**是 CI 闸门但长期红** ⇒ 每次跑 CI 都白红一片，防线形同虚设，且真错会被噪音吃掉 | 三条路选一：① 清完再当闸门；② 先降级为非阻断 `continue-on-error` 并把错误数钉成只减不增的棘轮（同 `tailwindClassIntegrity` 的 `KNOWN_PROBE_DANGLING` 手法）；③ 保持现状但每次看 CI 都人工忽略。**不选也不行** —— 2.8 那条排版防线的可信度取决于它旁边那些步骤是不是狼来了 |
+| 2.10 **首次真实 CI 跑完要回来看** | 阈值全部在 macOS Chromium 1.63 量得，CI 是 Linux Chromium，字体度量会变（§1.12 末估过余量，属推断非实测） | 看这 6 条的数：① / ② / ③ / ④ / 落定后不抖 / CLS。红了先按"换 OS 度量差异"归因并**收紧判据写法**（如把 45% 改成实测值的比例），不许先放松阈值蒙过去 |
 
 ---
 
@@ -358,6 +427,8 @@ npm 脚本 `npm run test:e2e`；`webServer` 自起 vite（复用已开的 5199�
 - S5 收敛（`VStatLine` 五处换件）与滚动接管任一失衡可单独回滚，互不牵连：前者只改消费点，后者只改 utility 串。
 - 舞台契约自本轮起住在 `components/lifecircle/stageContract.ts`（**单一来源**）；回滚滚动接管 = 改那一个文件里的 `lg:` 前缀即可，页面不再散着字面量。
 - 尺寸跟随 = `LcMap` 建图后那一行 `map.resize()`（SDK 内部 `_watchSize()`）。删掉这一行即回到"容器变高不重绘"的旧行为，**没有**其它残留（我们不自建 ResizeObserver，也没有观察器要卸载）。
+- CI 的 `e2e` job 是**纯增**：删掉那一个 job 块即回到原状，`backend/frontend/docker` 三个 job 与 `npm run test:e2e` 脚本本身都不依赖它（本地照跑）。Gitee 侧本就没跟，无需回滚。
+- `display=optional` 与 CLS 用例是**一对**，回滚要同时撤：只把 URL 改回 `swap` 会让「首屏零布局跳动」在 1280 档稳定红（实测 CLS=0.4584），那不是回归而是记账对了。若要保留跳动换回字体落地率，就得把判据改成显式阈值并在此处登记理由。
 
 ## 4. 本轮明确不做
 

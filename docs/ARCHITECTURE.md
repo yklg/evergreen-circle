@@ -300,6 +300,7 @@ DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）�
 | γ 静态守卫 | `backend/scripts/check_guard_construction.py`（AST，非正则） | 治理闸不得被绕过、断言不得读挂钟、`from_iso` 唯一出口、流水线 import 方向 |
 | 等价类套件 | `backend/tests/test_guard_construction_lint.py` | 上述每条规则「违规必红 + 合法必绿」 |
 | 元守卫自证 | `backend/tests/test_guard_selfvalidation.py`、`tests/test_api_mirror_guard.py`、`tests/test_semantic_residue.py` | **守卫在比对对象消失时必须报错或显式 SKIP，不得静默报绿** |
+| 几何/像素层 | `frontend/e2e/*.spec.ts`（Playwright，两档视口 1440×900 与 1280×720） | jsdom 无排版引擎 ⇒ "真的不滚、真的常驻、容器变了画布真的跟"只能在真浏览器里钉。判据须由**变异测试**证明非空判（把产品改坏看它红），且**要看报错文本**——验法自身的副作用（改 `index.html` 触发 dev server 重启）会伪装成功能红 |
 
 外加词表闸（`test_expert_caliber_refs.py`）、注册表单一真相源（`test_registry_single_source.py`）、
 前后端夹具契约（`test_fixture_mirror.py`）、前端样式与色 token 完整性
@@ -311,3 +312,12 @@ DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）�
 
 判别力机器：`backend/scripts/mutation_check.py` —— 往生产代码注入变异，断言目标用例**转红**，
 再按 sha256 校验还原。全绿只说明"当前代码让测试满意"，不说明"测试真的在检查东西"。
+
+CI 侧有一条与守卫等价的**结构约束**：`.github/workflows/ci.yml` 里几何层是**独立 job**（`e2e`），
+不并进 `frontend` job。原因是 step 按序终止 —— `frontend` 在 `lint` 步就长期红（HEAD 全仓 113 个
+eslint error），并进去的防线**永远轮不到执行**，形式上"有"、实际上一行没跑。由此推出本仓通用的
+一条纪律：**新防线不得排在已知长期红的步骤之后**，要么独立成 job，要么先把那道红治理成棘轮
+（同 `tailwindClassIntegrity.test.ts` 的 `KNOWN_PROBE_DANGLING` 只减不增手法）。
+另记：CI 无后端 ⇒ 地图取不到浏览器 AK 走降级分支，`画布跟随容器变高` 那条会**显式 SKIP** ——
+所以"CI 绿"不代表 live BMapGL 的 resize 被看守过；同理 `npm run typecheck` 也把 `e2e/` 纳入
+（`tsconfig.app.json` 的 include），新增 e2e 文件只跑浏览器不跑 tsc 会漏掉类型红。
