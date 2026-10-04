@@ -541,6 +541,45 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 
 ---
 
+## 1.16 2.2c 结案：真实模式那块横幅终于有像素级验收了（2026-10-04）
+
+**两个前提被现场推翻**（都记下来，因为它们决定这类用例能不能复用）：
+
+1. 我上一版写在码里的判断"光把事件喂进 `EventSource` 不足以进入 running"是**半错的**：
+   `subscribeLifeCircleTask` 第一行就 `seedRegistry(taskId)` 写 `status:'running'`
+   （`src/lib/lifeCircleFlow.ts:138`）。真正卡住的是**传输层** —— `route.fulfill` 只能一次性给完
+   body，连接随即关闭 ⇒ 客户端 `onError` → `markFailed` ⇒ 横幅刚挂上就被卸载。
+   ⇒ "任务停在 running"没法靠伪造一个响应体做到，只能有一个**真保持打开的 SSE**。
+2. 更关键的一条：真实模式下若 `GET /api/life-circle` 是空列表，页面只渲染「还没有体检记录」，
+   **两栏舞台根本不存在**（实测 `main [class*="lg:grid-rows-"]` 计数 0）—— 那块横幅住在报告分支里
+   （`LifeCirclePage.tsx:627`）。所以必须先有一条"上次体检已有记录"的历史态，否则无从测起。
+
+**落法（生产码零改动）**：`e2e/support/lcRunningApi.mjs` 一个最小 mock 后端 —— 建任务、
+**会保持打开的 SSE**（progress/message/N 个 round + 心跳）、任务状态轮询、以及一份历史报告
+（**直接读仓里那份 fixture** `src/mocks/fixtures/livingCircle/kaili-ev2.json`，不抄副本）。
+`playwright.config.ts` 因此从单 `webServer` 变成三个（5199 / mock 8799 / 5200），
+其中 5200 用 `VITE_PROXY_TARGET` 把 `/api` 代理到 mock，并新增第三个 project
+`running 1280×720（真 SSE）`。页面走的仍是生产那条
+`createLivingCircleTask → subscribeLifeCircleTask → taskRegistry → 横幅` 链。
+
+**为什么回合数要能调**（`GET /api/e2e/rounds?n=`）：限高是 `lg:max-h-[22vh]`，720 档 = 158px，
+而真机上最多的 5 轮只有约 150px —— **只测 5 轮等于没压到**，摘掉限高也不会红。
+所以第二条用例按到 12 行：实测横幅列**可视 158 / 内容 365** ⇒ 它真在有界内滚，
+同时地图格 420px（58.3% 视口）、右栏 420/1398 都还在。
+
+**变异验证踩了一次"无效证据"，也记下来**：第一次摘掉 `lg:max-h-[22vh]` 确实红了，但红因是
+`[class*="22vh"]` **选择器找不到元素**（30s 超时）—— 那只能证明"这个 class 是承重的"，
+证明不了几何断言在量什么。换成结构锚点 `[role="status"] > div.min-w-0`（进度条那个 div 不带
+`min-w-0`，不会误匹配）后重做，报的是
+**「横幅列高 365px 超过 22vh 上限 160px ⇒ 限高失效」** —— 带数、可归因。
+
+**数字**：本地全套 **30 passed / 0 skipped**（53.8s）；模拟 CI（`/api` 代理指死端口）
+**28 passed / 2 skipped**，那 2 条全是无 AK 时降级自跳的 live 画布 ⇒
+**真实模式这两条在 CI 里是被执行的**，不依赖后端。jsdom 121 文件 / 1037 例；tsc 非 WIP 0 错；
+`eslint e2e/ playwright.config.ts` 0 error。CI 那段注释里过时的"14 passed / 4 skipped"已改成实测值。
+
+---
+
 ## 2. 待办（按顺序，逐项要证据）
 
 | # | 事项 | 完成判据 |
@@ -551,9 +590,9 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 | 2.0 **P1** | **GL 自愈能力真机验**（B 能否定稿就卡这条）：真 AK 下把窗口/容器改高，画布是否自动重绘、有无灰边 | 若不自愈：显式 `enableAutoResize()`，或把地图格改回定高（预览第 ⑤ 屏）。**不许**再造 `resize()` 调用 |
 | 2.0 ~~P0~~ **已完成** | resize 通道的最终形态与测试 | ✅ 建图时 `map.resize()` 一次（GL 源码 = `this._watchSize()`）；`lcMapResizeGuard.test.tsx` 3 例钉「恰调一次 + 源码不得出现 `new ResizeObserver`」；地图替身改记账版 |
 | 2.1 **已完成** | 跑测试 | 全量 **119 文件 / 1025 例绿**（起点 115 / 1005）。⚠ 这条绿**不覆盖排版主张**（jsdom 无排版引擎）；缺口与补案见 `生活圈-布局改动测试覆盖评估-v1.md` |
-| 2.2 ~~P0~~ **大部分完成（Playwright）** | 真机验 B 的五条主张 | ①整页不滚 ②右栏内滚 ③滚到底图例仍可见（含真指针点击）④容器变高画布跟随 —— 四条已在两档视口全绿（§1.11 时 14 例，加 CLS 与落定后不抖两条后为 **8 例 × 2 档 = 16 例**）。⑤真实模式 5 行 `roundLines` 不塌**仍未像素级验证**（见 2.2c 的 fixme），现只有源码钉 TC-11 + S1 的限高在守 |
+| 2.2 ~~P0~~ **已完成（Playwright）** | 真机验 B 的五条主张 | ①整页不滚 ②右栏内滚 ③滚到底图例仍可见（含真指针点击）④容器变高画布跟随 ⑤真实模式 5 行 `roundLines` 不塌 —— **五条全部有像素级验收**：①-④ 在 `lifeCircleStage`（8 例 × 两档），⑤ 在 `lifeCircleRunning`（含 12 轮压力档，§1.16）。另有 2.10 的六档字体度量压力试验（§1.14）与 2.11 的图例同源判据（§1.15） |
 | 2.2b ~~P2~~ **已完成** | 首屏 CJK 字体交换造成 48px 布局跳动（仅 ≤1280 档：表头两行收回一行 ⇒ 地图格 572 → 620） | ✅ 选的是第四种解法：字体 URL 从 `display=swap` 改 **`optional`**（到位就用、没到这趟不换 ⇒ 一次定形）。新增 e2e「首屏零布局跳动 CLS<0.01」，**变异测试**验过非空判 —— 改回 swap 时 1280 档报 CLS=0.4584 红、1440 档照绿（详见 §1.12） |
-| 2.2c **停在 `fixme`（诚实收手）** | 把 ⑤ 也做成像素级：e2e 里注入一段 `roundLines`（或 stub SSE）后量地图格与右栏仍可用 | 半段已通（`page.route` 打 POST `/api/tasks` + 5 个 `round` 事件 SSE；响应必须 camelCase `taskId`）。卡住的是 `runActive` 要**任务注册表**进 `running`，纯 mock 到不了 ⇒ 标 `test.fixme` 并把两条收口路径写进码里。**S1 限高目前仍只有 TC-11 源码钉在守，别当成已渲染级验证** |
+| 2.2c ~~P2~~ **已完成（真 SSE + 自带 mock）** | 把 ⑤ 做成像素级：真实模式下把取证回合喂进横幅，量地图格与右栏是否仍有可用高度 | ✅ 结案见 §1.16。`e2e/support/lcRunningApi.mjs`（含会保持打开的 SSE 与一份真 fixture 报告）+ 第三个 project `running 1280×720`；两条用例：5 轮（真机最大量级）与 **12 轮压过 22vh**（实测横幅列可视 158 / 内容 365、地图格 420px=58.3% 视口、右栏 420/1398）。变异：摘掉 `lg:max-h-[22vh]` 报「365px 超过 22vh 上限 160px」。CI 里也执行（不依赖后端） |
 | 2.3 ~~待办~~ **已完成** | 镜像页 / 对比页 / 探针的读数面：5 处私有实现全换成 `VStatLine`（`row` 面对旧消费方零像素变化） | `statLineSingleSource.test.ts` 3 例绿；`lifeCircleReportView.test.tsx` 10 例绿；`ComparePage` 相关用例绿 |
 | 2.4 **部分完成** | `ComparePage.tsx:333,346` 的**未定义** `className="card"` ✅ 已修（两块对比卡此前一直没有卡面）+ 裸 token 名守卫已补（§1.10）。**剩下的**：`:341` `h-[440px]`、`:356` `h-[400px]` 两处写死定高是否收成共享常量 | 定高收口需与用户确认（改了要重采 ComparePage 结构基线）；守卫断言"发货码零命中 + 探针 3 处只减不增"已绿 |
 | 2.4b ~~P2~~ **体检台侧已完成** | S4 完整抽件 `LcStage`（`.Canvas/.Legend/.Panel`）。阻塞被换掉的路子：像素量不了，但"有没有多包一层"是纯树形问题 ⇒ 先采**结构基线**再重构（见 §1.9） | `lcStageStructure.test.tsx`(2 例) 在重构前后都绿；全量 120 文件 / 1027 例绿。**剩下的**：`LifeCircleReportView` 与 `ComparePage` 采用前须各自采一份基线（树不同，拿体检台的基线比是空判） |
@@ -574,6 +613,7 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 - 尺寸跟随 = `LcMap` 建图后那一行 `map.resize()`（SDK 内部 `_watchSize()`）。删掉这一行即回到"容器变高不重绘"的旧行为，**没有**其它残留（我们不自建 ResizeObserver，也没有观察器要卸载）。
 - CI 的 `e2e` job 是**纯增**：删掉那一个 job 块即回到原状，`backend/frontend/docker` 三个 job 与 `npm run test:e2e` 脚本本身都不依赖它（本地照跑）。Gitee 侧本就没跟，无需回滚。
 - `display=optional` 与 CLS 用例是**一对**，回滚要同时撤：只把 URL 改回 `swap` 会让「首屏零布局跳动」在 1280 档稳定红（实测 CLS=0.4584），那不是回归而是记账对了。若要保留跳动换回字体落地率，就得把判据改成显式阈值并在此处登记理由。
+- 真实模式那两条（2.2c）是**纯测试基建**：`e2e/lifeCircleRunning.spec.ts` + `e2e/support/lcRunningApi.mjs` + `playwright.config.ts` 的第三个 project 与两个额外 `webServer`，删掉即回到"只有源码钉 TC-11"的状态，**没有生产码需要一起回滚**。⚠ 但三处要一起撤：只删用例不删 config，会留下一个没人访问的 5200 dev server 与一个空转的 mock 后端。
 - 图例收口（2.11 / 方案 A）的回滚点是**两个常量**：`stageContract.ts` 里删掉 `LC_LEGEND` 的 `lg:max-h-[calc(100%-1.5rem)] overflow-y-auto` 与整条 `LC_LEGEND_JUDGE` 即回到"内容决定浮层高度"。⚠ 同笔必须一起改三处判据，否则红的是记账：TC-18 六串（`lcLayoutContract.test.tsx` 里那份字面量副本）、结构基线（`LC_STAGE_CAPTURE=1` 重采）、e2e 那条同源正判据「图例不许越出地图格」（`e2e/stageChecks.ts`）。
 
 ## 4. 本轮明确不做

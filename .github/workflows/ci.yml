@@ -98,13 +98,16 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: 安装依赖
         run: npm ci
-      - name: 装 Chromium（--with-deps 顺带装系统库；config 里两个 project 都只用 chromium）
+      - name: 装 Chromium（--with-deps 顺带装系统库；config 里三个 project 都只用 chromium）
         run: npx playwright install --with-deps chromium
       # CI 里不起后端：`/api/life-circle/map-config` 取不到 AK ⇒ 地图落降级画布，
-      # 「画布跟随容器变高」那条会自己 skip 并写明原因（2026-10-04 实测：14 passed / 4 skipped）。
-      # ⚠️ 那 4 条 skip 里 2 条是这条降级跳过、2 条是 lifeCircleRunning 的显式 fixme —— 别把
-      # 「绿色」读成「live 地图的 resize 也被看守过了」。
-      - name: 排版 e2e（webServer 自起 vite:5199）
+      # 「画布跟随容器变高」那条会自己 skip 并写明原因。2026-10-04 实测（把 dev server 的 /api 代理
+      # 指向死端口复现 CI 条件）：**28 passed / 2 skipped**，那 2 条 skip 全是这一条降级跳过。
+      # ⚠️ 别把「绿色」读成「live 地图的 resize 也被 CI 看守过了」—— 它只在有 AK 的本地态真跑。
+      # 真实模式（体检进行中横幅）那两条**不依赖后端**：它们连的是 `e2e/support/lcRunningApi.mjs`
+      # 那个自带 mock（一份真 fixture 报告 + 会保持打开的 SSE），由 config 里的第二个 dev server
+      # 代理过去 ⇒ 2.2c 那条像素级验收在 CI 里是**被执行**的，不是被 skip 掉的。
+      - name: 排版 e2e（webServer 自起 vite:5199 + mock 后端 8799 + vite:5200）
         run: npm run test:e2e
       - name: 失败时留现场
         if: failure()
