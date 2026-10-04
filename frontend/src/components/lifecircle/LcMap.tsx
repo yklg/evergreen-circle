@@ -117,6 +117,16 @@ export interface LcMapProps {
    * 折算口径与报告静态快照共用 `coarseBlindFootprint`，两处必须同一份实现。
    */
   desensitize?: boolean
+  /**
+   * 局部视图：只画这一处盲区的图层（面/圆、中心点、编号批注、补点 Marker；那圈 1km
+   * 服务范围仍是点补点后才画，与其它实例同语义），live 分支把视口收到该点 zoom 16。
+   *
+   * 用途是报告体检单里那张「台账卡 ↔ 局部图」对照：台账指出一格判盲，图要能只留下
+   * 那一处，否则满屏 8 类点位与 4 层等时圈会把"到底哪一格"淹掉。
+   * ⚠️ 降级画布是固定 860×620 投影（以 `scene.center` 为原点），**不做重投影聚焦** ⇒
+   *    该分支只减少图层、不放大视野。局部性来自判定圆与编号批注，不来自缩放。
+   */
+  focusBlindspotId?: string
 }
 
 /**
@@ -335,7 +345,7 @@ function NotesToggle({ on, onToggle, disabled }: { on: boolean; onToggle: () => 
 }
 
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, selectedCell = null, onCellPick, desensitize = false },
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, selectedCell = null, onCellPick, desensitize = false, focusBlindspotId },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -745,6 +755,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // 盲区：连续缺口热力填充（C1）+ 严重度语义色描边/标号（C2）+ 补点处方（C3）+ 详情（C4）。仅主报告。
     if (!compareReport) {
       report.blindspots.forEach((b, bi) => {
+        // 局部视图：跳过其它盲区但**保留原下标**，否则 `#N` 编号会与盲区清单对不上号
+        if (focusBlindspotId && b.id !== focusBlindspotId) return
         const ring = blindPolygonOf(b, boundaryView)?.coordinates?.[0] ?? []
         const pts = ring.map((p) => pt([p[0], p[1]]))
         fitPts.push(...pts)
@@ -1038,11 +1050,17 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     if (compareReport) {
       const all = fitPts.length ? fitPts : [pt(center), pt(compareReport.scene.center)]
       map.setViewport(all)
+    } else if (focusBlindspotId) {
+      // 局部视图：视口收到那一处。走 centerAndZoom 而非 setViewport(fitPts) —— 后者会把
+      // 4 层等时圈一起框进来，等于没聚焦。
+      const fb = report.blindspots.find((b) => b.id === focusBlindspotId)
+      if (fb) map.centerAndZoom(pt(fb.center), 16)
+      else map.centerAndZoom(pt(center), 15)
     } else {
       map.centerAndZoom(pt(center), 15)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, report, compareReport, customCenter, draggableCenter, boundaryView, desensitize])
+  }, [mode, report, compareReport, customCenter, draggableCenter, boundaryView, desensitize, focusBlindspotId])
 
   /* 片 5 · 证据域图层（逐锚点举证盘）—— **单独一个 effect**，不并进上面那份主覆盖层。
    *
@@ -1344,6 +1362,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
 
           {!secondary &&
             report.blindspots.map((b, bi) => {
+              // 局部视图：与 live 分支同一判据、同样保留原下标（`#N` 要与清单对得上）
+              if (focusBlindspotId && b.id !== focusBlindspotId) return null
               const sev = severityOf(b)
               const spec = blindSevSpec(sev || undefined)
               const gap = gapScoreOf(b)

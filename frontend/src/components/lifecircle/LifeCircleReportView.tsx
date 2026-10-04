@@ -7,7 +7,7 @@
  *
  * M 阶段 BMapGL 接入后仅替换快照渲染层，页面骨架不变。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { VStatLine } from '../ui'
 import {
@@ -82,6 +82,34 @@ import { VDataGrid } from '../VDataGrid'
 import { useExpertStore } from '../../store/expertStore'
 
 /* ── 地图快照（静态投影，非交互） ─────────────────────────── */
+
+/** 进视口一次即常驻（P0-7：报告页同页有两个 BMapGL 实例，第二个必须懒挂载）。
+ *  "一次即常驻"是有意的：来回卸载会让用户每次滚回来都重看一次加载骨架。
+ *  ⚠️ 返回**元组**而非 `{ref, seen}`：`react-hooks/refs` 认定"从 hook 拿到的、装着 ref 的
+ *  对象上读任何属性"都算渲染期读 ref（连 `x.seen` 一起报），解构后 seen 只是 boolean。 */
+function useLazyInView<T extends HTMLElement>(): [RefObject<T | null>, boolean] {
+  const ref = useRef<T | null>(null)
+  const [seen, setSeen] = useState(false)
+  useEffect(() => {
+    if (seen) return
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      // 无 IntersectionObserver 的环境（老浏览器、jsdom）⇒ 直接挂载，不因为观测器缺失而永不显示
+      setSeen(true)
+      return
+    }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setSeen(true)
+        io.disconnect()
+      }
+    }, { rootMargin: '200px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [seen])
+  return [ref, seen]
+}
+
 function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; shared?: boolean }) {
   const { W, H } = LC_CANVAS
   const center: LngLat = lc.scene.center
@@ -358,6 +386,8 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   // 一个消费者；笔 8 把 LcMap 嵌进来后，两处共用这一个 state 即可拿到点格联动。
   const [ledgerCell, setLedgerCell] = useState<[number, number] | null>(null)
   const ledger = cellsLedgerOf(lc)
+  // 局部图与主图是两个 GL 实例 ⇒ 进视口才挂（P0-7）
+  const [blindRef, blindSeen] = useLazyInView<HTMLDivElement>()
   const mainRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const scroller = mainRef.current
@@ -715,14 +745,49 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
               哪几格判盲、哪几格未定指不出来（`CellsLedgerCard` 的建卡理由正是这一层，却只挂在体检台）。
               **没有台账就不出现**（`ev-2` 之前的快照与离线骨架走这一支）：摆一张只能看不能对的
               空卡，等于又造一个假入口。解码全走 `cellsLedgerOf`/`cellVerdict`，与体检台同一实现。 */}
-          {ledger && (
-            <div className="mt-4">
-              <CellsLedgerCard
-                led={ledger}
-                selected={ledgerCell}
-                onPick={setLedgerCell}
-                verdictAt={(i, j) => cellVerdict(lc, [i, j])}
-              />
+          {(ledger || lc.blindspots.length > 0) && (
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {ledger && (
+                <CellsLedgerCard
+                  led={ledger}
+                  selected={ledgerCell}
+                  onPick={setLedgerCell}
+                  verdictAt={(i, j) => cellVerdict(lc, [i, j])}
+                />
+              )}
+              {/* 盲区局部图（计划笔 8 的第二张）。挂在台账卡旁边而不是章节正文里，
+                  理由不是省事：这张图的用处就是跟台账卡对指 —— 点一格 → 图上画那格的
+                  方框与判定圆，点图上一点 → 卡里选中那格。共用同一个 `ledgerCell` state，
+                  两侧通道 `LcMap` 的 selectedCell/onCellPick 已经具备（:104-109）。
+                  焦点取 `blindspots[0]`：与上方清单的首行同一处，读者能逐字对上，不自作
+                  主张另挑一处。没有盲区 ⇒ 整块不渲染（无焦点可聚，摆一张跟主图一样的图是凑数）。
+                  `self-start`：grid 默认 stretch，会把这张约 420px 的卡拉到与台账卡（实测 629px）
+                  等高，图注下面凭空多出一截空白边框 —— 判据见 `e2e/lcReportLocalMap.spec.ts`。 */}
+              {lc.blindspots.length > 0 && (
+                <div ref={blindRef} className="relative self-start overflow-hidden rounded-card border border-line bg-card shadow-card">
+                  <div className="h-[360px] print:hidden">
+                    {blindSeen ? (
+                      <LcMap
+                        report={lc}
+                        desensitize={isShared}
+                        draggableCenter={false}
+                        focusBlindspotId={lc.blindspots[0].id}
+                        selectedCell={ledgerCell}
+                        onCellPick={setLedgerCell}
+                        showJudgeScale
+                      />
+                    ) : (
+                      <div className="grid h-full place-items-center text-tag text-ink-3">滚动到此处加载局部图…</div>
+                    )}
+                  </div>
+                  <div className="border-t border-line px-3 py-2 text-tag text-ink-3">
+                    局部视图：盲区图层只留 {lc.blindspots[0].id.replace(/^bs-/, '盲区 ')}
+                    {lc.blindspots.length > 1 ? `（其余 ${lc.blindspots.length - 1} 处见上方清单与主图）` : ''}
+                    ，设施点与等时圈同主图。点绿核补点会展开它的 1km 服务圈
+                    {ledger ? '；选中格与左侧台账卡互指，图上带该格的判定尺圆。' : '。'}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
