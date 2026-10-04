@@ -158,7 +158,8 @@ B 的**已接受代价**：必须给 `LcMap` 补一条仓库里原本不存在�
 | R2 / S2 `resize()` 存在性 | ✅ **已核验：存在**。现场直查 `window.BMapGL.Map.prototype`（v1.0）：`resize`/`checkResize`/`enableAutoResize` 均为 function，`resize` 源码 = `this._watchSize()`。⚠ 中途我曾凭社区类型包判它"不存在"并撤除 —— 那是**取证方法错误**，详见 §1.2 的三次翻案 |
 | R3 RO 与建图竞态 | ✅ **消失**（不是"随撤除消失"，而是换了解法）：监听交给 SDK 的 `_watchSize()`，我们不再持有观察器，也就不存在"我们的 RO 首帧回调 vs `centerAndZoom` 先后"这个问题 |
 | R5 主张无证据 | 部分：净增 17 例把「有没有调、有没有重复订阅」钉住了；**「容器变高后画布是否跟随」仍未证** —— 两次现场实验都发生在 `visibilityState=hidden` 的标签页里，渲染步被抑制，结果不能作数（既不能证实也不能证伪）。B 的观感主张同样需要一次可见页验证 |
-| R4 / S3 折叠销毁判读控件 | ❌ 未做，保留 `it.fails` 红钉（TC-05） |
+| R4 / S3 折叠销毁判读控件 | ✅ **已修**：折叠只收色块段（`{legendOpen && …}` 的范围缩到补点处方那行为止），证据域 / 判定尺两个勾选**常在**，按钮加 `aria-expanded`。TC-05 由 `it.fails` 转正并扩成「折叠→勾选仍可点且状态不被洗掉→再展开色块回来」 |
+| 2.3 镜像页勘察 | `LifeCircleReportView.tsx:529` 那份图例是**纯色块、无勾选**，且该页**不使用** `CellsLedgerCard` ⇒ S3 / foldable 无处可同步。剩下的只有读数面，而照搬 tile 会造出第 4 份实现（正是 S5 要收的债）⇒ **建议与 S5 合并做**，不在本轮单挑 |
 | S4 / S5 / S8（`LcStage`、读数面收敛、文档契约） | ❌ 未做，跨页结构改动，等确认 |
 
 ---
@@ -174,11 +175,93 @@ B 的**已接受代价**：必须给 `LcMap` 补一条仓库里原本不存在�
 | `src/__tests__/helpers/bmapGLFake.ts`（改） | 加**记账版** `resize()`（真 SDK 源码 = `this._watchSize()`）。空桩会让「容器变高画布不重绘」这类回归免疫 —— 本文件开档写过的教训，中途我还真差点把它当成"假通道"删掉 |
 | `src/__tests__/lcMapResizeGuard.test.tsx`（新，3 例） | 最终态守卫（文件头完整记了三次翻案）：正对照「`bmap.ts` 声明 `resize(): void` 且加载 `type=webgl`」、live 建图 ⇒ `resize` **恰调一次**、源码不得再出现 `new ResizeObserver` 且 `roStats.created === 0`（防有人手搓双份监听） |
 | `src/__tests__/lcLedgerFoldable.test.tsx`（新，4 例） | TC-16 `foldable` 两态：出厂折上但 `rect[data-cell]` 仍 == n²（折叠≠卸载，否则 `judgeScaleToggle` 的格数判据会静默空过）；点 summary 展开后读数链通；未传 `foldable` 的消费方形状串逐字不变（TC-17 的一半） |
-| `src/__tests__/lcLayoutContract.test.tsx`（新，10 例） | TC-18 四组布局 utility + 图例 `z-10` **各出现恰一次**（0 次=漂移，2 次=有人复制了滚动契约），含「正对照」防空过；TC-12 九条读数 + 三要素 chips + 判定尺句 **逐字等于** `poiMetricLabel` 等生产函数输出（ev-2 真跑件与 kaili 冻结件都跑）；TC-11 已由红钉转普通 `it`（S1 落地），**TC-05 保留 `it.fails`**（S3 未做） |
+| `src/__tests__/lcLayoutContract.test.tsx`（新，10 例） | TC-18 四组布局 utility + 图例 `z-10` **各出现恰一次**（0 次=漂移，2 次=有人复制了滚动契约），含「正对照」防空过；TC-12 九条读数 + 三要素 chips + 判定尺句 **逐字等于** `poiMetricLabel` 等生产函数输出（ev-2 真跑件与 kaili 冻结件都跑）；TC-11 已由红钉转普通 `it`（S1 落地），**TC-05 也已转正**（S3 落地：折叠只收色块、勾选常在 + `aria-expanded`）|
 
 **实测**：全量 `npx vitest run` **118 文件 / 1022 通过 + 1 todo**（起点 115 / 1005 ⇒ 净增 3 文件 17 例，无回归）；`tsc` 错误数 = 基线 **8**（全部来自你未提交的 WIP，本轮新文件 0 错）；`eslint` 对本轮新增/改动文件 **0 error**。
 
 **红钉 ≠ 已修**：S1（压塌 stage）本轮已真修；TC-05 只是把 S3（折叠销毁判读控件）钉成可见事实，缺陷本身还在。
+
+---
+
+## 1.8 第二轮落实：S5 收敛 + S4 第一步 + 未证项的环境结论（2026-10-04）
+
+### S5 · 读数面收敛（已完成，并当场多收一份）
+
+「标签 + 文本值」这一形状原本散落 **5 份**：`LifeCirclePage` 的 `StatTile`（本轮上一批引入）、
+`LifeCircleReportView.tsx:205` 与 `dev/lcP5Probe.tsx:145` 各一份私有 `StatRow`、
+**外加 `ComparePage.tsx:323` 直接内联在 `.map()` 里的一份** —— 这第 5 份是新闸门首次运行抓出来的
+（内联实现没有函数名，靠读代码数不清，正是"没有结构性防线"的样子）。
+
+- 单一实现：`components/ui/index.tsx` 新增 **`VStatLine`**，两面 `row`（原行式，逐字沿用旧 class 串）/
+  `tile`（原体检台紧凑面，逐字沿用）⇒ **五处消费点换件而不改像素**。
+- 为什么不是塞进 `VStatCard` 的第五个 surface：那三面是**大数字面**（`font-serif text-[26|32]px`、
+  `value: number`），这里要放的是字符串读数（`采集 194 · 圈内 108 · 已展示 108`），
+  硬并要改共享件契约、连累既有消费方。两种形状各留一处单一实现。
+- 新闸门 `__tests__/statLineSingleSource.test.ts`(3 例)：扫 `src/**`（排除 `__tests__`），
+  任一面指纹出现在 `ui/index.tsx` 之外即红。**独立成文件**而不是扩 `statCardSingleSource` 的判据 ——
+  那条守卫自己文件头写明"别把这条守卫偷偷扩成全能闸"，尊重它声明的边界。
+
+### S4 · 只做第一步：契约有单一来源，不碰 DOM 层级
+
+新增 `components/lifecircle/stageContract.ts`，把五组 utility（页根 / 两栏 / 地图格 / 右栏 / 图例）
+收成命名常量 + 成文规矩（为什么 `z-10`、为什么只在大屏接管、为什么 `minmax(0,1fr)`）。页面全部改为消费常量。
+TC-18 随之改为：五组串只在契约文件里各恰一次、页面必须引用常量且**不得内联副本**；
+判据故意自带字面量副本（若 import 常量，"契约被改"就永远不会让这条红）。
+
+**完整抽件（包一层 `LcStage`）本轮不做，且是有意的**：`lg:h-full` / `min-h-0` 这类百分比高度按**父层**解析，
+包一层就改解析结果；而当前环境渲染步停摆（见下），改完无法验证。等能在真浏览器量尺寸时再做。
+
+### 未证项的环境结论（从"没测到"升级为"知道为什么测不到"）
+
+面板一度 `visible`（531×593），但进入实验又转 `hidden`；关键测量：**3.6 秒里 `requestAnimationFrame`
+0 帧**。⇒ 这个标签页根本不产生渲染步，SDK 的尺寸监听（挂在渲染步上）不可能被触发，
+"画布没跟随"从此**可证明是环境产物**，既不能证实也不能证伪这条主张。
+结案只剩两条真路子：① 在正常窗口打开 `http://localhost:5199/life-circle/kaili-ev2`，拉窗口高度看有没有灰边（30 秒）；
+② 批准引入 Playwright，把它钉成自动回归（我没擅自装依赖）。
+
+### 本轮实测
+
+全量 `npx vitest run` **119 文件 / 1025 通过 + 1 todo**；`tsc` = 基线 **8**（仍全在你 WIP，本轮文件 0 错）；
+`eslint` 逐个文件：本轮 8 个文件里 7 个 **0 error**，`dev/lcP5Probe.tsx` 12 条（HEAD 上是 14 条，只减不增，既存债）。
+
+---
+
+## 1.9 S4 完整抽件已落（LcStage），靠结构基线而不是靠眼睛（2026-10-04）
+
+2.4b 的阻塞理由是"看不见，改几何等于闭眼"。这个前提被**换掉了**：像素量不了，
+但 jsdom 拿得到**树**，而"抽件会不会多包一层"恰恰是个纯树形问题。于是先采基线再重构。
+
+- **新件** `components/lifecircle/LcStage.tsx`：复合组件 `<LcStage>` / `.Canvas` / `.Legend` / `.Panel`，
+  类名全部取自 `stageContract.ts`。**刻意不用 props API** —— 那要把页面里几百行 JSX 抽出来重传，
+  一次纯机械的大搬迁；换标签写法则子节点原地不动，而组件本身不产生 DOM 节点 ⇒ 树形逐字不变。
+- **基线** `__tests__/fixtures/lcStageStructure.json`（45 个节点，depth ≤3）+
+  `__tests__/lcStageStructure.test.tsx`(2 例)：记「从 `main`（AppLayout 滚动容器）到两栏容器的祖先链」
+  + 两栏子树，逐节点比对 tag / 完整 class / 关键 aria 属性。祖先链就是百分比高度的解析上下文，
+  **包一层立刻红**。
+- 采集条件：fixture 态、`kaili-ev2`、外套一层与 `AppLayout.tsx:6-9` 同构的滚动外壳。
+  连跑三遍确认可复现后才动结构。
+
+### 采集踩了两次坑，都值得记（否则基线就是假的）
+
+1. **就绪门用"或"不稳定**：`LcMap` 是异步的 —— `boot` 态渲染 live 容器（带 `data-lc-map`），
+   拿不到 AK 后**改渲染降级 SVG 画布**，`data-lc-map` 消失。第一版门写作
+   「有容器 或 有画布」，早一秒晚一秒取到的是两棵不同的树 ⇒ 同一份代码采的基线比不过。
+   现在只认**已落定的降级画布**，并显式断言 `[data-lc-map]` 不在。
+2. **基线太薄等于没守**：depth 2 只有 13 个节点，比"半棵树"还容易漏判。加深到 3 层（45 节点），
+   并让正对照断言在节点数 < 40 时直接红（阈值写的是意图：三层=两栏→槽→槽内首层）。
+
+### 本轮实测
+
+`npx vitest run` 全量 **120 文件 / 1027 通过 + 1 todo**（起点 119/1025）；结构护栏在重构前后都绿，
+这是"没有多包一层"的**证据**而非断言。`tsc` = 基线 8；`LcStage.tsx` / `LifeCirclePage.tsx` /
+两个测试文件 eslint **0 error**。
+
+### 还没做的那一半（说清楚，别让"抽件完成"冒充全部）
+
+只有体检台采用了 `LcStage`。`LifeCircleReportView`（`grid-cols-[1.6fr_1fr]` + 快照图例）与
+`ComparePage`（两块定高小图 + `OverlayLegend`）结构不同，套用前**必须各自先采一份结构基线**，
+否则拿体检台的基线去比对别的树，红了也不知道是谁的错。它们的像素表现也仍卡在 2.2（需要能出帧的环境）。
+2.4b 因此改标为"体检台侧完成，跨页推广待各采基线"。
 
 ---
 
@@ -190,20 +273,22 @@ B 的**已接受代价**：必须给 `LcMap` 补一条仓库里原本不存在�
 | 2.0 ~~P0~~ **已完成** | **核验 `resize` 存在性** | ✅ **存在**（现场直查 `Map.prototype`，v1.0）。中途凭社区类型包判"不存在"是错误结论，已更正。最终落码：建图时 `map.resize()` 一次，不自建 RO；`lcMapResizeGuard.test.tsx` 钉住 |
 | 2.0 **P0** | **「变高后画布是否跟随」还没证**：必须在一个**可见**页面里量 `host` 改高前后 `canvas` 的 style/attr 尺寸 | 打开浏览器面板（或真机）后跑一次；hidden 标签页里的两次实验已作废（渲染步被抑制，不能作数） |
 | 2.0 **P1** | **GL 自愈能力真机验**（B 能否定稿就卡这条）：真 AK 下把窗口/容器改高，画布是否自动重绘、有无灰边 | 若不自愈：显式 `enableAutoResize()`，或把地图格改回定高（预览第 ⑤ 屏）。**不许**再造 `resize()` 调用 |
-| 2.0 ~~P0~~ **已完成** | **补 resize 通道的测试** | ✅ `lcMapResize.test.tsx` 4 例 + `vitest.setup.ts` 可触发替身 + `bmapGLFake.resize()`（见 §1.7）。仍**未**回答的：真 SDK 到底有没有这个方法 ⇒ 下一条 |
-| 2.1 | **跑测试**：已完成 —— `npx vitest run` 全量 **115 文件 / 1005 例全绿**。⚠ 但这条绿**不覆盖本轮核心主张**（jsdom 无排版、无 `ResizeObserver` ⇒ L-INV-1/2/4/5 全在测试能力之外）。覆盖缺口与补案见 `生活圈-布局改动测试覆盖评估-v1.md`（22 条用例清单 + 差距矩阵）；其第一批（TC-06/07/12/16/18 + RO stub）是与 R1/R2/R4 直接对应的 P0 | 全绿（已达）；第一批新用例落地并全绿（待生成） |
-| 2.2 | **真机验证 B 的两条主张**（当前浏览器面板视口 0×0，预览是在强制 1440×900 下量的，真页面没验过）：`npm run dev` + `VITE_USE_MOCK=1` 打开 `/life-circle/kaili-ev2` | ① 整页不滚、右栏内滚；② 滚右栏到底时图例仍在视野；③ 真 AK 下容器变高画布自动重绘无灰边（**靠 GL autoResize，不再有我们那条假通道**）；④ 无 AK 降级画布同样不破；⑤ 真实模式 5 行 `roundLines` + 1280×720 不塌（S1 的像素确认） |
-| 2.3 | **同步镜像页** `components/lifecircle/LifeCircleReportView.tsx:525,530` | 注意它在 `ReportPage` 自有滚动容器内（`ReportPage.tsx:415-417`），**不能照搬 `lg:h-full lg:overflow-hidden`** —— 需按该页滚动模型决定：只同步「图例可折叠 + KPI tile + 台账 foldable」，滚动接管留给单独判断。同步后 `lifeCircleReportView.test.tsx` 必须绿 |
-| 2.4 | **地图高度常量收口**（顺手统一先例）：`ComparePage.tsx:341` 写死 `h-[440px]`、`:356` `h-[400px]`，且 `:335,346` 用了未定义的 `className="card"` 工具类 | 与用户确认是否本轮处理；若处理，抽 `LC_MAP_*` 常量到一处，并先修 `card` 这个既存缺陷（与本布局重构分开提交） |
-| 2.5 | 更新预览与实现的一致性说明 | 四处已知偏差要在预览里改齐或在此登记：① summary 文案（预览「已收起」/ 实现沿用原 `15×15 格 · 格距 · 尺`）；② 折叠实现为条件渲染（预览为 CSS 隐藏）；③ label 全称 vs 预览缩写；④ **预览外壳的顶栏上方没有那块可无界增长的实时横幅** ⇒ 预览第 ③ 屏的「不挤压」结论对真实模式不成立，需补一屏带 5 行 `roundLines` 的 fixture 态 |
-| 2.6 | 提交划分 | **改为一笔**（原第 2 笔「LcMap 补 resize 通道」经核验是假通道，已撤除，不存在待提交内容）：`fix(lifecircle): 体检台右栏独立滚动 + 图例常驻可折叠 + 读数 tile 化 + 取证横幅限高` + 同批测试文件 |
+| 2.0 ~~P0~~ **已完成** | resize 通道的最终形态与测试 | ✅ 建图时 `map.resize()` 一次（GL 源码 = `this._watchSize()`）；`lcMapResizeGuard.test.tsx` 3 例钉「恰调一次 + 源码不得出现 `new ResizeObserver`」；地图替身改记账版 |
+| 2.1 **已完成** | 跑测试 | 全量 **119 文件 / 1025 例绿**（起点 115 / 1005）。⚠ 这条绿**不覆盖排版主张**（jsdom 无排版引擎）；缺口与补案见 `生活圈-布局改动测试覆盖评估-v1.md` |
+| 2.2 **P0（环境阻塞）** | 真机验 B 的五条主张 | ①整页不滚 ②右栏内滚 ③滚到底图例仍可见 ④容器变高画布跟随无灰边 ⑤真实模式 5 行 `roundLines` + 1280×720 不塌。**已实证**当前面板 `requestAnimationFrame` 3.6 秒 0 帧 ⇒ 渲染步停摆，需正常窗口或 Playwright |
+| 2.3 ~~待办~~ **已完成** | 镜像页 / 对比页 / 探针的读数面：5 处私有实现全换成 `VStatLine`（`row` 面对旧消费方零像素变化） | `statLineSingleSource.test.ts` 3 例绿；`lifeCircleReportView.test.tsx` 10 例绿；`ComparePage` 相关用例绿 |
+| 2.4 **P2** | 地图定高先例收口：`ComparePage.tsx:341` 写死 `h-[440px]`、`:356` `h-[400px]`；另 `:335,346` 用了**未定义**的 `className="card"` 工具类（既存缺陷，与 `tailwindClassIntegrity` 的 token 纪律相悖） | 与用户确认是否处理；`card` 那条建议单独一笔小修，不与布局重构混做 |
+| 2.4b ~~P2~~ **体检台侧已完成** | S4 完整抽件 `LcStage`（`.Canvas/.Legend/.Panel`）。阻塞被换掉的路子：像素量不了，但"有没有多包一层"是纯树形问题 ⇒ 先采**结构基线**再重构（见 §1.9） | `lcStageStructure.test.tsx`(2 例) 在重构前后都绿；全量 120 文件 / 1027 例绿。**剩下的**：`LifeCircleReportView` 与 `ComparePage` 采用前须各自采一份基线（树不同，拿体检台的基线比是空判） |
+| 2.5 | 更新预览与实现的一致性说明 | 五处偏差需改齐或登记：① summary 文案；② 折叠从"整块收起"改成"只收色块、勾选常在"（S3 结果，预览第 ③ 屏要跟着改）；③ label 全称 vs 预览缩写；④ 预览外壳顶栏上方缺那块可无界增长的横幅 ⇒ ③ 屏"不挤压"结论对真实模式不成立；⑤ 图例折叠用条件渲染 vs 预览的 CSS 隐藏 |
+| 2.6 | 提交划分 | 已提交 `8a4630a`（fix）+ `21f737e`（docs）。**本轮 S5 / S4 第一步 / 文档尚未提交**，等你批准 |
+| 2.7 **P2** | `docs/ARCHITECTURE.md` 补「页面滚动所有权」一节（S8） | 现契约只活在 `stageContract.ts` 头注释与测试判据里，读架构文档的人看不到三套模型并存的取舍 |
 
 ---
 
 ## 3. 回滚点
 
-- 2.3 / 2.4 任一失衡可单独回滚，不影响 1.1-1.3。
-- 滚动接管只由 `lg:` 前缀的 4 个 class 决定：删掉 `lg:h-full lg:min-h-0 lg:overflow-hidden`（页根）+ `lg:min-h-0 lg:grid-rows-[minmax(0,1fr)]`（两栏）+ `lg:h-full lg:min-h-0`（地图格）+ `lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1`（右栏），即回到整页滚，其余改动（图例折叠、tile、Top-N、foldable）独立存活。
+- S5 收敛（`VStatLine` 五处换件）与滚动接管任一失衡可单独回滚，互不牵连：前者只改消费点，后者只改 utility 串。
+- 舞台契约自本轮起住在 `components/lifecircle/stageContract.ts`（**单一来源**）；回滚滚动接管 = 改那一个文件里的 `lg:` 前缀即可，页面不再散着字面量。
 - 尺寸跟随 = `LcMap` 建图后那一行 `map.resize()`（SDK 内部 `_watchSize()`）。删掉这一行即回到"容器变高不重绘"的旧行为，**没有**其它残留（我们不自建 ResizeObserver，也没有观察器要卸载）。
 
 ## 4. 本轮明确不做
