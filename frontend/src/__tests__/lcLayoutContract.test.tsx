@@ -8,18 +8,18 @@
  * jsdom 没有排版引擎 ⇒ 像素层主张（图例真常驻吗、地图真没被右栏撑高吗）在这一层
  * **测不到**（覆盖评估文档 §四 效力上限，像素层归 TC-21/TC-22）。
  * 所以这里钉两件测得到的事：
- *  ① **class 串逐字不动**（沿用 `recordStatsStripDom.test.tsx:22-31` 的先例）——
- *     滚动/高度所有权现在是靠这四组 utility 表达的，改一个字就得显式处理一次；
+ *  ① **class 串逐字不动**（手法沿用 `recordStatsStripDom.test.tsx:22-31` 的先例）——
+ *     滚动/高度所有权由 `stageContract.ts` 那五组 utility 单一表达，改一个字就得显式处理一次；
+ *     判据故意自带字面量副本、不 import 常量，否则"契约被改"永远不会让这条红；
  *  ② **读数文本逐字等于生产 label 函数输出**（沿用 `eventFlowNumbersMatchFixture.test.ts`
  *     那条纪律）—— 版式从 9 行改成 2 列 tile 时，最坏的不是难看，是"结构看着对、
  *     数字与图上点数对不上账"，那是本项目真踩过的坑。
  *
- * ## 红钉只留一枚
+ * ## 红钉都转正了
  *
- * TC-11（S1 · 无界通知区压塌 stage）已在 `LifeCirclePage.tsx:648` 落地并转成普通 `it`。
- * TC-05（S3 · 折叠销毁判读控件）仍未实施，保留 `it.fails` 把已知缺陷钉成可见事实 ——
- * S3 落地后它会反过来报 "Expected to fail, but passed"，提醒把它改回 `it`。
- * 这不是把套件弄脏，也不是掩盖：红钉的意义就是让"以后再说"无处可藏。
+ * TC-11（S1 · 无界通知区压塌 stage）与 TC-05（S3 · 折叠销毁判读控件）都已落地并转成普通
+ * `it`。留这段说明是因为**它们当初是以 `it.fails` 进来的**：先把已知缺陷钉成可见事实，
+ * 修完再转正 —— 比"以后再说"诚实，也比悄悄不加断言诚实。
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -40,13 +40,17 @@ import {
 } from '../lib/livingCircle'
 import type { LivingCircleReport } from '../types'
 
-const SRC = join(process.cwd(), 'src', 'pages', 'LifeCirclePage.tsx')
-const src = readFileSync(SRC, 'utf8')
+const PAGE_SRC_FILE = join(process.cwd(), 'src', 'pages', 'LifeCirclePage.tsx')
+const CONTRACT_FILE = join(process.cwd(), 'src', 'components', 'lifecircle', 'stageContract.ts')
+const src = readFileSync(PAGE_SRC_FILE, 'utf8')
+const contract = readFileSync(CONTRACT_FILE, 'utf8')
 
 const EV2 = ev2 as unknown as LivingCircleReport
 const KAILI = kaili as unknown as LivingCircleReport
 
-/* ── 现状四组布局 utility（逐字抄自 LifeCirclePage.tsx:480,681,683,830） ────────── */
+/* ── 契约的五组 utility。**这里的字面量是故意重复的**：本文件是判据，判据必须独立于被测值 ——
+   如果这里改成 `import { LC_SPLIT }`，那"有人改了契约"就永远不会让这条红（自我一致的废话）。
+   改任何一条 utility，都要显式来改这里，这正是要的效果。 ─────────────────────────────── */
 const PAGE_ROOT =
   'mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6 lg:h-full lg:min-h-0 lg:overflow-hidden'
 const SPLIT =
@@ -56,7 +60,7 @@ const MAP_CELL =
 const ASIDE =
   'flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1'
 /* 图例浮层的 `z-10` 不是装饰：BMapGL 注入 `.BMap_mask`（z-index:9）会吞掉勾选点击
-   （见 LifeCirclePage.tsx:695-700 的实测注释）。谁把它改回 auto，谁就在真机上摆一个点不动的控件。 */
+   （`LifeCirclePage.tsx` 图例注释记着实测）。谁把它改回 auto，谁就在真机上摆一个点不动的控件。 */
 const LEGEND =
   'absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur'
 
@@ -85,21 +89,28 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('TC-18 · 布局契约的 class 串逐字钉死', () => {
-  it('正对照：源文件确实读到了（否则下面的判据全是空过）', () => {
+describe('TC-18 · 舞台契约的 class 串逐字钉死（单一来源 = stageContract.ts）', () => {
+  it('正对照：两份源文件都读到了（否则下面的判据全是空过）', () => {
     expect(src.length).toBeGreaterThan(10_000)
     expect(src).toContain('export default function LifeCirclePage')
+    expect(contract).toContain('export const LC_PAGE_ROOT')
   })
 
-  it('页根 / 两栏 / 地图格 / 右栏四组 utility 各出现恰一次', () => {
-    exactlyOnce(src, PAGE_ROOT, '页根（大屏接管滚动）')
-    exactlyOnce(src, SPLIT, '两栏（行高锁成容器高，杜绝右栏反向撑高）')
-    exactlyOnce(src, MAP_CELL, '地图格（高度交给视口）')
-    exactlyOnce(src, ASIDE, '右栏（内部滚动）')
+  it('五组 utility 只在契约文件里各出现恰一次', () => {
+    exactlyOnce(contract, PAGE_ROOT, '页根（大屏接管滚动）')
+    exactlyOnce(contract, SPLIT, '两栏（行高锁成容器高，杜绝右栏反向撑高）')
+    exactlyOnce(contract, MAP_CELL, '地图格（高度交给视口）')
+    exactlyOnce(contract, ASIDE, '右栏（内部滚动）')
+    exactlyOnce(contract, LEGEND, '图例浮层（`z-10` 必须压过 .BMap_mask 的 z-index:9）')
   })
 
-  it('图例浮层保持 z-10（压过 .BMap_mask 的 z-index:9）', () => {
-    exactlyOnce(src, LEGEND, '图例浮层')
+  it('页面消费常量，不许自己内联一份副本（那会有第二处真相）', () => {
+    for (const name of ['LC_PAGE_ROOT', 'LC_SPLIT', 'LC_MAP_CELL', 'LC_ASIDE', 'LC_LEGEND']) {
+      expect(src, `页面没有消费 ${name}`).toContain(`className={${name}}`)
+    }
+    for (const literal of [PAGE_ROOT, SPLIT, MAP_CELL, ASIDE, LEGEND]) {
+      expect(src, '页面里出现了契约的字面量副本').not.toContain(literal)
+    }
   })
 
   it('读数改的是版式不是文案：2 列 tile 网格存在且原行式面已撤下', () => {
@@ -165,17 +176,33 @@ describe('TC-12 · tile 版式下读数文本逐字等于生产 label 函数（e
   })
 })
 
-describe('P0 落地状态钉（S1 已转绿 · S3 仍是红钉）', () => {
-  // S3 · 折叠实现目前是条件渲染（LifeCirclePage.tsx:722-774），收起时判定尺/证据域
-  // 勾选连同 DOM 一起消失 —— 与 :695-700「别摆一个勾不动的控件」是同一条纪律的两面。
-  it.fails('TC-05：图例折叠按钮应报出展开态，且折叠不销毁判读控件', async () => {
+describe('P0/P1 落地状态钉（S1、S3 均已转绿）', () => {
+  // S3 · 折叠曾把两个勾选连同色块一起从 DOM 摘掉 —— 与 :695-700「别摆一个勾不动的控件」
+  // 是同一条纪律的另一面：判读入口不该在收起时人间蒸发。现在折叠只收色块。
+  it('TC-05：折叠报出自身状态，且只收色块、不销毁判读勾选', async () => {
     renderScene('kaili-ev2')
     await screen.findByText('凯里老街 · 生活圈体检单')
     const fold = screen.getByRole('button', { name: '收起' }) as HTMLButtonElement
     expect(fold.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(fold)
-    // 折叠后判定尺勾选仍应可达（当前实现把它整个摘掉，故本支红）
+    // 折叠前：色块与勾选都在
+    expect(screen.getByText('采样点耗时热力（0→20min）')).toBeTruthy()
     expect(screen.getByRole('checkbox', { name: /判定尺/ })).toBeTruthy()
+
+    fireEvent.click(fold)
+    const folded = screen.getByRole('button', { name: '展开' }) as HTMLButtonElement
+    expect(folded.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('采样点耗时热力（0→20min）')).toBeNull()   // 色块收掉
+
+    // 勾选仍在、仍可勾，且是受控的（卸载重挂会把已勾的图层状态洗掉）
+    const box = screen.getByRole('checkbox', { name: /判定尺/ }) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+    expect(box.checked).toBe(true)
+
+    // 再点同一个按钮（折叠态下它的名字是"展开"）回到展开态
+    fireEvent.click(screen.getByRole('button', { name: '展开' }))
+    expect(screen.getByText('采样点耗时热力（0→20min）')).toBeTruthy()
+    expect((screen.getByRole('checkbox', { name: /判定尺/ }) as HTMLInputElement).checked).toBe(true)
   })
 
   // S1 已落（`LifeCirclePage.tsx:648` 那列加了 `lg:max-h-[22vh] lg:overflow-y-auto`）：

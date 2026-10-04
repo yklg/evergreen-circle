@@ -35,6 +35,8 @@ import { useTaskRegistry } from '../store/taskRegistry'
 import LcMap from '../components/lifecircle/LcMap'
 import CellsLedgerCard from '../components/lifecircle/CellsLedgerCard'
 import RegionSelector from '../components/lifecircle/RegionSelector'
+import { LC_ASIDE, LC_LEGEND, LC_MAP_CELL, LC_PAGE_ROOT, LC_SPLIT } from '../components/lifecircle/stageContract'
+import { VStatLine } from '../components/ui'
 import type { LcMapHandle, LcMapMode, LcBlindSev } from '../components/lifecircle/LcMap'
 import type {
   ForensicRoundRow,
@@ -91,21 +93,6 @@ interface TaskInput {
 
 /** 盲区清单默认只摊前 N 条：它是右栏里最高的那块，右栏内部滚之后没必要一次铺完。 */
 const BLIND_TOP_N = 3
-
-/** 读数面（2 列 tile 网格里的单格）。label/value 文本与原行式读数逐字相同，只是不再一行一条。
- *  C8 图-面板联动仍在：悬停地图 15min 圈 → 本格高亮；inline style 避开 tailwind 调色板守卫风险，
- *  手法与原行式面与图例计数徽标同款。 */
-function StatTile({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <div
-      className="rounded-btn border border-line bg-bg p-2.5"
-      style={highlight ? { backgroundColor: 'color-mix(in srgb, #5F7B69 10%, transparent)' } : undefined}
-    >
-      <div className="text-tag text-ink-3">{label}</div>
-      <div className="mt-0.5 text-[12px] font-medium leading-snug text-ink">{value}</div>
-    </div>
-  )
-}
 
 export default function LifeCirclePage() {
   const { sceneId = 'kaili' } = useParams()
@@ -480,7 +467,7 @@ export default function LifeCirclePage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6 lg:h-full lg:min-h-0 lg:overflow-hidden">
+    <div className={LC_PAGE_ROOT}>
       {/* 顶栏：mock=场景切换 + 演示流水线；M3=真实「开始体检」CTA + 最新报告入口 */}
       {isFixture ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -681,9 +668,9 @@ export default function LifeCirclePage() {
         </div>
       )}
 
-      <div className="grid flex-1 grid-cols-1 gap-4 lg:min-h-0 lg:grid-cols-[1fr_320px] lg:grid-rows-[minmax(0,1fr)]">
+      <div className={LC_SPLIT}>
         {/* 地图画布：BMapGL 真实地图（LcMap），无 AK/离线自动降级静态画布 */}
-        <div className="relative min-h-[480px] overflow-hidden rounded-card border border-line bg-card shadow-card lg:h-full lg:min-h-0">
+        <div className={LC_MAP_CELL}>
           <LcMap
             ref={lcMapRef}
             report={report}
@@ -708,14 +695,15 @@ export default function LifeCirclePage() {
               （看不见也点不着，无人察觉），片 5 往里放了**第一个可交互控件**（证据域勾选）后，
               真机上 `elementFromPoint(勾选框中心)` 返回的是 `BMap_mask` —— 点击被地图吃掉。
               抬到 10（> mask 的 9）之后同一判据返回 INPUT，真指针点击成功。 */}
-          <div className="absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur">
+          <div className={LC_LEGEND}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-tag font-medium text-ink-2">图层</span>
               {/* 图例浮层是全屏常驻最高的那块（约 554px），地图改视口高度后它会吃掉半屏 ——
-                  给一个折叠口。默认展开：色块与两个勾选是判读入口，不该藏起来。 */}
+                  给一个折叠口。默认展开；折叠只收色块，两个勾选是判读入口、常在。 */}
               <button
                 onClick={() => setLegendOpen((v) => !v)}
                 title={legendOpen ? '收起图例' : '展开图例'}
+                aria-expanded={legendOpen}
                 className="rounded-chip border border-line bg-card px-1.5 text-tag text-ink-3 hover:bg-primary-tint"
               >
                 {legendOpen ? '收起' : '展开'}
@@ -760,6 +748,8 @@ export default function LifeCirclePage() {
               <img src={fixPlusSvgDataUrl(LC_FIX_DOT)} alt="" className="h-3.5 w-3.5" />
               补点处方（流动服务/改道/补建）
             </span>
+              </>
+            )}
             {/* 片 5：证据域图层开关。**没有明细就不出现**（旧快照/离线从没发过 `evidence_anchors`，
                 给一个勾不动的复选框等于摆一个假入口）。 */}
             {evidenceDiscs(report).length > 0 && (
@@ -796,8 +786,6 @@ export default function LifeCirclePage() {
                 </span>
               </label>
             )}
-              </>
-            )}
           </div>
 
           {dragging ? (
@@ -830,7 +818,7 @@ export default function LifeCirclePage() {
         </div>
 
         {/* 体检单右栏：大屏下自己滚，地图与图例因此永不进滚动链 */}
-        <aside className="flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+        <aside className={LC_ASIDE}>
           <div className="rounded-card border border-line bg-card p-4 shadow-card">
             <div className="flex items-end justify-between">
               <div>
@@ -883,10 +871,10 @@ export default function LifeCirclePage() {
                 旧文案 `N 个（圈内 M）` 与图上点数对不上账（面板数取 `poi.in_circle`、
                 图上点数取 `points.length`，两条链各算各的）。 */}
             <div className="mt-2 grid grid-cols-2 gap-2">
-              <StatTile label="POI 采集" value={poiMetricLabel(report)} />
-              <StatTile label="采样点" value={samplingReachLabel(report)} />
-              <StatTile label="15min 等时圈面积" value={`${(report.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`} highlight={isoHoverMinutes === 15} />
-              <StatTile label="服务盲区" value={`${report.blindspots.length} 处`} />
+              <VStatLine face="tile" label="POI 采集" value={poiMetricLabel(report)} />
+              <VStatLine face="tile" label="采样点" value={samplingReachLabel(report)} />
+              <VStatLine face="tile" label="15min 等时圈面积" value={`${(report.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`} highlight={isoHoverMinutes === 15} />
+              <VStatLine face="tile" label="服务盲区" value={`${report.blindspots.length} 处`} />
             </div>
             {/* 阶段 1.8 读侧披露：历史报告里「面板数 ≠ 图上点数」时如实说明，
                 不让读者自己发现两处数字打架。新报告由装配层守恒保证，不会出现。 */}
@@ -923,11 +911,11 @@ export default function LifeCirclePage() {
                 <div className="mt-3 border-t border-line pt-3">
                   <div className="mb-2 text-tag font-medium text-ink-2">测算口径</div>
                   <div className="grid grid-cols-2 gap-2">
-                    <StatTile label="出行方式" value={report.caliber.travel_mode === 'walking' ? '步行' : report.caliber.travel_mode === 'riding' ? '骑行' : report.caliber.travel_mode === 'driving' ? '驾车' : report.caliber.travel_mode} />
-                    <StatTile label="速度" value={`${report.caliber.speed_m_per_min} m/min`} />
-                    <StatTile label="绕行系数" value={`×${report.caliber.detour_k}`} />
-                    <StatTile label="研究半径" value={`${report.caliber.study_radius_m} m`} />
-                    <StatTile label="等时圈档位" value={report.caliber.iso_minutes.map(m => `${m}min`).join(' / ')} />
+                    <VStatLine face="tile" label="出行方式" value={report.caliber.travel_mode === 'walking' ? '步行' : report.caliber.travel_mode === 'riding' ? '骑行' : report.caliber.travel_mode === 'driving' ? '驾车' : report.caliber.travel_mode} />
+                    <VStatLine face="tile" label="速度" value={`${report.caliber.speed_m_per_min} m/min`} />
+                    <VStatLine face="tile" label="绕行系数" value={`×${report.caliber.detour_k}`} />
+                    <VStatLine face="tile" label="研究半径" value={`${report.caliber.study_radius_m} m`} />
+                    <VStatLine face="tile" label="等时圈档位" value={report.caliber.iso_minutes.map(m => `${m}min`).join(' / ')} />
                   </div>
                   <div className="mt-2 text-tag text-ink-3 leading-relaxed">
                     {report.caliber.basis}
