@@ -66,8 +66,8 @@ function rectsOverlap(a: Rect, b: Rect, pad: number): boolean {
 }
 
 function clampToContainer(rect: Rect, W: number, H: number): { x: number; y: number } {
-  let x = Math.max(0, Math.min(rect.x, W - rect.w))
-  let y = Math.max(0, Math.min(rect.y, H - rect.h))
+  const x = Math.max(0, Math.min(rect.x, W - rect.w))
+  const y = Math.max(0, Math.min(rect.y, H - rect.h))
   return { x, y }
 }
 

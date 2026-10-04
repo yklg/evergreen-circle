@@ -1164,7 +1164,6 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isoCard])
 
   /* 定位到我（顶部按钮调用）：live 用 BMapGL（WGS84→BD09+逆地理）；降级用原生定位裸坐标 */

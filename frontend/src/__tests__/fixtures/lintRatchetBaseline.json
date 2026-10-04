@@ -1,9 +1,9 @@
 {
-  "_note": "lint 棘轮基线：只记已入库（git ls-files 认得的）文件的 eslint error 数，逐文件。改小=还债，需同笔删/降这里的数字；任何一项变大都必须先消掉。生成方式见 lintRatchet.test.ts 头部。",
-  "measuredAt": "2026-10-04",
+  "_note": "lint 棘轮基线：只记已入库（git ls-files 认得的）文件的 eslint error 数，逐文件。改小=还债，需同笔删/降这里的数字；任何一项变大都必须先消掉。生成方式见 lintRatchet.test.ts 头部。 首次下调发生在 2.9 结案同批：证明这条棘轮\"还了债必须改小账本\"是真会执行的，不是摆设。",
+  "measuredAt": "2026-10-04（第 2 次记账：还掉 wordcloudLayout 的 2 条 prefer-const；另清掉 LcMap 一条失效 disable —— 那是 warning，不计 errorCount）",
   "commit": "2590d44",
   "eslintVersion": "10.9.1",
-  "totalErrorsInTrackedFiles": 106,
+  "totalErrorsInTrackedFiles": 104,
   "perFile": {
     "src/dev/lcCovCaliberProbe.tsx": 15,
     "src/dev/lcP5Probe.tsx": 12,
@@ -25,7 +25,6 @@
     "src/__tests__/wordcloudChart.test.tsx": 2,
     "src/__tests__/workspaceThreePanel.test.tsx": 2,
     "src/components/VStructured.tsx": 2,
-    "src/lib/wordcloudLayout.ts": 2,
     "src/__tests__/apiTaskStream.test.ts": 1,
     "src/components/VTracePanel.tsx": 1,
     "src/components/lifecircle/LcMap.tsx": 1,
