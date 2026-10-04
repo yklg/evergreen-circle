@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>生活圈体检台 · 布局五屏对比预览（现状 / A′ / B / C / A′+C）</title>
+<style>
+/* 设计 token —— tailwind.config.js:32-58 与 src/index.css:7-45 的手工等价声明（本预览不跑构建） */
+:root{
+  --c-primary:#7c9885; --c-primary-soft:#a8c0a8; --c-primary-tint:#eaf1ea; --c-primary-deep:#5e7a66;
+  --c-sun:#f4e2b8; --c-sun-soft:#fbf6e9;
+  --c-ink:#3a413c; --c-ink-2:#6b746c; --c-ink-3:#9aa39c; --c-line:#e3e8e3; --c-bg:#fafbf9; --c-card:#ffffff;
+  --c-ok:#8ab58a; --c-warn:#e0b775; --c-risk:#ce9a92; --c-info:#8fa8c0;
+  --r-card:16px; --r-btn:12px; --r-chip:999px;
+  --shadow-card:0 4px 24px rgba(124,152,133,.08);
+  --shadow-float:0 8px 40px rgba(124,152,133,.14);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--c-bg);color:var(--c-ink);
+  font-family:'Inter','Noto Sans SC','PingFang SC',system-ui,sans-serif;font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased}
+.serif{font-family:'Noto Serif SC',Georgia,serif}
+.tag{font-size:11px;line-height:1.4}
+.aux{font-size:13px;line-height:1.6}
+.i2{color:var(--c-ink-2)} .i3{color:var(--c-ink-3)}
+.card{background:var(--c-card);border:1px solid var(--c-line);border-radius:var(--r-card);box-shadow:var(--shadow-card)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:999px;flex:none}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--c-line);border-radius:999px}
+
+/* 预览外壳（非产品 UI） */
+#chrome{position:sticky;top:0;z-index:200;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 14px;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px dashed var(--c-primary-soft)}
+#chrome b{font-size:13px}
+.tab{border:1px solid var(--c-line);background:#fff;border-radius:var(--r-chip);padding:5px 12px;font-size:12px;cursor:pointer;color:var(--c-ink-2)}
+.tab[aria-selected="true"]{background:var(--c-primary);border-color:var(--c-primary);color:#fff;font-weight:600}
+.mini{border:1px solid var(--c-line);background:#fff;border-radius:var(--r-chip);padding:5px 10px;font-size:12px;cursor:pointer;color:var(--c-ink-2)}
+.mini:hover{background:var(--c-primary-tint)}
+.spacer{flex:1}
+
+/* 应用外壳复刻：AppLayout.tsx:6-9 */
+.shell{display:flex;height:calc(100vh - 46px);width:100%;overflow:hidden;background:var(--c-bg)}
+.vsb{width:220px;flex:0 0 220px;border-right:1px solid var(--c-line);background:rgba(255,255,255,.7);padding:14px;display:flex;flex-direction:column;gap:10px}
+.vsb .logo{display:grid;place-items:center;width:36px;height:36px;border-radius:var(--r-btn);background:var(--c-primary-tint);color:var(--c-primary);font-weight:600;font-size:13px}
+.vsb .navi{height:32px;border-radius:var(--r-btn);background:var(--c-primary-tint);opacity:.55}
+.vsb .navi.dim{opacity:.22}
+main{position:relative;min-width:0;flex:1;overflow-y:auto}
+.page{margin:0 auto;display:flex;flex-direction:column;min-height:100%;max-width:1240px;gap:16px;padding:24px}
+.topbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:var(--r-chip);font-size:13px;background:rgba(234,241,234,.6);color:var(--c-ink-2)}
+.pill.on{background:var(--c-primary);color:#fff}
+.origin{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;border-radius:var(--r-chip);font-size:11px;font-weight:500;
+  border:1px solid rgba(138,181,138,.5);background:rgba(138,181,138,.12);color:var(--c-ink-2)}
+
+.split{flex:1;display:grid;grid-template-columns:1fr 320px;gap:16px}
+.mapcell{position:relative;min-height:480px;overflow:hidden;background:var(--c-card);
+  border:1px solid var(--c-line);border-radius:var(--r-card);box-shadow:var(--shadow-card)}
+.aside{display:flex;flex-direction:column;gap:16px;min-width:0}
+
+/* 地图占位（无 BMapGL AK，灰阶 + 真实点位投影） */
+.mapbody{position:absolute;inset:0;overflow:hidden;
+  background:
+    repeating-linear-gradient(0deg,rgba(154,163,156,.10) 0 1px,transparent 1px 48px),
+    repeating-linear-gradient(90deg,rgba(154,163,156,.10) 0 1px,transparent 1px 48px),
+    linear-gradient(160deg,#f3f6f3,#e9efea)}
+.ring{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border:1.5px solid rgba(124,152,133,.55);background:rgba(124,152,133,.05)}
+.ring.r5{width:56px;height:56px}.ring.r10{width:150px;height:150px}.ring.r15{width:250px;height:250px}.ring.r20{width:352px;height:352px}
+.ringlbl{position:absolute;left:50%;transform:translateX(-50%);font-size:11px;color:var(--c-ink-3);white-space:nowrap}
+.poidot{position:absolute;width:7px;height:7px;border-radius:50%;transform:translate(-50%,-50%);opacity:.85}
+.blindpoly{position:absolute;inset:0;pointer-events:none}
+.mapbadge{position:absolute;right:8px;top:8px;z-index:11;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.mapbadge span{border-radius:var(--r-chip);border:1px solid var(--c-line);background:rgba(255,255,255,.92);padding:4px 10px;font-size:11px;color:var(--c-ink-3)}
+.hintchip{position:absolute;bottom:12px;left:12px;z-index:10;display:flex;align-items:center;gap:4px;border-radius:var(--r-chip);
+  background:rgba(255,255,255,.8);padding:6px 12px;font-size:11px;color:var(--c-ink-3);backdrop-filter:blur(8px)}
+
+/* 图例：真机形态 = 地图内绝对定位浮层（LifeCirclePage.tsx:700，z-10 是为压过 .BMap_mask 的 z-index:9） */
+.legend{position:absolute;left:12px;top:12px;z-index:10;display:flex;flex-direction:column;gap:6px;max-width:190px;
+  border:1px solid var(--c-line);border-radius:var(--r-btn);background:rgba(255,255,255,.9);padding:12px;backdrop-filter:blur(8px)}
+.legend .row{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--c-ink-3)}
+.legend .row .n{margin-left:auto;border-radius:var(--r-chip);padding:0 6px;font-size:11px;font-weight:500;color:#555}
+.legend .sep{margin-top:2px;border-top:1px solid rgba(227,232,227,.7);padding-top:6px}
+.legend label{display:flex;align-items:flex-start;gap:6px;margin-top:2px;border-top:1px solid rgba(227,232,227,.7);padding-top:6px;
+  font-size:11px;font-weight:500;color:var(--c-ink-2);cursor:pointer}
+.legend label .sub{display:block;margin-top:2px;font-weight:400;color:var(--c-ink-3)}
+.legend input{width:14px;height:14px;margin-top:2px}
+.fold{align-self:flex-end;border:1px solid var(--c-line);background:#fff;border-radius:var(--r-chip);padding:0 8px;font-size:11px;color:var(--c-ink-3);cursor:pointer}
+.legend.mini-fold .legend-body{display:none}
+
+/* 图例上移到地图卡片头部（ComparePage.tsx:65-78 的 OverlayLegend 先例形态） */
+.mapwrap{align-self:start;display:flex;flex-direction:column;gap:0;background:var(--c-card);
+  border:1px solid var(--c-line);border-radius:var(--r-card);box-shadow:var(--shadow-card);overflow:hidden}
+.maphead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:10px 12px;border-bottom:1px solid var(--c-line);background:#fff}
+.maphead .lg{display:flex;flex-wrap:wrap;gap:4px 10px;flex:1;min-width:0}
+.maphead .row{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--c-ink-3)}
+.maphead .row .n{border-radius:var(--r-chip);padding:0 5px;font-size:11px;color:#555}
+.maphead .hd{font-size:11px;font-weight:600;color:var(--c-ink-2)}
+.maphead .ck{display:flex;align-items:center;gap:5px;border-left:1px solid var(--c-line);padding-left:10px;font-size:11px;color:var(--c-ink-2)}
+.maphead .ck input{width:13px;height:13px}
+.maphead .ck .sub{color:var(--c-ink-3)}
+.mapbody-box{position:relative;height:560px;overflow:hidden}
+
+/* 右栏卡片（真机文案与读数，逐字来自生产实现） */
+.k{border-radius:var(--r-card);border:1px solid var(--c-line);background:var(--c-card);padding:16px;box-shadow:var(--shadow-card)}
+.k + .k{margin-top:0}
+.khead{font-size:13px;font-weight:600;color:var(--c-ink)}
+.stat{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid rgba(227,232,227,.6);padding:6px 0}
+.stat:last-child{border-bottom:0}
+.stat .lab{font-size:11px;color:var(--c-ink-3)}
+.stat .val{font-size:13px;font-weight:500;color:var(--c-ink)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:var(--r-chip);padding:4px 10px;font-size:11px;font-weight:500}
+.chip.ok{background:rgba(138,181,138,.1);color:var(--c-primary-deep)}
+.chip .dot{width:6px;height:6px}
+.badge-warn{margin-left:6px;border-radius:var(--r-chip);background:rgba(224,183,117,.12);padding:2px 6px}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;width:100%;height:40px;border:0;
+  border-radius:var(--r-btn);background:var(--c-primary);color:#fff;font-weight:500;box-shadow:var(--shadow-card)}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tile{border:1px solid var(--c-line);border-radius:var(--r-btn);padding:8px 10px;background:rgba(250,251,249,.7)}
+.tile .tl{font-size:11px;color:var(--c-ink-3)}
+.tile .tv{margin-top:2px;font-size:12px;font-weight:600;color:var(--c-ink);line-height:1.45;word-break:break-word}
+details.fold-led{border-radius:var(--r-card);border:1px solid var(--c-line);background:var(--c-card);box-shadow:var(--shadow-card)}
+details.fold-led > summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:12px 14px}
+details.fold-led > summary::-webkit-details-marker{display:none}
+.grid15{display:grid;grid-template-columns:repeat(15,1fr);gap:1px;width:100%;max-width:240px;margin:8px auto 0}
+.cell{aspect-ratio:1;border-radius:1px}
+.bs{border-radius:var(--r-btn);border:1px solid rgba(227,232,227,.7);background:rgba(154,163,156,.1);padding:10px}
+.bs .r1{display:flex;align-items:center;justify-content:space-between}
+.bs .t{font-size:13px;font-weight:500;color:var(--c-ink);display:flex;align-items:center;gap:6px}
+.bs .d{margin-top:4px;font-size:11px;color:var(--c-ink-3)}
+.fixline{margin-top:2px;font-size:11px;font-weight:500;color:#1f9e63}
+
+/* 改动区高亮 + 每屏注释 */
+.hl{position:relative;outline:2px dashed var(--c-primary);outline-offset:3px}
+.hlk{position:absolute;z-index:120;top:-11px;left:8px;background:var(--c-primary);color:#fff;border-radius:var(--r-chip);
+  padding:1px 8px;font-size:11px;font-weight:600;box-shadow:var(--shadow-card)}
+.notecard{position:fixed;right:14px;bottom:14px;z-index:190;width:340px;border-radius:var(--r-card);border:2px dashed var(--c-primary-soft);
+  background:rgba(255,255,255,.97);box-shadow:var(--shadow-float);padding:12px 14px}
+.notecard summary{cursor:pointer;font-size:13px;font-weight:600}
+.notecard ul{margin:8px 0 0;padding-left:16px}
+.notecard li{font-size:12px;line-height:1.6;color:var(--c-ink-2)}
+.notecard .cost{margin-top:8px;border-top:1px dashed var(--c-line);padding-top:8px;font-size:12px;color:var(--c-risk)}
+.fidelity{max-width:1240px;margin:0 auto;padding:0 24px 24px}
+.fidelity details{border:1px solid var(--c-line);border-radius:var(--r-card);background:#fff;padding:10px 14px}
+.fidelity summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--c-ink-2)}
+.fidelity li{font-size:12px;color:var(--c-ink-2)}
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+
+<div id="chrome">
+  <b>生活圈体检台 · 布局五屏</b>
+  <button class="tab" role="tab" data-p="0" aria-selected="true">① 现状（复现问题）</button>
+  <button class="tab" role="tab" data-p="1" aria-selected="false">② A′ 定高 + 卡头图例</button>
+  <button class="tab" role="tab" data-p="2" aria-selected="false">③ B 视口自适应 + 右栏独立滚</button>
+  <button class="tab" role="tab" data-p="3" aria-selected="false">④ C 粘性跟随</button>
+  <button class="tab" role="tab" data-p="4" aria-selected="false">⑤ A′+C 推荐组合</button>
+  <span class="spacer"></span>
+  <button class="mini" id="toBottom">滚到页底测图例 ↓</button>
+  <button class="mini" id="toTop">回到顶部 ↑</button>
+  <button class="mini" id="toggleHl">高亮开关</button>
+</div>
+
+<div id="stage"></div>
+
+<div class="fidelity">
+  <details>
+    <summary>保真声明 · 这版预览里哪些是真的、哪些是占位（选型前请读一次）</summary>
+    <ul>
+      <li>数据＝<b>真跑样例 kaili-ev2</b>（<code>src/mocks/fixtures/livingCircle/kaili-ev2.json</code>）：凯里老街，综合评分 68.4，1 处轻度盲区，逐格台账 15×15。图上 POI 点位与盲区多边形是夹具里的真实坐标投影，不是随机点。</li>
+      <li>读数文案＝<b>直调生产函数</b>，非手抄：<code>poiMetricLabel</code> / <code>samplingReachLabel</code> / <code>blindspotCoverageBrief</code> / <code>confidenceBadgeLabel</code> / <code>judgeRulerLabel</code>（经 vite-node 取原样输出）。<code>CategoryCaliberNotes</code> 在这份夹具下返回 null，所以确实不渲染。</li>
+      <li>雷达几何＝<code>layoutRadar(真实 8 维)</code> 的输出（viewBox <code>0 0 242 215</code>、maxWidth 242、fontSize 11），未写死宽度 —— 遵守 <code>docs/雷达图遮挡修复-落地记录与后续项.md:47</code>。</li>
+      <li>样式＝<code>tailwind.config.js:32-58</code> 与 <code>src/index.css:7-45</code> 的 token 手工等价声明；布局骨架照抄 <code>LifeCirclePage.tsx:475,673,675,700,807</code> 与 <code>AppLayout.tsx:6-9</code>。</li>
+      <li>占位＝地图本体（无 BMapGL AK，用灰阶底 + 真实点位）；<code>VSidebar</code> 用色块代替；顶栏只留影响高度的主要按钮。</li>
+      <li>每屏注释里的像素数不是估的：在 1440×900 的强制排版尺寸下用 <code>getBoundingClientRect()</code> 逐屏量出（地图框高、图例偏移、右栏可视/内容高）。因浏览器面板当时视口为 0×0，测量时给外壳显式定了宽高，故与真机可能有 ±1 行换行差异，但相对关系成立。</li>
+      <li>已更正规划阶段的一条推断：当时按 CSS-Tricks 判断「祖先 <code>overflow</code> 可能废掉 sticky」，实测在 <code>&lt;main&gt; overflow-y:auto</code> 这条链上 sticky 正常生效 —— 真正会让它失效的是缺 <code>align-self:start</code>（格子被撑满即无可粘余量）。</li>
+      <li>未展开的取舍：本轮只验 ≥1280px 桌面观感（小屏/矮视口按约定不管）；外层滚动容器 <code>AppLayout</code> 未改动；本轮未动任何测试断言。</li>
+    </ul>
+  </details>
+</div>
+
+<script>
+const LC = /* 由 /tmp/lcprev/entry4.ts 经 vite-node 直调生产函数生成，勿手改 */ {"center":[107.9758,26.5734],"boxW":900,"boxH":560,"points":[[107.972178,26.567477,"market"],[107.971982,26.572207,"market"],[107.97101,26.57165,"market"],[107.98077,26.575024,"market"],[107.982529,26.572141,"market"],[107.984284,26.577328,"market"],[107.985858,26.572027,"market"],[107.977027,26.573319,"medical"],[107.973318,26.574264,"medical"],[107.973178,26.574207,"medical"],[107.978519,26.57245,"medical"],[107.976973,26.575795,"medical"],[107.978847,26.573659,"medical"],[107.980206,26.57464,"medical"],[107.970111,26.573204,"medical"],[107.97011,26.573655,"medical"],[107.981184,26.575287,"medical"],[107.980122,26.577797,"medical"],[107.974501,26.567375,"medical"],[107.974368,26.567394,"medical"],[107.973554,26.567534,"medical"],[107.971645,26.573353,"medical"],[107.97265,26.569409,"medical"],[107.981792,26.571453,"medical"],[107.974307,26.567732,"medical"],[107.968566,26.574418,"medical"],[107.98445,26.578454,"medical"],[107.971819,26.57218,"education"],[107.977963,26.569651,"education"],[107.980327,26.574813,"education"],[107.975882,26.569041,"education"],[107.980639,26.574535,"education"],[107.980542,26.574912,"education"],[107.981363,26.574521,"education"],[107.972579,26.568159,"education"],[107.981033,26.568863,"education"],[107.982841,26.569925,"education"],[107.982393,26.577581,"education"],[107.98291,26.569804,"education"],[107.970455,26.567802,"education"],[107.98398,26.577484,"education"],[107.985136,26.57584,"education"],[107.985625,26.574782,"education"],[107.98431,26.579282,"education"],[107.976427,26.568734,"education"],[107.976484,26.573432,"shopping"],[107.977376,26.573251,"shopping"],[107.97301,26.573393,"shopping"],[107.97456,26.571048,"shopping"],[107.97705,26.575896,"shopping"],[107.977293,26.576825,"shopping"],[107.979231,26.57096,"shopping"],[107.973949,26.568983,"shopping"],[107.969948,26.573505,"shopping"],[107.981349,26.575411,"shopping"],[107.974783,26.56729,"shopping"],[107.980301,26.578157,"shopping"],[107.976987,26.567209,"shopping"],[107.968632,26.574526,"shopping"],[107.972178,26.567477,"shopping"],[107.983377,26.570813,"shopping"],[107.983443,26.57673,"shopping"],[107.967079,26.573074,"shopping"],[107.984603,26.575299,"shopping"],[107.982178,26.579413,"shopping"],[107.984577,26.577005,"shopping"],[107.984081,26.579203,"shopping"],[107.982534,26.581249,"shopping"],[107.976175,26.572274,"shopping"],[107.977247,26.575305,"shopping"],[107.97657,26.5692,"shopping"],[107.974842,26.569191,"shopping"],[107.974536,26.568811,"shopping"],[107.98077,26.575024,"shopping"],[107.974911,26.567675,"shopping"],[107.982529,26.572141,"shopping"],[107.97431,26.565769,"shopping"],[107.984284,26.577328,"shopping"],[107.984418,26.577163,"shopping"],[107.975224,26.571481,"finance"],[107.973566,26.573454,"finance"],[107.974217,26.569753,"finance"],[107.974155,26.56939,"finance"],[107.982106,26.571868,"finance"],[107.969034,26.572966,"finance"],[107.982768,26.575858,"finance"],[107.981496,26.578865,"finance"],[107.98428,26.576524,"finance"],[107.982914,26.579079,"finance"],[107.983177,26.579163,"finance"],[107.985547,26.578624,"finance"],[107.970091,26.568115,"recreation"],[107.985871,26.574272,"recreation"],[107.973669,26.572237,"recreation"],[107.974362,26.570544,"recreation"],[107.968134,26.574513,"recreation"],[107.983212,26.570616,"recreation"],[107.983261,26.569869,"recreation"],[107.984606,26.572575,"recreation"],[107.984309,26.576943,"recreation"],[107.98453,26.57816,"recreation"],[107.986105,26.572389,"recreation"],[107.975759,26.566366,"service"],[107.968742,26.56774,"service"],[107.985261,26.570781,"service"],[107.985381,26.579417,"service"],[107.981418,26.576615,"service"],[107.982124,26.578936,"service"]],"catColor":{"market":"#C2642E","medical":"#E0483F","education":"#2F7FBF","shopping":"#8A6BD1","elderly":"#C09A2E","finance":"#5F8A6A","recreation":"#2FA09A","service":"#7C6670"},"blindPolygon":[[107.97187645611318,26.566381862758863],[107.97334778507074,26.566820496336433],[107.9738382280566,26.568136397069146],[107.9738382280566,26.56989093137943],[107.97334778507074,26.571206832112143],[107.97236689909904,26.572084099267286],[107.97187645611318,26.5734],[107.97138601312733,26.574715900732713],[107.97040512715563,26.574715900732713],[107.96991468416978,26.5734],[107.96991468416978,26.571645465689716],[107.96991468416978,26.56989093137943],[107.96991468416978,26.568136397069146],[107.97040512715563,26.566820496336433],[107.97187645611318,26.566381862758863]],"iso15":1.562,"sevCounts":{"heavy":0,"medium":0,"light":1},"fixPlus":"data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2218%22%20height%3D%2218%22%20viewBox%3D%220%200%2018%2018%22%3E%3Ccircle%20cx%3D%229%22%20cy%3D%229%22%20r%3D%228%22%20fill%3D%22rgba(31%2C158%2C99%2C0.16)%22%20stroke%3D%22%231f9e63%22%20stroke-width%3D%221.5%22%2F%3E%3Cpath%20d%3D%22M9%205%20V13%20M5%209%20H13%22%20stroke%3D%22%23ffffff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M9%205%20V13%20M5%209%20H13%22%20stroke%3D%22%231f9e63%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%2F%3E%3C%2Fsvg%3E","evidenceDiscs":5,"rulerLabel":"以格心为圆心、半径 1000m 的圆","sceneName":"凯里老街","sceneCity":"黔东南苗族侗族自治州","total":68.4,"originLabel":"真实数据","originDetail":"实时百度路网测时（live）","radar":{"viewBox":"0 0 242 215","width":242,"fontSize":11,"rings":["120.99,86.56 138.26,93.71 145.41,110.98 138.26,128.25 120.99,135.4 103.72,128.25 96.57,110.98 103.72,93.71","120.99,62.14 155.53,76.44 169.83,110.98 155.53,145.52 120.99,159.82 86.45,145.52 72.15,110.98 86.45,76.44","120.99,36.98 173.32,58.65 194.99,110.98 173.32,163.31 120.99,184.98 68.66,163.31 46.99,110.98 68.66,58.65"],"spokes":[{"x1":120.99,"y1":110.98,"x2":120.99,"y2":36.98},{"x1":120.99,"y1":110.98,"x2":173.32,"y2":58.65},{"x1":120.99,"y1":110.98,"x2":194.99,"y2":110.98},{"x1":120.99,"y1":110.98,"x2":173.32,"y2":163.31},{"x1":120.99,"y1":110.98,"x2":120.99,"y2":184.98},{"x1":120.99,"y1":110.98,"x2":68.66,"y2":163.31},{"x1":120.99,"y1":110.98,"x2":46.99,"y2":110.98},{"x1":120.99,"y1":110.98,"x2":68.66,"y2":58.65}],"dataPoints":"120.99,45.19 169.65,62.32 186.55,110.98 171.75,161.74 120.99,110.98 73.53,158.44 54.91,110.98 79.6,69.59","labels":[{"text":"菜市场","x":120.99,"y":17.99,"anchor":"middle","bbox":[104.49,6,137.49,22.06]},{"text":"医疗","x":186.74,"y":45.23,"anchor":"start","bbox":[186.74,33.24,208.74,49.3]},{"text":"教育","x":213.98,"y":110.98,"anchor":"start","bbox":[213.98,98.99,235.98,115.05]},{"text":"购物","x":186.74,"y":176.73,"anchor":"start","bbox":[186.74,164.74,208.74,180.8]},{"text":"养老","x":120.99,"y":203.97,"anchor":"middle","bbox":[109.99,191.98,131.99,208.04]},{"text":"金融","x":55.24,"y":176.73,"anchor":"end","bbox":[33.24,164.74,55.24,180.8]},{"text":"文体","x":28,"y":110.98,"anchor":"end","bbox":[6,98.99,28,115.05]},{"text":"政务","x":55.24,"y":45.23,"anchor":"end","bbox":[33.24,33.24,55.24,49.3]}]},"poiLabel":"采集 194 · 圈内 108 · 已展示 108","samplingLabel":"采样 1049 个（≤20 分钟内可达 126）","isoAreaLabel":"1.56 km²","blindLabel":"1 处","coverageBrief":"可达区 72 格中仅判 66 格，6 格数据不足未判","badge":"证据面不足 · 覆盖率 92%","calSpeed":"80 m/min","calDetour":"×1.3","calRadius":"2500 m","calIso":"5min / 10min / 15min / 20min","calBasis":"商务部 2021《城市一刻钟便民生活圈建设意见》「步行约15分钟的服务半径」；《城市规划》2022.5 实测步行 15min ≈ 0.8–1.2km","triads":[{"facility":"菜市场","covered":true,"nearest_name":"私宴","nearest_minutes":7.4},{"facility":"药店","covered":true,"nearest_name":"惠康大药房","nearest_minutes":6.6},{"facility":"小学","covered":true,"nearest_name":"凯里市第十三小学","nearest_minutes":9.3}],"ledger":{"n":15,"step":195,"radius":1000,"counts":{"outside":153,"clear":58,"unknown":6,"capped":0,"blind":8}},"ledgerGrid":["outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","unknown","clear","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","clear","clear","clear","outside","outside","outside","outside","outside","clear","clear","clear","clear","clear","clear","clear","clear","clear","clear","clear","outside","outside","outside","outside","clear","clear","clear","clear","clear","clear","clear","clear","clear","clear","outside","outside","outside","clear","clear","clear","blind","clear","clear","clear","clear","clear","clear","clear","clear","outside","outside","outside","clear","clear","clear","blind","clear","clear","clear","clear","clear","clear","clear","clear","outside","outside","outside","outside","outside","clear","blind","blind","clear","clear","clear","clear","clear","clear","outside","outside","outside","outside","outside","outside","unknown","blind","blind","clear","clear","clear","clear","outside","outside","outside","outside","outside","outside","outside","outside","outside","blind","blind","unknown","unknown","unknown","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","unknown","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside","outside"],"blind":[{"id":"盲区 凯里老街-1","coord":"107.9707,26.5692","missing":"小学","sev":"light","gap":0.262,"walk":13.4,"residents":839,"sites":14,"fixFacility":"小学","fixStrategy":"移动点/改道补充","fixPriority":1}]};
+
+const CAT_ZH = { market:'菜市场', medical:'医疗', education:'教育', shopping:'购物', elderly:'养老', finance:'金融', recreation:'文体', service:'政务/服务' };
+const SEV = { heavy:{dot:'#d64545',stroke:'#d64545',label:'重度'}, medium:{dot:'#e89a3c',stroke:'#e89a3c',label:'中度'}, light:{dot:'#d9bd3a',stroke:'#d9bd3a',label:'轻度'} };
+const SEV_ORDER = ['heavy','medium','light'];
+
+/* ── 地图占位（真实点位投影） ─────────────────────────────── */
+function mapCanvas(){
+  const [clng, clt] = LC.center;
+  const pxPerM = 0.157, mPerLng = 99300, mPerLat = 111000;
+  const dots = LC.points.map(([lng, lat, cat]) => {
+    const x = 50 + ((lng - clng) * mPerLng * pxPerM) / LC.boxW * 100;
+    const y = 50 - ((lat - clt) * mPerLat * pxPerM) / LC.boxH * 100;
+    if (x < 1 || x > 99 || y < 1 || y > 99) return '';
+    return `<span class="poidot" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;background:${LC.catColor[cat]}"></span>`;
+  }).join('');
+  const poly = LC.blindPolygon.map(([lng, lat]) => [
+    ((lng - clng) * mPerLng * pxPerM) / LC.boxW * 100,
+    50 - ((lat - clt) * mPerLat * pxPerM) / LC.boxH * 100
+  ]);
+  const vb = '0 0 100 100';
+  const pts = poly.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+  return `<div class="mapbody">
+    <div class="ring r5"></div><div class="ring r10"></div><div class="ring r15"></div><div class="ring r20"></div>
+    <div class="ringlbl" style="top:calc(50% - 178px)">5min</div>
+    <div class="ringlbl" style="top:calc(50% - 122px)">10min</div>
+    <div class="ringlbl" style="top:calc(50% - 70px)">15min · ${LC.isoAreaLabel}</div>
+    <div class="ringlbl" style="top:calc(50% + 178px)">20min</div>
+    ${dots}
+    <svg class="blindpoly" viewBox="${vb}" preserveAspectRatio="none"><polygon points="${pts}" fill="rgba(227,200,79,.33)" stroke="#d9bd3a" stroke-width="0.4"/></svg>
+    <div class="mapbadge"><span title="${LC.originDetail}">${LC.originLabel} · 预览占位（非 BMapGL 图层）</span></div>
+    <div class="hintchip">点击画布任意位置设定新中心点</div>
+  </div>`;
+}
+
+/* ── 图例（内容逐条来自 LifeCirclePage.tsx:700-774） ──────── */
+function legendInner(){
+  const cats = Object.entries(LC.catColor).map(([k, v]) =>
+    `<span class="row"><span class="dot" style="background:${v}"></span>${CAT_ZH[k] ?? k}</span>`).join('');
+  const sev = SEV_ORDER.map(s => {
+    const n = LC.sevCounts[s];
+    return `<span class="row"><span class="dot" style="background:${SEV[s].dot}"></span>${SEV[s].label}盲区 · 缺口≥0.6/0.33/其余${n > 0 ? `<span class="n" style="background:${SEV[s].dot}29">${n}</span>` : ''}</span>`;
+  }).join('');
+  return `
+    <button class="fold" type="button" title="预览用：方案 B 里图例可折叠">收起</button>
+    <div class="legend-body">
+      <span style="font-size:11px;font-weight:500;color:var(--c-ink-2)">图层</span>
+      ${cats}
+      <span class="row sep"><span class="dot" style="background:linear-gradient(135deg,#8fbfa2,#2c5a3f)"></span>采样点耗时热力（0→20min）</span>
+      ${sev}
+      <span class="row"><img src="${LC.fixPlus}" alt="" style="width:14px;height:14px;flex:none">补点处方（流动服务/改道/补建）</span>
+      <label><input type="checkbox"><span>证据域（查到哪儿）<span class="sub">${LC.evidenceDiscs} 盘 · 实线查全 / 虚线未查全</span></span></label>
+      <label><input type="checkbox"><span>判定尺（判一格用多大）<span class="sub">判盲问的是${LC.rulerLabel}，不是眼前这一小块</span></span></label>
+    </div>`;
+}
+function headInner(){
+  const cats = Object.entries(LC.catColor).map(([k, v]) =>
+    `<span class="row"><span class="dot" style="background:${v}"></span>${CAT_ZH[k] ?? k}</span>`).join('');
+  const sev = SEV_ORDER.map(s => {
+    const n = LC.sevCounts[s];
+    return `<span class="row"><span class="dot" style="background:${SEV[s].dot}"></span>${SEV[s].label}盲区${n > 0 ? `<span class="n" style="background:${SEV[s].dot}29">${n}</span>` : ''}</span>`;
+  }).join('');
+  return `<span class="hd">图层</span><div class="lg">${cats}
+      <span class="row"><span class="dot" style="background:linear-gradient(135deg,#8fbfa2,#2c5a3f)"></span>耗时热力（0→20min）</span>
+      ${sev}
+      <span class="row"><img src="${LC.fixPlus}" alt="" style="width:14px;height:14px">补点处方</span>
+      <span class="row"><span class="dot" style="background:var(--c-info)"></span>判定尺</span></div>
+    <span class="ck"><input type="checkbox"><span>证据域 <span class="sub">${LC.evidenceDiscs} 盘</span></span></span>
+    <span class="ck"><input type="checkbox"><span>判定尺 <span class="sub">${LC.rulerLabel}</span></span></span>`;
+}
+
+/* ── 右栏卡片（读数全部来自生产函数输出） ─────────────────── */
+const LEDGER_FILL = { outside:'transparent', clear:'#8FA8C0', unknown:'#E0B775', capped:'#C9A87C', blind:'#6E6E6E' };
+const LEDGER_OPACITY = { outside:0, clear:.34, unknown:.55, capped:.55, blind:.8 };
+function cellStyle(v){ return `background:${LEDGER_FILL[v]};opacity:${Math.max(LEDGER_OPACITY[v], .45)}` }
+function cardScore(){
+  const rings = LC.radar.rings.map(g => `<polygon points="${g}"/>`).join('');
+  const spokes = LC.radar.spokes.map(s => `<line x1="${s.x1}" y1="${s.y1}" x2="${s.x2}" y2="${s.y2}"/>`).join('');
+  const labels = LC.radar.labels.map(l => `<text x="${l.x}" y="${l.y}" text-anchor="${l.anchor}" font-size="${LC.radar.fontSize}" fill="#78807a">${l.text}</text>`).join('');
+  return `<div class="k">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between">
+      <div>
+        <div style="font-size:13px;font-weight:600">${LC.sceneName} · 生活圈体检单</div>
+        <div class="tag i3" style="margin-top:2px">${LC.sceneCity}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="serif" style="font-size:34px;font-weight:600;line-height:1;color:var(--c-primary)">${LC.total}</div>
+        <div class="tag i3" style="margin-top:4px">综合评分</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;border-top:1px solid var(--c-line);padding-top:12px">
+      <svg viewBox="${LC.radar.viewBox}" style="display:block;margin:0 auto;width:100%;max-width:${LC.radar.width}px;height:auto">
+        <g stroke="#d8dfda" fill="none" stroke-width="1">${rings}${spokes}</g>
+        <polygon points="${LC.radar.dataPoints}" fill="rgba(124,152,133,.40)" stroke="#5F7B69" stroke-width="2" stroke-linejoin="round"/>
+        ${labels}
+      </svg>
+    </div>
+  </div>`;
+}
+function statRows(){
+  const rows = [
+    ['POI 采集', LC.poiLabel], ['采样点', LC.samplingLabel],
+    ['15min 等时圈面积', LC.isoAreaLabel], ['服务盲区', LC.blindLabel],
+  ].map(([l, v]) => `<div class="stat"><span class="lab">${l}</span><span class="val">${v}</span></div>`).join('');
+  const cal = [
+    ['出行方式', '步行'], ['速度', LC.calSpeed], ['绕行系数', LC.calDetour],
+    ['研究半径', LC.calRadius], ['等时圈档位', LC.calIso],
+  ].map(([l, v]) => `<div class="stat"><span class="lab">${l}</span><span class="val">${v}</span></div>`).join('');
+  return `${rows}
+    <p class="tag ${LC.badge ? 'i2' : 'i3'}" style="margin-top:4px;color:${LC.badge ? 'var(--c-warn)' : 'inherit'};font-weight:${LC.badge ? 500 : 400}">
+      ${LC.coverageBrief}${LC.badge ? `<span class="badge-warn">${LC.badge}</span>` : ''}</p>
+    <div style="margin-top:12px;border-top:1px solid var(--c-line);padding-top:12px">
+      <div class="tag i2" style="margin-bottom:8px;font-weight:500">测算口径</div>${cal}
+      <div class="tag i3" style="margin-top:8px;line-height:1.6">${LC.calBasis}</div>
+      <div class="tag i3" style="margin-top:4px;display:flex;align-items:center;gap:6px"><span class="dot" style="width:8px;height:8px;background:var(--c-ok)"></span>实测数据</div>
+    </div>
+    <button class="btn">查看体检报告</button>`;
+}
+function tiles(){
+  const mk = (l, v) => `<div class="tile"><div class="tl">${l}</div><div class="tv">${v}</div></div>`;
+  return `<div class="tiles">${mk('POI 采集', LC.poiLabel)}${mk('采样点', LC.samplingLabel)}${mk('15min 等时圈', LC.isoAreaLabel)}${mk('服务盲区', LC.blindLabel)}</div>
+    <p class="tag i2" style="margin-top:8px;color:var(--c-warn);font-weight:500">${LC.coverageBrief}${LC.badge ? `<span class="badge-warn">${LC.badge}</span>` : ''}</p>
+    <div style="margin-top:12px;border-top:1px solid var(--c-line);padding-top:12px">
+      <div class="tag i2" style="margin-bottom:8px;font-weight:500">测算口径</div>
+      <div class="tiles">${mk('出行方式', '步行')}${mk('速度', LC.calSpeed)}${mk('绕行系数', LC.calDetour)}${mk('研究半径', LC.calRadius)}${mk('等时圈档位', LC.calIso)}</div>
+      <div class="tag i3" style="margin-top:8px;line-height:1.6">${LC.calBasis}</div>
+    </div>
+    <button class="btn">查看体检报告</button>`;
+}
+function cardTriad(mode){
+  const chips = LC.triads.map(t =>
+    `<span class="chip ok"><span class="dot" style="background:var(--c-ok)"></span>${t.facility} · 最近 ${t.nearest_minutes}min</span>`).join('');
+  return `<div class="k">
+    <div class="khead">必备设施三要素</div>
+    <div class="chips">${chips}</div>${mode === 'tile' ? tiles() : statRows()}</div>`;
+}
+function ledgerBody(){
+  const cells = LC.ledgerGrid.map(v => `<span class="cell" style="${cellStyle(v)}"></span>`).join('');
+  return `<div class="khead" style="display:flex;align-items:baseline;justify-content:space-between">逐格台账
+      <span class="tag i3">${LC.ledger.n}×${LC.ledger.n} 格 · 格距 ${LC.ledger.step}m · 尺 ${LC.ledger.radius}m</span></div>
+    <div class="grid15">${cells}</div>
+    <div class="tag i3" style="display:flex;gap:8px;justify-content:center;margin-top:8px">
+      <span style="display:flex;align-items:center;gap:4px"><span class="cell" style="${cellStyle('blind')}"></span>判盲 ${LC.ledger.counts.blind}</span>
+      <span style="display:flex;align-items:center;gap:4px"><span class="cell" style="${cellStyle('clear')}"></span>不盲 ${LC.ledger.counts.clear}</span>
+      <span style="display:flex;align-items:center;gap:4px"><span class="cell" style="${cellStyle('unknown')}"></span>未定 ${LC.ledger.counts.unknown}</span></div>
+    <p class="tag i3" style="margin-top:12px;border-top:1px solid var(--c-line);padding-top:8px">
+      点上面任意一格看它的判定依据；开着「判定尺」时也可以直接在地图上点一块。</p>`;
+}
+function cardLedger(mode){
+  if (mode === 'fold') return `<details class="fold-led"><summary>
+      <span class="khead">逐格台账</span><span class="tag i3">${LC.ledger.n}×${LC.ledger.n} 格 · 已收起</span></summary>
+      <div style="padding:0 16px 16px">${ledgerBody().replace(/<div class="khead"[\s\S]*?<\/div>/, '')}</div></details>`;
+  return `<div class="k">${ledgerBody()}</div>`;
+}
+function cardBlind(mode){
+  const b = LC.blind[0];
+  const one = `<div class="bs">
+      <div class="r1"><span class="t"><span class="dot" style="background:${SEV[b.sev].dot}"></span>${b.id}</span><span class="tag i3">${b.coord}</span></div>
+      <div class="d">缺失：${b.missing} · <span style="color:${SEV[b.sev].stroke}">${SEV[b.sev].label}</span> · 缺口 ${b.gap}</div>
+      <div class="d">最近替代步行 ${b.walk}min（实测等时圈）</div>
+      <div class="d">受估 ${b.residents} 人 · 采样 ${b.sites} 点</div>
+      <div class="fixline">建议补${b.fixFacility} · ${b.fixStrategy} · P${b.fixPriority}</div></div>`;
+  const extra = mode === 'fold'
+    ? `<p class="tag i3" style="margin-top:8px">本样例只有 1 处盲区，Top-N 折叠在真实多盲区场景才显出差别（重度 0 / 中度 0 / 轻度 1）。</p>`
+    : '';
+  return `<div class="k">
+    <div class="khead" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid var(--c-warn)"></span>
+      服务盲区清单${mode === 'fold' ? '<span class="tag i3" style="margin-left:auto">Top 3 · 查看全部 1 处 →</span>' : ''}</div>
+    <div style="display:flex;flex-direction:column;gap:8px">${one}${extra}</div></div>`;
+}
+
+/* ── 四屏装配 ─────────────────────────────────────────────── */
+function asideHTML(mode){
+  const tile = mode === 'tile' || mode === 'scroll';
+  const fold = tile;   // tile 网格与台账/盲区折叠是一组压缩手法，对比屏里同进同出
+  return `<aside class="aside${mode === 'scroll' ? ' scr' : ''}">
+    ${cardScore()}${cardTriad(tile ? 'tile' : 'row')}${cardLedger(fold ? 'fold' : 'plain')}${cardBlind(fold ? 'fold' : 'plain')}</aside>`;
+}
+function noteCard(title, items, cost){
+  return `<details class="notecard" open><summary>${title}</summary><ul>${items.map(i => `<li>${i}</li>`).join('')}</ul>
+    <div class="cost">本屏代价：${cost}</div></details>`;
+}
+
+const LEGEND_HL = '<span class="hlk">改②图例</span>';
+const MAP_HL = '<span class="hlk">改①地图高度</span>';
+const KPI_HL = '<span class="hlk">改③KPI</span>';
+
+const PANES = [
+  { // 现状
+    label: '① 现状',
+    css: '',
+    map: `<div class="mapcell">${mapCanvas()}<div class="legend">${legendInner()}</div></div>`,
+    aside: asideHTML('row'),
+    note: ['实测（排版宽度 1440、可视高 900）：地图框 <b>1627px</b>，与右栏 <b>1627px</b> 分毫不差 —— 坐实了「grid 默认 <code>align-items:stretch</code>，右栏多长地图就多长」。',
+           '图例（浮层，554px 高）在页顶时偏移 89px 可见；<b>滚到底偏移 −738px，整块出屏</b>，正是你说的「下滑就看不到左上角图例」。',
+           '右栏 9 条行式读数 + 逐格台账 15×15 + 盲区清单纵向堆叠，是撑高地图的唯一原因。',
+           '点右上角「滚到页底测图例 ↓」自己复现一次，再切后四屏对比。'],
+    cost: '这两个问题本身'
+  },
+  { // A′
+    label: '② A′ 定高 + 卡头图例',
+    css: '',
+    map: `<div class="hl mapwrap"><div class="maphead">${LEGEND_HL}${headInner()}</div><div class="mapbody-box hl">${MAP_HL}${mapCanvas()}</div></div>`,
+    aside: asideHTML('row'),
+    note: ['实测（1440×900）：地图由 <b>1627px → 647px</b>（卡体 560 + 卡头 85）。<code>align-self:flex-start</code> + 卡体定高确实切断了 stretch 传导（沿用 <code>ComparePage.tsx:341</code> 的确定高度先例）。',
+           '图例移进卡头后压到 85px 高，<code>.BMap_mask z-index:9</code> 那套抬层约束消失。',
+           '⚠ 但<b>本屏滚到底时图例仍不在视野内</b>（实测卡头偏移 −750px）：地图不再被撑长，可整页还在滚，地图整块（连卡头一起）照样上移出屏。',
+           '⇒ 结论：<b>「定高」单独用不满足你的第 1 条需求</b>，必须叠 ④ 的粘性或 ③ 的独立滚动。这一屏留着是为了让你看清这一点。'],
+    cost: '只治「地图过长」，不治「下滑看不到图例」'
+  },
+  { // B
+    label: '③ B 视口自适应 + 独立滚',
+    css: '.p2 .page{height:100%;overflow:hidden}.p2 .split{min-height:0}.p2 .mapcell{min-height:0;height:100%}' +
+         '.p2 .aside.scr{height:100%;overflow-y:auto;padding-right:4px}',
+    map: `<div class="hl mapcell">${MAP_HL}${mapCanvas()}<div class="legend"><button class="fold" type="button">收起</button>${legendInner().replace(/<button class="fold"[\s\S]*?<\/button>/, '')}</div></div>`,
+    aside: asideHTML('scroll'),
+    note: ['实测（1440×900）：<b>整页不再滚</b>（scrollHeight 900 = viewport 900），地图 800px 满屏高，右栏 <code>overflow-y:auto</code> 内部滚（可视 800 / 内容 1351）。',
+           '滚到底时图例勾选框<b>仍在视野内</b>（偏移恒定 89px）—— 图例与地图控件永不进滚动链，这是四屏里最强的一条保证。',
+           '代价：页根要包一层 <code>height:100%;overflow:hidden</code>（<code>AppLayout</code> 不动），两栏 <code>min-height:0</code>；且必须在 <code>LcMap</code> 补 <code>ResizeObserver</code> 通知 BMapGL 重绘 —— 仓库目前<b>没有</b>这条通道（全仓只有 <code>VWordCloud.tsx:37</code>、<code>ui/index.tsx:264</code> 用过）。',
+           'KPI 改 2 列 tile 网格（复用 <code>RecordStatsStrip.tsx:14</code> + <code>VStatCard surface="tile"</code> 手法），逐格台账折叠为 <code>details</code>，盲区清单 Top-N。'],
+    cost: '新增 LcMap resize 耦合；地图失去整页呼吸空间，矮视口会挤（本轮按约定不处理）'
+  },
+  { // C
+    label: '④ C 粘性跟随',
+    css: '.p3 .mapcell{align-self:start;position:sticky;top:16px;height:560px;min-height:0}',
+    map: `<div class="hl mapcell">${MAP_HL}<div class="legend">${LEGEND_HL}${legendInner()}</div>${mapCanvas()}</div>`,
+    aside: asideHTML('tile'),
+    note: ['实测（1440×900）：地图 <code>align-self:start</code> + <code>position:sticky;top:16px</code> 后，滚到底图例偏移从 89px 收到 <b>29px</b> 并停住 —— <b>粘性在 <code>&lt;main&gt; overflow-y-auto</code> 这条滚动链上确实生效</b>。',
+           '这一条修正了规划阶段的推断：当时按 CSS-Tricks 的说法担心「祖先 overflow 会废掉 sticky」。实测证据是 —— 会废掉的是<b>没配 <code>align-self:start</code></code> 的情况（格子被 stretch 撑满就没有可粘余量，①②屏正是这样），而不是 sticky 本身。',
+           '保留整页滚动的阅读习惯，右栏（含盲区清单）照常下滑。',
+           'KPI 同样改 2 列 tile 网格 + 逐格台账折叠 + 盲区 Top-N，便于与 ③⑤ 直接比较。'],
+    cost: '粘住的 560px 地图吃掉 62% 视口高；图例仍是 554px 高的浮层（占屏比 ⑤ 的卡头形态大得多）'
+  },
+  { // A′ + C 合体（推荐）
+    label: '⑤ A′+C 定高 + 粘性 + 卡头图例',
+    css: '.p4 .mapwrap{position:sticky;top:16px}',
+    map: `<div class="hl mapwrap">${MAP_HL}<div class="maphead">${LEGEND_HL}${headInner()}</div><div class="mapbody-box">${mapCanvas()}</div></div>`,
+    aside: asideHTML('tile'),
+    note: ['把 ② 的「定高 + 卡头图例」和 ④ 的「粘性」合起来：地图 647px（卡体 560 + 卡头 85），滚动时整块粘在 <code>top:16px</code>。',
+           '图例常驻且只占 85px 高（② 的紧凑卡头 + ④ 的常驻能力），同时消掉 <code>.BMap_mask</code> 的 <code>z-index</code> 抬层约束。',
+           '纯 CSS，不给 <code>LcMap</code> 加 resize 通道；右栏照常整页滚，长清单不受影响。',
+           'KPI：2 列 tile 网格 + 逐格台账 <code>details</code> 折叠 + 盲区 Top-N（与 ③④ 同一套）。',
+           '选型请重点看这一屏：它是五屏里唯一同时满足你两条抱怨、又不新增 JS 耦合的组合。'],
+    cost: '地图与卡头合计约 72% 视口高（可把卡体 560 再降到 480 换取呼吸）'
+  },
+];
+
+const stage = document.getElementById('stage');
+stage.innerHTML = PANES.map((p, i) => `<div class="${'pane p' + i}" data-i="${i}"${i ? ' hidden' : ''}>
+  <style>${p.css}</style>
+  <div class="shell"><aside class="vsb" title="VSidebar 占位">
+      <div class="logo">圈</div><div class="navi"></div><div class="navi dim"></div><div class="navi dim"></div><div class="navi dim"></div>
+    </aside>
+    <main><div class="page">
+      <div class="topbar">
+        <span class="pill on">${LC.sceneName}</span><span class="pill">北京·劲松</span><span class="pill">演示体检流水线</span><span class="pill">对比双样例 →</span><span class="pill">定位到我</span>
+        <span class="spacer" style="flex:1"></span><span class="origin" title="${LC.originDetail}">ⓘ ${LC.originLabel}</span>
+      </div>
+      <div class="split">${p.map}${p.aside}</div>
+    </div></main>
+    ${noteCard('预览注释 · ' + p.label + '（非产品 UI）', p.note, p.cost)}
+  </div></div>`).join('');
+
+let cur = 0;
+function show(i){
+  cur = i;
+  document.querySelectorAll('.pane').forEach(el => el.hidden = +el.dataset.i !== i);
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', +t.dataset.p === i));
+  document.querySelectorAll('.pane:not([hidden]) .hlk').forEach(el => el.style.display = hlOn ? '' : 'none');
+  document.querySelectorAll('.pane:not([hidden]) .hl').forEach(el => el.style.outline = hlOn ? '' : 'none');
+}
+let hlOn = true;
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => show(+t.dataset.p));
+document.getElementById('toggleHl').onclick = () => { hlOn = !hlOn; show(cur); };
+document.getElementById('toBottom').onclick = () => {
+  const m = document.querySelector('.pane:not([hidden]) main');
+  m.scroll({ top: m.scrollHeight, behavior: 'smooth' });
+};
+document.getElementById('toTop').onclick = () => document.querySelector('.pane:not([hidden]) main').scrollTo({ top: 0, behavior: 'smooth' });
+document.addEventListener('click', e => {
+  if (e.target.classList.contains('fold')) {
+    const lg = e.target.closest('.legend'); if (!lg) return;
+    lg.classList.toggle('mini-fold');
+    e.target.textContent = lg.classList.contains('mini-fold') ? '展开' : '收起';
+  }
+});
+</script>
+</body>
+</html>
