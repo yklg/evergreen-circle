@@ -455,6 +455,92 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 
 ---
 
+## 1.14 2.10 结案：Linux 阈值风险改成实测，并顺手量出一个真缺陷 2.11（2026-10-04）
+
+不 push、不在你机器上起 Docker，也能把"换 OS 会不会打碎阈值"变成实测：
+新增 `frontend/e2e/lifeCircleStageFontStress.spec.ts` —— **同一份判据**（阈值与 locator 的真源抽进
+`e2e/stageChecks.ts`，主守卫与压力档共用，漂不了）在六档度量下重跑。
+
+### 六档 × 两视口的读数（10 passed / 2 skipped，全部现打）
+
+| 档 | 地图格（720 档） | 图例高 | 折行标签 | 右栏超出 | 判据 |
+|---|---|---|---|---|---|
+| ① 基线 | 572 | 539.765625 | 6 行 | 826px | 绿 |
+| ② 拦掉全部 webfont | 572 | **539.765625（逐位相同）** | 6 行 | 826px | 绿 |
+| ③ rem 间距 1.25× | 561 | 592.15625 | 7 行 | — | **红（fixme）** |
+| ④ ②+③ | 561 | 592.15625 | 7 行 | — | **红（fixme）** |
+| ⑤ 字宽 +5% | 572 | **555.15625** | **7 行** | 874px | 绿，**余量只剩 4.8px** |
+| ⑥ 字宽 +8% | 572 | 555.15625 | 7 行 | 874px | 绿 |
+
+**结论**：地图格那条在六档里都 ≥ 视口 **79.4%**（判据下限 45%，余量 34.4pt），右栏余量 598–874px
+⇒ 换 OS 换不动这两条；**唯一脆的是图例浮层**，它没有高度上限。2.10 于是从"推断不会碎"变成
+"知道会红在哪一条、为什么红、还剩几像素"。
+
+### 本轮三处自我更正（都写进码里了，不只是这里）
+
+1. **③ 不是字体代理**。第一版把 `root font-size:20px` 当"比任何字体替换都狠"的代理，**错了**：
+   本仓字号 token 是 **px 定值**（`fontSize.tag = ['11px',{lineHeight:'1.4'}]` ⇒ 行高恒 15.4px 与字体无关），
+   换 CJK 字体只动**字面宽度**，后果只有一条路径 —— **某行标签折行**（+15.4px/行）。
+   所以补了 ⑤⑥ 用 `letter-spacing` 直接顶这个面；③④ 保留，它钉的是另一条真实暴露面（浏览器缩放/紧凑间距）。
+2. **正对照写成了硬依赖网络**。`document.fonts.size > 0` 被写成断言后，这台机器连不上
+   fonts CDN 的这段时间里 5 条压力档全红在"基线档 CSS 没到"上 —— **红的是网络，不是布局**。
+   改成：只有"拦住了"（`=== 0`，route abort 与网络无关）可以硬断言；基线档**只记录**，
+   `fontFaces=0` 时该档自动等价于 ②，日志里明写"CSS 没到 ⇒ 本档等价②"。
+   顺带一条同类事实：**断网时 CLS 那条是空跑**（没有换面可测），它的强度取决于跑的人能否取到 webfont。
+3. **`document.fonts.check()` 的语义与直觉相反**，第一版探针用它判断"webfont 有没有被拦住"，
+   结果正好反：CSS 被拦 ⇒ 没有 `@font-face` ⇒ check() 转去问系统有没有这族（macOS 装了）⇒ 返回 true。
+   换成 `document.fonts.size`（= `@font-face` 条数），量的才是要控制的开关。
+
+### 新发现的真缺陷 2.11（已按纪律 `test.fixme`，不留假绿）
+
+**图例浮层高度无界**：`LcStage.Legend` 是 `absolute left-3 top-3` + 内容自然高。
+720 档基线余量 **20.2px**；字宽 +5% 折出一行 ⇒ 余量 **4.8px**；rem 间距 1.25× ⇒ 图例
+`171.0 + 592.2 = 763.2` vs main 下沿 `720` ⇒ **溢出 43.2px**（这一档 fixme 钉住）。
+它同时就是 §1.11 里那条"1280×720 图例占屏 73%"未决问题的量化答案。
+修复候选与逐屏对比见预览 **`skip/preview-lc-legend-fit.html`**（1:1 尺寸，图例高度直接钉 e2e 实测数；
+已用 Playwright 渲染核对过五屏几何：① 539.8/② 555.2/③ 溢出 44.2/④ 框 546 且 `scrolls=true` + 勾选 `sticky`/⑤ 折起 143）。
+
+---
+
+## 1.15 2.11 按方案 A 落地：图例高度改挂同源容器（2026-10-04）
+
+你拍的是 **A**。落点三处，全部走契约单一来源，页面不留字面量副本：
+
+| 文件 | 改动 |
+|---|---|
+| `stageContract.ts` `LC_LEGEND` | 加 `overflow-y-auto` + **`lg:max-h-[calc(100%-1.5rem)]`**（顶 12 + 底 12）⇒ 高度由**地图格**决定，与字体度量解耦 |
+| `stageContract.ts` `LC_LEGEND_JUDGE`（新） | `sticky bottom-0 -mx-3 -mb-3 … border-t bg-card/95` ⇒ 图例内滚之后 S3 那条「勾选常在」才成立（否则勾一次判定尺要先滚到底） |
+| `LifeCirclePage.tsx` | 两个判读 `<label>` 收进 `<div className={LC_LEGEND_JUDGE}>`；证据域那条的分割线从 `border-t` 改成 `border-b`（**没有尺**时不会留一条孤线） |
+
+**版式有一处真实变化，说清**：两个勾选之间那条分隔线挪到了证据域下方（原来各带一条 `border-t`），
+折叠语义、勾选位置、文案一字未动。
+
+### 判据侧同步做了三件事
+
+1. **新增一条同源正判据**（`e2e/stageChecks.ts`）：图例底边**不许越出地图格**。
+   它与"图例不许出 main 视野"不同 —— 是**同源比较**，与字体无关，越界只有"max-h 失效"一种解释。
+2. **TC-18 从五串扩到六串**，判据里的字面量副本同步更新（这条守卫本来就是"契约改了必须红"）。
+3. **结构基线重采**，并把采集口做进测试：`LC_STAGE_CAPTURE=1 npx vitest run src/__tests__/lcStageStructure.test.tsx`
+   —— 采集时**先打印结构差分再落盘**，"重采"从此是一次可见记账（上一轮只能靠临时脚本，那件事只有当时的人知道）。
+   本次差分恰 4 处：图例 class 一条 + 两个 `LABEL` 换成一层 `DIV`（`split/DIV[0]/DIV[14]`、`LABEL[15]` 少一子节点）。
+
+### 验收证据（都是跑出来的）
+
+- **两条 fixme 变成真通过**：修复前 720 档 ③④ 溢出 43.2px 只能 `test.fixme`；现在
+  ③ 图例 **503px**（cell 535）、⑤⑥ 图例 **546px** = `572 − 24` ⇒ **max-h 正在挡**（日志直接打"可视/内容"两值）。
+  全套 e2e **28 passed / 2 skipped / 0 failed**（53.8s；剩下 2 条 skip 只有 `lifeCircleRunning` 的 fixme）。
+- **变异测试**：把 `lg:max-h-[calc(100%-1.5rem)]` 从契约里摘掉 ⇒ 720 档 ③④ 立刻红，⑤⑥ 仍绿
+  （自然高 555.16 ≤ 572，与 §1.14 量的 4.8px 余量吻合）⇒ 新判据不是空判，且它挡的正是那条缺陷。
+  还原用 `cmp` 逐字节核对。
+- **jsdom 侧**：121 文件 / 1037 通过 + 1 todo；`tsc` 非 WIP 0 错；`eslint` 我碰过的文件 0 error。
+- **顺手还掉一点债**：`wordcloudLayout.ts` 两条 `prefer-const` 清掉，棘轮账本 **106 → 104**
+  （这是那条守卫第一次走通"还债 ⇒ 同笔改小账本"）。
+  另清掉 `LcMap.tsx:1167` 一条**失效的** `eslint-disable`（它是 warning，不计 errorCount —— 我一开始按 3 条记，被自己的账本抓回来改成 2 条）。
+  发货码剩下的 14 条分三类：`no-explicit-any` 4（要补类型）、`react-refresh/only-export-components` 3（要拆文件）、
+  `react-hooks/set-state-in-effect` 5 + `refs` 1（**行为问题**，不是风格问题，得单独一轮）。
+
+---
+
 ## 2. 待办（按顺序，逐项要证据）
 
 | # | 事项 | 完成判据 |
@@ -476,7 +562,8 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 | 2.7 ~~P2~~ **已完成** | `docs/ARCHITECTURE.md` §10 新增「页面滚动所有权与舞台契约」：三种滚动模型的适用面、契约唯一真源、三条硬规矩（高度不许由内容决定 / 尺寸跟随交给 SDK 且厂商 API 只认厂商运行时 / `z-10` 来由），并要求新页先自采结构基线 | 文档成文；末尾写明"没有渲染步时观察既不能证实也不能证伪，不得拿单元全绿冒充已验" |
 | 2.8 ~~待办~~ **已完成** | e2e 接入 CI：`.github/workflows/ci.yml` 新增独立 `e2e` job（`npm ci` → `playwright install --with-deps chromium` → `npm run test:e2e` → 失败时上传现场） | **独立成 job 的理由已写进 yml**：`frontend` job 在 `lint` 步就红，step 按序终止 ⇒ 塞进去的排版防线永远轮不到跑。CI 条件已本地复现（`VITE_PROXY_TARGET` 指死端口）：**exit=0 / 14 passed / 4 skipped**；Gitee 侧按它的约定在头部记明"有意不跟"的理由。两份 yml 用 pyyaml 解析校验过 |
 | 2.9 ~~未决~~ **已按推荐落地（存量未清）** | `npm run lint` 与 `npm run typecheck` 该不该继续当闸门 | ✅ 定性已更正并实测（干净 HEAD clone）：**typecheck 0 error**（本机那 8 条全来自你未跟踪的在制品），**lint 106 error** 才是 CI 里唯一长期红的一道。落法：lint 降为 `continue-on-error` 诊断（`ci.yml:62-64`），阻断权交给 vitest 里的**逐文件棘轮** `src/__tests__/lintRatchet.test.ts`(6 例) + `fixtures/lintRatchetBaseline.json`。双向变异实测都红、口径与 CI 对账一致、全套 121 文件 / 1037 例绿（15.0s→18.2s）。**剩下的不是闸门问题而是债**：存量 106 一条没清（探针 51 / 测试 39 / 发货码 16），要清就从发货码那 16 条起 |
-| 2.10 **首次真实 CI 跑完要回来看** | 阈值全部在 macOS Chromium 1.63 量得，CI 是 Linux Chromium，字体度量会变（§1.12 末估过余量，属推断非实测） | 看这 6 条的数：① / ② / ③ / ④ / 落定后不抖 / CLS。红了先按"换 OS 度量差异"归因并**收紧判据写法**（如把 45% 改成实测值的比例），不许先放松阈值蒙过去 |
+| 2.10 ~~待观察~~ **已改成实测（不用 push、不用 Docker）** | 阈值全部在 macOS Chromium 1.63 量得，CI 是 Linux Chromium，字体度量会变（§1.12 末估过余量，属推断非实测） | ✅ 结案见 §1.14：`e2e/lifeCircleStageFontStress.spec.ts` 六档度量 × 两视口重跑**同一份判据**（阈值真源抽进 `e2e/stageChecks.ts`，主守卫与压力档共用一份，漂不了）。地图格那条六档全 ≥ 视口 79.4%（下限 45%，余量 34.4pt）、右栏余量 598–874px ⇒ 换 OS 换不动这两条；**唯一脆的是图例浮层** ⇒ 转成 2.11 |
+| 2.11 ~~P1~~ **已按方案 A 落地（§1.15）** | **图例浮层高度无界**：`absolute left-3 top-3` + 内容自然高。720 档基线余量 20.2px，字宽 +5% 只剩 4.8px，rem 间距 1.25× 溢出 43.2px | ✅ `LC_LEGEND` 加 `overflow-y-auto` + `lg:max-h-[calc(100%-1.5rem)]`（挂地图格=视口同源），判读块收进新常量 `LC_LEGEND_JUDGE` 并 `sticky bottom-0`。e2e 新增**同源正判据**「图例不许越出地图格」；两条 fixme 变成真通过（③ 503px、⑤⑥ 恰好 546px=572−24 ⇒ max-h 在挡）；变异测试（摘掉 max-h ⇒ 720 档 ③④ 红）证明非空判。全套 e2e **28 passed / 2 skipped / 0 failed**，jsdom 121 文件 / 1037 例。结构基线已重采（差分 4 处，采集口 `LC_STAGE_CAPTURE=1` 已内建）；TC-18 扩到六串 |
 
 ---
 
@@ -487,6 +574,7 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 - 尺寸跟随 = `LcMap` 建图后那一行 `map.resize()`（SDK 内部 `_watchSize()`）。删掉这一行即回到"容器变高不重绘"的旧行为，**没有**其它残留（我们不自建 ResizeObserver，也没有观察器要卸载）。
 - CI 的 `e2e` job 是**纯增**：删掉那一个 job 块即回到原状，`backend/frontend/docker` 三个 job 与 `npm run test:e2e` 脚本本身都不依赖它（本地照跑）。Gitee 侧本就没跟，无需回滚。
 - `display=optional` 与 CLS 用例是**一对**，回滚要同时撤：只把 URL 改回 `swap` 会让「首屏零布局跳动」在 1280 档稳定红（实测 CLS=0.4584），那不是回归而是记账对了。若要保留跳动换回字体落地率，就得把判据改成显式阈值并在此处登记理由。
+- 图例收口（2.11 / 方案 A）的回滚点是**两个常量**：`stageContract.ts` 里删掉 `LC_LEGEND` 的 `lg:max-h-[calc(100%-1.5rem)] overflow-y-auto` 与整条 `LC_LEGEND_JUDGE` 即回到"内容决定浮层高度"。⚠ 同笔必须一起改三处判据，否则红的是记账：TC-18 六串（`lcLayoutContract.test.tsx` 里那份字面量副本）、结构基线（`LC_STAGE_CAPTURE=1` 重采）、e2e 那条同源正判据「图例不许越出地图格」（`e2e/stageChecks.ts`）。
 
 ## 4. 本轮明确不做
 

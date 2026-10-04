@@ -266,6 +266,19 @@ DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）�
    凭类型包判"不存在"曾让我们撤掉一条真修复。
 3. **图例浮层的 `z-10` 不是装饰。** 百度 GL 往容器注入 `.BMap_mask`（`z-index:9; pointer-events:auto`），
    压在它上面的浮层点不动；真机实测过 `elementFromPoint` 返回的是 mask。
+4. **浮层的高度同样不许由内容决定**（第 1 条的浮层版）。体检台图例原先就是违例 ——
+   1280×720 基线余量仅 20.2px，字宽 +5% 剩 4.8px，rem 间距 1.25× 溢出 main 下沿 43.2px（台账 2.11）。
+   现已收口：`LC_LEGEND` 带 `overflow-y-auto` + `lg:max-h-[calc(100%-1.5rem)]`（挂在**地图格**上=与视口同源），
+   判读勾选块 `LC_LEGEND_JUDGE` 用 `sticky bottom-0` 兑现"内滚之后仍然勾选常在"。
+   e2e 里对应的正判据是**同源比较**（图例底边不许越出地图格），因此与字体度量无关；
+   摘掉 `max-h` 会让 720 档两档压力试验立刻红（变异测过）。
+
+**换字体到底会动什么**（2026-10-04 六档压力实测的结论，写下来免得每次重新猜）：本仓字号 token 是
+**px 定值**（`fontSize.tag = ['11px',{lineHeight:'1.4'}]`），所以换 CJK 字体**不动行高**，
+只动字面宽度 ⇒ 唯一路径是**某行标签折行**（+15.4px/行）。因此"CI 换 Linux 会不会打碎像素阈值"
+的正确压力代理是 `letter-spacing`，不是 `root font-size`（后者放大的是 rem 间距，是另一条暴露面）。
+判据本身要写成与同源量的相对关系，且**网络连通性不许进断言**（`document.fonts.size > 0` 当断言时，
+连不上 CDN 会把 5 条几何档全红成"功能回归"）。
 
 新增同类"地图 + 侧栏"页时：套 `LcStage`，**并先给自己采一份结构基线**
 （手法见 `__tests__/lcStageStructure.test.tsx` 文件头——它把"有没有多包一层"变成树形等式，
