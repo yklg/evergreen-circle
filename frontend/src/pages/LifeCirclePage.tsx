@@ -35,7 +35,8 @@ import { useTaskRegistry } from '../store/taskRegistry'
 import LcMap from '../components/lifecircle/LcMap'
 import CellsLedgerCard from '../components/lifecircle/CellsLedgerCard'
 import RegionSelector from '../components/lifecircle/RegionSelector'
-import { LC_ASIDE, LC_LEGEND, LC_MAP_CELL, LC_PAGE_ROOT, LC_SPLIT } from '../components/lifecircle/stageContract'
+import { LC_PAGE_ROOT } from '../components/lifecircle/stageContract'
+import LcStage from '../components/lifecircle/LcStage'
 import { VStatLine } from '../components/ui'
 import type { LcMapHandle, LcMapMode, LcBlindSev } from '../components/lifecircle/LcMap'
 import type {
@@ -668,9 +669,9 @@ export default function LifeCirclePage() {
         </div>
       )}
 
-      <div className={LC_SPLIT}>
+      <LcStage>
         {/* 地图画布：BMapGL 真实地图（LcMap），无 AK/离线自动降级静态画布 */}
-        <div className={LC_MAP_CELL}>
+        <LcStage.Canvas>
           <LcMap
             ref={lcMapRef}
             report={report}
@@ -695,7 +696,7 @@ export default function LifeCirclePage() {
               （看不见也点不着，无人察觉），片 5 往里放了**第一个可交互控件**（证据域勾选）后，
               真机上 `elementFromPoint(勾选框中心)` 返回的是 `BMap_mask` —— 点击被地图吃掉。
               抬到 10（> mask 的 9）之后同一判据返回 INPUT，真指针点击成功。 */}
-          <div className={LC_LEGEND}>
+          <LcStage.Legend>
             <div className="flex items-center justify-between gap-2">
               <span className="text-tag font-medium text-ink-2">图层</span>
               {/* 图例浮层是全屏常驻最高的那块（约 554px），地图改视口高度后它会吃掉半屏 ——
@@ -786,7 +787,7 @@ export default function LifeCirclePage() {
                 </span>
               </label>
             )}
-          </div>
+          </LcStage.Legend>
 
           {dragging ? (
             <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-chip border border-line bg-card/95 px-4 py-2 shadow-card backdrop-blur">
@@ -815,10 +816,10 @@ export default function LifeCirclePage() {
               {mapMode === 'live' ? '拖拽地图中心标记设定新中心点' : '点击画布任意位置设定新中心点'}
             </div>
           )}
-        </div>
+        </LcStage.Canvas>
 
         {/* 体检单右栏：大屏下自己滚，地图与图例因此永不进滚动链 */}
-        <aside className={LC_ASIDE}>
+        <LcStage.Panel>
           <div className="rounded-card border border-line bg-card p-4 shadow-card">
             <div className="flex items-end justify-between">
               <div>
@@ -1015,8 +1016,8 @@ export default function LifeCirclePage() {
               </div>
             )}
           </div>
-        </aside>
-      </div>
+        </LcStage.Panel>
+      </LcStage>
 
       {/* A4 演示流水线 overlay：回放 SSE 事件流 */}
       {playing && (

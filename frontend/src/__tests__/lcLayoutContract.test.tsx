@@ -42,6 +42,7 @@ import type { LivingCircleReport } from '../types'
 
 const PAGE_SRC_FILE = join(process.cwd(), 'src', 'pages', 'LifeCirclePage.tsx')
 const CONTRACT_FILE = join(process.cwd(), 'src', 'components', 'lifecircle', 'stageContract.ts')
+const STAGE_FILE = join(process.cwd(), 'src', 'components', 'lifecircle', 'LcStage.tsx')
 const src = readFileSync(PAGE_SRC_FILE, 'utf8')
 const contract = readFileSync(CONTRACT_FILE, 'utf8')
 
@@ -104,12 +105,18 @@ describe('TC-18 · 舞台契约的 class 串逐字钉死（单一来源 = stageC
     exactlyOnce(contract, LEGEND, '图例浮层（`z-10` 必须压过 .BMap_mask 的 z-index:9）')
   })
 
-  it('页面消费常量，不许自己内联一份副本（那会有第二处真相）', () => {
-    for (const name of ['LC_PAGE_ROOT', 'LC_SPLIT', 'LC_MAP_CELL', 'LC_ASIDE', 'LC_LEGEND']) {
-      expect(src, `页面没有消费 ${name}`).toContain(`className={${name}}`)
+  it('常量由 LcStage 消费、页面只引 LC_PAGE_ROOT 与 <LcStage>，两处都不许内联副本', () => {
+    const stage = readFileSync(STAGE_FILE, 'utf8')
+    expect(stage).toContain("import { LC_ASIDE, LC_LEGEND, LC_MAP_CELL, LC_SPLIT } from './stageContract'")
+    for (const name of ['LC_SPLIT', 'LC_MAP_CELL', 'LC_LEGEND', 'LC_ASIDE']) {
+      expect(stage, `LcStage 没有消费 ${name}`).toContain(`className={${name}}`)
     }
+    expect(src).toContain('className={LC_PAGE_ROOT}')      // 页根仍归页面自己
+    expect(src).toContain('<LcStage')
+    // 两处都不许留字面量副本 —— 契约只有一个家
     for (const literal of [PAGE_ROOT, SPLIT, MAP_CELL, ASIDE, LEGEND]) {
       expect(src, '页面里出现了契约的字面量副本').not.toContain(literal)
+      expect(stage, 'LcStage 里出现了契约的字面量副本').not.toContain(literal)
     }
   })
 
