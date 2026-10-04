@@ -132,3 +132,8 @@ coverage/
 
 # ============== 本地脚本 / 一次性工具（非项目源码，禁止提交） ==============
 setup-github-sync.sh
+
+# ============== Playwright e2e 产物（本机运行结果，不入库） ==============
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
