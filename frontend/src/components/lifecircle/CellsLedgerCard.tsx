@@ -42,12 +42,15 @@ const cellXy = (led: CellsLedgerRaw, i: number, j: number): [number, number] => 
   Math.round(-led.scan_m + i * led.step_m),
 ]
 
-export default function CellsLedgerCard({ led, verdictAt, selected, onPick }: {
+export default function CellsLedgerCard({ led, verdictAt, selected, onPick, foldable }: {
   led: CellsLedgerRaw
   /** 取一格的读数。由页面用 `cellVerdict` 供给 —— 卡片不自己解字符。 */
   verdictAt: (i: number, j: number) => LedgerCellState | null
   selected: [number, number] | null
   onPick: (cell: [number, number] | null) => void
+  /** 体检台右栏（内部滚动）用：格阵 + 计数 + 读数收进 `<details>`，出厂折上。
+   *  格阵仍留在 DOM 里，`rect[data-cell]` 的判据不会因为折叠而空过。 */
+  foldable?: boolean
 }) {
   const n = led.n
   const side = 240
@@ -56,15 +59,15 @@ export default function CellsLedgerCard({ led, verdictAt, selected, onPick }: {
   const counts: Record<LedgerVerdict, number> = { outside: 0, clear: 0, unknown: 0, capped: 0, blind: 0 }
   for (let i = 0; i < n; i += 1) for (let j = 0; j < n; j += 1) counts[verdictAt(i, j)!.verdict] += 1
 
-  return (
-    <div className="rounded-card border border-line bg-card p-4 shadow-card">
-      <div className="flex items-baseline justify-between">
-        <div className="text-aux font-semibold text-ink">逐格台账</div>
-        <div className="text-tag text-ink-3">
-          {n}×{n} 格 · 格距 {Math.round(led.step_m)}m · 尺 {Math.round(led.radius_m)}m
-        </div>
+  const head = (
+    <div className="flex items-baseline justify-between">
+      <div className="text-aux font-semibold text-ink">逐格台账</div>
+      <div className="text-tag text-ink-3">
+        {n}×{n} 格 · 格距 {Math.round(led.step_m)}m · 尺 {Math.round(led.radius_m)}m
       </div>
-
+    </div>
+  )
+  const body = (<>
       <svg viewBox={`0 0 ${side} ${side}`} className="mt-2 w-full" role="img"
            aria-label="逐格判定台账格阵">
         {Array.from({ length: n * n }, (_, k) => {
@@ -150,6 +153,20 @@ export default function CellsLedgerCard({ led, verdictAt, selected, onPick }: {
           </p>
         </div>
       )}
-    </div>
+  </>)
+
+  if (!foldable) {
+    return (
+      <div className="rounded-card border border-line bg-card p-4 shadow-card">
+        {head}
+        {body}
+      </div>
+    )
+  }
+  return (
+    <details className="rounded-card border border-line bg-card shadow-card">
+      <summary className="list-none cursor-pointer p-4">{head}</summary>
+      <div className="px-4 pb-4">{body}</div>
+    </details>
   )
 }

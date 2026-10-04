@@ -89,16 +89,20 @@ interface TaskInput {
   coord_sys: CoordSys
 }
 
-function StatRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+/** 盲区清单默认只摊前 N 条：它是右栏里最高的那块，右栏内部滚之后没必要一次铺完。 */
+const BLIND_TOP_N = 3
+
+/** 读数面（2 列 tile 网格里的单格）。label/value 文本与原行式读数逐字相同，只是不再一行一条。
+ *  C8 图-面板联动仍在：悬停地图 15min 圈 → 本格高亮；inline style 避开 tailwind 调色板守卫风险，
+ *  手法与原行式面与图例计数徽标同款。 */
+function StatTile({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    // C8：图-面板联动（悬停地图 15min 圈 → 本行高亮）。inline style 避开 tailwind 调色板守卫风险，
-    // 手法与图例计数徽标的 color-mix 同款（:648 先例）。
     <div
-      className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0"
-      style={highlight ? { backgroundColor: 'color-mix(in srgb, #5F7B69 10%, transparent)', borderRadius: 6 } : undefined}
+      className="rounded-btn border border-line bg-bg p-2.5"
+      style={highlight ? { backgroundColor: 'color-mix(in srgb, #5F7B69 10%, transparent)' } : undefined}
     >
-      <span className="text-tag text-ink-3">{label}</span>
-      <span className="text-aux font-medium text-ink">{value}</span>
+      <div className="text-tag text-ink-3">{label}</div>
+      <div className="mt-0.5 text-[12px] font-medium leading-snug text-ink">{value}</div>
     </div>
   )
 }
@@ -125,6 +129,10 @@ export default function LifeCirclePage() {
   /** C1：判定尺图层开关（同样默认关）。它回答的是"判一格用的圆有多大"，
    *  与证据盘回答的"查到哪儿"是两件事，所以不合并成一个开关。 */
   const [judgeScaleOn, setJudgeScaleOn] = useState(false)
+  /** 图例浮层的收起态。默认展开 —— 色块与那两个勾选是判读入口，不该出厂就藏起来。 */
+  const [legendOpen, setLegendOpen] = useState(true)
+  /** 盲区清单「查看全部」的展开态（默认只摊前 BLIND_TOP_N 条） */
+  const [blindShowAll, setBlindShowAll] = useState(false)
   /** C5：选中的判定格 `(行, 列)`。卡片格阵与地图点击共用这一个状态。 */
   const [selectedCell, setSelectedCell] = useState<[number, number] | null>(null)
   const [locating, setLocating] = useState(false)
@@ -472,7 +480,7 @@ export default function LifeCirclePage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6">
+    <div className="mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6 lg:h-full lg:min-h-0 lg:overflow-hidden">
       {/* 顶栏：mock=场景切换 + 演示流水线；M3=真实「开始体检」CTA + 最新报告入口 */}
       {isFixture ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -637,7 +645,10 @@ export default function LifeCirclePage() {
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-btn bg-primary text-white">
             <Play size={15} />
           </span>
-          <div className="min-w-0 flex-1">
+          {/* 这块会**按取证轮次逐行增长**（`roundLines`），而大屏下页根已接管为定高 + 不滚：
+              不限高就会把地图格与右栏压向 0 高，且没有整页滚动可逃。故界加在**这一列**上，
+              左图标与右侧进度条留在原位，只有逐轮账在内部滚。 */}
+          <div className="min-w-0 flex-1 lg:max-h-[22vh] lg:overflow-y-auto">
             <div className="flex items-center gap-2 text-aux font-semibold text-ink">
               生活圈体检进行中 · {stageLabel(runStage)}
               <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
@@ -670,9 +681,9 @@ export default function LifeCirclePage() {
         </div>
       )}
 
-      <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid flex-1 grid-cols-1 gap-4 lg:min-h-0 lg:grid-cols-[1fr_320px] lg:grid-rows-[minmax(0,1fr)]">
         {/* 地图画布：BMapGL 真实地图（LcMap），无 AK/离线自动降级静态画布 */}
-        <div className="relative min-h-[480px] overflow-hidden rounded-card border border-line bg-card shadow-card">
+        <div className="relative min-h-[480px] overflow-hidden rounded-card border border-line bg-card shadow-card lg:h-full lg:min-h-0">
           <LcMap
             ref={lcMapRef}
             report={report}
@@ -698,7 +709,20 @@ export default function LifeCirclePage() {
               真机上 `elementFromPoint(勾选框中心)` 返回的是 `BMap_mask` —— 点击被地图吃掉。
               抬到 10（> mask 的 9）之后同一判据返回 INPUT，真指针点击成功。 */}
           <div className="absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur">
-            <span className="text-tag font-medium text-ink-2">图层</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-tag font-medium text-ink-2">图层</span>
+              {/* 图例浮层是全屏常驻最高的那块（约 554px），地图改视口高度后它会吃掉半屏 ——
+                  给一个折叠口。默认展开：色块与两个勾选是判读入口，不该藏起来。 */}
+              <button
+                onClick={() => setLegendOpen((v) => !v)}
+                title={legendOpen ? '收起图例' : '展开图例'}
+                className="rounded-chip border border-line bg-card px-1.5 text-tag text-ink-3 hover:bg-primary-tint"
+              >
+                {legendOpen ? '收起' : '展开'}
+              </button>
+            </div>
+            {legendOpen && (
+              <>
             {Object.entries(LC_CAT_COLOR).map(([k, v]) => (
               <span key={k} className="flex items-center gap-1.5 text-tag text-ink-3">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: v }} />
@@ -772,6 +796,8 @@ export default function LifeCirclePage() {
                 </span>
               </label>
             )}
+              </>
+            )}
           </div>
 
           {dragging ? (
@@ -803,8 +829,8 @@ export default function LifeCirclePage() {
           )}
         </div>
 
-        {/* 体检单右栏 */}
-        <aside className="flex flex-col gap-4">
+        {/* 体检单右栏：大屏下自己滚，地图与图例因此永不进滚动链 */}
+        <aside className="flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1">
           <div className="rounded-card border border-line bg-card p-4 shadow-card">
             <div className="flex items-end justify-between">
               <div>
@@ -856,15 +882,17 @@ export default function LifeCirclePage() {
             {/* 阶段 2.5：三段式「采集 · 圈内 · 已展示」，走 `poiMetricLabel` 单一实现。
                 旧文案 `N 个（圈内 M）` 与图上点数对不上账（面板数取 `poi.in_circle`、
                 图上点数取 `points.length`，两条链各算各的）。 */}
-            <StatRow label="POI 采集" value={poiMetricLabel(report)} />
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <StatTile label="POI 采集" value={poiMetricLabel(report)} />
+              <StatTile label="采样点" value={samplingReachLabel(report)} />
+              <StatTile label="15min 等时圈面积" value={`${(report.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`} highlight={isoHoverMinutes === 15} />
+              <StatTile label="服务盲区" value={`${report.blindspots.length} 处`} />
+            </div>
             {/* 阶段 1.8 读侧披露：历史报告里「面板数 ≠ 图上点数」时如实说明，
                 不让读者自己发现两处数字打架。新报告由装配层守恒保证，不会出现。 */}
             {poiConservationNote(report) && (
               <p className="mt-1 text-tag text-risk">{poiConservationNote(report)}</p>
             )}
-            <StatRow label="采样点" value={samplingReachLabel(report)} />
-            <StatRow label="15min 等时圈面积" value={`${(report.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0).toFixed(2)} km²`} highlight={isoHoverMinutes === 15} />
-            <StatRow label="服务盲区" value={`${report.blindspots.length} 处`} />
             {/* 阶段 −1.5：判盲覆盖度必须与盲区数同屏。只写「0 处」会被读成「全圈都没问题」，
                 实际 kaili 只有 9/72 格被判定过（87.5% 数据不足未判）。
                 rev2 · D-3：证据不足时综合评分已按覆盖率打折，脚注同时升为 warn 色并挂降档徽标
@@ -894,11 +922,13 @@ export default function LifeCirclePage() {
               <>
                 <div className="mt-3 border-t border-line pt-3">
                   <div className="mb-2 text-tag font-medium text-ink-2">测算口径</div>
-                  <StatRow label="出行方式" value={report.caliber.travel_mode === 'walking' ? '步行' : report.caliber.travel_mode === 'riding' ? '骑行' : report.caliber.travel_mode === 'driving' ? '驾车' : report.caliber.travel_mode} />
-                  <StatRow label="速度" value={`${report.caliber.speed_m_per_min} m/min`} />
-                  <StatRow label="绕行系数" value={`×${report.caliber.detour_k}`} />
-                  <StatRow label="研究半径" value={`${report.caliber.study_radius_m} m`} />
-                  <StatRow label="等时圈档位" value={report.caliber.iso_minutes.map(m => `${m}min`).join(' / ')} />
+                  <div className="grid grid-cols-2 gap-2">
+                    <StatTile label="出行方式" value={report.caliber.travel_mode === 'walking' ? '步行' : report.caliber.travel_mode === 'riding' ? '骑行' : report.caliber.travel_mode === 'driving' ? '驾车' : report.caliber.travel_mode} />
+                    <StatTile label="速度" value={`${report.caliber.speed_m_per_min} m/min`} />
+                    <StatTile label="绕行系数" value={`×${report.caliber.detour_k}`} />
+                    <StatTile label="研究半径" value={`${report.caliber.study_radius_m} m`} />
+                    <StatTile label="等时圈档位" value={report.caliber.iso_minutes.map(m => `${m}min`).join(' / ')} />
+                  </div>
                   <div className="mt-2 text-tag text-ink-3 leading-relaxed">
                     {report.caliber.basis}
                   </div>
@@ -923,6 +953,7 @@ export default function LifeCirclePage() {
               摆一张只能看不能对的空卡，等于又造一个假入口。 */}
           {ledger && (
             <CellsLedgerCard
+              foldable
               led={ledger}
               selected={selectedCell}
               onPick={setSelectedCell}
@@ -933,6 +964,14 @@ export default function LifeCirclePage() {
           <div className="rounded-card border border-line bg-card p-4 shadow-card">
             <div className="mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink">
               <TriangleAlert size={15} className="text-warn" /> 服务盲区清单
+              {report.blindspots.length > BLIND_TOP_N && (
+                <button
+                  onClick={() => setBlindShowAll((v) => !v)}
+                  className="ml-auto text-tag font-medium text-primary-deep hover:underline"
+                >
+                  {blindShowAll ? `只看前 ${BLIND_TOP_N} 处` : `查看全部 ${report.blindspots.length} 处`}
+                </button>
+              )}
             </div>
             {report.data_origin === 'offline' ? (
               <p className="text-tag text-ink-3">离线估算未联网采集 POI，盲区识别需实时体检后给出</p>
@@ -947,7 +986,7 @@ export default function LifeCirclePage() {
               </>
             ) : (
               <div className="flex flex-col gap-2">
-                {report.blindspots.map((b) => {
+                {(blindShowAll ? report.blindspots : report.blindspots.slice(0, BLIND_TOP_N)).map((b) => {
                   const sev = severityOf(b)
                   const sevSpec = LC_BLIND_SEV[sev]
                   const gap = gapScoreOf(b)

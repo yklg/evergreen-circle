@@ -487,6 +487,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
         container = containerRef.current
         const map = new bmap.Map(container, { zoom: 15, enableHighResZoom: true })
         map.enableScrollWheelZoom()
+        /* 体检台大屏把地图高度交给视口（右栏改成内部滚动），而画布不会自己跟容器变高。
+           GL 的 `resize()` 实现就是 `this._watchSize()` —— 打开 SDK **自己**的尺寸监听，
+           所以我们不另建 ResizeObserver，只在建图时订阅这一次。 */
+        map.resize()
         // C7 底图风格（阶段 0.2 / 决策 D4）：**内置模板优先**，因为「关掉底图 POI 注记」
         // 是数据可信度纪律而非配色偏好 —— 第三方设施名与我们的 Marker 同款呈现，会被读成
         // 自家数据。styleId 由后端默认不下发（见 `life_circle_map_config()`）；

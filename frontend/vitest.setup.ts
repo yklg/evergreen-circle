@@ -10,6 +10,8 @@
 // 在测试边界注入符合 Web Storage 语义的内存实现，使所有 jsdom 测试获得确定的
 // localStorage（setItem/getItem/removeItem/clear/key/length），不修改任何生产代码。
 
+import { ResizeObserverStub } from './src/__tests__/helpers/resizeObserverStub'
+
 function createMemoryStorage(): Storage {
   const store = new Map<string, string>()
   return {
@@ -57,12 +59,12 @@ if (
 // jsdom 未实现 ResizeObserver（浏览器专有 API，jsdom 有意不做布局模拟）。
 // VWordCloud 用 ResizeObserver 测容器宽（组件侧对宽度已有 640 回退），但构造函数
 // 本身在 jsdom 缺失会抛 ReferenceError。此处补最小桩使测试环境不炸，不改生产代码。
+//
+// 桩从「纯 no-op」升级为「记账 + 可由测试触发」：no-op 会让任何
+// 「容器尺寸变化 ⇒ 做某事」的链路在测试里安静空转（套件照绿却什么都没验）。
+// 语义保持不变 —— 不自动回调，何时回调由用例 `fireResize(el)` 决定。
+// 手法与本文件顶部的 localStorage 补水同源：补的是环境缺口，不是被测行为。
 if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
-  class ResizeObserverStub {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).ResizeObserver = ResizeObserverStub
 }

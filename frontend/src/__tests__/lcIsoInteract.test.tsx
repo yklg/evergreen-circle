@@ -205,6 +205,10 @@ const fb = vi.hoisted(() => {
       }
       openInfoWindow() {}
       setViewport() {}
+      /** GL 的尺寸监听开关（真 SDK 里 = `this._watchSize()`）。本文件不测这条链，
+       *  留 inert 方法只为让生产码能跑；**记账版**在 `helpers/bmapGLFake.ts`，
+       *  由 `lcMapResizeGuard.test.tsx` 负责钉。 */
+      resize() {}
       centerAndZoom(c: { lng: number; lat: number }, z: number) {
         this.center = c
         this.zoom = z

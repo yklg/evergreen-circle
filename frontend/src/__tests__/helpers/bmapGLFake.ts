@@ -277,6 +277,11 @@ export class BMapMapBase {
   setViewport(...args: unknown[]): void {
     this.log('setViewport', args)
   }
+  /** GL 的尺寸监听开关（真 SDK 源码为 `this._watchSize()`）。**必须记账** ——
+   *  空桩会让「容器变高后画布不重绘」这条回归免疫，正是本文件开档写过的教训。 */
+  resize(): void {
+    this.log('resize', [])
+  }
   centerAndZoom(...args: unknown[]): void {
     this.log('centerAndZoom', args)
   }

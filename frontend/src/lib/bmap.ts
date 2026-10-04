@@ -44,6 +44,11 @@ export interface BMapMap {
   pointToPixel(point: BMapPoint): { x: number; y: number }
   /** 地图 DOM 容器（HeatFieldOverlay 挂 canvas 覆盖层；BMapGL Map 官方方法） */
   getContainer(): HTMLElement
+  /** 打开 SDK 自己的尺寸监听（GL 源码即 `this._watchSize()`；`resize` 为 GL 专用，
+   *  非 GL 版会 `console.warn` 并让位给 `checkResize`）。建图时调一次即可，
+   *  本仓因此**不需要**自建 ResizeObserver。实测来源：真 SDK `Map.prototype` 244 个方法、
+   *  `resize`/`checkResize`/`enableAutoResize` 均为 function。 */
+  resize(): void
   /** 地图级事件订阅。⚠️ 载荷**有内容**，见 `BMapMapEvent` —— 这条签名以前写成
    *  `fn: () => void`，等于宣称"地图事件不带东西"，于是每个调用点各自猜形状。
    *  本仓未开 `strict`（`tsconfig.app.json`），这层类型只是文档不是防线；
