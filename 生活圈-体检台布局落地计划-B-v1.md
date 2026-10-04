@@ -397,6 +397,64 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 
 ---
 
+## 1.13 2.9 结案：lint 降级为诊断 + 逐文件棘轮接管阻断权（2026-10-04）
+
+### 先更正我上一轮报错的定性
+
+我之前把 lint 与 typecheck 混着说成"两道长期红的闸门"，**不对**。用 `git clone` 出一份**干净 HEAD**
+（`2590d44`）实测：
+
+| 判据 | 干净 HEAD（= CI 看到的） | 本机工作区（含你未跟踪的在制品） |
+|---|---|---|
+| `npm run typecheck` | **0 error** | 8 error，全在 `src/__tests__/eventFlowNumbersMatchFixture.test.ts`（未跟踪） |
+| `npm run lint` | **106 error** | 113 error（多的 7 条在未跟踪的 `dev/lcHitSurfaceProbe.tsx`） |
+
+⇒ CI 里长期红的**只有 lint 一道**；typecheck 的红是本机现象，不冤枉 CI，它继续当阻断步。
+
+### 106 条债落在哪一页（账本逐文件记，不只看总数）
+
+| 归属 | error | 说明 |
+|---|---|---|
+| `src/dev/*Probe.tsx` 探针 | **51** | 调试页，不是发货码；`lcCovCaliberProbe` 15、`lcP5Probe` 12、`lcTabProbe` 8… |
+| 测试与测试工具 | **39** | 12 个测试文件 + `testUtils/canvasMock.ts` |
+| 发货码（pages/components/lib） | **16** | `BMapBlock` 4、`ClarifyPage` 4、`VStructured` 2、`wordcloudLayout` 2、`LcMap`/`VTracePanel`/`HomePage`/`ReportPage` 各 1 |
+
+### 已落的两处
+
+1. **CI（`.github/workflows/ci.yml:62-64`）**：`npm run lint` 改 `continue-on-error: true`，注释写明
+   "它一红 ⇒ vitest(1027 例) 与 build 一行都不跑"。阻断权移到 `npm run test` 里面。
+2. **棘轮（新增 3 个文件）**：`src/__tests__/lintRatchet.test.ts`(6 例) + 纯判据
+   `src/__tests__/helpers/lintRatchet.ts` + 逐文件账本 `src/__tests__/fixtures/lintRatchetBaseline.json`。
+   规则两条都红：`实测 > 账本` ⇒ 新增违规；`实测 < 账本` ⇒ **还了债必须同笔把账本改小**
+   （手法同 `tailwindClassIntegrity` 的 `KNOWN_PROBE_DANGLING` 只减不增）。
+   三个设计决定值得记：
+   - **逐文件而非总数** —— 否则"修 A 两条 + B 新加两条"互相抵消就溜过去了；
+   - **只统计 `git ls-files` 认得的路径** —— 你的在制品不算这条分支的债，也不由我替改；
+     CI 里 checkout 全为已跟踪，两侧同口径（已用干净 clone 对账：eslint 合计 **106 == 账本合计**）；
+   - **进 vitest 而不是新加一个 npm script** —— 单独脚本要有人"记得调它"，而"没人调"正是这次要修的病。
+     代价实测 **全套 15.0s → 18.2s**（`beforeAll` 只 spawn 一次 eslint）。
+
+### 判据非空判的证据（双向变异，都按预期红）
+
+- 账本 `lcCovCaliberProbe` 15 → **14**：红「lint 棘轮：新增违规 1 个文件（已入库共 106 error；另有在制品 7 条不计入判据）… 账本 14 → 实测 15」。
+- 账本 15 → **16**：红「1 个文件的债比账本少 —— 还了债请同笔把账本改小… 账本 16 → 实测 15」。
+- 还原用 `cmp` 逐字节核对一致，6 例回到全绿；全量 **121 文件 / 1037 通过 + 1 todo**。
+- 未跟踪排除这道栅栏是**实测生效**的：变异输出里那句「在制品 7 条」正是你 `lcHitSurfaceProbe.tsx` 的数。
+
+### Gitee 侧
+
+`.workflow/ci.yml` 的 goals 串**去掉** `npm run lint`（它在那条链里只会让后面三道真闸门一行不跑），
+按头部约定记明差异与残余差异：真源还额外跑一次 lint 打印诊断，本侧不跑 —— 因为
+`npmbuild@1` 是否支持"失败不中断"我在这台机器上验证不了。
+
+### 还没做的（别把"接了棘轮"读成"债还清了"）
+
+- **存量 106 一条没清**。要不要清、清哪一层，是独立决策：探针那 51 条属调试页，清了没收益；
+  真正值得先动的是发货码 16 条。棘轮的作用是**从此不再增加**，不是自动减少。
+- 2.10（Linux 阈值首跑复核）仍待你拍路径：push 触发真 CI / 本地起 Playwright 容器 / 把两条绝对阈值改写成相对判据。
+
+---
+
 ## 2. 待办（按顺序，逐项要证据）
 
 | # | 事项 | 完成判据 |
@@ -417,7 +475,7 @@ camelCase **`taskId`** —— 用 `task_id` 会得到「创建体检任务失败
 | 2.6 ~~待办~~ **已完成** | 提交划分 | 按批准的四笔落地：`0a88694` fix（`index.html` + CLS 例同笔）、`e04dc06` test(e2e)（`lifeCircleRunning.spec.ts` 的 fixme）、`df3ffd8` ci（两份 yml）、`8b29d86` docs（两份台账 + `ARCHITECTURE.md`）。⚠ 你 WIP 的 8 处（`docs/多源POI…md`、`gen-living-circle-fixtures.mjs`、`eventFlow.json`、`livingCircleMock.ts`、删 `start.sh`、`preview-lc-hit.html`、`eventFlowNumbersMatchFixture.test.ts`、`lcHitSurfaceProbe.tsx`）**一笔都没进暂存区**，`git status` 核过。本行的提交状态回写是第 5 笔（只动这一段记账，无代码）。 |
 | 2.7 ~~P2~~ **已完成** | `docs/ARCHITECTURE.md` §10 新增「页面滚动所有权与舞台契约」：三种滚动模型的适用面、契约唯一真源、三条硬规矩（高度不许由内容决定 / 尺寸跟随交给 SDK 且厂商 API 只认厂商运行时 / `z-10` 来由），并要求新页先自采结构基线 | 文档成文；末尾写明"没有渲染步时观察既不能证实也不能证伪，不得拿单元全绿冒充已验" |
 | 2.8 ~~待办~~ **已完成** | e2e 接入 CI：`.github/workflows/ci.yml` 新增独立 `e2e` job（`npm ci` → `playwright install --with-deps chromium` → `npm run test:e2e` → 失败时上传现场） | **独立成 job 的理由已写进 yml**：`frontend` job 在 `lint` 步就红，step 按序终止 ⇒ 塞进去的排版防线永远轮不到跑。CI 条件已本地复现（`VITE_PROXY_TARGET` 指死端口）：**exit=0 / 14 passed / 4 skipped**；Gitee 侧按它的约定在头部记明"有意不跟"的理由。两份 yml 用 pyyaml 解析校验过 |
-| 2.9 **未决（要你拍）** | `npm run lint`（HEAD 全仓 **113 error**）与 `npm run typecheck`（8 错，全在你 WIP 的两个文件里）现在**是 CI 闸门但长期红** ⇒ 每次跑 CI 都白红一片，防线形同虚设，且真错会被噪音吃掉 | 三条路选一：① 清完再当闸门；② 先降级为非阻断 `continue-on-error` 并把错误数钉成只减不增的棘轮（同 `tailwindClassIntegrity` 的 `KNOWN_PROBE_DANGLING` 手法）；③ 保持现状但每次看 CI 都人工忽略。**不选也不行** —— 2.8 那条排版防线的可信度取决于它旁边那些步骤是不是狼来了 |
+| 2.9 ~~未决~~ **已按推荐落地（存量未清）** | `npm run lint` 与 `npm run typecheck` 该不该继续当闸门 | ✅ 定性已更正并实测（干净 HEAD clone）：**typecheck 0 error**（本机那 8 条全来自你未跟踪的在制品），**lint 106 error** 才是 CI 里唯一长期红的一道。落法：lint 降为 `continue-on-error` 诊断（`ci.yml:62-64`），阻断权交给 vitest 里的**逐文件棘轮** `src/__tests__/lintRatchet.test.ts`(6 例) + `fixtures/lintRatchetBaseline.json`。双向变异实测都红、口径与 CI 对账一致、全套 121 文件 / 1037 例绿（15.0s→18.2s）。**剩下的不是闸门问题而是债**：存量 106 一条没清（探针 51 / 测试 39 / 发货码 16），要清就从发货码那 16 条起 |
 | 2.10 **首次真实 CI 跑完要回来看** | 阈值全部在 macOS Chromium 1.63 量得，CI 是 Linux Chromium，字体度量会变（§1.12 末估过余量，属推断非实测） | 看这 6 条的数：① / ② / ③ / ④ / 落定后不抖 / CLS。红了先按"换 OS 度量差异"归因并**收紧判据写法**（如把 45% 改成实测值的比例），不许先放松阈值蒙过去 |
 
 ---

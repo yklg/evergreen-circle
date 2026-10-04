@@ -313,6 +313,15 @@ DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）�
 判别力机器：`backend/scripts/mutation_check.py` —— 往生产代码注入变异，断言目标用例**转红**，
 再按 sha256 校验还原。全绿只说明"当前代码让测试满意"，不说明"测试真的在检查东西"。
 
+棘轮（ratchet）是本仓处理"存量债 + 不许再涨"的统一手法：把债**逐文件**记进一份账本
+（`frontend/src/__tests__/fixtures/lintRatchetBaseline.json`、`tailwindClassIntegrity.test.ts` 的
+`KNOWN_PROBE_DANGLING`），判据两个方向都红 —— 超线是新增违规，低于线要求**同笔把账本改小**。
+只记总数会被"修 A 两条、B 新加两条"互相抵消糊过去，所以必须逐文件。
+配套的一条 CI 规则：**诊断步与阻断步分开**。`npm run lint` 有 106 条存量 error（2026-10-04 干净
+clone 实测），若让它阻断，`frontend` job 后面的 vitest 与 build 一行都不跑；现在它是
+`continue-on-error: true` 的诊断，阻断权在 vitest 里的棘轮（`lintRatchet.test.ts`）。
+判据只统计 `git ls-files` 认得的路径 —— 工作区里的在制品不算这条分支的债，也不该由别人替你改。
+
 CI 侧有一条与守卫等价的**结构约束**：`.github/workflows/ci.yml` 里几何层是**独立 job**（`e2e`），
 不并进 `frontend` job。原因是 step 按序终止 —— `frontend` 在 `lint` 步就长期红（HEAD 全仓 113 个
 eslint error），并进去的防线**永远轮不到执行**，形式上"有"、实际上一行没跑。由此推出本仓通用的
