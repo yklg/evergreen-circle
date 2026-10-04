@@ -330,7 +330,7 @@ export default function ComparePage() {
 
       {/* 呈现策略：同片 → 单图真实叠加；跨城 → 双图各居其城 + 归一化圈形示意 */}
       {plan && cards.length >= 2 && (plan.shareMap ? (
-        <div className="card">
+        <div className="rounded-card border border-line bg-card shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
             <div className="text-aux font-semibold text-ink">同图叠加 · 等时圈对比</div>
             <OverlayLegend names={[names[0], names[1]]} />
@@ -341,7 +341,7 @@ export default function ComparePage() {
           </div>
         </div>
       ) : (
-        <div className="card flex flex-col gap-4 p-4">
+        <div className="flex flex-col gap-4 rounded-card border border-line bg-card p-4 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-aux font-semibold text-ink">A / B 所在城市等时圈 · 真实地理位置</div>
             <OverlayLegend names={[names[0], names[1]]} />

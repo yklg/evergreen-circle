@@ -248,3 +248,102 @@ describe('CSS 自定义属性完整性（悬空 var() 会静默丢色）', () =>
     expect(cssVars.dangling).toEqual([])
   })
 })
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 第三段守卫：**裸 token 名被当类名用**（`className="card"`）。
+ *
+ * 与前两段的分工：那两段管"带前缀的类有没有对应 token""var() 有没有定义"。
+ * 这段管一个它们**都漏掉**的形状 —— 本项目把 token 名同时用作 `rounded-card` /
+ * `text-ink` / `border-line` 的词根，于是裸写 `card` 看着像"当然有这个类"，
+ * 实际 Tailwind 一个字都不生成：结构照渲染，卡面（圆角/描边/底色/阴影）静默消失。
+ *
+ * 实证：`ComparePage.tsx:333,346` 两块等时圈对比卡就这么裸奔着，而第一段看不见它 ——
+ * `card` 不带 `bg-`/`text-` 前缀，不在颜色工具类的扫描范围内。
+ *
+ * 判据只认 config 里定义过的 token 名这一**封闭集合** ⇒ 不会误报 `flex` / `grid` /
+ * `truncate` 这些 Tailwind 原生工具类；带前缀的合法写法（`bg-card`、`rounded-card`）也不命中。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const BARE_TOKEN_NAMES = new Set<string>()
+for (const fam of ['colors', 'borderRadius', 'fontSize', 'boxShadow', 'maxWidth', 'fontFamily'] as const) {
+  for (const k of Object.keys(config.theme?.extend?.[fam] ?? {})) BARE_TOKEN_NAMES.add(k)
+}
+
+/** 去掉变体前缀（`lg:` / `hover:`）与透明度写法（`/90`）后，是不是一个裸 token 名 */
+function bareTokenIn(cls: string): boolean {
+  const noVariant = cls.split(':').pop() ?? ''
+  return BARE_TOKEN_NAMES.has(noVariant.split('/')[0])
+}
+
+/**
+ * 只扫**发货码**。两处刻意的范围收缩，都不是"绕过"：
+ *  - `__tests__`：本文件自己的探针串（`className="card flex…"`）会被抽到，扫它等于自己告自己；
+ *  - `src/dev/**`：内部探针页，见下面那份点名清单 —— 它们是**记在账上的债**，不是免检。
+ */
+const SHIPPED_DIRS = ['pages', 'components', 'layout', 'lib', 'store', 'hooks']
+
+function shippedFiles(): string[] {
+  return walk(SRC).filter((f) => {
+    const rel = relative(SRC, f)
+    if (rel.startsWith('__tests__') || rel.startsWith('dev' + '/') || rel.startsWith('mocks' + '/')) return false
+    return SHIPPED_DIRS.some((d) => rel.startsWith(d + '/'))
+  })
+}
+
+function bareTokenHitsIn(files: string[]): string[] {
+  const hits: string[] = []
+  for (const file of files) {
+    if (!/\.tsx?$/.test(file)) continue
+    for (const source of classSourcesIn(readFileSync(file, 'utf8'))) {
+      for (const cls of source.split(/\s+/)) {
+        // 只认"整词正好等于 token 名"：`'ok'`（带引号，模板串里的数据值）与 `rounded-chip` 都不许命中
+        const noVariant = cls.split(':').pop() ?? ''
+        if (BARE_TOKEN_NAMES.has(noVariant.split('/')[0])) {
+          hits.push(`${relative(SRC, file)} → ${noVariant}`)
+        }
+      }
+    }
+  }
+  return [...new Set(hits)].sort()
+}
+
+/**
+ * `src/dev/**` 里已知的悬空类（**点名，不免检**）。
+ *
+ * 它们的成因与 `card` 一样：探针页作者按想象中的样式表写类名。区别在于这些页面只在内部
+ * 截图/演示时打开，且"修"它们要现写一串 utility —— 而探针页的观感本轮没有可验环境，
+ * 闭眼改样式正是这次反复踩的坑。所以：记账 + 冻结增长，修它们另开一笔。
+ */
+const KNOWN_PROBE_DANGLING = [
+  'dev/intelCenterProbe.tsx → chip',
+  'dev/lcHitSurfaceProbe.tsx → warn',
+  'dev/roadContrastProbe.ts → card',
+]
+
+describe('裸 token 名当类名（Tailwind 静默不生成 CSS）', () => {
+  it('守卫自己的前置：名单与扫描面都非空（空名单/空文件表会让下面全部断言恒绿）', () => {
+    expect(BARE_TOKEN_NAMES.size).toBeGreaterThan(15)
+    for (const t of ['card', 'btn', 'chip', 'ink', 'line', 'primary']) {
+      expect(BARE_TOKEN_NAMES.has(t), `${t} 应在名单里（config 定义过它）`).toBe(true)
+    }
+    expect(shippedFiles().length).toBeGreaterThan(30)
+  })
+
+  it('检测器认得出刚被修掉的旧形状，且不误报合法写法与模板串里的数据值', () => {
+    const probe = '<div className="card flex flex-col gap-4 p-4" /><span className="text-ink rounded-card bg-card/90" />'
+    expect(classSourcesIn(probe).flatMap((s) => s.split(/\s+/)).filter(bareTokenIn)).toEqual(['card'])
+    // `className={...}` 抽取段里的 `${ x === 'ok' ? 'text-ok' : … }` 是数据值，不是类名
+    const tpl = 'className={`rounded-chip px-2 ${ b.tone === \'info\' ? \'bg-info/10\' : \'bg-line\' }`}'
+    expect(classSourcesIn(tpl).flatMap((s) => s.split(/\s+/)).filter(bareTokenIn)).toEqual([])
+  })
+
+  it('发货码里不存在裸 token 名当类名', () => {
+    // 失败信息即修复清单：每行 `文件 → 类名`
+    expect(bareTokenHitsIn(shippedFiles())).toEqual([])
+  })
+
+  it('探针页的悬空类只许减少不许增加（点名制，防止悄悄滚成免检区）', () => {
+    const devHits = bareTokenHitsIn(walk(SRC).filter((f) => relative(SRC, f).startsWith('dev' + '/')))
+    expect(devHits).toEqual(KNOWN_PROBE_DANGLING)
+  })
+})
