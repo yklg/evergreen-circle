@@ -10,8 +10,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- display=optional（不是 swap）是有原因的，别改回去：
+         swap 会在 ~700ms 处换面，CJK 字宽变化让顶栏从两行收回一行，地图格随之 572→620px，
+         整屏内容跳一次（1280 档实测；拦掉 webfont 则全程 84px 不跳）。
+         optional 是"到位就用、没到位这趟就不换" ⇒ 一次定形，无重排。
+         回归网在 e2e/lifeCircleStage.spec.ts 的「首屏不抖」那条。 -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=optional"
       rel="stylesheet"
     />
     <!-- 注意：本行必须与 src/lib/brand.ts 的 BRAND.title 一致，由 src/lib/brand.test.ts 守卫 -->

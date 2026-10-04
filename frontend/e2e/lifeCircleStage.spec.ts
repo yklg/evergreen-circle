@@ -116,3 +116,28 @@ test('首屏落定后不再抖：地图格高度 1.5s 内不变', async ({ page 
   const b = (await box(mapCell(page))).height
   expect(Math.abs(a - b), `落定后地图格仍在动（${a} → ${b}）`).toBeLessThanOrEqual(2)
 })
+
+test('首屏零布局跳动（CLS）：webfont 换面不许把内容挪位', async ({ page, context }) => {
+  // 用浏览器自己的 layout-shift 记账，比"采样两个时刻比高度"更严：它覆盖首屏所有来源的跳动，
+  // 而不只是我们已知的那一次。观察器必须从第一个脚本起装，所以走 addInitScript。
+  await context.addInitScript(() => {
+    const w = window as unknown as { __cls?: number }
+    w.__cls = 0
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        // layout-shift 的专有字段不在 `PerformanceEntry` 基面上（tsc 会报 TS2339），
+        // 也不保证本档 lib.dom 有 `LayoutShift` ⇒ 就地声明，不把浏览器私有形状当类型契约。
+        const shift = e as unknown as { value?: number; hadRecentInput?: boolean }
+        if (!shift.hadRecentInput) w.__cls = (w.__cls ?? 0) + (shift.value ?? 0)
+      }
+    }).observe({ type: 'layout-shift', buffered: true })
+  })
+  await page.goto(SCENE, { waitUntil: 'load' })
+  await expect(mapCell(page)).toBeVisible()
+  await page.waitForTimeout(2200)          // 给字体交换留窗口：实测那一跳发生在 ~700ms
+
+  const cls = await page.evaluate(() => (window as unknown as { __cls?: number }).__cls ?? 0)
+  // 变异测试过的阈值：把 index.html 改回 display=swap，本条在 1280×720 报 CLS=0.4584 并红，
+  // 1440×900 因为那一行不换行照绿 —— 所以必须两档都跑。0.01 是 Google Web Vitals"良好"档的一半。
+  expect(cls, `首屏 CLS = ${cls.toFixed(4)}，超过 0.01`).toBeLessThan(0.01)
+})
