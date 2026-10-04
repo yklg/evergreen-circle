@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { VStatLine } from '../ui'
 import {
   ChevronLeft,
   MapPin,
@@ -198,15 +199,6 @@ function ShareWatermark({ lc }: { lc: LivingCircleReport }) {
           </div>
         ))}
       </div>
-    </div>
-  )
-}
-
-function StatRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0">
-      <span className="text-tag text-ink-3">{label}</span>
-      <span className="text-aux font-medium text-ink">{value}</span>
     </div>
   )
 }
@@ -592,14 +584,14 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   ))}
                 </div>
                 {/* 阶段 2.5：三段式单一口径（见 lib/livingCircle.poiMetricLabel） */}
-                <StatRow label="POI 采集" value={poiMetricLabel(lc)} />
+                <VStatLine label="POI 采集" value={poiMetricLabel(lc)} />
                 {/* 阶段 1.8：历史报告的面板数/图上点数打架时如实披露 */}
                 {poiConservationNote(lc) && (
                   <p className="mt-1 text-tag text-risk">{poiConservationNote(lc)}</p>
                 )}
-                <StatRow label="采样点" value={`${reach.total} 个（≤${reach.reachFullMin} 分钟内可达 ${reach.inReach}）`} />
-                <StatRow label="15min 等时圈面积" value={`${area15.toFixed(2)} km²`} />
-                <StatRow label="服务盲区" value={`${lc.blindspots.length} 处`} />
+                <VStatLine label="采样点" value={`${reach.total} 个（≤${reach.reachFullMin} 分钟内可达 ${reach.inReach}）`} />
+                <VStatLine label="15min 等时圈面积" value={`${area15.toFixed(2)} km²`} />
+                <VStatLine label="服务盲区" value={`${lc.blindspots.length} 处`} />
               </div>
             </div>
           </div>

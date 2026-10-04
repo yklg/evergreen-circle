@@ -13,6 +13,7 @@ import { demoCompareSamples } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
 import { COMPARE_ROWS, compareCaliberNotices, compareRows, planComparisonOverlay, poiConservationNote } from '../lib/livingCircle'
+import { VStatLine } from '../components/ui'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
 import LcMap from '../components/lifecircle/LcMap'
@@ -320,10 +321,7 @@ export default function ComparePage() {
             </div>
             <div className="mt-2 border-t border-line pt-3">
               {COMPARE_ROWS.map((def) => (
-                <div key={def.key} className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0">
-                  <span className="text-tag text-ink-3">{def.key}</span>
-                  <span className="text-aux font-medium text-ink">{def.cell(r)}</span>
-                </div>
+                <VStatLine key={def.key} label={def.key} value={def.cell(r)} />
               ))}
             </div>
           </div>

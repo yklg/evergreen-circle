@@ -27,6 +27,7 @@ import { Info, Layers, Play, TriangleAlert } from 'lucide-react'
 import '../index.css'
 import scenarios from './fixtures/lcP5Scenarios.json'
 import { minuteHeatColor } from '../components/lifecircle/HeatFieldOverlay'
+import { VStatLine } from '../components/ui'
 import {
   LC_BLIND_SEV,
   LC_BLIND_SEV_ORDER,
@@ -139,15 +140,6 @@ function Chip({ children, title, tone = 'primary' }: { children: ReactNode; titl
     <span title={title} className={`inline-flex items-center gap-1 rounded-chip px-2 py-0.5 text-tag font-medium ${cls}`}>
       {children}
     </span>
-  )
-}
-
-function StatRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0">
-      <span className="text-tag text-ink-3">{label}</span>
-      <span className="text-aux font-medium text-ink">{value}</span>
-    </div>
   )
 }
 
@@ -470,11 +462,11 @@ function ReportScreen({ lc, tier }: { lc: LivingCircleReport; tier: 'now' | 'jia
               </span>
             ))}
           </div>
-          <StatRow label="POI 采集" value={poiMetricLabel(lc)} />
+          <VStatLine label="POI 采集" value={poiMetricLabel(lc)} />
           {poiConservationNote(lc) && <p className="mt-1 text-tag text-risk">{poiConservationNote(lc)}</p>}
-          <StatRow label="采样点" value={`${reach.total} 个（≤${reach.reachFullMin} 分钟内可达 ${reach.inReach}）`} />
-          <StatRow label="15min 等时圈面积" value={`${area15.toFixed(2)} km²`} />
-          <StatRow label="服务盲区" value={`${lc.blindspots.length} 处`} />
+          <VStatLine label="采样点" value={`${reach.total} 个（≤${reach.reachFullMin} 分钟内可达 ${reach.inReach}）`} />
+          <VStatLine label="15min 等时圈面积" value={`${area15.toFixed(2)} km²`} />
+          <VStatLine label="服务盲区" value={`${lc.blindspots.length} 处`} />
         </div>
 
         <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">

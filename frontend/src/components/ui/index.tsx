@@ -532,3 +532,54 @@ export function VStatCard({
     </div>
   )
 }
+
+/* ── 统计行 VStatLine（全仓唯一一份「标签 + 文本值」的小面） ──
+ *
+ * 为什么它不是 `VStatCard` 的第五个 surface：那三面全是**大数字面**（`font-serif text-[26|32]px`），
+ * `value` 收 `number`；这里放的是**字符串读数**（`采集 194 · 圈内 108 · 已展示 108` 这类三段式），
+ * 硬塞进去要改共享件的契约、连累它已有的消费方。两种形状各留一处单一实现，互不吞并 ——
+ * `statCardSingleSource.test.ts` 的文件头也明写了"别把这条守卫偷偷扩成全能闸"，
+ * 所以本件的判据另立 `__tests__/statLineSingleSource.test.ts`。
+ *
+ * `face` 两面不是审美枚举，是把**既存三处私有实现**收进来时的逐字形状：
+ *  - `row` = 体检单行式（原 `LifeCircleReportView.tsx:205`、`dev/lcP5Probe.tsx:145` 各抄一份）
+ *  - `tile` = 体检台 2 列紧凑面（原 `LifeCirclePage.tsx` 的 `StatTile`）
+ * class 串照原样搬，换件不改像素。
+ */
+const STAT_LINE_FACE = {
+  row: {
+    wrap: 'flex items-center justify-between gap-3 border-b border-line/60 py-1.5 last:border-0',
+    label: 'text-tag text-ink-3',
+    value: 'text-aux font-medium text-ink',
+  },
+  tile: {
+    wrap: 'rounded-btn border border-line bg-bg p-2.5',
+    label: 'text-tag text-ink-3',
+    value: 'mt-0.5 text-[12px] font-medium leading-snug text-ink',
+  },
+} as const
+
+export function VStatLine({
+  label,
+  value,
+  highlight,
+  face = 'row',
+}: {
+  label: string
+  value: string
+  highlight?: boolean
+  face?: keyof typeof STAT_LINE_FACE
+}) {
+  const f = STAT_LINE_FACE[face]
+  // C8 图-面板联动（悬停地图 15min 圈 → 本格高亮）。inline style 避开 tailwind 调色板守卫风险，
+  // 手法与图例计数徽标的 color-mix 同款。
+  return (
+    <div
+      className={f.wrap}
+      style={highlight ? { backgroundColor: 'color-mix(in srgb, #5F7B69 10%, transparent)', borderRadius: face === 'row' ? 6 : undefined } : undefined}
+    >
+      <span className={f.label}>{label}</span>
+      {face === 'row' ? <span className={f.value}>{value}</span> : <div className={f.value}>{value}</div>}
+    </div>
+  )
+}
