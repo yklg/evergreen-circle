@@ -1,6 +1,7 @@
 # 常青圈 CI（唯一真源）。Gitee Go 侧镜像见 .workflow/ci.yml —— 它**只覆盖** backend 与 frontend
-# 两个 job，不含本文件的 `api/` 运行时校验与 docker job（2026-09-26 实测两侧本就不一致，
-# 旧注释写「保持两边一致」是假的）。改本文件时若 Gitee 侧有意不跟，请在那份文件里记明差异。
+# 两个 job，不含本文件的 `api/` 运行时校验、e2e（Playwright 排版回归）与 docker job
+# （2026-09-26 实测两侧本就不一致，旧注释写「保持两边一致」是假的）。改本文件时若 Gitee 侧有意不跟，
+# 请在那份文件里记明差异。
 # 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
 name: CI
 
@@ -68,6 +69,43 @@ jobs:
             exit 0
           fi
           python -c "import sys; sys.path.insert(0,'../api'); import app.core.db, app.core.models, app.core.audit, app.core.credibility, app.core.metrics, app.core.orchestrator"
+
+  # 排版层回归单独成 job，不塞进上面的 frontend job —— 这是有意的：
+  # 那条 job 在 `lint` 这一步就已经是红的（HEAD 上全仓 113 个 eslint error），
+  # step 是按序终止的，塞进去就等于让排版防线永远轮不到跑。
+  # 分层判据：jsdom 套件看契约与树形，这里看真实几何（滚不滚、图例在不在、点得到点不到）。
+  e2e:
+    name: 前端排版回归（Playwright · 两档视口 · 无后端全 mock）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装依赖
+        run: npm ci
+      - name: 装 Chromium（--with-deps 顺带装系统库；config 里两个 project 都只用 chromium）
+        run: npx playwright install --with-deps chromium
+      # CI 里不起后端：`/api/life-circle/map-config` 取不到 AK ⇒ 地图落降级画布，
+      # 「画布跟随容器变高」那条会自己 skip 并写明原因（2026-10-04 实测：14 passed / 4 skipped）。
+      # ⚠️ 那 4 条 skip 里 2 条是这条降级跳过、2 条是 lifeCircleRunning 的显式 fixme —— 别把
+      # 「绿色」读成「live 地图的 resize 也被看守过了」。
+      - name: 排版 e2e（webServer 自起 vite:5199）
+        run: npm run test:e2e
+      - name: 失败时留现场
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: |
+            frontend/test-results/
+            frontend/playwright-report/
+          retention-days: 7
 
   docker:
     name: Docker 镜像构建（可选，push 到 main 时）

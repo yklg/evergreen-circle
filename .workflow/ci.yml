@@ -6,6 +6,11 @@
 #   会让名单外的分支从不被看守）；本侧仍留 master/main 白名单 —— 理由：仓库当前**没有 Gitee 远端**
 #   （`git remote -v` 只有 github），此文件实为惰性配置，且 Gitee Go 的通配符支持在本机无法验证，
 #   不拿未验证的语法冒充防线。接 Gitee 时再一并改。
+# 2026-10-04 差异：真源新增 `e2e` job（Playwright 排版回归，两档视口）。本侧**有意不跟** ——
+#   理由两条：① 这仍是惰性配置（仓库无 Gitee 远端）；② Gitee Go `npmbuild@1` 的镜像能否
+#   `--with-deps` 装到 Chromium 的系统库（libnss3/fonts-noto 那一组）我在这台机器上验证不了，
+#   写一个从没跑通过的安装步骤当排版防线，等于把真源那 14 条断言换成一句"应该会绿"。
+#   接 Gitee 时先在一台真实 Gitee Runner 上跑通 `npx playwright install --with-deps chromium` 再补。
 # 全 mock 执行：不注入任何真实 AK/密钥；living_circle 域测试走 fixture 数据源。
 # 配置入口：Gitee 仓库 → 流水线（Gitee Go）→ 新建流水线 → 选择本文件。
 version: '1.0'
