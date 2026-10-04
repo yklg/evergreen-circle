@@ -1119,6 +1119,10 @@ export interface LivingCircleReport {
     cells_inside?: number
     /** 其中**可判定**的格数（1km 邻域被采集区完整覆盖） */
     cells_judged?: number
+    /** 可判定格里**判盲**的格数（= 台账 `blind` 位阵的 1 计数）。
+     *  与 `cells_judged` 是子集关系：`cells_judged = cells_blind + 确认不盲`。
+     *  缺它就只能报"判了多少格"，报不出"判出什么结论" —— 盲区处数与格数分属两套粒度。 */
+    cells_blind?: number
     /** 其中**不可判定**的格数（数据不足，既不算有盲区也不算没盲区） */
     cells_unknown?: number
     /** 其中因**接口自有上限**（服务端自称还欠一整页却断了货）而判不动的格数。
@@ -1126,6 +1130,18 @@ export interface LivingCircleReport {
      *  分账恒等式 `cells_inside = cells_judged + cells_unknown + 这一位`。
      *  ⚠️ 可选：第三态落地前冻结的快照与离线骨架不带 ⇒ 读侧必须 `?? 0`，不得无条件解构。 */
     cells_unjudgeable_by_cap?: number
+    /** 设施实体归并口径（与 `poi.merged` 的"这次实际吸收了多少"分职：这一位说的是**规则本身**）。
+     *  报告念「同名 50m 内归并」时必须指得回这里，不能写死在模板里 —— 半径一改文案就假。
+     *  ⚠️ 可选：归并上线前冻结的快照不带 ⇒ 读侧须判空。 */
+    facility_merge?: {
+      rule_version?: string
+      enabled?: boolean
+      merge_radius_m?: number
+      /** 三要素那一通道走几何归并还是名称归并（`geometric` = 只按坐标判同体） */
+      triad_channel_policy?: string
+      /** 哪些形状算同一设施的子点、无主点时怎么升格代表名 */
+      name_promotion?: string
+    }
     /* ── rev2 · 证据相（「实际查到哪儿」与「请求了多大」并列可查）──
        全部可选：判盲口径升级**前**冻结的快照与离线骨架不带这些键。前端一律经
        `lib/livingCircle.ts` 的安全取值读，**不得**无条件解构 —— 否则演示链（内嵌夹具
@@ -1203,6 +1219,20 @@ export interface LivingCircleReport {
     timed_count?: number
     /** 可达点数（`minutes <= caliber.reach_full_min`）。「可达率」的分子只能是它 */
     in_reach_count?: number
+    /** 本次采样的**规格举证**（档位/出行方式/粗网与加密格距/总格数）。
+     *  报告要说「400m 粗网格 + 15min 边界带 150m 加密」时得指得回这里，不能写死在模板里。
+     *  ⚠️ 可选：ev-2 之前的快照不带 ⇒ 读侧须判空后回落现算。 */
+    spec?: {
+      profile?: string
+      travel_mode?: string
+      coarse_m?: number
+      fine_m?: number
+      fine_band?: number[]
+      grid_n?: number
+      grid_step_m?: number
+      sample_step_m?: number
+      degraded?: boolean
+    }
   }
   poi: {
     categories: FacilityCategoryStat[]
@@ -1221,6 +1251,13 @@ export interface LivingCircleReport {
   }
   blindspots: BlindSpot[]
   scores: LifeCircleScores
+  /** 本次体检动态选出的专家团队（Phase 6）。报告署名与「N 位规划专家」计数都取自这里；
+   *  缺省时后端回落到保底名单（`diagnosis_templates.assemble_report`），故可选。 */
+  team?: {
+    expert_ids?: string[]
+    /** 每位专家为何被选中（与 `expert_ids` 同序，用于报告里的派工说明） */
+    reasons?: string[]
+  }
 }
 
 /** 双样例对比（ComparePage 数据） */

@@ -21,11 +21,16 @@ import {
   GitCompare,
   Database,
   Sparkles,
+  Lightbulb,
   Share2,
   Plus,
   Layers,
   Info as InfoIcon,
 } from 'lucide-react'
+
+/** 正文超过这个段数才折叠：改动前落库的报告是 2 段，一律折叠会让老报告的观感凭空变样
+ *  （读时无版本升级，见 db.py:1559-1586）。加深层（≥3 段）自然进入折叠态。 */
+const COLLAPSE_MIN_PARAS = 2
 import type { Report, LivingCircleReport, LngLat, BlindSpot, ForensicAccount } from '../../types'
 import {
   LC_CANVAS,
@@ -61,11 +66,17 @@ import {
   partialBanner,
   roundAnchorCell,
   roundDroppedCell,
+  cellsLedgerOf,
+  cellVerdict,
+  coarseBlindFootprint,
+  maskGridForShare,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
+import CellsLedgerCard from './CellsLedgerCard'
 import { CategoryCaliberNotes } from './CategoryCaliberNotes'
 import ShareModal from './ShareModal'
+import LcMap from './LcMap'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
 import { useExpertStore } from '../../store/expertStore'
@@ -148,13 +159,10 @@ function BlindCoarseCircle({ lc, b }: { lc: LivingCircleReport; b: BlindSpot }) 
   const pxPerMx = (W / 2) / R
   const pxPerMy = (H / 2) / R
   const [cx, cy] = lcToPx(lc.scene.center, b.center[0], b.center[1])
-  const fm = footprintMetaOf(b)
-  const gridM = fm?.grid_m ?? 200
-  const area = fm?.area_m2 ?? Math.PI * gridM * gridM
-  const r = area > 0 ? Math.sqrt(area / Math.PI) : gridM
+  // 折算口径与交互式地图共用 `coarseBlindFootprint`（全仓唯一实现）
+  const { radiusM: r, label } = coarseBlindFootprint(b)
   const rx = Math.max(r * pxPerMx, 6)
   const ry = Math.max(r * pxPerMy, 6)
-  const label = fm?.area_m2 != null ? `概略 ${(fm.area_m2 / 1e4).toFixed(1)}公顷（面积当量）` : '概略片区'
   const rulerM = judgeRulerM(lc)
   const srx = rulerM === null ? 0 : Math.max(rulerM * pxPerMx, 4)
   const sry = rulerM === null ? 0 : Math.max(rulerM * pxPerMy, 4)
@@ -346,6 +354,10 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   const isShared = typeof window !== 'undefined' && window.location.search.includes('share=1')
   // C1：左竖排章节导航的当前高亮（scroll-spy，与 research 报告页同模式）
   const [activeSection, setActiveSection] = useState(report.toc[0]?.id ?? '')
+  // 逐格台账的选中格（与体检台 `LifeCirclePage.tsx:125` 同一形态）。报告里目前只有台账卡
+  // 一个消费者；笔 8 把 LcMap 嵌进来后，两处共用这一个 state 即可拿到点格联动。
+  const [ledgerCell, setLedgerCell] = useState<[number, number] | null>(null)
+  const ledger = cellsLedgerOf(lc)
   const mainRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const scroller = mainRef.current
@@ -515,9 +527,22 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
         {/* ① 顶层体检单（一屏） */}
         <section className="mx-auto max-w-6xl px-6 pt-5" aria-label="体检单">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
-            {/* 左：地图快照 + 图例 */}
+            {/* 左：地图 + 图例
+                笔 8：主图改为交互式 `LcMap`（13 层：耗时热力场、补点 plus + 1km 服务圈、
+                严重度语义、gap 连续热力填充、#N·重度 标注、判定尺、证据盘开关…）。
+                此前的 `IsochroneSnapshot` 只有 5 层，连 LcMap 自己的降级画布都不如。
+                ⚠️ 三点约束：
+                 ① 容器必须给**显式像素高度** —— BMapGL 底图读父容器 px（`stageContract.ts:7-9`
+                    同一条），而本页在 `main overflow-y-auto` 内，`h-full` 会塌成 0。
+                 ② `desensitize={isShared}` —— 公开分享链接不得画逐格边界（P0-5）。
+                 ③ 静态快照退居**打印替身**：GL canvas 在 `window.print()` 下通常不出图（P0-6）。 */}
             <div className="relative overflow-hidden rounded-card border border-line bg-card shadow-card">
-              <IsochroneSnapshot lc={lc} shared={isShared} />
+              <div className="h-[480px] print:hidden">
+                <LcMap report={lc} desensitize={isShared} draggableCenter={false} />
+              </div>
+              <div className="hidden print:block">
+                <IsochroneSnapshot lc={lc} shared={isShared} />
+              </div>
               <div className="absolute left-3 top-3 flex max-w-[150px] flex-col gap-1 rounded-btn border border-line bg-card/90 p-2.5 backdrop-blur">
                 <span className="text-tag font-medium text-ink-2">图层</span>
                 {Object.entries(LC_CAT_COLOR).map(([k, v]) => (
@@ -685,6 +710,22 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             </div>
           )}
 
+          {/* C4 · 逐格台账（报告侧接入，计划笔 7）。
+              判盲以格为单位，但报告此前只给「四类计数 + 一处连续盲区环」——环 smeared 跨十几格，
+              哪几格判盲、哪几格未定指不出来（`CellsLedgerCard` 的建卡理由正是这一层，却只挂在体检台）。
+              **没有台账就不出现**（`ev-2` 之前的快照与离线骨架走这一支）：摆一张只能看不能对的
+              空卡，等于又造一个假入口。解码全走 `cellsLedgerOf`/`cellVerdict`，与体检台同一实现。 */}
+          {ledger && (
+            <div className="mt-4">
+              <CellsLedgerCard
+                led={ledger}
+                selected={ledgerCell}
+                onPick={setLedgerCell}
+                verdictAt={(i, j) => cellVerdict(lc, [i, j])}
+              />
+            </div>
+          )}
+
           {/* 片 5：取证回合账目（与顶部 chip、SSE `round` 事件三处同源一份 `to_row()`） */}
           {forensic && <ForensicSection account={forensic} />}
 
@@ -725,14 +766,52 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   </div>
                 )}
 
-                {sec.paragraphs && sec.paragraphs.length > 0 && (
-                  <div className="mt-4 space-y-3">
-                    {sec.paragraphs.map((p, i) => (
-                      <p key={i} className="text-body leading-relaxed text-ink-2">
-                        {p}
-                      </p>
+                {/* 章首亮点卡。⚠️ 必须 Array.isArray 守卫：`highlights` 是后端新产出的字段，
+                    改动前已落库的报告没有它（db.py:1529-1586 读时无版本升级），
+                    老数据这里是 undefined ⇒ 直接 .map 会让整页白屏。 */}
+                {Array.isArray(sec.highlights) && sec.highlights.length > 0 && (
+                  <ul className="mt-3 space-y-2">
+                    {sec.highlights.map((h, i) => (
+                      <li key={i} className="flex items-start gap-2.5 rounded-card border border-line/60 bg-card/70 px-3.5 py-2.5">
+                        <Lightbulb size={14} className="mt-1 shrink-0 text-primary-deep" />
+                        <span className="text-aux leading-relaxed text-ink">{h}</span>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
+                )}
+
+                {sec.paragraphs && sec.paragraphs.length > 0 && (
+                  sec.paragraphs.length > COLLAPSE_MIN_PARAS ? (
+                    /* 折叠必须复用调研侧同名类 `report-body-collapse`：
+                       ReportPage 的 beforeprint 强制展开按**类名**选择（ReportPage.tsx:153-167），
+                       而该 effect 与生活圈早退在同一组件实例里注册 ⇒ 同名即自动生效。
+                       换任何别的类名 = 生活圈正文在导出的 PDF 里整段消失（评审 P0-3）。 */
+                    <div className="mt-4">
+                      <details
+                        data-section-body={sec.id}
+                        className="report-body-collapse mt-3 rounded-card border border-line/60 bg-card/40 px-4 py-2"
+                      >
+                        <summary className="cursor-pointer select-none text-tag font-medium text-primary-deep">
+                          展开完整正文（共 {sec.paragraphs.length} 段）
+                        </summary>
+                        <div className="report-body-inner mt-3 space-y-3 pb-1">
+                          {sec.paragraphs.map((p, i) => (
+                            <p key={i} className="text-body leading-relaxed text-ink-2">
+                              {p}
+                            </p>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      {sec.paragraphs.map((p, i) => (
+                        <p key={i} className="text-body leading-relaxed text-ink-2">
+                          {p}
+                        </p>
+                      ))}
+                    </div>
+                  )
                 )}
 
                 {sec.claims && sec.claims.length > 0 && (
@@ -768,7 +847,19 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   </div>
                 )}
 
-                {sec.data_grid && <div className="mt-5"><VDataGrid grid={sec.data_grid} title={`${sec.title} · 盲区明细`} /></div>}
+                {/* 标题由章名派生，不写死「盲区明细」：该 title 还兼作 VDataGrid 的 CSV 文件名
+                    （VDataGrid.tsx:23），而 data_grid 不再只属于盲区章（整改看板会进结论章）。
+                    ⚠️ 分享态必须走 `maskGridForShare`：明细表的 source 列原本带着盲区中心
+                    精确经纬度与 gap 值（后端 `diagnosis_templates._sec_blindspot` 与 TS mock 同源），
+                    而 `?share=1` 是公开无鉴权链接 —— 地图脱敏了、表没脱，等于没脱。 */}
+                {sec.data_grid && (
+                  <div className="mt-5">
+                    <VDataGrid
+                      grid={isShared ? maskGridForShare(sec.data_grid) : sec.data_grid}
+                      title={`${sec.title} · 明细表`}
+                    />
+                  </div>
+                )}
 
                 {/* 章节溯源 + 专家署名 */}
                 <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3">

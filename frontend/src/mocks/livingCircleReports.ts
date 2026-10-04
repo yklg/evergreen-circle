@@ -342,6 +342,54 @@ function secIsochrone(r: LivingCircleReport): ReportSection {
   }
 }
 
+/**
+ * 逐格台账句（演示态侧）—— 与后端 `diagnosis_templates._ledger_sentence` **逐字同一份**，
+ * 由 `backend/tests/test_fixture_mirror.py` 钉住。只读三张位，绝不重算不对称判盲规则。
+ * 无台账 / 验形不过 ⇒ 空串（不印，也不印 0）：`ev-2` 之前的快照根本无从知道判了几格。
+ */
+export function ledgerSentence(r: LivingCircleReport): string {
+  const led = (r.caliber as { cells_ledger?: Record<string, unknown> } | undefined)?.cells_ledger
+  if (!led || typeof led !== 'object') return ''
+  const n = led.n
+  if (typeof n !== 'number' || n <= 0 || n % 2 === 0) return ''
+  if (led.grid !== 'square' || led.schema_version !== 1) return ''
+  const rowsOf = (key: string): string[] | null => {
+    const v = led[key]
+    if (!Array.isArray(v) || v.length !== n) return null
+    for (const row of v) if (typeof row !== 'string' || row.length !== n) return null
+    return v as string[]
+  }
+  const inside = rowsOf('inside'), blind = rowsOf('blind'), verdict = rowsOf('verdict'), capped = rowsOf('capped')
+  if (!inside || !blind || !verdict || !capped) return ''
+  const num = (key: string) => {
+    const v = led[key]
+    return typeof v === 'number' && v > 0 ? v : null
+  }
+  const step = num('step_m'), radius = num('radius_m'), scan = num('scan_m')
+  if (step === null || radius === null || scan === null) return ''
+  const bit = (rows: string[], i: number, j: number) => rows[i][j] === '1'
+  let inCnt = 0, blindCnt = 0, clearCnt = 0, unknownCnt = 0, cappedCnt = 0
+  for (let i = 0; i < n; i += 1) {
+    for (let j = 0; j < n; j += 1) {
+      if (!bit(inside, i, j)) continue
+      inCnt += 1
+      if (bit(blind, i, j)) blindCnt += 1
+      else if (bit(verdict, i, j)) clearCnt += 1
+      else if (bit(capped, i, j)) cappedCnt += 1
+      else unknownCnt += 1
+    }
+  }
+  const judged = blindCnt + clearCnt
+  return (
+    `判定格阵 ${n}×${n}（格距 ${Math.round(step)}m、判定尺半径 ${Math.round(radius)}m）：` +
+    `${inCnt} 格落在可达区内、其中 ${judged} 格出到结论` +
+    `（判盲 ${blindCnt} 格、确认不盲 ${clearCnt} 格）；` +
+    `余下 ${unknownCnt} 格未定（有类别没查全，属我们的取证缺口）、` +
+    `${cappedCnt} 格判不动（接口能力封顶）—— 后两档与「不盲」不是一回事，` +
+    '既不算进「出到结论」，也不合并成一句「没结论」。'
+  )
+}
+
 function secBlindspot(r: LivingCircleReport): ReportSection {
   const rows = r.blindspots.map((b) => ({
     盲区编号: b.id.replace(/^bs-/, ''),
@@ -377,8 +425,11 @@ function secBlindspot(r: LivingCircleReport): ReportSection {
             '下表为各盲区的缺失要素与最近设施方位（供「最近距补点/加设流动服务」式整改参考）。',
           ]
         : []),
+      // 台账段追加在口径句之后（与后端 `_sec_blindspot` 同一位置约定）；无台账则空串不追加。
+      ...((() => { const s = ledgerSentence(r); return s ? [s] : [] })()),
     ],
     claims,
+    highlights: [highlightItems(r).blindspot].filter((x): x is string => !!x),
     data_grid: {
       columns: ['盲区编号', '中心点', '缺失设施', '最近设施', '最近距离'],
       rows: rows.map((x) => ({ name: x['盲区编号'], value: x['最近设施'], metric: x['缺失设施'], source: `${x['中心点']} · ${x['最近距离']}`, source_url: 'fixture://blindspot' })),
@@ -411,6 +462,7 @@ function secConclusion(r: LivingCircleReport): ReportSection {
         author: EXP['L3-001'].name,
       },
     ],
+    highlights: [highlightItems(r).spread].filter((x): x is string => !!x),
     source_evidence_ids: r.blindspots.map((b) => `ev-${r.scene.name}-bs-${b.id}`),
   }
 }
@@ -561,6 +613,46 @@ function buildEvidence(r: LivingCircleReport): Evidence[] {
 
 /* ── 主构造器 ── */
 
+/**
+ * 亮点句（演示态侧）—— 与后端 `diagnosis_templates._highlight_items` 同判据、同措辞。
+ * 按主题返回，各章按键取；某主题无数据就不产该条（宁可少一条，不写没据的判断）。
+ *
+ * ⚠️ 这是"同一份文案两处实现"的又一例（计划风险台账 R1/R3）。本轮只镜像 highlights
+ * 这一个字段——它是本次新增里最可见的一项；其余新句式的演示态分叉已在批次二**量化记录**，
+ * 统一交给"报告装配单一真相源"那次重构收，不再往这里加第五、第六份。
+ */
+export function highlightItems(r: LivingCircleReport): Record<string, string> {
+  const out: Record<string, string> = {}
+  const bars = r.scores.bars ?? []
+  if (bars.length >= 2) {
+    const lo = bars.reduce((a, b) => (b.value < a.value ? b : a))
+    const hi = bars.reduce((a, b) => (b.value > a.value ? b : a))
+    if (hi.value !== lo.value) {
+      out.spread = `最长板与短板差 ${Math.round(hi.value - lo.value)} 分：「${hi.label}」${hi.value} 对「${lo.label}」${lo.value}`
+    }
+  }
+  const b0 = r.blindspots?.[0]
+  const res = (b0?.affected as { estimated_residents?: number } | undefined)?.estimated_residents
+  if (res) {
+    out.blindspot = `一处 1km 服务空洞压着受估 ${res} 人 —— 缺的是${(b0?.missing_facilities ?? []).join('、')}`
+  }
+  const tri = r.scores.triads ?? []
+  if (tri.length) {
+    const far = tri.reduce((a, b) => ((b.nearest_minutes ?? 0) > (a.nearest_minutes ?? 0) ? b : a))
+    if (far.nearest_minutes) {
+      out.triad = `三要素都判可达，但「${far.facility}」要走 ${far.nearest_minutes}min —— 可达不等于方便`
+    }
+  }
+  return out
+}
+
+const HL_ORDER = ['spread', 'blindspot', 'triad'] as const
+
+function hlList(r: LivingCircleReport): string[] {
+  const it = highlightItems(r)
+  return HL_ORDER.map((k) => it[k]).filter((x): x is string => !!x).slice(0, 3)
+}
+
 function buildSections(r: LivingCircleReport): ReportSection[] {
   return [
     {
@@ -573,6 +665,7 @@ function buildSections(r: LivingCircleReport): ReportSection[] {
         `数据口径：${r.data_origin === 'offline' ? '离线估算（offline）· 区县中心近似 + 距离模型测时，未联网采集 POI，评分与盲区需实时体检后给出' : r.data_origin === 'fixture_sample' ? '演示数据（fixture_sample）· 等时圈圆形近似' : '真实百度 API（live）· IDW 插值等时圈'}。图例与章节图表均可溯源至采样点 / POI / 判定等确定性动作。`,
       ],
       charts: [radarChart(r), coverageBarChart(r)],
+      highlights: hlList(r),
       source_evidence_ids: [`ev-${r.scene.name}-measure`],
     },
     secMedical(r),
@@ -655,14 +748,20 @@ export function getLivingCircleReportMock(id: string): Report | null {
 
 /** 历史页 / 报告中心共用：历次体检记录（首批 = 两样区实检 + 早期轮次快照） */
 export function getLifeCircleRecords(): LifeCircleRecord[] {
-  const two: LifeCircleRecord[] = (['kaili', 'beijing-jinsong']
+  // `kaili-ev2` 排进来不是凑数：它是三份内置样区里**唯一带逐格台账**的那一份
+  // （`caliber.cells_ledger`，判盲 8 格）。不列它，报告中心里台账卡与台账段永远取不到，
+  // 演示态就会变成"功能做了但没人看得见"。
+  const two: LifeCircleRecord[] = (['kaili-ev2', 'kaili', 'beijing-jinsong']
     .map((sceneId): LifeCircleRecord | null => {
       const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
       if (!sample) return null
       const lc = sample.report
       return {
         id: LC_REPORT_ID(sceneId),
-        title: `${lc.scene.name} · 生活圈体检报告`,
+        // 用样区名而非 `lc.scene.name`：ev2 与 kaili 是**同一个社区的两轮体检**，
+        // scene.name 都是「凯里老街」⇒ 两条记录会同名，报告中心里点哪条分不清。
+        // 样区名带口径后缀（「凯里老街 · 逐格台账口径」），另两条一字不变。
+        title: `${sample.title} · 生活圈体检报告`,
         scene_name: lc.scene.name,
         city: lc.scene.city,
         checked_at: lc.generated_at,

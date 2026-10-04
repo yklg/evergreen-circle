@@ -161,6 +161,55 @@ export function footprintMetaOf(b: { footprint_meta?: unknown }): {
   }
 }
 
+/**
+ * 分享脱敏（口径 ③-A）的「概略片区」折算 —— 全仓唯一实现。
+ *
+ * 不暴露精确多边形的逐格边界，只画**面积等价圆**：半径 = √(area_m2/π)；
+ * 缺 `footprint_meta.area_m2` 时退化为判定格距近似圆。
+ *
+ * ⚠️ 报告静态快照（`BlindCoarseCircle`）与交互式地图（`LcMap` 的 `desensitize` 分支）
+ * 必须共用本函数。两处各写一份 `sqrt(area/π)` 的话，一旦其中一处改了口径，
+ * 公开分享链接就会有一侧仍在泄漏逐格边界 —— 而那正是这条脱敏要防的事。
+ */
+export function coarseBlindFootprint(b: { footprint_meta?: unknown }): { radiusM: number; label: string } {
+  const fm = footprintMetaOf(b)
+  const gridM = fm?.grid_m ?? 200
+  const area = fm?.area_m2 ?? Math.PI * gridM * gridM
+  const radiusM = area > 0 ? Math.sqrt(area / Math.PI) : gridM
+  const label = fm?.area_m2 != null ? `概略 ${(fm.area_m2 / 1e4).toFixed(1)}公顷（面积当量）` : '概略片区'
+  return { radiusM, label }
+}
+
+/** 分享态明细表脱敏（口径 ③-A 的表格侧补全）。
+ *
+ *  只剥两类粒度：① 经纬度对（`107.9758, 26.5734` 形态）② `gap 0.262` 这类缺口指数。
+ *  方位与"最近 N m"保留 —— 与 `coarseBlindFootprint`/盲区清单在分享态的既有立场一致
+ *  （清单里 gap 同样被隐藏）。CSV 导出与表格共用同一份 grid 对象，故一处生效两处干净。
+ *
+ *  ⚠️ 为什么必须有这条：地图脱敏做久了容易以为完事，但盲区明细表的 `source` 列一直带着
+ *  精确中心经纬度（后端 `diagnosis_templates._sec_blindspot` 与 TS mock 同源），
+ *  而 `?share=1` 是公开无鉴权链接 —— 表不脱等于没脱。真浏览器差分实测抓出来的。
+ */
+export function maskGridForShare<T extends { rows: Record<string, unknown>[] }>(grid: T): T {
+  const COORD_PAIR = /-?\d{1,3}\.\d{2,}\s*,\s*-?\d{1,3}\.\d{2,}/g
+  const GAP_VALUE = /gap\s*[0-9.]+/gi
+  return {
+    ...grid,
+    rows: grid.rows.map((r) => {
+      const out: Record<string, unknown> = { ...r }
+      for (const k of Object.keys(out)) {
+        if (typeof out[k] !== 'string') continue
+        out[k] = (out[k] as string)
+          .replace(COORD_PAIR, '概略片区')
+          .replace(GAP_VALUE, '')
+          .replace(/\s·\s*(?=·|\s*$)/g, '')
+          .trim()
+      }
+      return out
+    }),
+  }
+}
+
 /** 盲区边界显示档位：精确锯齿（raw）↔ 显示圆角（smoothed）。 */
 export type BlindBoundaryView = 'smoothed' | 'raw'
 

@@ -39,6 +39,7 @@ import {
   blindHeatFill,
   blindPolygonOf,
   blindSevSpec,
+  coarseBlindFootprint,
   evidenceDiscs,
   evidenceDiscTitle,
   fixPlusSvg,
@@ -106,6 +107,16 @@ export interface LcMapProps {
   selectedCell?: [number, number] | null
   /** 地图上点中一格（或点到格阵外）的回调。只有台账在且判定尺开着时才可能触发。 */
   onCellPick?: (cell: [number, number] | null) => void
+  /**
+   * 分享脱敏（口径 ③-A，计划 P0-5）：为真时盲区**不画逐格边界**，改画面积等价圆，
+   * 且不外泄精确中心坐标与缺口指数。
+   *
+   * 为什么必须有这个入口：`?share=1` 的报告页是**公开可读、无鉴权**的
+   * （`ShareModal.tsx:4`），而报告页现在要嵌这张图。此前 LcMap 完全没有脱敏概念
+   * （全文件 `shared` 出现 0 次）⇒ 直接嵌就会把逐格边界发给任意访问者。
+   * 折算口径与报告静态快照共用 `coarseBlindFootprint`，两处必须同一份实现。
+   */
+  desensitize?: boolean
 }
 
 /**
@@ -324,7 +335,7 @@ function NotesToggle({ on, onToggle, disabled }: { on: boolean; onToggle: () => 
 }
 
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, selectedCell = null, onCellPick },
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, selectedCell = null, onCellPick, desensitize = false },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -741,16 +752,29 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
         const spec = blindSevSpec(sev || undefined)
         const gap = gapScoreOf(b)
         const heatFill = lcFillSpec(blindHeatFill(gap))
-        const title = `${blindTitle(b)}${
-          b.reach?.isochrone_based ? ' · 真实可达据实测等时圈' : ' · 未见实测等时圈'
-        }`
-        const blindPoly = new bmap.Polygon(pts, {
-          strokeColor: gap == null ? '#8a8a8a' : spec.stroke,
-          fillColor: heatFill.color,
-          strokeWeight: 1.2,
-          fillOpacity: heatFill.opacity,
-          strokeStyle: gap == null ? 'dashed' : 'solid',
-        })
+        // 脱敏分支：几何换成面积等价圆、标题换成概略口径（不带缺口值），
+        // 折算半径与报告静态快照同源（`coarseBlindFootprint`）。
+        const coarse = desensitize ? coarseBlindFootprint(b) : null
+        const title = coarse
+          ? coarse.label
+          : `${blindTitle(b)}${
+              b.reach?.isochrone_based ? ' · 真实可达据实测等时圈' : ' · 未见实测等时圈'
+            }`
+        const blindPoly = coarse
+          ? new bmap.Circle(pt(b.center), coarse.radiusM, {
+              strokeColor: '#8a8a8a',
+              fillColor: 'rgba(120,120,120,0.10)' ,
+              strokeWeight: 1,
+              fillOpacity: 0.1,
+              strokeStyle: 'dashed',
+            })
+          : new bmap.Polygon(pts, {
+              strokeColor: gap == null ? '#8a8a8a' : spec.stroke,
+              fillColor: heatFill.color,
+              strokeWeight: 1.2,
+              fillOpacity: heatFill.opacity,
+              strokeStyle: gap == null ? 'dashed' : 'solid',
+            })
         add(blindPoly)
         /* ═══ C5：盲区交互（悬停锁 + 浮层 + 卡片；C8 严重度联动）═══ */
         const openBlindCard = (e: BMapOverlayEvent) => {
@@ -814,7 +838,9 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
           hideTooltip()
           onBlindHover?.(null)
         })
-        centerMarker.addEventListener?.('click', openBlindCard)
+        // 脱敏下不开精确读数卡：卡里带缺口指数、受估户数人数与逐格边界，
+        // 那些正是 ③-A 口径要在公开链接里挡掉的粒度（悬停 tooltip 已换成概略口径）。
+        if (!desensitize) centerMarker.addEventListener?.('click', openBlindCard)
         add(centerMarker)
         // 编号文本批注（C2）：BMapGL 用 Label 叠加 "N·重度"
         if (gap != null) {
@@ -1016,7 +1042,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       map.centerAndZoom(pt(center), 15)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, report, compareReport, customCenter, draggableCenter, boundaryView])
+  }, [mode, report, compareReport, customCenter, draggableCenter, boundaryView, desensitize])
 
   /* 片 5 · 证据域图层（逐锚点举证盘）—— **单独一个 effect**，不并进上面那份主覆盖层。
    *
@@ -1323,8 +1349,27 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               const gap = gapScoreOf(b)
               const ring = blindPolygonOf(b, boundaryView)?.coordinates?.[0] ?? []
               const [cx, cy] = lcToPx(center, b.center[0], b.center[1])
+              // 脱敏分支（与 BMap 分支同一判据、同一折算函数）：AK 缺失走降级画布时
+              // 也必须只画面积等价圆 —— 否则"没配 AK"反而比配了 AK 泄得更多。
+              const coarse = desensitize ? coarseBlindFootprint(b) : null
+              const rx = coarse ? Math.max(coarse.radiusM * (LC_CANVAS.W / 2) / LC_CANVAS.R, 6) : 0
+              const ry = coarse ? Math.max(coarse.radiusM * (LC_CANVAS.H / 2) / LC_CANVAS.R, 6) : 0
               return (
                 <g key={b.id}>
+                  {coarse ? (
+                    <ellipse
+                      cx={cx}
+                      cy={cy}
+                      rx={rx}
+                      ry={ry}
+                      fill="rgba(120,120,120,0.10)"
+                      stroke="#8a8a8a"
+                      strokeWidth={1}
+                      strokeDasharray="4 3"
+                    >
+                      <title>{coarse.label}</title>
+                    </ellipse>
+                  ) : (
                   <polygon
                     points={lcPolyPts(center, ring)}
                     fill={blindHeatFill(gap)}
@@ -1334,8 +1379,9 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
                   >
                     <title>{blindTitle(b)}</title>
                   </polygon>
+                  )}
                   <circle cx={cx} cy={cy} r={5} fill={spec.dot} stroke="#fff" strokeWidth={1.5}>
-                    <title>{blindTitle(b)}</title>
+                    <title>{coarse ? coarse.label : blindTitle(b)}</title>
                   </circle>
                   {gap != null && (
                     <g>
