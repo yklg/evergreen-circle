@@ -1,207 +1,203 @@
 {
- "maxDepth": 3,
- "ancestors": [
-  {
-   "tag": "DIV",
-   "class": "grid flex-1 grid-cols-1 gap-4 lg:min-h-0 lg:grid-cols-[1fr_320px] lg:grid-rows-[minmax(0,1fr)]"
-  },
-  {
-   "tag": "DIV",
-   "class": "mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6 lg:h-full lg:min-h-0 lg:overflow-hidden"
-  },
-  {
-   "tag": "MAIN",
-   "class": "relative min-w-0 flex-1 overflow-y-auto"
-  }
- ],
- "split": {
-  "tag": "DIV",
-  "class": "grid flex-1 grid-cols-1 gap-4 lg:min-h-0 lg:grid-cols-[1fr_320px] lg:grid-rows-[minmax(0,1fr)]",
-  "kids": [
-   {
+  "maxDepth": 3,
+  "ancestors": [
+    {
+      "tag": "DIV",
+      "class": "grid flex-1 grid-cols-1 gap-4 lg:min-h-0 lg:grid-cols-[1fr_320px] lg:grid-rows-[minmax(0,1fr)]"
+    },
+    {
+      "tag": "DIV",
+      "class": "mx-auto flex min-h-full max-w-[1240px] flex-col gap-4 px-6 py-6 lg:h-full lg:min-h-0 lg:overflow-hidden"
+    },
+    {
+      "tag": "MAIN",
+      "class": "relative min-w-0 flex-1 overflow-y-auto"
+    }
+  ],
+  "split": {
     "tag": "DIV",
-    "class": "relative min-h-[480px] overflow-hidden rounded-card border border-line bg-card shadow-card lg:h-full lg:min-h-0",
+    "class": "grid flex-1 grid-cols-1 gap-4 lg:min-h-0 lg:grid-cols-[1fr_320px] lg:grid-rows-[minmax(0,1fr)]",
     "kids": [
-     {
-      "tag": "DIV",
-      "class": "relative h-full w-full",
-      "kids": [
-       {
-        "tag": "svg",
-        "class": "block w-full cursor-crosshair select-none",
-        "aria-label": "生活圈等时圈画布（降级）",
-        "role": "img"
-       },
-       {
+      {
         "tag": "DIV",
-        "class": "absolute right-2 top-2 z-10 flex flex-col items-end gap-1"
-       }
-      ]
-     },
-     {
-      "tag": "DIV",
-      "class": "absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur",
-      "kids": [
-       {
-        "tag": "DIV",
-        "class": "flex items-center justify-between gap-2"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "mt-1 flex items-center gap-1.5 border-t border-line/70 pt-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "SPAN",
-        "class": "flex items-center gap-1.5 text-tag text-ink-3"
-       },
-       {
-        "tag": "LABEL",
-        "class": "mt-1 flex cursor-pointer items-start gap-1.5 border-t border-line/70 pt-1.5 text-tag font-medium text-ink-2"
-       },
-       {
-        "tag": "LABEL",
-        "class": "mt-1 flex cursor-pointer items-start gap-1.5 border-t border-line/70 pt-1.5 text-tag font-medium text-ink-2"
-       }
-      ]
-     },
-     {
-      "tag": "DIV",
-      "class": "absolute bottom-3 left-3 z-10 hidden items-center gap-1 rounded-chip bg-card/80 px-3 py-1.5 text-tag text-ink-3 backdrop-blur sm:flex",
-      "kids": [
-       {
-        "tag": "svg",
-        "class": "lucide lucide-crosshair"
-       }
-      ]
-     }
+        "class": "relative min-h-[480px] overflow-hidden rounded-card border border-line bg-card shadow-card lg:h-full lg:min-h-0",
+        "kids": [
+          {
+            "tag": "DIV",
+            "class": "relative h-full w-full",
+            "kids": [
+              {
+                "tag": "svg",
+                "class": "block w-full cursor-crosshair select-none",
+                "aria-label": "生活圈等时圈画布（降级）",
+                "role": "img"
+              },
+              {
+                "tag": "DIV",
+                "class": "absolute right-2 top-2 z-10 flex flex-col items-end gap-1"
+              }
+            ]
+          },
+          {
+            "tag": "DIV",
+            "class": "absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 overflow-y-auto rounded-btn border border-line bg-card/90 p-3 backdrop-blur lg:max-h-[calc(100%-1.5rem)]",
+            "kids": [
+              {
+                "tag": "DIV",
+                "class": "flex items-center justify-between gap-2"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "mt-1 flex items-center gap-1.5 border-t border-line/70 pt-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "SPAN",
+                "class": "flex items-center gap-1.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "DIV",
+                "class": "sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-1.5 rounded-b-btn border-t border-line/70 bg-card/95 px-3 pb-3 pt-1.5 backdrop-blur"
+              }
+            ]
+          },
+          {
+            "tag": "DIV",
+            "class": "absolute bottom-3 left-3 z-10 hidden items-center gap-1 rounded-chip bg-card/80 px-3 py-1.5 text-tag text-ink-3 backdrop-blur sm:flex",
+            "kids": [
+              {
+                "tag": "svg",
+                "class": "lucide lucide-crosshair"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "ASIDE",
+        "class": "flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1",
+        "kids": [
+          {
+            "tag": "DIV",
+            "class": "rounded-card border border-line bg-card p-4 shadow-card",
+            "kids": [
+              {
+                "tag": "DIV",
+                "class": "flex items-end justify-between"
+              },
+              {
+                "tag": "DIV",
+                "class": "mt-3 border-t border-line pt-3"
+              }
+            ]
+          },
+          {
+            "tag": "DIV",
+            "class": "rounded-card border border-line bg-card p-4 shadow-card",
+            "kids": [
+              {
+                "tag": "DIV",
+                "class": "mb-1 text-aux font-semibold text-ink"
+              },
+              {
+                "tag": "DIV",
+                "class": "flex flex-wrap gap-2 py-2"
+              },
+              {
+                "tag": "DIV",
+                "class": "mt-2 grid grid-cols-2 gap-2"
+              },
+              {
+                "tag": "P",
+                "class": "mt-1 text-tag font-medium text-warn"
+              },
+              {
+                "tag": "P",
+                "class": "mt-1 text-tag font-medium text-warn"
+              },
+              {
+                "tag": "DIV",
+                "class": "mt-3 border-t border-line pt-3"
+              },
+              {
+                "tag": "BUTTON",
+                "class": "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-btn bg-primary px-4 h-10 font-medium text-white shadow-card hover:bg-primary-deep disabled:opacity-40"
+              }
+            ]
+          },
+          {
+            "tag": "DETAILS",
+            "class": "rounded-card border border-line bg-card shadow-card",
+            "kids": [
+              {
+                "tag": "SUMMARY",
+                "class": "list-none cursor-pointer p-4"
+              },
+              {
+                "tag": "DIV",
+                "class": "px-4 pb-4"
+              }
+            ]
+          },
+          {
+            "tag": "DIV",
+            "class": "rounded-card border border-line bg-card p-4 shadow-card",
+            "kids": [
+              {
+                "tag": "DIV",
+                "class": "mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink"
+              },
+              {
+                "tag": "DIV",
+                "class": "flex flex-col gap-2"
+              }
+            ]
+          }
+        ]
+      }
     ]
-   },
-   {
-    "tag": "ASIDE",
-    "class": "flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1",
-    "kids": [
-     {
-      "tag": "DIV",
-      "class": "rounded-card border border-line bg-card p-4 shadow-card",
-      "kids": [
-       {
-        "tag": "DIV",
-        "class": "flex items-end justify-between"
-       },
-       {
-        "tag": "DIV",
-        "class": "mt-3 border-t border-line pt-3"
-       }
-      ]
-     },
-     {
-      "tag": "DIV",
-      "class": "rounded-card border border-line bg-card p-4 shadow-card",
-      "kids": [
-       {
-        "tag": "DIV",
-        "class": "mb-1 text-aux font-semibold text-ink"
-       },
-       {
-        "tag": "DIV",
-        "class": "flex flex-wrap gap-2 py-2"
-       },
-       {
-        "tag": "DIV",
-        "class": "mt-2 grid grid-cols-2 gap-2"
-       },
-       {
-        "tag": "P",
-        "class": "mt-1 text-tag font-medium text-warn"
-       },
-       {
-        "tag": "P",
-        "class": "mt-1 text-tag font-medium text-warn"
-       },
-       {
-        "tag": "DIV",
-        "class": "mt-3 border-t border-line pt-3"
-       },
-       {
-        "tag": "BUTTON",
-        "class": "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-btn bg-primary px-4 h-10 font-medium text-white shadow-card hover:bg-primary-deep disabled:opacity-40"
-       }
-      ]
-     },
-     {
-      "tag": "DETAILS",
-      "class": "rounded-card border border-line bg-card shadow-card",
-      "kids": [
-       {
-        "tag": "SUMMARY",
-        "class": "list-none cursor-pointer p-4"
-       },
-       {
-        "tag": "DIV",
-        "class": "px-4 pb-4"
-       }
-      ]
-     },
-     {
-      "tag": "DIV",
-      "class": "rounded-card border border-line bg-card p-4 shadow-card",
-      "kids": [
-       {
-        "tag": "DIV",
-        "class": "mb-2 flex items-center gap-1.5 text-aux font-semibold text-ink"
-       },
-       {
-        "tag": "DIV",
-        "class": "flex flex-col gap-2"
-       }
-      ]
-     }
-    ]
-   }
-  ]
- }
+  }
 }

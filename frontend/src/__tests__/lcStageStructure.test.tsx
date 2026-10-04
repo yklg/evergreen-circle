@@ -25,6 +25,8 @@
  * 真实渲染表现仍归计划 B-v1 的 2.2。
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
@@ -94,12 +96,61 @@ async function settle() {
 beforeAll(() => useDataModeStore.setState({ mode: 'fixture' }))
 afterEach(cleanup)
 
+/**
+ * ## 重采基线是**显式动作**，不是临时脚本
+ *
+ * `LC_STAGE_CAPTURE=1 npx vitest run src/__tests__/lcStageStructure.test.tsx` 才会重写
+ * `fixtures/lcStageStructure.json`；平时这条只做比对。之所以把采集口做进测试本身：
+ * 上一轮是靠一个临时脚本抓的，于是"改了结构 → 基线红 → 怎么重采"这件事只有当时那个人知道。
+ * 采集模式**必须先打印结构差分**再落盘 —— 让"重采"变成一次可见的记账，
+ * 而不是把等式悄悄改成"和现在一样"。
+ */
+const CAPTURE = process.env.LC_STAGE_CAPTURE === '1'
+const FIXTURE_FILE = join(process.cwd(), 'src', '__tests__', 'fixtures', 'lcStageStructure.json')
+
+type Tree = Record<string, unknown> & { kids?: Tree[] }
+
+/** 人可读的逐节点差分（只到"哪个位置变了什么"，不做最小编辑距离 —— 它是给人看账的） */
+function diffNode(exp: Tree, got: Tree, path: string, out: string[]): void {
+  for (const key of new Set([...Object.keys(exp), ...Object.keys(got)])) {
+    if (key === 'kids') continue
+    if (exp[key] !== got[key]) out.push(`${path} · ${key}: ${JSON.stringify(exp[key])} → ${JSON.stringify(got[key])}`)
+  }
+  const a = exp.kids ?? []
+  const b = got.kids ?? []
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const at = `${path}/${(b[i] ?? a[i])?.tag ?? '?'}[${i}]`
+    if (!a[i]) out.push(`${at} · 新增子节点 class=${JSON.stringify(b[i].class ?? '')}`)
+    else if (!b[i]) out.push(`${path}/${a[i].tag}[${i}] · 少掉子节点 class=${JSON.stringify(a[i].class ?? '')}`)
+    else diffNode(a[i], b[i], at, out)
+  }
+}
+
 describe('舞台结构必须与抽件前基线逐节点相同', () => {
   it('祖先链 + 两栏子树（depth≤' + MAX_DEPTH + '）不变 ⇒ 包一层就红', async () => {
     renderStage()
     const split = await settle()
-    expect({ ancestors: ancestorsOf(split), split: subtree(split, 0) })
-      .toEqual({ ancestors: baseline.ancestors, split: baseline.split })
+    const actual = { ancestors: ancestorsOf(split), split: subtree(split, 0) as Tree }
+
+    if (CAPTURE) {
+      const out: string[] = []
+      diffNode(baseline.split as Tree, actual.split, 'split', out)
+      for (let i = 0; i < Math.max(baseline.ancestors.length, actual.ancestors.length); i++) {
+        diffNode(
+          (baseline.ancestors[i] ?? {}) as Tree,
+          (actual.ancestors[i] ?? {}) as Tree,
+          `ancestors[${i}]`,
+          out,
+        )
+      }
+      writeFileSync(FIXTURE_FILE, JSON.stringify({ maxDepth: MAX_DEPTH, ...actual }, null, 2) + '\n')
+      console.info(
+        `[LC_STAGE_CAPTURE] 基线已重写。${out.length ? `本次被放行的结构差分 ${out.length} 处：\n  ${out.join('\n  ')}` : '与旧基线无差异（那这次重写没内容，考虑撤掉改动）。'}`,
+      )
+      return
+    }
+
+    expect(actual).toEqual({ ancestors: baseline.ancestors, split: baseline.split })
   })
 
   it('正对照：基线确实含关键节点，且不是空壳（否则上面的比对是空过）', () => {

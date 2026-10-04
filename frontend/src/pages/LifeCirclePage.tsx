@@ -35,7 +35,7 @@ import { useTaskRegistry } from '../store/taskRegistry'
 import LcMap from '../components/lifecircle/LcMap'
 import CellsLedgerCard from '../components/lifecircle/CellsLedgerCard'
 import RegionSelector from '../components/lifecircle/RegionSelector'
-import { LC_PAGE_ROOT } from '../components/lifecircle/stageContract'
+import { LC_LEGEND_JUDGE, LC_PAGE_ROOT } from '../components/lifecircle/stageContract'
 import LcStage from '../components/lifecircle/LcStage'
 import { VStatLine } from '../components/ui'
 import type { LcMapHandle, LcMapMode, LcBlindSev } from '../components/lifecircle/LcMap'
@@ -751,42 +751,46 @@ export default function LifeCirclePage() {
             </span>
               </>
             )}
-            {/* 片 5：证据域图层开关。**没有明细就不出现**（旧快照/离线从没发过 `evidence_anchors`，
-                给一个勾不动的复选框等于摆一个假入口）。 */}
-            {evidenceDiscs(report).length > 0 && (
-              <label className="mt-1 flex cursor-pointer items-start gap-1.5 border-t border-line/70 pt-1.5 text-tag font-medium text-ink-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-3.5 w-3.5"
-                  checked={evidenceOn}
-                  onChange={(e) => setEvidenceOn(e.target.checked)}
-                />
-                <span>
-                  证据域（查到哪儿）
-                  <span className="mt-0.5 block font-normal text-ink-3">
-                    {evidenceDiscs(report).length} 盘 · 实线查全 / 虚线未查全
+            {/* 判读控件块。图例改成"高度由地图格决定 + 内滚"之后，S3 那条「折叠只收色块、勾选常在」
+                要靠 `LC_LEGEND_JUDGE` 的 sticky 才成立 —— 否则勾一次判定尺得先把浮层滚到底。 */}
+            <div className={LC_LEGEND_JUDGE}>
+              {/* 片 5：证据域图层开关。**没有明细就不出现**（旧快照/离线从没发过 `evidence_anchors`，
+                  给一个勾不动的复选框等于摆一个假入口）。 */}
+              {evidenceDiscs(report).length > 0 && (
+                <label className="flex cursor-pointer items-start gap-1.5 border-b border-line/70 pb-1.5 text-tag font-medium text-ink-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5"
+                    checked={evidenceOn}
+                    onChange={(e) => setEvidenceOn(e.target.checked)}
+                  />
+                  <span>
+                    证据域（查到哪儿）
+                    <span className="mt-0.5 block font-normal text-ink-3">
+                      {evidenceDiscs(report).length} 盘 · 实线查全 / 虚线未查全
+                    </span>
                   </span>
-                </span>
-              </label>
-            )}
-            {/* C1/C6 · 判定尺开关 + 那句口径。**没有尺就不出现**（同证据盘那条纪律：
-                摆一个勾不动的复选框等于摆一个假入口）。半径取自产物，不写死 1km。 */}
-            {rulerLabel && (
-              <label className="mt-1 flex cursor-pointer items-start gap-1.5 border-t border-line/70 pt-1.5 text-tag font-medium text-ink-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-3.5 w-3.5"
-                  checked={judgeScaleOn}
-                  onChange={(e) => setJudgeScaleOn(e.target.checked)}
-                />
-                <span>
-                  判定尺（判一格用多大）
-                  <span className="mt-0.5 block font-normal text-ink-3">
-                    判盲问的是{rulerLabel}，不是眼前这一小块
+                </label>
+              )}
+              {/* C1/C6 · 判定尺开关 + 那句口径。**没有尺就不出现**（同证据盘那条纪律：
+                  摆一个勾不动的复选框等于摆一个假入口）。半径取自产物，不写死 1km。 */}
+              {rulerLabel && (
+                <label className="flex cursor-pointer items-start gap-1.5 text-tag font-medium text-ink-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5"
+                    checked={judgeScaleOn}
+                    onChange={(e) => setJudgeScaleOn(e.target.checked)}
+                  />
+                  <span>
+                    判定尺（判一格用多大）
+                    <span className="mt-0.5 block font-normal text-ink-3">
+                      判盲问的是{rulerLabel}，不是眼前这一小块
+                    </span>
                   </span>
-                </span>
-              </label>
-            )}
+                </label>
+              )}
+            </div>
           </LcStage.Legend>
 
           {dragging ? (

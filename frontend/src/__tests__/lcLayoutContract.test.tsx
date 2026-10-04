@@ -61,9 +61,15 @@ const MAP_CELL =
 const ASIDE =
   'flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1'
 /* 图例浮层的 `z-10` 不是装饰：BMapGL 注入 `.BMap_mask`（z-index:9）会吞掉勾选点击
-   （`LifeCirclePage.tsx` 图例注释记着实测）。谁把它改回 auto，谁就在真机上摆一个点不动的控件。 */
+   （`LifeCirclePage.tsx` 图例注释记着实测）。谁把它改回 auto，谁就在真机上摆一个点不动的控件。
+   `lg:max-h-[calc(100%-1.5rem)]` + `overflow-y-auto`（台账 2.11）：浮层高度必须挂在**同源容器**上。
+   原先它由内容决定，1280×720 基线余量只有 20.2px、字宽 +5% 剩 4.8px、rem 间距 1.25× 溢出 43.2px
+   —— 六档压力实测见 `e2e/lifeCircleStageFontStress.spec.ts`。摘掉这两条就是把判据交回字体度量。 */
 const LEGEND =
-  'absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur'
+  'absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 overflow-y-auto rounded-btn border border-line bg-card/90 p-3 backdrop-blur lg:max-h-[calc(100%-1.5rem)]'
+/* 判读控件块（证据域 / 判定尺）：图例内滚之后，S3 的「勾选常在」只能靠 sticky 兑现 */
+const LEGEND_JUDGE =
+  'sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-1.5 rounded-b-btn border-t border-line/70 bg-card/95 px-3 pb-3 pt-1.5 backdrop-blur'
 
 /** 出现次数必须恰为 1：0 次是漂移，2 次是有人复制了一份滚动契约。 */
 function exactlyOnce(hay: string, needle: string, label: string) {
@@ -97,12 +103,13 @@ describe('TC-18 · 舞台契约的 class 串逐字钉死（单一来源 = stageC
     expect(contract).toContain('export const LC_PAGE_ROOT')
   })
 
-  it('五组 utility 只在契约文件里各出现恰一次', () => {
+  it('六组 utility 只在契约文件里各出现恰一次', () => {
     exactlyOnce(contract, PAGE_ROOT, '页根（大屏接管滚动）')
     exactlyOnce(contract, SPLIT, '两栏（行高锁成容器高，杜绝右栏反向撑高）')
     exactlyOnce(contract, MAP_CELL, '地图格（高度交给视口）')
     exactlyOnce(contract, ASIDE, '右栏（内部滚动）')
     exactlyOnce(contract, LEGEND, '图例浮层（`z-10` 必须压过 .BMap_mask 的 z-index:9）')
+    exactlyOnce(contract, LEGEND_JUDGE, '图例判读块（内滚后靠 sticky 兑现「勾选常在」）')
   })
 
   it('常量由 LcStage 消费、页面只引 LC_PAGE_ROOT 与 <LcStage>，两处都不许内联副本', () => {
@@ -112,9 +119,10 @@ describe('TC-18 · 舞台契约的 class 串逐字钉死（单一来源 = stageC
       expect(stage, `LcStage 没有消费 ${name}`).toContain(`className={${name}}`)
     }
     expect(src).toContain('className={LC_PAGE_ROOT}')      // 页根仍归页面自己
+    expect(src).toContain('className={LC_LEGEND_JUDGE}')   // 判读块归页面（它在 Legend 的 children 里）
     expect(src).toContain('<LcStage')
     // 两处都不许留字面量副本 —— 契约只有一个家
-    for (const literal of [PAGE_ROOT, SPLIT, MAP_CELL, ASIDE, LEGEND]) {
+    for (const literal of [PAGE_ROOT, SPLIT, MAP_CELL, ASIDE, LEGEND, LEGEND_JUDGE]) {
       expect(src, '页面里出现了契约的字面量副本').not.toContain(literal)
       expect(stage, 'LcStage 里出现了契约的字面量副本').not.toContain(literal)
     }

@@ -41,6 +41,16 @@ export const LC_MAP_CELL =
 export const LC_ASIDE =
   'flex flex-col gap-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:pr-1'
 
-/** 图例浮层：`z-10` 见上方规矩 2 */
+/** 图例浮层：`z-10` 见上方规矩 2。
+ *  `lg:max-h-[calc(100%-1.5rem)]`（顶 12px + 底 12px）+ 内滚是**契约的一部分**，不是美化：
+ *  浮层原先由内容决定高度，1280×720 基线余量只有 20.2px，字宽 +5% 只剩 4.8px，
+ *  rem 间距 1.25× 直接溢出 main 下沿 43.2px（台账 2.11，六档压力实测见
+ *  `e2e/lifeCircleStageFontStress.spec.ts`）。挂 `max-h` 之后高度与**同源容器**绑定 ⇒ 与字体度量解耦。 */
 export const LC_LEGEND =
-  'absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 rounded-btn border border-line bg-card/90 p-3 backdrop-blur'
+  'absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1.5 overflow-y-auto rounded-btn border border-line bg-card/90 p-3 backdrop-blur lg:max-h-[calc(100%-1.5rem)]'
+
+/** 图例里的**判读控件块**（证据域 / 判定尺两个勾选）：图例内滚时必须吸底。
+ *  规矩 3（S3）说"折叠只收色块，勾选常在"—— 有了内滚之后"常在"就得靠 sticky 才成立，
+ *  否则勾一下判定尺要先把浮层滚到底。负外边距让这条块铺满浮层内宽并盖住下内边距，读起来像 footer。 */
+export const LC_LEGEND_JUDGE =
+  'sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-1.5 rounded-b-btn border-t border-line/70 bg-card/95 px-3 pb-3 pt-1.5 backdrop-blur'
