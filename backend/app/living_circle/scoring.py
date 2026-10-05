@@ -173,13 +173,37 @@ def triad_from_points(
     pharmacy: List[Dict[str, Any]],
     primary: List[Dict[str, Any]],
     field_fn,
+    blind_center: Dict[str, Tuple[int, float]],
 ) -> List[Dict[str, Any]]:
-    """三要素覆盖结论（供 live 管线）：最近设施名 + 耗时。"""
+    """三要素覆盖结论（供 live 管线）：**两把尺各报各的**，不再塌成一个布尔。
+
+    ``field_fn`` 是可达尺（实测耗时场 + `reach_ring` 封顶，见 `assemble.py`），
+    ``blind_center`` 是 1km 直线尺（`JudgeMasks.center_readings()` 的中心格读数，
+    int8 三态）。必填、无回落 —— 留"不传就只报可达"的旁路＝允许半迁移，那正是
+    `assemble.py` 的 `judgement` 形参当初拒绝回落的同一条理由。
+
+    发射的键：
+      - ``in_reach``            可达区内有该类设施（``field_fn`` 对某点给出非 None）；
+      - ``covered``             **兼容别名**，恒等于 ``in_reach``。旧消费者（报告模板、
+                                 体检单卡片、前端契约）读的是它。真语义是"可达区内"，
+                                 不是"1km 内" —— 名字留在兼容位上，语义由 ``in_reach`` 承担；
+      - ``within_blind_radius`` 中心 1km 直线内有该类设施：``True`` / ``False`` /
+                                 ``None``（``None`` ＝ 该类在中心格**无从下结论**，
+                                 证据没查全，**不等于"没有"**）；
+      - ``nearest_m``           中心到该类最近设施的直线米数，来自 1km 那把尺的同一张表
+                                 （`JudgeMasks.nearest_m`，故同名）。**不受 1km 截断** ——
+                                 最近一家在 2200m 就报 2200，此时 ``within_blind_radius``
+                                 为 ``False``；``None`` ＝ 无从知道。名字里没有 "within"
+                                 是有意的：它是最近距离，不是"1km 之内"的证据。
+      - ``blocked_by_geometry`` **1km 内有、但步行到不了**（``within_blind_radius`` 为真
+                                 且 ``in_reach`` 为假）。这是"道路并非直线"的直接证据；
+                                 任一前置未知 ⇒ ``None``，不猜。
+    """
     out: List[Dict[str, Any]] = []
-    for label, items in (
-        ("菜市场", market),
-        ("药店", pharmacy),
-        ("小学", primary),
+    for key, label, items in (
+        ("market", "菜市场", market),
+        ("pharmacy", "药店", pharmacy),
+        ("primary", "小学", primary),
     ):
         best = None
         best_m = None
@@ -190,10 +214,17 @@ def triad_from_points(
             if best_m is None or m < best_m:
                 best_m = m
                 best = it
+        in_reach = best_m is not None
+        present, nearest_m = blind_center.get(key, (-1, -1.0))
+        within = None if present < 0 else present > 0
         out.append({
             "facility": label,
-            "covered": best_m is not None,
+            "in_reach": in_reach,
+            "covered": in_reach,
             "nearest_name": best.get("name") if best else None,
             "nearest_minutes": round(best_m, 1) if best_m is not None else None,
+            "within_blind_radius": within,
+            "nearest_m": None if nearest_m < 0 else round(nearest_m, 1),
+            "blocked_by_geometry": None if within is None else bool(within and not in_reach),
         })
     return out

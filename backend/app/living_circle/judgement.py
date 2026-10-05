@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -92,6 +92,26 @@ class JudgeMasks:
         第三态归因被改动时就会有一处悄悄不算封顶格。
         """
         return self.inside & ~self.verdict
+
+    def center_readings(self) -> Dict[str, Tuple[int, float]]:
+        """中心格（分析中心所在格）的逐类台账读数 ``{类别: (present, nearest_m)}``。
+
+        为什么索引可以直接推：格阵恒为**奇数对称**（`grid_spec`：``n = 2k+1``、
+        ``coords = linspace(-scan, scan, n)``）⇒ 分析中心恰落在第 ``k = n//2`` 行与列的
+        格心上。这条保证记在 `GridSpec` 的 docstring 里（"中心格不会被半格偏移污染"）——
+        它一旦不成立，这里读到的就不是"以社区为中心"的那一把尺，而是偏了半格的邻格。
+
+        为什么遍历 `self.present` 而不是 import `TRIAD_KEYS`：本模块刻意不在运行时依赖
+        `scope`（见文件头的环依赖警告），而 `present` 的键集**就是**本次判定的必达要素集
+        （`blindspot._verdict_masks` 按 `TRIAD_KEYS` 逐类建表）。另起一份类别清单＝第二事实源。
+
+        `present` 是 int8 **三态**（``-1`` 无从知道 / ``0`` 有据但 1km 内没有 / ``1`` 有据且
+        命中），与 `JudgeMasks` 的 ⚠️ 同一条约定：消费方**不许**把它塌成 bool —— 那会把
+        "没查过"洗成"查过且没有"，正是 `ev-1` 整套改造要消灭的形状。
+        """
+        k = self.grid.n // 2
+        return {key: (int(self.present[key][k, k]), float(self.nearest_m[key][k, k]))
+                for key in self.present}
 
 
 @dataclass(frozen=True)

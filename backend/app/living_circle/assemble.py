@@ -303,6 +303,10 @@ def assemble_living_circle(
         full(triads.get("pharmacy", [])),
         full(triads.get("primary", [])),
         field_fn,
+        # 1km 直线尺**从判定那一次的中心格读**，不在这里重算：`EvidenceRegion` 自称判盲/
+        # 出图/举证的唯一事实源（`scope.py:244`），这里再抄一遍 `haversine ≤ 1km` 就是第二处
+        # 1km 判定 —— 两处的 `<=` 一旦分叉，三要素卡与盲区清单就会互相打脸。
+        judgement.masks.center_readings(),
     )
 
     # ── 盲区（判定在编排层完成，本层只消费产物；见参数表 `judgement` 的所有权契约）──
