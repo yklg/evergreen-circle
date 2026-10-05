@@ -104,7 +104,7 @@ def test_tc_e04a_hallucinated_ids_are_dropped(monkeypatch):
     out = O._dispatch_experts("大理", ["大理"], ["交通"])
     got = [m["id"] for m in out["members"]]
     assert got == ["L1-012"], f"幻觉/空 id 混进了团队：{got}"
-    assert out["lead"] in {e["id"] for e in load_experts()}, "lead 也必须落在真实池内"
+    assert out["lead"] in {e["id"] for e in load_experts("travel")}, "lead 也必须落在真实池内"
 
 
 
@@ -309,7 +309,7 @@ def test_tc_e11_full_roster_reaches_prompt(monkeypatch):
     _patch_finish(monkeypatch, "stop")
     O._dispatch_experts("大理", ["大理"], ["交通"])
     blob = json.dumps(seen["messages"], ensure_ascii=False)
-    pool = [e["id"] for e in load_experts()]
+    pool = [e["id"] for e in load_experts("travel")]
     assert len(pool) == 48, "名册规模变了要同步本钉（前端硬编码文案另计）"
     missing = [i for i in pool if i not in blob]
     assert not missing, f"名册被截断，这些专家永远不可能被选中：{missing}"

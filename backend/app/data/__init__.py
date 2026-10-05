@@ -25,6 +25,9 @@ _FILES = {
 }
 _DEFAULT_DOMAIN = "travel"
 
+#: 合法域名清单（端点层校验与测试共用，避免第二份字面量）
+DOMAINS = tuple(_FILES)
+
 
 def _normalize(data: list[dict]) -> list[dict]:
     """宽松校验：只记录 warning/回落默认值，绝不因数据问题抛异常。"""
@@ -44,8 +47,18 @@ def _normalize(data: list[dict]) -> list[dict]:
 
 
 @lru_cache
-def load_experts(domain: str = _DEFAULT_DOMAIN) -> list[dict]:
-    path = _FILES.get(domain, _FILES[_DEFAULT_DOMAIN])
+def load_experts(domain: str) -> list[dict]:
+    """按域取名册。`domain` **必填**：两本名册共用同一套 48 个 id、人设却不同，
+    留一个"默认域"等于让忘记传域的调用点静默拿到另一本人设（生活圈报告署名曾整批
+    取成旅游人设，实测 7/7 章全错），而这类错误不会抛异常、只会显示成另一个人名。
+
+    未知域名 ⇒ 直接抛错，绝不回落 travel（回落等于把同一个静默错值留给端点层）。
+    唯一保留的回落是**文件级**的：living_circle 文件缺失/损坏时借 travel 并记 warning，
+    让"名册数据缺陷"永不阻断启动（由 test_expert_loader_availability 守）。
+    """
+    if domain not in _FILES:
+        raise ValueError(f"未知专家域 {domain!r}，可选：{', '.join(DOMAINS)}")
+    path = _FILES[domain]
     try:
         with open(path, "r", encoding="utf-8") as f:
             return _normalize(json.load(f))
@@ -57,12 +70,12 @@ def load_experts(domain: str = _DEFAULT_DOMAIN) -> list[dict]:
         raise
 
 
-def expert_by_id(eid: str, domain: str = _DEFAULT_DOMAIN) -> Optional[dict]:
+def expert_by_id(eid: str, domain: str) -> Optional[dict]:
     for e in load_experts(domain):
         if e.get("id") == eid:
             return e
     return None
 
 
-def experts_by_level(level: str, domain: str = _DEFAULT_DOMAIN) -> list[dict]:
+def experts_by_level(level: str, domain: str) -> list[dict]:
     return [e for e in load_experts(domain) if e.get("level") == level]

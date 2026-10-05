@@ -98,8 +98,8 @@ def test_tc_e18_list_experts_returns_full_pool():
     r = client.get("/api/experts")
     assert r.status_code == 200
     items = r.json()
-    assert len(items) == len(load_experts()) == 48, "端点漏项 → 前端专家页永远看不到这些人"
-    assert {i["id"] for i in items} == {e["id"] for e in load_experts()}
+    assert len(items) == len(load_experts("travel")) == 48, "端点漏项 → 前端专家页永远看不到这些人"
+    assert {i["id"] for i in items} == {e["id"] for e in load_experts("travel")}
 
 
 def test_tc_e18b_workload_empty_db_is_stable():

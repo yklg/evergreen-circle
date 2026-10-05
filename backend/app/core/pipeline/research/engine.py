@@ -105,6 +105,7 @@ from app.core.pipeline.research.planning import (  # noqa: E402,F401
     _plan_research,
 )
 from app.core.pipeline.research.dispatch import (  # noqa: E402,F401
+    ROSTER_DOMAIN,
     _FALLBACK_PICK,
     _TEAM_QUOTA,
     _TEAM_QUOTA_DESC,
@@ -888,12 +889,12 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
                                       f"（{dispatch['degraded_reason']}）——"
                                       f"专长匹配度低于正常轮次，建议核对模型配置后重跑。",
                               "ts": _now()})
-    lead_expert = expert_by_id(dispatch["lead"]) or {}
+    lead_expert = expert_by_id(dispatch["lead"], ROSTER_DOMAIN) or {}
     yield _ev("thought", {"id": _sid("th"), "kind": "dispatch", "expert": "L3-001",
                           "text": f"由 {lead_expert.get('name','决策层')} 领衔组建 {len(member_ids)} 人专家队，"
                                   f"按调研主题精准匹配专长。", "ts": _now()})
     for m in dispatch["members"]:
-        ex = expert_by_id(m["id"]) or {}
+        ex = expert_by_id(m["id"], ROSTER_DOMAIN) or {}
         yield _ev("thought", {"id": _sid("th"), "kind": "dispatch", "expert": m["id"],
                               "text": f"指派 {ex.get('name', m['id'])}（{ex.get('role_title','')}）：{m['reason']}",
                               "ts": _now()})
@@ -915,7 +916,7 @@ async def research_pipeline(task_id: str, sub_id: str = "") -> AsyncIterator[Dic
 
     collector = next((m["id"] for m in dispatch["members"] if m["id"].startswith("L1")), "L1-025")
     sentiment_expert = next((m["id"] for m in dispatch["members"]
-                             if (expert_by_id(m["id"]) or {}).get("group") == "function"), collector)
+                             if (expert_by_id(m["id"], ROSTER_DOMAIN) or {}).get("group") == "function"), collector)
 
     # ---- 3. collect：深度多角度真实搜索 + 抓取 ----
     yield _ev("node_update", {"node": "collect", "status": "working", "expert": collector})

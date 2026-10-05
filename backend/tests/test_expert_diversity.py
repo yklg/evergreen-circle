@@ -33,7 +33,7 @@ ROUNDS = [
     ("三亚冬季避寒性价比调研", ["三亚"], ["预算", "气候", "住宿"]),
 ]
 
-POOL_L1 = [e["id"] for e in load_experts() if e["level"] == "L1"]
+POOL_L1 = [e["id"] for e in load_experts("travel") if e["level"] == "L1"]
 
 
 def _dead_llm(monkeypatch):
@@ -82,4 +82,4 @@ def test_tc_e20c_pool_depth_is_not_the_bottleneck():
     那时真正的约束会变成名册本身，而不是选人逻辑。
     """
     assert len(POOL_L1) == 36
-    assert len({e["id"] for e in load_experts()}) == 48, "id 必须唯一，否则统计与署名会串号"
+    assert len({e["id"] for e in load_experts("travel")}) == 48, "id 必须唯一，否则统计与署名会串号"

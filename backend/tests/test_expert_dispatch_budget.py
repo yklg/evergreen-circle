@@ -54,7 +54,7 @@ def test_roster_volume_is_not_sliced():
     守的是「有人为省 token 把 roster 切成前 N 位」——那会让后面的专家永久不可选，
     且症状与本 bug 一模一样（永远是那几个），极难从报告里看出来。
     """
-    pool = load_experts()
+    pool = load_experts("travel")
     assert len(pool) == 48
     roster = [
         {"id": e["id"], "name": e["name"], "level": e["level"],

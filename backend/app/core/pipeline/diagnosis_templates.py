@@ -99,12 +99,16 @@ def poi_dedupe_rule_label(poi: Dict[str, Any]) -> str:
 
 
 def _expert(eid: str) -> Dict[str, str]:
-    """署名由权威名册 experts.json 派生（不再有第二份姓名表）。
+    """署名由权威名册 experts_living_circle.json 派生（不再有第二份姓名表）。
+
+    域写死 living_circle：本模块只服务生活圈（唯一 import 方是 `pipeline/living_circle.py`）。
+    两本名册共用同一套 48 个 id、人设互不通用，取错域不会报错、只会静默换人名 ——
+    曾经整批把生活圈章节署成旅游人设（实测 7/7 章，如医疗章「苏明哲·行程策略专家」）。
 
     role 取 role_title 首段中文；名册缺该 id 时回落 id 本身 + 通用职位而非抛 KeyError，
     避免一个专家条目问题打断整份 D4 报告装配。
     """
-    e = expert_by_id(eid) or {}
+    e = expert_by_id(eid, "living_circle") or {}
     return {
         "name": e.get("name") or eid,
         "role": (e.get("role_title") or "").split(" / ")[0] or "规划专家",

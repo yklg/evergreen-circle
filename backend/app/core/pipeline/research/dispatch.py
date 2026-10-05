@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional
 from app.core import llm, trace
 from app.data import load_experts
 
+#: 调研域取哪本专家名册 —— 唯一定义源，engine 侧同 import 此常量。
+#: 两本名册共用同一套 48 个 id、人设不同（`app/data/__init__.py`），所以域必须写出来：
+#: 少写一次不会报错，只会静默换成另一个人名。
+ROSTER_DOMAIN = "travel"
+
 from . import runtime
 
 
@@ -124,7 +129,7 @@ def _dispatch_experts(query: str, destinations: List[str], focus: List[str]) -> 
     降级标记只走 trace 与运行中 SSE，不进报告 payload（见 test_report_read_compat 的
     plan_fallback 同源约定）。
     """
-    experts = load_experts()
+    experts = load_experts(ROSTER_DOMAIN)
     valid_ids = {e["id"] for e in experts}
     level_of = {e["id"]: e["level"] for e in experts}
     roster = [

@@ -45,7 +45,7 @@ from app.core.user_prefs import (
     apply_prefs,
     prefs_doc,
 )
-from app.data import expert_by_id, load_experts
+from app.data import DOMAINS as EXPERT_DOMAINS, expert_by_id, load_experts
 
 _logger = logging.getLogger(__name__)
 
@@ -82,7 +82,9 @@ def root():
         "version": "2.0.0",
         "slogan": "让每个结论都有出处，让每次调研都活着。",
         "llm_configured": bool(get_effective_settings().get("llm_api_key")),
-        "experts": len(load_experts()),
+        "experts": len(load_experts("travel")),
+        # 双名册各自报数：只报 travel 一份会让"生活圈名册丢了/串了"在健康检查里隐形
+        "experts_by_domain": {d: len(load_experts(d)) for d in EXPERT_DOMAINS},
     }
 
 
@@ -269,18 +271,31 @@ def search_endpoint(q: str, num: int = 10, site: Optional[str] = None):
 
 
 # ── 专家 ────────────────────────────────────────────────
+def _require_domain(domain: str) -> str:
+    """端点层的域校验：非法域报 422，绝不静默当成 travel。
+
+    端点缺省仍是 travel —— 那不是"忘记传域"，而是 `/api/experts` 这个 URL 的公开契约
+    （前端取 travel 名册时刻意不带查询参，`lib/api.ts:54`）。要防的是**拼错/传错域**
+    被悄悄洗成另一本人设：两本名册共用同一套 48 个 id，串域不会 404，只会换人名。
+    """
+    if domain not in EXPERT_DOMAINS:
+        raise HTTPException(status_code=422, detail=f"未知专家域 {domain!r}，可选：{', '.join(EXPERT_DOMAINS)}")
+    return domain
+
+
 @app.get("/api/experts")
 def list_experts(domain: str = "travel"):
-    """专家名册按域取：travel（默认）/ living_circle；非法域由 loader 回落 travel（fail-loud 到默认）。"""
-    return load_experts(domain)
+    """专家名册按域取：travel（缺省）/ living_circle；非法域 422。"""
+    return load_experts(_require_domain(domain))
 
 
 @app.get("/api/experts/workload")
-def experts_workload():
-    """专家工作量看板：真实累计任务/产出论点/采集证据。"""
+def experts_workload(domain: str = "travel"):
+    """专家工作量看板：真实累计任务/产出论点/采集证据（按域取名册）。"""
+    domain = _require_domain(domain)
     stats = {s["expert_id"]: s for s in db.expert_workload()}
     out = []
-    for e in load_experts():
+    for e in load_experts(domain):
         s = stats.get(e["id"])
         out.append({
             "id": e["id"],
@@ -288,6 +303,7 @@ def experts_workload():
             "title": e.get("role_title", ""),
             "layer": e.get("level", ""),
             "avatar": e.get("avatar", ""),
+            "domain": domain,
             "missions": s["missions"] if s else 0,
             "claims_authored": s["claims_authored"] if s else 0,
             "evidence_collected": s["evidence_collected"] if s else 0,
@@ -302,15 +318,15 @@ def experts_integrity():
     """名册结构性自检（双域）：返回问题清单，不影响专家端点可用性。"""
     from app.data.schema import validate_roster
     problems = []
-    for domain in ("travel", "living_circle"):
+    for domain in EXPERT_DOMAINS:
         for prob in validate_roster(load_experts(domain)):
             problems.append({"domain": domain, **(prob if isinstance(prob, dict) else {"msg": prob})})
     return {"ok": len(problems) == 0, "problems": problems}
 
 
 @app.get("/api/experts/{eid}")
-def get_expert(eid: str):
-    e = expert_by_id(eid)
+def get_expert(eid: str, domain: str = "travel"):
+    e = expert_by_id(eid, _require_domain(domain))
     if not e:
         return {"ok": False, "message": "not found"}
     stat = next((s for s in db.expert_workload() if s["expert_id"] == eid), None)

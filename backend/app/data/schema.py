@@ -1,6 +1,6 @@
 """专家名册 schema 定义与校验器。
 
-本模块是名册结构的唯一权威来源；`load_experts()` 只负责宽松加载，
+本模块是名册结构的唯一权威来源；`load_experts(domain)` 只负责宽松加载，
 所有结构性校验集中在此，返回问题清单而非抛异常。
 """
 from __future__ import annotations
