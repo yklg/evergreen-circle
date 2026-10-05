@@ -766,7 +766,7 @@ export interface FacilityCategoryStat {
   label: string
   /** 研究范围内总数 */
   total: number
-  /** 15 分钟圈内数量 */
+  /** 可达区内数量 */
   in_circle: number
   /** 覆盖度 0-1 = `min(1, 分子 / 该类理想阈值)`。分子**看口径**（`cov-1`）：
    *  建了子类表的类别取 `required_in_circle`（门槛项数），没建表或旧快照取 `in_circle`（点数）。
@@ -951,7 +951,7 @@ export interface BlindFootprintMeta {
 /** 盲区三要素覆盖结论 */
 export interface TriadFacility {
   facility: '菜市场' | '药店' | '小学'
-  /** 15 分钟圈内是否可达 */
+  /** 可达区内是否可达 */
   covered: boolean
   nearest_name: string | null
   nearest_minutes: number | null

@@ -203,7 +203,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `圈内医疗设施 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近 ${fmtMin(m?.min_minutes ?? null)}；社区医院/诊所/药店三类中${(ph?.nearest_name || m?.nearest_name) ? `最近为「${ph?.nearest_name ?? m?.nearest_name}」` : '尚无近端设施'}`,
     paragraphs: [
-      `对研究范围内医疗类 POI 按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，15 分钟步行圈内 ${m?.in_circle ?? 0} 处；${medCoverageSentence(m, r.caliber)}`,
+      `对研究范围内医疗类 POI 按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，可达区内 ${m?.in_circle ?? 0} 处；${medCoverageSentence(m, r.caliber)}`,
       `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一，圈内可达性为「${triad?.covered ? '可达' : '不可达'}」${triad?.nearest_minutes != null ? `（最近 ${triad.nearest_minutes}min）` : ''}。`,
     ],
     claims,
@@ -228,7 +228,7 @@ function secEducation(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `教育类圈内 ${e ? `${e.in_circle}/${e.total}` : '—'} 处；小学为盲区三要素之一，${triad?.covered ? `圈内可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'} `,
     paragraphs: [
-      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，15 分钟圈内 ${e?.in_circle ?? 0} 处；${eduCoverageSentence(e, r.caliber)}最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
+      `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，可达区内 ${e?.in_circle ?? 0} 处；${eduCoverageSentence(e, r.caliber)}最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
       `就学通勤视角：小学接送是生活圈体检的高频痛点，本样区${triad?.covered ? `最近小学步行 ${triad.nearest_minutes}min，处于可接受范围` : '1km 内无小学，需重点关注跨区就学问题'}。`,
     ],
     claims: [
@@ -296,7 +296,7 @@ function secElderly(r: LivingCircleReport): ReportSection {
     level: 2,
     key_takeaway: `养老(含社区级命名)圈内 ${el ? `${el.in_circle}/${el.total}` : '0/0'} 处${missing ? LC_ELDERLY_UNDETECTED_TAIL : ''}；文体类 ${rec ? `${rec.in_circle}/${rec.total}` : '—'} 处`,
     paragraphs: [
-      `养老托育类设施共 ${el?.total ?? 0} 处，15 分钟圈内 ${el?.in_circle ?? 0} 处，覆盖度 ${pct(el?.coverage ?? 0)}。${missing ? LC_ELDERLY_UNDETECTED_CAUSE : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}`,
+      `养老托育类设施共 ${el?.total ?? 0} 处，可达区内 ${el?.in_circle ?? 0} 处，覆盖度 ${pct(el?.coverage ?? 0)}。${missing ? LC_ELDERLY_UNDETECTED_CAUSE : `最近「${el?.nearest_name}」${fmtMin(el?.min_minutes ?? null)}。`}`,
       `文体(公园/健身) ${rec?.total ?? 0} 处（圈内 ${rec?.in_circle ?? 0}），作为全龄友好配套的补充观测项${rec?.min_minutes != null ? `，最近「${rec.nearest_name}」${fmtMin(rec.min_minutes)}` : ''}。`,
     ],
     claims: [

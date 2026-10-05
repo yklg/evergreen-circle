@@ -144,6 +144,13 @@ async function openLiveCta(page: import('@playwright/test').Page, records: boole
   const cta = page.getByRole('button', { name: /开始体检/ })
   await expect(cta, '真实模式的「开始体检」入口没出现').toBeVisible()
   await expect(page.locator(PICKER), `${records ? '有' : '无'}记录态的出行方式段控没出现`).toBeVisible()
+  // 段控在两个挂载点里各有一份，`toBeVisible()` 分不出页面停在哪一个 —— 两个 CTA 行的
+  // placeholder 已统一成「社区名 / 经纬度」，唯一可分辨的是 aria-label。不锁这一条就会拿
+  // 首帧的无记录态行（h-11，尚未布局时整行 0×0）去量有记录态的几何。
+  await expect(
+    page.getByLabel(records ? '重新体检目标（社区名或经纬度）' : '首次体检目标（社区名或经纬度）'),
+    `${records ? '有' : '无'}记录态未生效：页面还停在另一个 CTA 挂载点上`,
+  ).toBeVisible()
   return cta
 }
 

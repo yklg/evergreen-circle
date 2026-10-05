@@ -582,7 +582,7 @@ def _sec_medical(lc: dict) -> dict:
         "level": 2,
         "key_takeaway": f"圈内医疗设施 {in_circle}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{'可达' if (triad or {}).get('covered') else '1km 内缺失'}",
         "paragraphs": [
-            f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，15 分钟圈内 {in_circle} 处；{_med_cov_sentence(m, lc.get('caliber'))}",
+            f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，可达区内 {in_circle} 处；{_med_cov_sentence(m, lc.get('caliber'))}",
             # 原第 2 段只有一句「最近设施 X 步行约 Y」；机理段含同一信息并交代它与分子的形状关系，
             # 所以**替换**而非再加一段 —— 否则"最近是谁"这句话在正文里出现两遍。
             _mechanism_sentence(lc, "medical") or f"最近设施「{(m or {}).get('nearest_name') or '—'}」步行约 {_fmt_min((m or {}).get('min_minutes'))}。",
@@ -686,7 +686,7 @@ def _sec_elderly(lc: dict) -> dict:
         "id": "elderly", "title": "养老配置", "level": 2,
         "key_takeaway": f"养老(含社区级命名)圈内 {(el or {}).get('in_circle', 0)}/{(el or {}).get('total', 0)} 处{(_LC_ELDERLY_UNDETECTED_TAIL if missing else '')}",
         "paragraphs": [
-            f"养老托育类设施共 {(el or {}).get('total', 0)} 处，15 分钟圈内 {(el or {}).get('in_circle', 0)} 处，覆盖度 {_pct(_cov_score(el))}。",
+            f"养老托育类设施共 {(el or {}).get('total', 0)} 处，可达区内 {(el or {}).get('in_circle', 0)} 处，覆盖度 {_pct(_cov_score(el))}。",
             (_LC_ELDERLY_UNDETECTED_CAUSE if missing
              else f"最近「{(el or {}).get('nearest_name')}」{_fmt_min((el or {}).get('min_minutes'))}。"),
         ],
