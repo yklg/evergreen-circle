@@ -2,9 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <!-- 品牌图标：SVG 主图标（任意尺寸清晰）+ iOS 触屏图标（PNG，由 make_brand_icon.py 从 favicon.svg 生成） -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- 品牌图标：SVG 主图标（任意尺寸清晰）+ iOS 触屏图标（PNG，由 make_brand_icon.py 从 favicon.svg 生成）。
+         ?v= 只是投递手段：浏览器会记住「这个图标 URL 解析失败」，改过 favicon.svg 后
+         不递增 v 就可能一直沿用旧结论。但图标能否显示真正取决于 favicon.svg 自身的
+         XML 良构性（2026-09-27 那份因注释里有连续两个减号而整份解析失败，
+         标签页于是退回历史里唯一解析成功过的 Vite 默认闪电），由 brand.test.ts 的解析判据守着。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3" />
     <!-- 移动端地址栏配色，与 index.css 的 --c-primary 同源（品牌色 #7c9885） -->
     <meta name="theme-color" content="#7c9885" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

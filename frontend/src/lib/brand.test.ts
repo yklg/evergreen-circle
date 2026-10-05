@@ -32,9 +32,12 @@ describe('brand.ts ↔ index.html 漂移守卫', () => {
 
   it('图标声明齐备（SVG 主图标 + iOS 触屏图标）', () => {
     expect(html).toContain('rel="icon"')
-    expect(html).toContain('href="/favicon.svg"')
     expect(html).toContain('rel="apple-touch-icon"')
-    expect(html).toContain('href="/apple-touch-icon.png"')
+    // 带 ?v= 才算数：这是投递手段 —— 浏览器会记住「某图标 URL 解析失败」并长期沿用该结论，
+    // 改过 favicon.svg 不递增 v 就可能看不到变化。注意它管不了"图标本身合不合法"，
+    // 那由下面 favicon.svg 的 XML 良构判据负责（两者各守一段，别指望 ?v= 兜住格式错误）。
+    expect(html).toMatch(/href="\/favicon\.svg\?v=\d+"/)
+    expect(html).toMatch(/href="\/apple-touch-icon\.png\?v=\d+"/)
   })
 
   it('brand.ts 自身取值稳定（防止误改品牌名而不知情）', () => {
@@ -53,6 +56,8 @@ describe('brand.ts ↔ index.html 漂移守卫', () => {
     expect(svg).not.toContain('#863bff')
     // 品牌色谱系（#8daa97 → #6b8875 渐变）都在鼠尾草绿一支上
     expect(svg).toMatch(/#(8daa97|6b8875|7c9885)/i)
+    // 注意：本文件对图标只查字符串形状，"这份资产能否被浏览器解析"由
+    // faviconSvg.test.ts 按 XML 消费把关 —— 色值正则绿不代表图标显示得出来。
   })
 
   it('apple-touch-icon.png 存在（由 make_brand_icon.py 从 favicon.svg 生成）', () => {
