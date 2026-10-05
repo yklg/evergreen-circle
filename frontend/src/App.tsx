@@ -24,7 +24,10 @@ export default function App() {
   const load = useExpertStore((s) => s.load)
   const loadSettings = useSettingsStore((s) => s.load)
   useEffect(() => {
-    load()
+    // 启动只预载 travel 名册：调研侧组件（工作台/trace/agent 流）挂载即取人名，
+    // 缺册会把专家位显示成裸 id。生活圈名册由需要它的页面自己 load('living_circle')，
+    // 不在这里"顺手都载"——那等于把两本人设同时灌进全局。
+    load('travel')
   }, [load])
   useEffect(() => {
     loadSettings()

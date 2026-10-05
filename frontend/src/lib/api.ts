@@ -26,6 +26,8 @@ import type {
   TraceSpan,
 } from '../types'
 import { isFixtureMode } from '../store/dataModeStore'
+// 只 import 类型：编译期擦除，不会与 expertStore（它 import 本文件的 fetchExperts）形成运行时环
+import type { ExpertDomainName } from '../store/expertStore'
 import { resolveTypeOr, kindOfType, demoPurposeOf } from './taskDomains'
 import { getLivingCircleReportMock } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream } from '../mocks/livingCircleStream'
@@ -46,12 +48,25 @@ async function safeJson<T>(path: string, init?: RequestInit, fallback?: T): Prom
   }
 }
 
-/* 48 专家：优先后端，失败回退本地 JSON（绝不白屏） */
 /**
- * 拉专家名册（按域）：travel（默认）/ living_circle。
- * 后端不可达时回落静态资源；生活圈静态文件缺失时回落 travel 静态名册（不崩）。
+ * 每个域自己的静态名册（离线/演示态回落）。两本都必须存在，由
+ * `scripts/gen-static-rosters.mjs` 从后端名册生成。
  */
-export async function fetchExperts(domain: 'travel' | 'living_circle' = 'travel'): Promise<Expert[]> {
+const STATIC_ROSTER: Record<ExpertDomainName, string> = {
+  travel: '/assets/experts.json',
+  living_circle: '/assets/experts/living_circle.json',
+}
+
+/**
+ * 拉专家名册（按域）。`domain` 必填 —— 两本名册共用同一套 48 个 id、人设互不通用，
+ * 拿错本不会报错，只会把「谷穗安·基层医疗配置顾问」显示成「苏明哲·行程策略专家」。
+ *
+ * 后端不可达时回落**本域自己的**静态名册；本域静态文件也取不到 ⇒ 抛错，
+ * 绝不借另一本（旧代码最后那行 `fetch('/assets/experts.json')` 就是这个兜底，
+ * 而它恰好是生活圈域唯一的回落路径 —— 于是离线态下生活圈拿的是旅游人设）。
+ * 抛错后 store 该域槽位保持空，页面按"取不到名册"显示原始字符串，而不是显示别人。
+ */
+export async function fetchExperts(domain: ExpertDomainName): Promise<Expert[]> {
   const qs = domain === 'living_circle' ? '?domain=living_circle' : ''
   try {
     const r = await fetch(`${API_BASE}/api/experts${qs}`)
@@ -63,16 +78,12 @@ export async function fetchExperts(domain: 'travel' | 'living_circle' = 'travel'
   } catch {
     /* fall through */
   }
-  // 离线回落：生活圈有独立静态名册（若已部署），否则回落默认 travel 名册
-  const localFile = domain === 'living_circle' ? '/assets/experts/living_circle.json' : '/assets/experts.json'
-  try {
-    const local = await fetch(localFile)
-    if (local.ok) return (await local.json()) as Expert[]
-  } catch {
-    /* fall through to default */
+  const local = await fetch(STATIC_ROSTER[domain]).catch(() => null)
+  if (local?.ok) {
+    const list = (await local.json()) as Expert[]
+    if (Array.isArray(list) && list.length) return list
   }
-  const fallback = await fetch('/assets/experts.json')
-  return (await fallback.json()) as Expert[]
+  throw new Error(`专家名册不可用（域 ${domain}：后端与静态文件 ${STATIC_ROSTER[domain]} 均取不到）`)
 }
 
 /* ── 模型配置 ─────────────────────────────────────────── */
@@ -417,10 +428,11 @@ export async function deleteSubscription(subId: string): Promise<{ ok: boolean }
   return safeJson<{ ok: boolean }>(`/api/subscriptions/${subId}`, { method: 'DELETE' })
 }
 
-/* 专家工作量看板 */
-export async function fetchWorkload(): Promise<ExpertWorkload[]> {
+/** 专家工作量看板（按域）。`domain` 必填：两本名册共用同一套 48 个 id，
+ *  不带域就等于把另一本人设的出工数据挂到这个人身上。 */
+export async function fetchWorkload(domain: ExpertDomainName): Promise<ExpertWorkload[]> {
   // 同上：空看板与"取不到看板"是两种可观察结果，波次 B 摘掉兜底
-  return safeJson<ExpertWorkload[]>('/api/experts/workload')
+  return safeJson<ExpertWorkload[]>(`/api/experts/workload?domain=${domain}`)
 }
 
 /* SSE：监听任务流，返回关闭函数 */
@@ -469,6 +481,7 @@ export function openTaskStream(
     trace: true,
     round: true,
     report_ready: true,
+    warn: true,
     done: true,
     error: true,
   }

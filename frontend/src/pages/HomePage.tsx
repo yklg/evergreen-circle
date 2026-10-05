@@ -502,7 +502,9 @@ export default function HomePage() {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/experts')}
+              // 带着当前域跳：专家墙的段控读 URL 的 ?domain=，不带就会落在旅游名册上，
+              // 于是"在看生活圈专家墙 → 点进去看到一堆旅游人设"（本轮正在消灭的那类串域）。
+              onClick={() => navigate(`/experts?domain=${expertDomain}`)}
               className="ml-2.5 inline-flex h-8 items-center gap-1 rounded-chip border border-line bg-card/80 px-3 text-tag text-ink-2 transition-colors hover:border-primary hover:text-primary-deep"
             >
               专家团按域切换 · 查看 48 位 <ArrowRight size={13} />

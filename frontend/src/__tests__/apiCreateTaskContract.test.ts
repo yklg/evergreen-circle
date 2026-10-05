@@ -86,8 +86,10 @@ describe('FE-8 · fetchExperts 按域带查询参数', () => {
     }))
     const { fetchExperts } = await loadApi()
     await fetchExperts('living_circle')
-    await fetchExperts()
+    await fetchExperts('travel')
     expect(urls[0]).toContain('/api/experts?domain=living_circle')
+    // travel 走无查询参的 URL：端点缺省＝travel 是公开契约（`fetchExperts` 的 domain
+    // 本身已必填，这里钉的是**线上形状**没被改成 `?domain=travel`）。
     expect(urls[1].endsWith('/api/experts')).toBe(true)
   })
 })

@@ -118,6 +118,14 @@ export interface ResearchTypeOption {
 }
 
 /* SSE 事件 */
+/**
+ * 后端实发事件的唯一前端白名单。
+ *
+ * ⚠ `warn` 是补进来的：`living_circle.py:198` 一直在发「名称与中心点不同源」提示，
+ * 但这个 union 里没有它 ⇒ `api.ts` 的 `SSE_SUBSCRIPTIONS`（按本 union 穷举）不会订阅，
+ * 事件在**传输层就被丢掉**，那条核对提示从未上过屏。回归由
+ * `__tests__/sseEventTypeSingleSource.test.ts` 钉（后端实发集合 ⊆ 本 union）。
+ */
 export type SSEEventType =
   | 'node_update'
   | 'thought'
@@ -130,6 +138,7 @@ export type SSEEventType =
   | 'trace'
   | 'round'
   | 'report_ready'
+  | 'warn'
   | 'done'
   | 'error'
 

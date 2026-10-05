@@ -36,7 +36,7 @@ export function VAgentStream({ thoughts }: { thoughts: ThoughtItem[] }) {
       {thoughts.map((t) => {
         const meta = KIND_META[t.kind] ?? KIND_META.action
         const Icon = meta.icon
-        const expert = t.expert ? byId(t.expert) : undefined
+        const expert = t.expert ? byId(t.expert, 'travel') : undefined
         return (
           <motion.div
             key={t.id}

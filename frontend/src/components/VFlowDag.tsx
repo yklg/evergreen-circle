@@ -9,7 +9,7 @@ export function VFlowDag({ nodes }: { nodes: DAGNode[] }) {
   return (
     <div className="flex flex-col">
       {nodes.map((n, i) => {
-        const expert = n.expert ? byId(n.expert) : undefined
+        const expert = n.expert ? byId(n.expert, 'travel') : undefined
         const last = i === nodes.length - 1
         return (
           <div key={n.id} className="flex gap-3">

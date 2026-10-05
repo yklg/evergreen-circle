@@ -1,18 +1,52 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Search } from 'lucide-react'
-import { useExpertStore } from '../store/expertStore'
+import { EXPERT_DOMAINS, useExpertStore, type ExpertDomainName } from '../store/expertStore'
 import { DomainIcon } from '../components/DomainIcon'
 import { fadeUp, stagger } from '../lib/motion'
 import type { Expert, ExpertLevel } from '../types'
 
-const LEVEL_TABS: { key: ExpertLevel | 'all'; label: string; desc: string }[] = [
-  { key: 'all', label: '全部', desc: '48 位专家' },
-  { key: 'L3', label: '决策层', desc: '3 位 · 统筹签发' },
-  { key: 'L2', label: '策略层', desc: '9 位 · 规划顾问' },
-  { key: 'L1', label: '执行层', desc: '36 位 · 设施与执行' },
-]
+/** zustand selector 必须返回同一引用，否则每次渲染都触发重渲染。 */
+const EMPTY: Expert[] = []
+
+/**
+ * 每个域自己的口径文案。
+ *
+ * 为什么必须随域走：本页副标题曾无条件写「48 位**生活圈**体检专家 · 决策/策略/设施/方法」，
+ * 而卡片数据来自旅游名册 ⇒ 标题与内容分家，读者以为专家墙是生活圈的人（实测 48/48 卡
+ * 都是旅游人设、生活圈姓名 0 个）。等级说明同理：L1 在两域分别是「行业/职能」与「设施/方法」。
+ */
+const DOMAIN_META: Record<
+  ExpertDomainName,
+  { label: string; subtitle: string; levels: { key: ExpertLevel | 'all'; label: string; desc: string }[] }
+> = {
+  travel: {
+    label: '目的地调研',
+    subtitle: '48 位目的地调研专家 · 决策 / 策略 / 行业 / 职能 · 每项结论都有出处',
+    levels: [
+      { key: 'all', label: '全部', desc: '48 位专家' },
+      { key: 'L3', label: '决策层', desc: '3 位 · 统筹签发' },
+      { key: 'L2', label: '策略层', desc: '9 位 · 策略顾问' },
+      { key: 'L1', label: '执行层', desc: '36 位 · 行业与职能' },
+    ],
+  },
+  living_circle: {
+    label: '生活圈体检',
+    subtitle: '48 位生活圈体检专家 · 决策 / 策略 / 设施 / 方法 · 每项结论都有点位溯源',
+    levels: [
+      { key: 'all', label: '全部', desc: '48 位专家' },
+      { key: 'L3', label: '决策层', desc: '3 位 · 统筹签发' },
+      { key: 'L2', label: '策略层', desc: '9 位 · 领域顾问' },
+      { key: 'L1', label: '执行层', desc: '36 位 · 设施与方法' },
+    ],
+  },
+}
+
+/** URL 上的域参数：非法值一律当 travel，绝不"猜"成另一本名册。 */
+function readDomain(v: string | null): ExpertDomainName {
+  return (EXPERT_DOMAINS as readonly string[]).includes(v ?? '') ? (v as ExpertDomainName) : 'travel'
+}
 
 const LEVEL_BG: Record<ExpertLevel, string> = {
   L1: 'bg-[#EAF1EA]',
@@ -49,9 +83,23 @@ function ExpertCard({ expert, onClick }: { expert: Expert; onClick: () => void }
 
 export default function ExpertsPage() {
   const navigate = useNavigate()
-  const experts = useExpertStore((s) => s.experts)
+  const [params, setParams] = useSearchParams()
+  const domain = readDomain(params.get('domain'))
+  const load = useExpertStore((s) => s.load)
+  const experts = useExpertStore((s) => s.expertsByDomain[domain] ?? EMPTY)
   const [tab, setTab] = useState<ExpertLevel | 'all'>('all')
   const [kw, setKw] = useState('')
+  const meta = DOMAIN_META[domain]
+
+  useEffect(() => {
+    void load(domain)
+  }, [load, domain])
+
+  const setDomain = (next: ExpertDomainName) => {
+    const p = new URLSearchParams(params)
+    p.set('domain', next)
+    setParams(p, { replace: true })
+  }
 
   const filtered = useMemo(() => {
     return experts.filter((e) => {
@@ -69,8 +117,27 @@ export default function ExpertsPage() {
   return (
     <div className="mx-auto max-w-content px-8 py-8">
       <header className="flex flex-col gap-1">
-        <h1 className="font-serif text-h1 text-ink">专家团</h1>
-        <p className="text-aux text-ink-2">48 位生活圈体检专家 · 决策 / 策略 / 设施 / 方法 · 每项结论都有点位溯源</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="font-serif text-h1 text-ink">专家团</h1>
+          {/* 域段控：形状沿用侧栏「数据模式」那组两键段控（全仓唯一现成先例），
+              选中态放 URL（?domain=）而不是组件私有 state —— 分享链接要能落在同一本人设上。 */}
+          <div className="inline-flex items-center gap-1 rounded-btn border border-line bg-card p-1 shadow-card" role="tablist" aria-label="专家名册域">
+            {EXPERT_DOMAINS.map((d) => (
+              <button
+                key={d}
+                role="tab"
+                aria-selected={d === domain}
+                onClick={() => setDomain(d)}
+                className={`h-8 rounded-btn px-3 text-tag font-medium transition-colors ${
+                  d === domain ? 'bg-primary text-white' : 'text-ink-2 hover:bg-bg'
+                }`}
+              >
+                {DOMAIN_META[d].label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-aux text-ink-2">{meta.subtitle}</p>
       </header>
 
       {/* 搜索 + tab */}
@@ -85,7 +152,7 @@ export default function ExpertsPage() {
           />
         </div>
         <div className="flex gap-1.5">
-          {LEVEL_TABS.map((t) => (
+          {meta.levels.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
@@ -109,7 +176,7 @@ export default function ExpertsPage() {
         className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"
       >
         {filtered.map((e) => (
-          <ExpertCard key={e.id} expert={e} onClick={() => navigate(`/experts/${e.id}`)} />
+          <ExpertCard key={e.id} expert={e} onClick={() => navigate(`/experts/${e.id}?domain=${domain}`)} />
         ))}
       </motion.div>
 

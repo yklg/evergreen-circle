@@ -66,7 +66,7 @@ export default function TracePage() {
         ) : (
           <div className="relative space-y-3 border-l-2 border-line pl-6">
             {filtered.map((sp) => {
-              const ex = sp.agent_id ? byId(sp.agent_id) : undefined
+              const ex = sp.agent_id ? byId(sp.agent_id, 'travel') : undefined
               const isOpen = expanded === sp.span_id
               return (
                 <div key={sp.span_id} className="relative">

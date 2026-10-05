@@ -4,14 +4,18 @@ import { fetchExperts } from '../lib/api'
 
 /**
  * 专家名册按**域**隔离：双名册 id 集合相同但人设不同（travel 行业人设 vs
- * living_circle 设施人设）。各域独立缓存槽，切换加载互不覆盖——
- * 否则首页看生活圈专家墙会把运行中旅游流水线的专家**人名**串掉（R5 域隔离）。
+ * living_circle 设施人设）。各域独立缓存槽，加载互不覆盖。
  *
- * 兼容策略：顶层 experts/loaded/loading/byId/resolve 是 **travel 默认槽镜像**，
- * 既有 11 个消费方零改动；新代码需要双域时订阅 expertsByDomain 并调 load(domain)。
+ * `domain` 是**必填参数**，本文件不留任何"默认域"。理由不是风格：两本名册共用同一套
+ * 48 个 id，取错域不会报错、不会 404，只会把人名静默换成另一个人的（生活圈报告曾整批
+ * 署成旅游人设，实测 7/7 章；前端也曾把「温叙白·花费与性价比分析师」当成总检签名）。
+ * 顶层曾有一组 `experts/byId/resolve` 的 travel 镜像槽用于"零改动兼容"——那正是这个陷阱
+ * 的入口，已删除：现在每个消费方都必须写出自己要哪本人设。
  */
 export type ExpertDomainName = 'travel' | 'living_circle'
-const DEFAULT_DOMAIN: ExpertDomainName = 'travel'
+
+/** 合法域清单（与后端 `app/data.DOMAINS` 同集；端点/静态文件判据共用这一份） */
+export const EXPERT_DOMAINS = ['travel', 'living_circle'] as const
 
 interface ExpertState {
   /** 按域缓存的名册槽 */
@@ -19,25 +23,18 @@ interface ExpertState {
   /** 各域是否已加载/加载中（防重入） */
   loadedDomains: Partial<Record<ExpertDomainName, boolean>>
   loadingDomains: Partial<Record<ExpertDomainName, boolean>>
-  // ── travel 默认槽镜像（历史接口，保持语义不变）──
-  experts: Expert[]
-  loaded: boolean
-  loading: boolean
-  load: (domain?: ExpertDomainName) => Promise<void>
-  byId: (id: string) => Expert | undefined
-  /** 署名解析：报告里的 author 可能是专家 id 也可能是姓名/昵称，两者都要能查到（travel 名册）。 */
-  resolve: (key: string) => Expert | undefined
+  load: (domain: ExpertDomainName) => Promise<void>
+  byId: (id: string, domain: ExpertDomainName) => Expert | undefined
+  /** 署名解析：报告里的 author 可能是专家 id、姓名或昵称，三者都要能在**指定域**内查到。 */
+  resolve: (key: string, domain: ExpertDomainName) => Expert | undefined
 }
 
 export const useExpertStore = create<ExpertState>((set, get) => ({
   expertsByDomain: {},
   loadedDomains: {},
   loadingDomains: {},
-  experts: [],
-  loaded: false,
-  loading: false,
 
-  load: async (domain: ExpertDomainName = DEFAULT_DOMAIN) => {
+  load: async (domain: ExpertDomainName) => {
     if (get().loadedDomains[domain] || get().loadingDomains[domain]) return
     set((s) => ({ loadingDomains: { ...s.loadingDomains, [domain]: true } }))
     try {
@@ -46,18 +43,15 @@ export const useExpertStore = create<ExpertState>((set, get) => ({
         expertsByDomain: { ...s.expertsByDomain, [domain]: list },
         loadedDomains: { ...s.loadedDomains, [domain]: true },
         loadingDomains: { ...s.loadingDomains, [domain]: false },
-        // travel 槽同步镜像到历史顶层字段；其它域绝不触碰顶层（防串人设）
-        ...(domain === DEFAULT_DOMAIN
-          ? { experts: list, loaded: true, loading: false }
-          : {}),
       }))
     } catch {
       set((s) => ({ loadingDomains: { ...s.loadingDomains, [domain]: false } }))
-      if (domain === DEFAULT_DOMAIN) set({ loading: false })
     }
   },
 
-  byId: (id) => get().experts.find((e) => e.id === id),
-  resolve: (key) =>
-    get().experts.find((e) => e.id === key || e.name === key || e.nickname === key),
+  byId: (id, domain) => (get().expertsByDomain[domain] ?? []).find((e) => e.id === id),
+  resolve: (key, domain) =>
+    (get().expertsByDomain[domain] ?? []).find(
+      (e) => e.id === key || e.name === key || e.nickname === key,
+    ),
 }))

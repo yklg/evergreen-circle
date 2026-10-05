@@ -282,7 +282,7 @@ function App() {
       let workload: ExpertWorkload[]
       try {
         ;[stats, ev, subs, workload] = await Promise.all([
-          fetchIntel(), fetchEvidences(), fetchSubscriptions(), fetchWorkload(),
+          fetchIntel(), fetchEvidences(), fetchSubscriptions(), fetchWorkload('travel'),
         ])
       } catch (err) {
         setPhase({ kind: 'failed', detail: err instanceof Error ? err.message : String(err) })

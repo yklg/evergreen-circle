@@ -62,7 +62,7 @@ export default function ResearchIntelView({ onDelete, refreshToken }: DomainView
   const isFixture = useDataModeStore((s) => s.mode === 'fixture')
   const { data, loading, failed, reload } = useIntelOverview(!isFixture, refreshToken)
   const workload = useResource(
-    useCallback(() => fetchWorkload(), []),
+    useCallback(() => fetchWorkload('travel'), []),
     !isFixture,
     refreshToken,
   )

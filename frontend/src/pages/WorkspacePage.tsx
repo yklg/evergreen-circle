@@ -176,7 +176,7 @@ export default function WorkspacePage() {
             </div>
             <div className="flex flex-wrap gap-1.5">
               {teamMembers.map((id) => {
-                const ex = byId(id)
+                const ex = byId(id, 'travel')
                 if (!ex) return null
                 return (
                   <img

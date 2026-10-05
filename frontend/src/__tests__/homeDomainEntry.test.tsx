@@ -17,7 +17,7 @@ afterEach(cleanup)
 function PathProbe() {
   const loc = useLocation()
   return (
-    <div data-testid="path" data-path={loc.pathname}>
+    <div data-testid="path" data-path={loc.pathname} data-search={loc.search}>
       {JSON.stringify(loc.state ?? {})}
     </div>
   )
@@ -59,14 +59,7 @@ async function renderHome(mode: 'live' | 'fixture') {
   const { useDataModeStore } = await import('../store/dataModeStore')
   useDataModeStore.setState({ mode })
   const { useExpertStore } = await import('../store/expertStore')
-  useExpertStore.setState({
-    expertsByDomain: {},
-    loadedDomains: {},
-    loadingDomains: {},
-    experts: [],
-    loaded: false,
-    loading: false,
-  })
+  useExpertStore.setState({ expertsByDomain: {}, loadedDomains: {}, loadingDomains: {} })
   mocks.fetchExperts.mockImplementation(async (domain: string) =>
     domain === 'living_circle' ? LIVING_EXPERTS : TRAVEL_EXPERTS,
   )
@@ -213,7 +206,24 @@ describe('FE-27/28 · 边界与示例卡交互', () => {
 })
 
 describe('FE-29 · 专家墙按域', () => {
-  it('切到生活圈 → 加载生活圈名册（头像按 title 区分人设）；「查看 48 位」跳 /experts', async () => {
+  /** 「查看 48 位」必须把当前域带进 URL。
+   *  为什么值得钉：专家墙的段控读 `?domain=`，跳转不带域 ⇒ 用户在看生活圈专家墙，
+   *  点进去却落在旅游名册上（两域同 id 异人设，看着像"人变了"而不是"页面对不上"）。 */
+  async function jumpToExperts(cardText: string, expectDomain: string) {
+    await renderHome('live')
+    await ready()
+    if (cardText !== '游玩攻略') fireEvent.click(screen.getByText(cardText))
+    await ready()
+    fireEvent.click(screen.getByText(/查看 48 位/))
+    await waitFor(() => expect(lastPath()?.getAttribute('data-path')).toBe('/experts'))
+    expect(lastPath()?.getAttribute('data-search')).toBe(`?domain=${expectDomain}`)
+  }
+
+  it('旅游态：「查看 48 位」带 domain=travel', async () => {
+    await jumpToExperts('游玩攻略', 'travel')
+  })
+
+  it('生活圈态：加载生活圈名册（头像按 title 区分人设），「查看 48 位」带 domain=living_circle', async () => {
     await renderHome('live')
     await ready()
     await waitFor(() => expect(screen.getByTitle('旅游专家1 · T1')).toBeTruthy())
@@ -223,6 +233,7 @@ describe('FE-29 · 专家墙按域', () => {
     await waitFor(() => expect(screen.getByTitle('生活圈专家1 · L1')).toBeTruthy())
     fireEvent.click(screen.getByText(/查看 48 位/))
     await waitFor(() => expect(lastPath()?.getAttribute('data-path')).toBe('/experts'))
+    expect(lastPath()?.getAttribute('data-search')).toBe('?domain=living_circle')
   })
 })
 

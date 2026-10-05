@@ -7,7 +7,7 @@
  *
  * M 阶段 BMapGL 接入后仅替换快照渲染层，页面骨架不变。
  */
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { VStatLine } from '../ui'
 import {
@@ -80,6 +80,10 @@ import LcMap from './LcMap'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
 import { useExpertStore } from '../../store/expertStore'
+import type { Expert } from '../../types'
+
+/** zustand selector 的稳定空值（每次返回新数组会造成无限重渲染）。 */
+const EMPTY_ROSTER: Expert[] = []
 
 /* ── 地图快照（静态投影，非交互） ─────────────────────────── */
 
@@ -365,7 +369,22 @@ function caliberNote(lc: LivingCircleReport) {
 export default function LifeCircleReportView({ report }: { report: Report }) {
   const navigate = useNavigate()
   const [shareOpen, setShareOpen] = useState(false)
-  const resolveExpert = useExpertStore((s) => s.resolve)
+  const loadExperts = useExpertStore((s) => s.load)
+  // 署名必须查**生活圈**那本名册：两本名册共用同一套 48 个 id、人设互不通用，
+  // 查错本不会报错，只会把「谷穗安·基层医疗配置顾问」显示成「苏明哲·行程策略专家」。
+  //
+  // ⚠ 这里订阅的是**名册数组本身**而不是 store 上的 `resolve` 函数：函数引用恒定不变，
+  // 名册异步到位时组件不会重渲染 ⇒ 首屏永远停在「谷穗安 · 规划专家」（实测踩过，
+  // 由 lcSignatureDomain.test.tsx 抓到）。
+  const livingRoster = useExpertStore((s) => s.expertsByDomain.living_circle ?? EMPTY_ROSTER)
+  useEffect(() => {
+    void loadExperts('living_circle')
+  }, [loadExperts])
+  const resolveExpert = useMemo(
+    () => (key: string) =>
+      livingRoster.find((e) => e.id === key || e.name === key || e.nickname === key),
+    [livingRoster],
+  )
   const lc = report.living_circle as LivingCircleReport
   const grade = scoreGrade(lc.scores.total)
   // 报告 id 形如 lc-{sceneId}，反推样区路由参数（如 lc-kaili → kaili）
@@ -935,7 +954,8 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   )}
                   <span className="text-tag text-ink-3">本章署名：</span>
                   {(sec.claims ?? []).slice(0, 1).map((c) => {
-                    // D4 报告里 author 存的是姓名（竞品域报告存 id），resolve 两侧都容错
+                    // D4 报告里 author 存的是姓名（竞品域报告存 id），两侧都容错；
+                    // 名册固定生活圈 —— 本视图只渲染生活圈报告。
                     const e = resolveExpert(c.author)
                     const role = e ? e.role_title.split(' / ')[0] || '规划专家' : '规划专家'
                     return (

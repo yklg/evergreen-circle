@@ -88,7 +88,7 @@ export function VTracePanel({ traces, revealKey = 0 }: { traces: TraceSpan[]; re
               <div className="flex flex-col gap-1.5">
                 <AnimatePresence initial={false}>
                   {traces.map((sp) => {
-                    const ex = sp.agent_id ? byId(sp.agent_id) : undefined
+                    const ex = sp.agent_id ? byId(sp.agent_id, 'travel') : undefined
                     const isOpen = expandedId === sp.span_id
                     return (
                       <motion.div

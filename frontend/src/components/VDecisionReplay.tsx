@@ -23,7 +23,7 @@ export function VDecisionReplay({
 
   if (!trace?.length) return null
   const cur = trace[Math.min(step, trace.length - 1)]
-  const ex = cur.agent_id ? byId(cur.agent_id) : undefined
+  const ex = cur.agent_id ? byId(cur.agent_id, 'travel') : undefined
 
   function go(next: number) {
     const s = Math.max(0, Math.min(trace.length - 1, next))

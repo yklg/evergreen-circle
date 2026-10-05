@@ -10,7 +10,7 @@
  * A（全画）/ B（只画 9 张 + 截断说明 + 展开全部）/ C（只画 9 张 + 容器内滚）之间拍一个。
  *
  * 真实渲染的口径：
- * - 数据走 `lib/api.fetchIntel()` ⇒ 真实后端 `/api/intel`、`fetchWorkload()` ⇒ `/api/experts/workload`，不是夹具；
+ * - 数据走 `lib/api.fetchIntel()` ⇒ 真实后端 `/api/intel`、`fetchWorkload('travel')` ⇒ `/api/experts/workload`，不是夹具；
  * - 「现状」段的 class 与文案逐条抄自生产页 `pages/reports/ResearchIntelView.tsx`
  *   （那三块是页面私有函数，无法 import，故此处为 1:1 抄写；抄完已在真入口
  *   `/reports?domain=travel` 的 DOM 上比对过 class 串：统计格 `rounded-card border
@@ -683,7 +683,7 @@ export function Probe() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([fetchIntel(), fetchWorkload()])
+    Promise.all([fetchIntel(), fetchWorkload('travel')])
       .then(([i, w]) => {
         setIntel(i)
         setWorkload(w)

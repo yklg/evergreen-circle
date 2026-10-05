@@ -21,7 +21,7 @@ export function VClaimCard({
   const byId = useExpertStore((s) => s.byId)
   const meta = CONF_META[claim.confidence] ?? CONF_META.unverified
   const Icon = meta.icon
-  const author = byId(claim.author)
+  const author = byId(claim.author, 'travel')
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
