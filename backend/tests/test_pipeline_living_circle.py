@@ -480,7 +480,9 @@ def test_pipeline_event_contract():
     tid = create_living_circle_task(KAILI)
     events = _run_pipeline(tid)
     types = [e["type"] for e in events]
-    allowed = {"node_update", "message", "progress", "evidence", "report_ready", "done"}
+    # warn 补进白名单：`living_circle.py:198` 的名称/坐标不同源告警一直在发，
+    # 此前只是恰好没在 fixture 路径上触发才没红（`test_intake_and_shell.py` 反而依赖它存在）。
+    allowed = {"node_update", "message", "progress", "evidence", "report_ready", "done", "warn"}
     assert set(types) <= allowed
     assert "report_ready" in types and "done" in types
 

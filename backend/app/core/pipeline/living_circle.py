@@ -127,6 +127,16 @@ def _report_id(scene_key: str) -> str:
     return f"lc-{uuid.uuid4().hex[:8]}"
 
 
+def _team_payload(expert_ids: List[str], reasons: List[str]) -> Dict[str, Any]:
+    """报告 payload 里 `team` 键的**唯一**构造点。
+
+    为什么必须收在一处：粗报、缓存命中、后台精报三条路径各写过一份字典，其中精报那份
+    把 `reasons` 写成空数组 ⇒ 同一份报告被精报替换后，逐人指派理由退化成兜底句
+    （「…负责本节评审与结论签发（D4 专家出诊断）」）。三份手写迟早会再漂一次。
+    """
+    return {"expert_ids": list(expert_ids), "reasons": list(reasons)}
+
+
 def _fallback_center(source, scene_name: str) -> tuple:
     """中心点解析兜底：fixture 按场景名就近匹配样例中心，否则凯里老街（默认演示样区）。"""
     scenes = source.sample_scenes() if hasattr(source, "sample_scenes") else []
@@ -212,19 +222,32 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     # ── plan（专家队编排）────────────────────────────────
     from app.core.pipeline.lc_team import select_living_circle_team
 
-    # 从 params 中提取设施类别信息（若有）
-    facility_cats = params.get("facility_categories", [])
     scene_name = params.get("scene_name", "未命名社区")
 
-    dispatch_ids, dispatch_reasons = select_living_circle_team(
+    dispatch_ids, dispatch_reasons, dispatch_degraded = select_living_circle_team(
         scene_name=scene_name,
-        facility_categories=facility_cats if isinstance(facility_cats, list) else [],
         travel_mode=travel_mode,
     )
 
     yield _ev("node_update", {"stage": "plan", "node": {"id": "n-plan", "label": "专家队编排", "status": "working", "expert": "L3-002"}})
     yield _ev("node_update", {"stage": "plan", "node": {"id": "n-dispatch", "label": f"按域指派 {len(dispatch_ids)} 位专家", "status": "done", "expert": "L3-002"}})
-    yield _ev("message", {"stage": "plan", "percent": STAGE_PERCENT["plan"], "text": f"编排完成：{len(dispatch_ids)} 位专家就位，覆盖医疗/教育/购物/养老等核心民生领域"})
+    # 组队结果（含降级）走 **message 事件加字段**，不新增事件 type：
+    #   · 新增 type 会撞 A4 白名单（`test_pipeline_event_contract`），且未登记的 type
+    #     在前端 `SSE_SUBSCRIPTIONS` 处被传输层静默丢弃（`warn` 就是这么丢了很久的）；
+    #   · 降级只进运行流、不进报告 payload —— 与调研侧 MIG-01 同源
+    #     （`research/dispatch.py` 的 degraded 也只走 trace 与 SSE）。
+    yield _ev("message", {
+        "stage": "plan",
+        "percent": STAGE_PERCENT["plan"],
+        "kind": "team",
+        "members": dispatch_ids,
+        "degraded": dispatch_degraded,
+        "text": (
+            f"本次专家队由保底名单编排（{dispatch_degraded}），未经模型按场景挑选"
+            if dispatch_degraded
+            else f"编排完成：{len(dispatch_ids)} 位专家就位，覆盖医疗/教育/购物/养老等核心民生领域"
+        ),
+    })
     yield _ev("progress", {"stage": "plan", "percent": STAGE_PERCENT["plan"], "stage_seq": 2, "evidence_count": 0})
 
     engine = IsochroneEngine()
@@ -262,7 +285,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             yield _ev("progress", {"stage": "diagnose", "percent": STAGE_PERCENT["diagnose"], "stage_seq": 5, "evidence_count": 0})
 
             report_data = cached_hit
-            report_data["team"] = {"expert_ids": dispatch_ids, "reasons": dispatch_reasons}
+            report_data["team"] = _team_payload(dispatch_ids, dispatch_reasons)
 
             # E2 幂等收尾（D19/D22）：**只有精确命中**才复用既有 report_id —— 那时落库行与
             # 服务出去的内容同源，复用 id 才等于「不重复落库」。
@@ -490,10 +513,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         yield _ev("message", {"stage": "report", "percent": STAGE_PERCENT["report"], "text": "按 GB50180 生活圈标准撰写章节报告：养老配置与盲区整改优先级已标注"})
     
     # Phase 6：将动态选中的专家团队注入报告数据
-    report_data["team"] = {
-        "expert_ids": dispatch_ids,
-        "reasons": dispatch_reasons,
-    }
+    report_data["team"] = _team_payload(dispatch_ids, dispatch_reasons)
 
     # ── 落库前守卫：不合几何契约 ⇒ 置 failed，不得签收（同精报共用 _finalize_living_report）──
     # 实测 lc-c796c62d（迤栖村）：status=done / stage=audit / percent=100 / error=None，
@@ -540,11 +560,16 @@ def _finalize_living_report(report_data, scene_key, replace_scene: bool = False)
     return report_id, None, report
 
 
-def _schedule_refine(client, check, repo, scene_key, dispatch_ids, sample_profile):
+def _schedule_refine(client, check, repo, scene_key, dispatch_ids, dispatch_reasons, sample_profile):
     """后台精报：以 ``sample_profile`` 精采样 + 全量 POI 重算，产出精报**替换**粗报。
 
     fire-and-forget：出错只记日志，绝不带崩已交付的粗报/任务（粗报在进入此函数前已由
     尾部 ``_finalize_living_report`` 落库并 done）。精报结果写同 ``scene_key``，前端再取即得。
+
+    ⚠ 这条链路**目前零生产调用点**（只有 `test_replace_scene_dormancy` / `test_degrade_chain`
+    两个台架在驱动，判据 A/B/C 钉住 `replace_scene` 只能是字面 False）。`dispatch_reasons`
+    是本轮补进来的形参：以前只带 ids 进来，落库时理由只能写空数组。留着这条休眠路径是因为
+    "精报替换粗报"仍是既定能力，但它今天跑不到 —— 改动属修潜伏缺陷，不是修可见故障。
     """
     import asyncio
 
@@ -560,7 +585,7 @@ def _schedule_refine(client, check, repo, scene_key, dispatch_ids, sample_profil
                     scene_key, (refined.get("degraded") or {}).get("detail") or "unknown",
                 )
                 return
-            refined["team"] = {"expert_ids": dispatch_ids, "reasons": []}
+            refined["team"] = _team_payload(dispatch_ids, dispatch_reasons)
             _, reason, _ = _finalize_living_report(refined, scene_key, replace_scene=True)
             if reason is not None:
                 logger.warning("[living_circle] 精报几何不成立，保留粗报：%s", reason)

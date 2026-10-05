@@ -250,7 +250,7 @@ def test_refine_replacement_records_the_superseded_report_id(monkeypatch):
         # （M2 同一形状；第一版在外面造 task 再 await，RuntimeError 被 xfail 一起吞成"预期失败"，
         #  warning 里那句 `coroutine ... was never awaited` 就是当时的现形）。
         task = _schedule_refine(PipelineStubBaidu(KAILI_CENTER), _as_check(check), Repository(),
-                                scene_key, [], "standard")
+                                scene_key, [], [], "standard")
         await task
 
     asyncio.run(_drive())

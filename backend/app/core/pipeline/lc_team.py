@@ -1,7 +1,10 @@
 """生活圈体检专家团动态编排（Phase 6）。
 
 从 48 位专家名册中 LLM 挑选适合生活圈体检的团队，替代硬编码的 13 人列表。
-失败时回退到领域保底名单（基于设施类别与体检维度自动匹配）。
+失败时回退到保底名单，并把**降级原因带出去**（第三个返回值）—— 旧实现是静默换人：
+调用方与用户都分不清"这次是模型挑的人"还是"兜底凑的人"，而这两者的可信度不是一回事。
+
+`degraded` 取值：`""`（正常）/ `"llm_error"`（编排调用抛错）/ `"team_too_small"`（返回不足 5 人）。
 """
 from __future__ import annotations
 
@@ -11,19 +14,36 @@ from typing import Any, Dict, List, Tuple
 logger = logging.getLogger(__name__)
 
 
-# ── 保底团队：按生活圈体检的核心域划分 ─────────────────────
-_FACILITY_DOMAINS = {
-    "medical": ["L2-001", "L1-003", "L1-004"],       # 医疗顾问 + 医院/诊所核验
-    "education": ["L2-002", "L1-006", "L1-007"],     # 教育规划师 + 幼儿园/中小学核验
-    "shopping": ["L2-004", "L1-001", "L1-002"],      # 商业顾问 + 菜场/超市核验
-    "elderly": ["L2-003", "L1-019", "L1-020"],       # 养老顾问 + 养老/助餐核验
-}
+# ── 保底团队（决策层 2 ＋ 四领域顾问 ＋ 四方法专家）─────────────────
+# 刻意**不按设施类别裁剪**：原先有一张「类别→顾问」的映射表，但它依赖的
+# `facility_categories` 参数前端从未传过、`TaskParams` 里也没这个字段，且组队排在
+# POI 采集之前（类别那时还没确定）⇒ 那条分支线上永远走不到，只有测试在跑。
+# 同时它还有席位错位（elderly 挂的 L1-019/L1-020 其实是「无障碍环境顾问」
+# 「儿童友好规划师」，机构养老顾问是 L1-008）。与其留一份假装在工作的表，
+# 不如把保底名单写成一份确定的、与名册职位对得上的组合。
+_FALLBACK_SEATS: Tuple[Tuple[str, str], ...] = (
+    ("L3-001", "统筹体检全流程、统一指标口径并终审签发"),
+    ("L3-002", "把控设施覆盖与评分建模的逻辑严谨性"),
+    ("L2-001", "负责医疗类设施的配置密度与就医可达性评估"),
+    ("L2-002", "负责教育类设施的学位与就近入学情况评估"),
+    ("L2-003", "负责养老与托育设施的配置评估"),
+    ("L2-004", "负责菜市场与商业配套的覆盖评估"),
+    ("L1-025", "负责中心点定位与坐标解析"),
+    ("L1-030", "负责设施点位检索与核验"),
+    ("L1-027", "负责步行耗时测时与可达性测算"),
+    ("L1-032", "负责四维体检评分计算与建模"),
+)
 
-_FALLBACK_TEAM = [
-    "L3-001", "L3-002", "L3-003",  # 决策层统筹
-    "L2-001", "L2-002", "L2-003", "L2-004", "L2-005", "L2-008",  # 核心策略顾问
-    "L1-001", "L1-004", "L1-005", "L1-008",  # 关键执行专家
-]
+
+def _all_categories_text() -> str:
+    """体检覆盖的设施类别：从唯一真相源 `CATEGORY_RULES` 遍历取，不手工点取。
+
+    与报告侧「图 8 类、文 5 类」那次根因同源 —— 类别一旦增删，这里自动跟上，
+    不需要任何人记得改第二处。
+    """
+    from app.living_circle.category_rule import CATEGORY_RULES
+
+    return "、".join(str(v.get("label") or k) for k, v in CATEGORY_RULES.items())
 
 
 def _roster_index() -> Dict[str, dict]:
@@ -34,29 +54,29 @@ def _roster_index() -> Dict[str, dict]:
 
 def select_living_circle_team(
     scene_name: str = "",
-    facility_categories: List[str] | None = None,
     travel_mode: str = "walking",
-) -> Tuple[List[str], List[str]]:
+) -> Tuple[List[str], List[str], str]:
     """为生活圈体检动态选择专家团队。
 
     参数：
         scene_name: 场景名称（如"XX社区"）
-        facility_categories: 涉及的设施类别（如 ["医疗", "教育", "购物"]）
         travel_mode: 出行方式（walking/riding/driving）
 
     返回：
-        (expert_ids, reasons) 元组，ids 均经名册校验
+        `(expert_ids, reasons, degraded)` 三元组；ids 均经名册校验，
+        `degraded` 为空串表示这次是 LLM 挑的人，非空表示换了保底名单及其原因。
+
+    刻意**没有** `facility_categories` 形参：那个参数从来没有调用方会传（见文件头注释），
+    留着它比删掉更危险 —— 读代码的人会以为"按类别配顾问"这件事在发生。
     """
     roster = _roster_index()
 
     # 尝试 LLM 编排
     picked: List[Tuple[str, str]] = []
+    llm_failed = False
     try:
         from app.core.expert_prompt import roster_payload
         from app.core.llm import chat_json
-
-        # 构建上下文：哪些设施类别需要评估
-        categories_text = "、".join(facility_categories) if facility_categories else "全类别民生设施"
 
         data = chat_json(
             [
@@ -71,7 +91,7 @@ def select_living_circle_team(
                 )},
                 {"role": "user", "content": (
                     f"体检场景：{scene_name or '未命名社区'}\n"
-                    f"重点设施：{categories_text}\n"
+                    f"体检类别（全部 8 类都要评）：{_all_categories_text()}\n"
                     f"出行方式：{travel_mode}\n"
                     f"{roster_payload(list(roster.values()))}"
                 )},
@@ -89,11 +109,13 @@ def select_living_circle_team(
                     picked.append((eid, reason))
 
     except Exception as e:  # noqa: BLE001
-        logger.warning("生活圈体检 LLM 编排失败，回退领域保底: %s", e)
+        llm_failed = True
+        logger.warning("生活圈体检 LLM 编排失败，回退保底名单: %s", e)
 
-    # 若 LLM 选人不足，使用保底团队
+    # 若 LLM 选人不足，换保底团队 —— 且要把"为什么换"带出去，不能静默
     if len(picked) < 5:
-        return _fallback_team_for_categories(facility_categories or [])
+        ids, reasons = _fallback_team()
+        return ids, reasons, "llm_error" if llm_failed else "team_too_small"
 
     # 领队优先：让 Level 最高（L3）的成员排第一
     def _lv(eid: str) -> int:
@@ -102,74 +124,18 @@ def select_living_circle_team(
     picked.sort(key=lambda pair: -_lv(pair[0]))
     ids = [p[0] for p in picked]
     reasons = [p[1] for p in picked]
-    return ids, reasons
+    return ids, reasons, ""
 
 
-def _fallback_team_for_categories(categories: List[str]) -> Tuple[List[str], List[str]]:
-    """根据设施类别生成保底团队。"""
-    ids: List[str] = []
-    reasons: List[str] = []
+def _fallback_team() -> Tuple[List[str], List[str]]:
+    """保底团队：决策层 2 ＋ 四领域顾问 ＋ 四方法专家（席位与理由见 `_FALLBACK_SEATS`）。
 
-    # 始终包含决策层
-    ids.extend(["L3-001", "L3-002"])
-    reasons.extend([
-        "决策层统筹体检全流程与终审签发",
-        "把控设施覆盖与评分建模的逻辑严谨性",
-    ])
-
-    # 根据设施类别添加对应策略顾问
-    added_domains = set()
-    for cat in categories:
-        domain = _map_category_to_domain(cat)
-        if domain and domain not in added_domains:
-            domain_experts = _FACILITY_DOMAINS.get(domain, [])
-            if domain_experts:
-                ids.append(domain_experts[0])  # 取策略顾问
-                reasons.append(f"负责{cat}设施的配置密度与可达性评估")
-                added_domains.add(domain)
-
-    # 若没有特定类别，添加默认核心顾问
-    if not added_domains:
-        default_advisors = ["L2-001", "L2-002", "L2-004"]
-        for eid in default_advisors:
-            if eid not in ids:
-                ids.append(eid)
-                reasons.append("核心领域顾问负责基础民生设施评估")
-
-    # 添加关键方法专家
-    method_experts = {
-        "L1-025": "空间定位师负责中心点定位与坐标解析",
-        "L1-030": "POI 核验官负责设施点位检索核验",
-        "L1-027": "可达性测算师负责步行耗时测时",
-        "L1-032": "评分建模师负责四维体检评分计算",
-    }
-    for eid, reason in method_experts.items():
-        if eid not in ids:
-            ids.append(eid)
-            reasons.append(reason)
-
-    # 去重并保持顺序
-    seen = set()
-    unique_ids = []
-    unique_reasons = []
-    for eid, reason in zip(ids, reasons):
-        if eid not in seen:
-            seen.add(eid)
-            unique_ids.append(eid)
-            unique_reasons.append(reason)
-
-    return unique_ids, unique_reasons
-
-
-def _map_category_to_domain(category: str) -> str | None:
-    """将设施类别映射到领域标识。"""
-    mapping = {
-        "医疗": "medical", "医院": "medical", "诊所": "medical", "药店": "medical",
-        "教育": "education", "小学": "education", "幼儿园": "education", "中学": "education",
-        "购物": "shopping", "菜市场": "shopping", "超市": "shopping", "便利店": "shopping",
-        "养老": "elderly", "养老院": "elderly", "助餐": "elderly", "日间照料": "elderly",
-    }
-    for keyword, domain in mapping.items():
-        if keyword in category:
-            return domain
-    return None
+    名册里查不到的席位直接跳过并记 warning —— 保底名单自己绝不能交出一个悬空 id，
+    否则报告署名会退化成裸 id（`diagnosis_templates._expert` 的回落路径）。
+    """
+    roster = _roster_index()
+    pairs = [(eid, reason) for eid, reason in _FALLBACK_SEATS if eid in roster]
+    dropped = [eid for eid, _ in _FALLBACK_SEATS if eid not in roster]
+    if dropped:
+        logger.warning("保底名单有席位不在生活圈名册，已跳过：%s", "、".join(dropped))
+    return [eid for eid, _ in pairs], [reason for _, reason in pairs]

@@ -354,7 +354,7 @@ def test_m2_degraded_refine_does_not_replace_coarse_report(monkeypatch):
     check = _check("凯里老街-M2")
 
     async def _drive():
-        task = _schedule_refine(melted, check, Repository(), scene_key, [], "standard")
+        task = _schedule_refine(melted, check, Repository(), scene_key, [], [], "standard")
         await task
 
     asyncio.run(_drive())
