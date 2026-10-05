@@ -1283,6 +1283,9 @@ export interface LifeCircleCompare {
 /** 前端体检模式（快/标准/精细，映射后端采样档位） */
 export type LifeCircleMode = 'quick' | 'standard' | 'precise'
 
+/** 等时圈出行口径：与后端 `CreateTaskBody.travel_mode` 的合法值逐字一致。 */
+export type TravelMode = 'walking' | 'riding' | 'driving'
+
 /** 历史体检记录（历史页 / 报告中心列表项；M 阶段由 living_circle_reports 列表接口返回） */
 export interface LifeCircleRecord {
   id: string

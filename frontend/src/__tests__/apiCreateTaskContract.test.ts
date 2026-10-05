@@ -93,3 +93,41 @@ describe('FE-8 · fetchExperts 按域带查询参数', () => {
     expect(urls[1].endsWith('/api/experts')).toBe(true)
   })
 })
+
+describe('FE-9 · 生活圈请求体的 travel_mode 只在用户表态后出现', () => {
+  /** 抓 createLivingCircleTask 真正 POST 出去的 JSON（不是中间那层 TS 对象） */
+  async function captureBody(input: Record<string, unknown>) {
+    stubDataMode('live')
+    // 用数组接：`let body: ... | null = null` 在闭包里赋值，TS 会把后续收窄成 never
+    const captured: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/api/tasks')) {
+        captured.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify({ taskId: 'lc-t1' }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    }))
+    const { createLivingCircleTask } = await loadApi()
+    await createLivingCircleTask(input as never)
+    if (!captured.length) throw new Error('没有 POST /api/tasks')
+    return captured[0]
+  }
+
+  it('选骑行 ⇒ 键名逐字 travel_mode:"riding"（后端 CreateTaskBody 声明的就是这个名）', async () => {
+    const body = await captureBody({ query: '凯里老街', travel_mode: 'riding' })
+    expect(body.travel_mode).toBe('riding')
+  })
+
+  it('不表态 ⇒ 请求体**没有** travel_mode 键：缺键≠walking，后端才谈得上回落', async () => {
+    const body = await captureBody({ query: '凯里老街' })
+    expect('travel_mode' in body, `前端替用户预先表态了：${JSON.stringify(body)}`).toBe(false)
+    // 其余键照常发出，别把这条判据写成"整个 body 是空的"
+    expect(body.query).toBe('凯里老街')
+    expect(body.type).toBe('living_circle')
+  })
+
+  it('显式选 walking 也要发键（用户确实选了步行 ≠ 没选）', async () => {
+    const body = await captureBody({ query: '凯里老街', travel_mode: 'walking' })
+    expect(body.travel_mode).toBe('walking')
+  })
+})

@@ -9,6 +9,7 @@ import type {
   IntelOverview,
   LifeCircleCompare,
   LifeCircleMode,
+  TravelMode,
   LifeCircleRecord,
   LifeCircleShare,
   PingLLMResp,
@@ -183,6 +184,9 @@ export async function createLivingCircleTask(input: {
   data_mode?: string
   /** 中心点坐标系：bd09（默认，地图/文本输入）| wgs84（浏览器原生定位，服务端转 BD-09） */
   coord_sys?: CoordSys
+  /** 出行方式。缺省即**不发该键**：后端缺省回落 walking，但"没表态"与"选了步行"在
+   *  缓存键与口径追溯上不是同一件事，前端不替用户预先选。 */
+  travel_mode?: TravelMode
 }): Promise<CreateTaskResp> {
   // 坐标契约：前端唯一写入口。非法坐标当场抛错，**绝不**送进库
   // （一旦落库，报告 scene.center 就是坏的，之后每次打开都复现）。
@@ -200,6 +204,8 @@ export async function createLivingCircleTask(input: {
       address: input.address ?? '',
       // P1-1：任务数据源并入模式开关（live→真实/离线估算链路，fixture→内置演示）
       data_mode: input.data_mode ?? (isFixtureMode() ? 'fixture' : 'live'),
+      // 后端 CreateTaskBody 是 extra="forbid"：这里漏转发，上游传了也会被静默丢掉
+      ...(input.travel_mode ? { travel_mode: input.travel_mode } : {}),
     }),
   })
   const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }

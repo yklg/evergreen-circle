@@ -17,7 +17,7 @@
 import { createLivingCircleTask, fetchLifeCircleReport, openTaskStream } from './api'
 import { useTaskRegistry } from '../store/taskRegistry'
 import type { CoordSys } from './geo'
-import type { ForensicRoundRow, LngLat, LifeCircleMode, LivingCircleReport } from '../types'
+import type { ForensicRoundRow, LngLat, LifeCircleMode, LivingCircleReport, TravelMode } from '../types'
 
 export interface LifeCircleLaunchInput {
   query: string
@@ -26,6 +26,9 @@ export interface LifeCircleLaunchInput {
   city?: string
   address?: string
   coord_sys?: CoordSys
+  /** 出行方式。**未表态时不要传**：后端缺省会回落 walking，但"客户端没选"与
+   *  "客户端选了步行"在缓存键与口径追溯上是两件事，前端不替用户预先表态。 */
+  travel_mode?: TravelMode
 }
 
 export interface LifeCircleFlowCallbacks {
@@ -197,6 +200,7 @@ export async function launchLifeCircle(
     coord_sys: CoordSys
     city?: string
     address?: string
+    travel_mode?: TravelMode
   } = {
     query: input.query,
     mode: input.mode ?? 'standard',
@@ -205,6 +209,7 @@ export async function launchLifeCircle(
   }
   if (input.city) payload.city = input.city
   if (input.address) payload.address = input.address
+  if (input.travel_mode) payload.travel_mode = input.travel_mode
   const { taskId } = await createLivingCircleTask(payload)
   const close = subscribeLifeCircleTask(taskId, callbacks)
   return { taskId, close }
