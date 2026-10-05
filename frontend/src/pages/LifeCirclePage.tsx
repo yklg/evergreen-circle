@@ -43,6 +43,7 @@ import type {
   ForensicRoundRow,
   LngLat,
   LivingCircleReport,
+  TravelMode,
 } from '../types'
 import {
   LC_CAT_COLOR,
@@ -119,6 +120,50 @@ function RunNotices({ teamNotice, intakeWarns }: { teamNotice: string; intakeWar
   )
 }
 
+const TRAVEL_MODES: { key: TravelMode; label: string }[] = [
+  { key: 'walking', label: '步行' },
+  { key: 'riding', label: '骑行' },
+  { key: 'driving', label: '驾车' },
+]
+
+/** 出行方式段控（等时圈口径）。有记录态与无记录空态两个 CTA 行共用这一份实现。
+ *
+ * 几何是实测过的：段控按内容定宽（三枚键 126px），**输入框是这一行里唯一可伸缩的项**
+ * （`flex-1` + `min-w-0`），所以宽度损失全落在输入框上，CTA 行高与加控件前逐像素相同
+ * （36px／无记录态 44px），地图不会被推下去。
+ * 变异实测：删掉输入框的 `min-w-0` ⇒ 输入框退回 `size=20` 的固有宽 173px，1280 档整行
+ * 溢出 17px（e2e 的"行不得溢出"判据就是盯这个的）；而 `shrink-0` 之类"保护段控"的写法
+ * 实测全为 inert —— 段控宽 126 是靠输入框可缩到 0，不是靠它，故不写。
+ *
+ * 缺省 `value === null` 表示**用户还没表态** —— 显示步行（后端缺省口径），
+ * 但请求体不带 `travel_mode`，"没选"与"选了步行"在缓存键上必须可区分。
+ */
+function TravelModePicker({ value, onChange }: { value: TravelMode | null; onChange: (mode: TravelMode) => void }) {
+  const current = value ?? 'walking'
+  return (
+    <div
+      role="tablist"
+      aria-label="出行方式"
+      className="inline-flex items-center gap-[2px] rounded-[10px] border border-line bg-card p-[3px]"
+    >
+      {TRAVEL_MODES.map((m) => (
+        <button
+          key={m.key}
+          type="button"
+          role="tab"
+          aria-selected={m.key === current}
+          onClick={() => onChange(m.key)}
+          className={`h-[26px] whitespace-nowrap rounded-[7px] px-[7px] text-[12px] font-medium transition-colors ${
+            m.key === current ? 'bg-primary text-white' : 'text-ink-2 hover:bg-bg'
+          }`}
+        >
+          {m.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function LifeCirclePage() {
   const { sceneId = 'kaili' } = useParams()
   const navigate = useNavigate()
@@ -166,6 +211,9 @@ export default function LifeCirclePage() {
   const [ctaText, setCtaText] = useState(incomingQuery)
   const [ctaBusy, setCtaBusy] = useState(false)
   const [ctaErr, setCtaErr] = useState('')
+  /** 出行方式：null＝本次会话用户没表态 ⇒ 请求体不带 `travel_mode`（后端缺省 walking）。
+   *  与 ctaText 一样是"发起前才读"的输入态，不在定位/地图回调里 set 后立刻读。 */
+  const [travelMode, setTravelMode] = useState<TravelMode | null>(null)
   const [regionOpen, setRegionOpen] = useState(false)
   /* D·回落 SSE 运行态（真实模式）：进度值单一事实源 = taskRegistry。
      本页只保留「当前正在跟随的任务 id」做订阅锚点，runStage/runPercent/runActive
@@ -318,7 +366,7 @@ export default function LifeCirclePage() {
       }
     }
     if (coordText) {
-      // 文本输入约定为 BD-09（占位文案已注明）；越界即当场报错，
+      // 文本输入约定为 BD-09（输入框 `title` 已注明）；越界即当场报错，
       // 不允许把坏坐标写进库（一次写库 → 每次打开都复现）。
       return {
         query: explicitName || '生活圈体检',
@@ -347,6 +395,7 @@ export default function LifeCirclePage() {
           center: input.center,
           coord_sys: input.coord_sys,
           // city 有意不传：由后端按中心点逆地理（见 buildTaskInput 注释）
+          ...(travelMode ? { travel_mode: travelMode } : {}),
         },
         flowCallbacks,
       )
@@ -412,8 +461,10 @@ export default function LifeCirclePage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') startRealCheck()
               }}
-              placeholder="社区名 / 或 经度,纬度（BD-09）—— 例如：凯里老街"
-              className="h-11 flex-1 rounded-btn border border-line bg-card px-4 text-aux text-ink outline-none placeholder:text-ink-3 focus:border-primary"
+              placeholder="社区名 / 经纬度"
+              title="输入社区名，或 经度,纬度（BD-09）—— 例如：凯里老街"
+              aria-label="首次体检目标（社区名或经纬度）"
+              className="h-11 min-w-0 flex-1 rounded-btn border border-line bg-card px-4 text-aux text-ink outline-none placeholder:text-ink-3 focus:border-primary"
             />
             <button
               onClick={() => startRealCheck()}
@@ -422,6 +473,7 @@ export default function LifeCirclePage() {
             >
               <Play size={15} /> 开始体检
             </button>
+            <TravelModePicker value={travelMode} onChange={setTravelMode} />
           </div>
           {ctaErr && <div className="text-tag text-risk">创建失败：{ctaErr}</div>}
           {realLoading && <div className="text-tag text-ink-3">正在加载历史记录……</div>}
@@ -591,8 +643,10 @@ export default function LifeCirclePage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') startRealCheck()
               }}
-              placeholder="输入社区名 / 或 经度,纬度（BD-09）后重新体检，例如：凯里老街"
-              className="h-9 flex-1 rounded-btn border border-line bg-card px-3 text-aux text-ink outline-none placeholder:text-ink-3 focus:border-primary"
+              placeholder="社区名 / 经纬度"
+              title="输入社区名，或 经度,纬度（BD-09）后重新体检，例如：凯里老街"
+              aria-label="重新体检目标（社区名或经纬度）"
+              className="h-9 min-w-0 flex-1 rounded-btn border border-line bg-card px-3 text-aux text-ink outline-none placeholder:text-ink-3 focus:border-primary"
             />
             <button
               onClick={() => startRealCheck({ pending: customCenter ? { lnglat: customCenter, coordSys: customCoordSys } : undefined })}
@@ -601,6 +655,7 @@ export default function LifeCirclePage() {
             >
               <Play size={13} /> 开始体检
             </button>
+            <TravelModePicker value={travelMode} onChange={setTravelMode} />
           </div>
           <div className="flex items-center gap-2">
             {targetReportId && (

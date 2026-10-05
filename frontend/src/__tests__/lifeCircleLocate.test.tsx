@@ -112,8 +112,9 @@ async function renderAndStaleType() {
     </MemoryRouter>,
   )
   // 先等真实报告加载完成（否则拿到的是「还没有体检记录」空态的另一个输入框）
+  // 两个 CTA 输入框的占位文案刻意相同（都被段控挤到只剩短提示），靠 aria-label 分辨
   await screen.findByRole('button', { name: /定位到我/ })
-  const input = screen.getByPlaceholderText(/输入社区名 \/ 或 经度/) as HTMLInputElement
+  const input = screen.getByLabelText(/重新体检目标/) as HTMLInputElement
   // 输入框留一个与定位结果无关的旧值 —— 旧实现会把它当成本次任务的名称
   fireEvent.change(input, { target: { value: STALE_INPUT } })
   await waitFor(() => expect(input.value).toBe(STALE_INPUT), { timeout: 1000 })
@@ -193,7 +194,7 @@ describe('FE-32 · LifeCirclePage 接收首页透传的 state.query', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('button', { name: /定位到我/ })
-    const input = screen.getByPlaceholderText(/输入社区名/) as HTMLInputElement
+    const input = screen.getByLabelText(/重新体检目标/) as HTMLInputElement
     expect(input.value).toBe('贵阳市观山湖区')
   })
 
@@ -206,7 +207,7 @@ describe('FE-32 · LifeCirclePage 接收首页透传的 state.query', () => {
       </MemoryRouter>,
     )
     await screen.findByRole('button', { name: /定位到我/ })
-    const input = screen.getByPlaceholderText(/输入社区名/) as HTMLInputElement
+    const input = screen.getByLabelText(/重新体检目标/) as HTMLInputElement
     expect(input.value).toBe('')
   })
 })

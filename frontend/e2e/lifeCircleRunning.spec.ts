@@ -106,3 +106,101 @@ test('横幅被撑到超过 22vh 时：它自己滚，地图格与右栏仍有�
   expect(legend!.y, '图例被顶出地图格上沿').toBeGreaterThanOrEqual(cell!.y - 1)
   expect(legend!.y + legend!.height, '图例底边越出地图格').toBeLessThanOrEqual(cell!.y + cell!.height + 2)
 })
+
+/**
+ * ── 出行方式段控（travel_mode 前端可见可控）───────────────────────────
+ *
+ * 页面数据通道与上面两条相同：真实模式 + `e2e/support/lcRunningApi.mjs`。
+ * 历史列表由 `/api/e2e/records?on=0|1` 切换，用来把页面停在**两个 CTA 挂载点**之一：
+ * 有记录态的头部行（h-9）与无记录态的首屏行（h-11）。只测一处＝另一半没人看过。
+ *
+ * 三条主张，全部由 DOM 变异实测过"能咬住"（见 `mutate_round3.mjs` 的回执）：
+ * 1. 段控可见且**在 CTA 行矩形内** ⇒ 摘掉无记录态那个挂载点、或把段控挪出这一行都会红；
+ * 2. CTA 行**不得横向溢出**（`scrollWidth - clientWidth ≤ 1`）且输入框宽 ≥ 140
+ *    ⇒ 这一条盯的是输入框的 `min-w-0`：删掉它输入框退回 `size=20` 的固有宽 173px，
+ *    1280 档整行溢出 17px；把段控改成整块（`display:block`）则输入框被压到 26px、溢出 145px，
+ *    两种改法都被这一条抓住；
+ * 3. 请求体：动了段控才带 `travel_mode`，没动就**不带这个键** —— 后端 `extra="forbid"`
+ *    会静默丢弃未声明的键，而"没表态"与"选了步行"在缓存键上必须可区分。
+ *
+ * 反过来说，段控自身宽度（≥126）与行高（≤40）在这里是**结果性**读数：实测删 `shrink-0`
+ * 一类"保护段控"的写法完全无影响（段控不被压扁靠的是"输入框是唯一可伸缩项"），
+ * 所以不拿它们当机制判据，只当回归哨兵。
+ */
+const PICKER = '[role="tablist"][aria-label="出行方式"]'
+
+test.afterEach(async ({ request }) => {
+  // `records` 开关是**服务端全局态**：无记录态那条用例把它切到 0 后必须复位，
+  // 否则同一次运行里后面的用例会静默跑在无记录态（真踩过：整批读数全同）。
+  await request.get(`${MOCK}/api/e2e/records?on=1`)
+})
+
+/** 开到真实模式，records=false 时历史列表为空 ⇒ 页面停在无记录态首屏 CTA 行 */
+async function openLiveCta(page: import('@playwright/test').Page, records: boolean) {
+  const set = await page.request.get(`${MOCK}/api/e2e/records?on=${records ? 1 : 0}`)
+  expect(set.ok(), 'mock 后端没起来（webServer 没拉起 8799？）').toBe(true)
+  await page.addInitScript(() => localStorage.setItem('verda.dataMode.v1', 'live'))
+  await page.goto('/life-circle/custom')
+  const cta = page.getByRole('button', { name: /开始体检/ })
+  await expect(cta, '真实模式的「开始体检」入口没出现').toBeVisible()
+  await expect(page.locator(PICKER), `${records ? '有' : '无'}记录态的出行方式段控没出现`).toBeVisible()
+  return cta
+}
+
+/** 段控必须落在 CTA 行矩形内，且这一行既不横向溢出、也不被撑成两行 */
+async function expectInlinePicker(page: import('@playwright/test').Page, rowMaxHeight: number) {
+  const stat = await page.locator(PICKER).evaluate((el) => {
+    const row = el.parentElement
+    const input = row?.querySelector('input')
+    if (!row || !input) throw new Error('段控不在含输入框的 CTA 行里 ⇒ 挂载点被改坏了')
+    const rb = row.getBoundingClientRect()
+    const pb = el.getBoundingClientRect()
+    return {
+      pickerW: +pb.width.toFixed(1),
+      inputW: +input.getBoundingClientRect().width.toFixed(1),
+      rowH: +rb.height.toFixed(1),
+      overflow: +(row.scrollWidth - row.clientWidth).toFixed(1),
+      insideRow: pb.y >= rb.y - 1 && pb.y + pb.height <= rb.y + rb.height + 1,
+    }
+  })
+  expect(stat.pickerW, `段控宽 ${stat.pickerW}px < 126 ⇒ 三枚键被压窄了`).toBeGreaterThanOrEqual(126)
+  expect(stat.insideRow, '段控越出 CTA 行矩形 ⇒ 已经不在同一行了').toBe(true)
+  expect(stat.overflow, `CTA 行横向溢出 ${stat.overflow}px ⇒ 输入框不再可缩（min-w-0 被摘？）`).toBeLessThanOrEqual(1)
+  expect(stat.inputW, `输入框只剩 ${stat.inputW}px ⇒ 段控把它的宽度抢走了`).toBeGreaterThanOrEqual(140)
+  expect(stat.rowH, `CTA 行高 ${stat.rowH}px > ${rowMaxHeight} ⇒ 多占了一行`).toBeLessThanOrEqual(rowMaxHeight)
+}
+
+test('出行方式段控与 CTA 行同行：有记录态（h-9）与无记录态（h-11）两处都不加高', async ({ page }) => {
+  await openLiveCta(page, true)
+  await expectInlinePicker(page, 40)
+
+  // 换到无记录态：同一个组件、另一个挂载点，重新加载页面即可
+  await page.reload()
+  const set = await page.request.get(`${MOCK}/api/e2e/records?on=0`)
+  expect(set.ok()).toBe(true)
+  await page.reload()
+  await openLiveCta(page, false)
+  await expectInlinePicker(page, 48)
+})
+
+test('没动段控 ⇒ 请求体不带 travel_mode 键，且默认显示步行（与后端缺省同口径）', async ({ page }) => {
+  const cta = await openLiveCta(page, true)
+  await expect(page.getByRole('tab', { name: '步行' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: '骑行' })).toHaveAttribute('aria-selected', 'false')
+
+  const req = page.waitForRequest((r) => r.url().endsWith('/api/tasks') && r.method() === 'POST')
+  await cta.click()
+  const body = JSON.parse((await req).postData() ?? '{}')
+  expect('travel_mode' in body, `未表态却替用户发了 travel_mode=${String(body.travel_mode)}`).toBe(false)
+})
+
+test('选骑行再发起 ⇒ 请求体 travel_mode=riding（同地点换口径不得复用缓存）', async ({ page }) => {
+  const cta = await openLiveCta(page, true)
+  await page.getByRole('tab', { name: '骑行' }).click()
+  await expect(page.getByRole('tab', { name: '骑行' })).toHaveAttribute('aria-selected', 'true')
+
+  const req = page.waitForRequest((r) => r.url().endsWith('/api/tasks') && r.method() === 'POST')
+  await cta.click()
+  const body = JSON.parse((await req).postData() ?? '{}')
+  expect(body.travel_mode, `请求体没带上出行方式：${JSON.stringify(body)}`).toBe('riding')
+})

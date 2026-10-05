@@ -64,6 +64,9 @@ const ROUNDS = Number(process.env.LC_E2E_ROUNDS ?? 5)
  * 横幅会把地图格与右栏一起压塌，本 mock 的第二条用例立刻红。
  */
 let rounds = ROUNDS
+/** 由 `/api/e2e/records?on=0` 置真 ⇒ 历史列表返回空数组，让页面停在「无记录」CTA 行。
+ *  两个 CTA 挂载点（有记录态头部行 / 无记录态首屏行）都得被真浏览器量到，否则只测一半。 */
+let noRecords = false
 
 const sse = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
 
@@ -137,6 +140,12 @@ const server = createServer((req, res) => {
     rounds = n
     return json(res, 200, { rounds: n })
   }
+  if (req.method === 'GET' && path === '/api/e2e/records') {
+    const on = url.searchParams.get('on')
+    if (on !== '0' && on !== '1') return json(res, 400, { detail: 'on 只接 0/1' })
+    noRecords = on === '0'
+    return json(res, 200, { noRecords })
+  }
   if (req.method === 'POST' && path === '/api/tasks') return json(res, 200, { taskId: TASK_ID, kind: 'life_circle' })
   if (req.method === 'GET' && path === `/api/tasks/${TASK_ID}/stream`) return openStream(req, res)
   // 浮动条会轮询任务状态；不给它会拿到 404（虽然前端有兜底，但那是另一条链路，别混进这条用例）
@@ -146,7 +155,7 @@ const server = createServer((req, res) => {
       report_id: null, started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
   }
-  if (req.method === 'GET' && path === '/api/life-circle') return json(res, 200, [RECORD])
+  if (req.method === 'GET' && path === '/api/life-circle') return json(res, 200, noRecords ? [] : [RECORD])
   if (req.method === 'GET' && path === `/api/life-circle/${REPORT_ID}`) {
     return json(res, 200, { id: REPORT_ID, report_type: 'living_circle', living_circle: LIVING_CIRCLE })
   }
