@@ -1,9 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="常青圈 EvergreenCircle">
   <!-- 常青圈 EvergreenCircle 品牌图标
        造型取自 public/assets/brand/logo.png 的嫩芽（大叶 + 小叶 + 茎 + 种子），
-       配色取自 index.css 的 --verda-primary (#7c9885)，与侧边栏 logo 片同构。
+       配色与 index.css 的品牌主色 #7c9885 同源，与侧边栏 logo 片同构。
        用「品牌色圆角片 + 奶白嫩芽」而非透明底绿芽：16px 的浏览器标签上
-       任意明暗主题都能保持对比度，不会糊成一团。 -->
+       任意明暗主题都能保持对比度，不会糊成一团。
+
+       本文件按 XML 文档被浏览器解析，没有 HTML 那套容错：注释体内一旦出现
+       连续两个减号，整份 SVG 即解析失败、图标静默不显示。
+       所以注释里不要写 CSS 自定义属性名 —— 它们正是那样开头的。 -->
   <defs>
     <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#8daa97"/>
