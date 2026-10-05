@@ -16,6 +16,7 @@ import type {
   LngLat,
   LivingCircleReport,
   PoiPoint,
+  TriadFacility,
 } from '../types'
 
 /* 画布几何：研究范围 5km × 5km → 画布 W×H（m 等距投影局部近似，单一真相源） */
@@ -1363,6 +1364,120 @@ export function triadRows(
   lc: Pick<LivingCircleReport, 'scores'>,
 ): LivingCircleReport['scores']['triads'] {
   return lc.scores?.triads ?? []
+}
+
+/**
+ * 三要素条目落在哪一种事实上 —— 后端 `_triad_state`（`diagnosis_templates.py`）的镜像。
+ *
+ * `scores.triads[]` 带着**两把尺**的产物：`in_reach`（可达区，实测耗时场 + 多边形封顶）与
+ * `within_blind_radius`（中心 1km 直线）。此前只有一个 `covered`，于是"可达区内没有"被
+ * 一路说成"1km 内缺失"—— 一家直线 950m、隔河需 35min 的药店会被报成根本没有，
+ * 而同一份报告的盲区清单里就躺着它的 `distance_m`。
+ *
+ * 五态互斥，**「未查全」既不许塌成「没有」也不许并进「有」**（与逐格台账 `present` 的
+ * int8 三态同一条纪律）。渲染面一律走这里，不许再各自写 `t.covered ? … : '1km 内缺失'`。
+ */
+export type TriadState = 'reachable' | 'blocked' | 'absent' | 'unknown' | 'missing'
+
+export function triadState(t?: TriadFacility | null): TriadState {
+  if (!t) return 'missing'
+  const inReach = t.in_reach ?? t.covered
+  if (inReach) return 'reachable'
+  // 旧快照没这个键 ⇒ 读作"无从知道"，绝不等于"1km 内没有"
+  if (t.within_blind_radius == null) return 'unknown'
+  return t.within_blind_radius ? 'blocked' : 'absent'
+}
+
+/** 三要素 chip 上那半句文案（五态各说一句真话）。 */
+export function triadChipText(t: TriadFacility | null | undefined): string {
+  if (!t) return '未产出结论'
+  const s = triadState(t)
+  if (s === 'reachable') return `最近 ${t.nearest_minutes ?? '—'}min`
+  if (s === 'blocked') return `1km 内有（${Math.round(t.nearest_m ?? 0)}m）· 步行到不了`
+  if (s === 'absent') return '中心 1km 内没有'
+  if (s === 'unknown') return '1km 内有没有未查全'
+  return '未产出结论'
+}
+
+/** 三要素 chip 的配色档：`unknown` 走中性，不许借用警告色（那等于替它下"没有"的结论）。 */
+export function triadChipTone(t: TriadFacility | null | undefined): 'ok' | 'gap' | 'unknown' {
+  const s = triadState(t)
+  if (s === 'reachable') return 'ok'
+  if (s === 'unknown' || s === 'missing') return 'unknown'
+  return 'gap'
+}
+
+/**
+ * 章节 key_takeaway 那半句 —— 后端 `_triad_takeaway` 的**同一份措辞**。
+ * 演示态（本文件）与实时态（后端模板）此前各写一套，于是后端改了说法、mock 还在说旧的，
+ * 而 `test_fixture_mirror` 只比 JSON 数据、不比渲染句子 ⇒ 这条漂移无人看守。
+ * 现在两侧字面量由 `__tests__/triadProseMirror.test.ts` 逐条对齐。
+ */
+export function triadTakeawayText(t: TriadFacility | null | undefined): string {
+  if (!t) return '未产出该要素结论'
+  switch (triadState(t)) {
+    case 'reachable':
+      return `可达区内有（最近 ${fmtTriadMin(t.nearest_minutes)}）`
+    case 'blocked':
+      return `可达区内没有，但中心 1km 内有（最近 ${Math.round(t.nearest_m ?? 0)}m）⇒ 步行到不了`
+    case 'absent':
+      return '中心 1km 内没有'
+    case 'unknown':
+      return '可达区内没有；中心 1km 内有没有未查全'
+    default:
+      return '未产出该要素结论'
+  }
+}
+
+/** claims 那半句 —— 后端 `_triad_claim` 的同一份措辞（论断挂证据 ID，措辞必须与尺对齐）。 */
+export function triadClaimText(t: TriadFacility | null | undefined): string {
+  if (!t) return '无法判定（缺该要素的三要素结论）'
+  switch (triadState(t)) {
+    case 'reachable':
+      return '覆盖达标（可达区内有）'
+    case 'blocked':
+      return '可达区内缺口 —— 1km 内有但步行到不了'
+    case 'absent':
+      return '覆盖缺位（中心 1km 内没有）'
+    case 'unknown':
+      return '无法判定（可达区内没有，1km 内有没有未查全）'
+    default:
+      return '无法判定（缺该要素的三要素结论）'
+  }
+}
+
+/** 概览那句三要素总评 —— 后端 `_triad_overview` 的同一份分桶逻辑。 */
+export function triadOverviewText(triads: TriadFacility[]): string {
+  if (!triads?.length) return '本次未产出三要素结论'
+  const pick = (s: TriadState) => triads.filter((t) => triadState(t) === s).map((t) => t.facility)
+  const blocked = pick('blocked')
+  const absent = pick('absent')
+  const unknown = pick('unknown')
+  if (!blocked.length && !absent.length && !unknown.length) return '菜市场/药店/小学三要素在可达区内均有'
+  const parts: string[] = []
+  if (absent.length) parts.push(`「${absent.join('、')}」中心 1km 内没有`)
+  if (blocked.length) parts.push(`「${blocked.join('、')}」1km 内有但步行到不了`)
+  if (unknown.length) parts.push(`「${unknown.join('、')}」1km 内有没有未查全`)
+  return '三要素：' + parts.join('；')
+}
+
+/** 教育段"就学通勤视角"那一句 —— 后端 `_triad_school_para` 的同一份措辞。 */
+export function triadSchoolParaText(t: TriadFacility | null | undefined): string {
+  if (!t) return '可达区内没有小学，而中心 1km 内有没有尚未查全，先补取证再谈学区'
+  switch (triadState(t)) {
+    case 'reachable':
+      return `最近小学步行 ${t.nearest_minutes ?? '—'}min，处于可接受范围`
+    case 'blocked':
+      return `中心 1km 内有小学（最近 ${Math.round(t.nearest_m ?? 0)}m）但步行到不了，接送需绕行 —— 这正是「道路并非直线」落在上学这件事上的样子`
+    case 'absent':
+      return '中心 1km 内没有小学，需关注跨区就学问题'
+    default:
+      return '可达区内没有小学，而中心 1km 内有没有尚未查全，先补取证再谈学区'
+  }
+}
+
+function fmtTriadMin(v: number | null | undefined): string {
+  return v == null ? '—' : `${v}min`
 }
 
 /** 评分置信度安全取值：旧快照 / 离线骨架缺该键 ⇒ `null`（渲染层不给徽标，不猜成 full）。 */

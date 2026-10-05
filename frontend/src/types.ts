@@ -951,8 +951,20 @@ export interface BlindFootprintMeta {
 /** 盲区三要素覆盖结论 */
 export interface TriadFacility {
   facility: '菜市场' | '药店' | '小学'
-  /** 可达区内是否可达 */
+  /** 可达区内是否可达 —— 兼容别名，恒等于 `in_reach`。新代码请读 `in_reach` */
   covered: boolean
+  /** 可达区内有该类设施（`field_fn` 封顶后的真语义） */
+  in_reach?: boolean
+  /**
+   * 中心 1km 直线内有该类设施。**三态**：`true` / `false` / `null`＝未查全。
+   * `null` 不等于 `false` —— 把"没查过"塌成"确实没有"正是 `ev-1` 与本仓 `page_size`
+   * 那条注释反复要消灭的形状。旧快照没这个键，读作 `null`。
+   */
+  within_blind_radius?: boolean | null
+  /** 中心到该类最近设施的直线米数（1km 那把尺的读数，不受 1km 截断）；`null`＝无从知道 */
+  nearest_m?: number | null
+  /** 1km 内有、但步行到不了 —— 「道路并非直线」的直接证据；前置未知时 `null` */
+  blocked_by_geometry?: boolean | null
   nearest_name: string | null
   nearest_minutes: number | null
 }

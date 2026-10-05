@@ -268,6 +268,98 @@ def _triad(lc: dict, facility: str) -> Optional[dict]:
     return None
 
 
+# ── 三要素结论的唯一出口 ────────────────────────────────────────────────
+# `scores.triads[]` 今天同时带着两把尺的产物：`in_reach`（可达区，`field_fn` 封顶）与
+# `within_blind_radius`（中心 1km 直线，`JudgeMasks` 中心格）。此前正文各写各的三元组，
+# 于是 `covered`（可达尺）被四处说成"1km"—— 一家直线 950m、隔河 35min 的药店会被印成
+# 「1km 内缺失」，而同一份报告的 `blindspots[].nearest[]` 里就躺着它的 distance_m。
+# 现在**状态只判一次**（`_triad_state`），措辞按槽位各渲染一份，且「1km」这个字面量
+# 只许出现在下面这几个函数里 —— 守卫见 `tests/test_triad_prose.py`。
+TRIAD_STATES = ("reachable", "blocked", "absent", "unknown", "missing")
+
+
+def _triad_state(t: Optional[dict]) -> str:
+    """三要素条目落在哪一种事实上。四态互斥，**"未查全"不许塌成"没有"也不许塌成"有"**。
+
+    `in_reach` 缺席的旧快照回落读 `covered`（同义别名，由 `scoring.triad_from_points` 保证
+    两者恒等）；`within_blind_radius` 缺席或为 `None` 都读作 `unknown` —— 旧报告没有这一格的
+    原料，报"1km 内没有"就是伪造负结论，报"无从判断"才是真话。
+    """
+    if not t:
+        return "missing"
+    in_reach = bool(t.get("in_reach", t.get("covered", False)))
+    if in_reach:
+        return "reachable"
+    within = t.get("within_blind_radius")
+    if within is None:
+        return "unknown"
+    return "blocked" if within else "absent"
+
+
+def _fmt_m(v) -> str:
+    return "—" if v is None else f"{round(float(v)):d}m"
+
+
+def _triad_takeaway(t: Optional[dict]) -> str:
+    """章节 key_takeaway 里那半句：{要素}三要素 …"""
+    s = _triad_state(t)
+    if s == "reachable":
+        return f"可达区内有（最近 {_fmt_min((t or {}).get('nearest_minutes'))}）"
+    if s == "blocked":
+        return f"可达区内没有，但中心 1km 内有（最近 {_fmt_m((t or {}).get('nearest_m'))}）⇒ 步行到不了"
+    if s == "absent":
+        return "中心 1km 内没有"
+    if s == "unknown":
+        return "可达区内没有；中心 1km 内有没有未查全"
+    return "未产出该要素结论"
+
+
+def _triad_claim(t: Optional[dict]) -> str:
+    """claims 里那半句（论断要挂证据 ID，措辞必须与事实严格对齐）。"""
+    s = _triad_state(t)
+    return {
+        "reachable": "覆盖达标（可达区内有）",
+        "blocked": "可达区内缺口 —— 1km 内有但步行到不了",
+        "absent": "覆盖缺位（中心 1km 内没有）",
+        "unknown": "无法判定（可达区内没有，1km 内有没有未查全）",
+        "missing": "无法判定（缺该要素的三要素结论）",
+    }[s]
+
+
+def _triad_overview(triads: list) -> str:
+    """概览那句三要素总评。**三种坏消息各说各的**，尤其 `unknown` 不许并进"均可达"。"""
+    if not triads:
+        return "本次未产出三要素结论"
+    bucket = {k: [] for k in ("blocked", "absent", "unknown")}
+    for t in triads:
+        s = _triad_state(t)
+        if s in bucket:
+            bucket[s].append(str(t.get("facility", "")))
+    if not any(bucket.values()):
+        return "菜市场/药店/小学三要素在可达区内均有"
+    parts = []
+    if bucket["absent"]:
+        parts.append(f"「{'、'.join(bucket['absent'])}」中心 1km 内没有")
+    if bucket["blocked"]:
+        parts.append(f"「{'、'.join(bucket['blocked'])}」1km 内有但步行到不了")
+    if bucket["unknown"]:
+        parts.append(f"「{'、'.join(bucket['unknown'])}」1km 内有没有未查全")
+    return "三要素：" + "；".join(parts)
+
+
+def _triad_school_para(t: Optional[dict]) -> str:
+    """教育段那句"就学通勤视角"。"""
+    s = _triad_state(t)
+    if s == "reachable":
+        return f"最近小学步行 {_fmt_min((t or {}).get('nearest_minutes'))}，处于可接受范围"
+    if s == "blocked":
+        return (f"中心 1km 内有小学（最近 {_fmt_m((t or {}).get('nearest_m'))}）但步行到不了，"
+                "接送需绕行 —— 这正是「道路并非直线」落在上学这件事上的样子")
+    if s == "absent":
+        return "中心 1km 内没有小学，需关注跨区就学问题"
+    return "可达区内没有小学，而中心 1km 内有没有尚未查全，先补取证再谈学区"
+
+
 def _cov_score(c: Optional[dict]) -> float:
     return float((c or {}).get("coverage", 0.0))
 
@@ -387,8 +479,11 @@ def _edu_cov_sentence(e: Optional[dict], caliber: Optional[dict]) -> str:
     """教育节把「圈内 N 处」与「覆盖度 X%」拆成两个口径各自的数。
 
     旧写法两句并排（凯里：圈内 15 处 + 覆盖度 33.3%），读者按点数复算 15÷3=100% ⇒ 只能认定
-    数据对不上。⚠️ 本节的「覆盖达标」判的是**小学 1km 三要素事实**、置信度判的是**这个覆盖度
-    是否 ≥75%** —— 两把尺不同，所以"达标 + 置信度 medium"是合法组合，必须当场说圆。
+    数据对不上。⚠️ 本节的「覆盖达标」判的是**小学三要素**（可达区内有无 + 中心 1km 那把尺，
+    由 `_triad_claim` 统一渲染）、置信度判的是**这个覆盖度是否 ≥75%** —— 两把尺不同，所以
+    "达标 + 置信度 medium"是合法组合，必须当场说圆。
+    （此处原文写的是"小学 1km 三要素事实"，而那句读的一直是可达尺的 `covered` —— 口径自证
+    机制被正确执行了、尺名却写错，是 P1 的根因证据；勘误见计划 v5 §P1。）
     「没发起 / 没查全 / 整轮没扩词」那一句同样**只在 <75% 时挂**（本节没有分支句，所以闸门得显式写在这里）。
     """
     cov = _cov_score(e)
@@ -541,8 +636,7 @@ def _sec_overview(lc: dict, ev_id: str) -> dict:
     total = (lc.get("scores") or {}).get("total", 0)
     reachable, in_reach, n = sampling_counts(lc)
     area15 = next((z["area_km2"] for z in (lc.get("isochrones") or []) if z["minutes"] == 15), 0)
-    miss = [t["facility"] for t in (lc.get("scores") or {}).get("triads", []) if not t.get("covered")]
-    triad_note = f"三要素中「{'、'.join(miss)}」存在 1km 覆盖缺口" if miss else "菜市场/药店/小学三要素 1km 内均可达"
+    triad_note = _triad_overview((lc.get("scores") or {}).get("triads", []))
     poi = lc.get("poi") or {}
     return {
         "id": "overview",
@@ -580,7 +674,7 @@ def _sec_medical(lc: dict) -> dict:
         "id": "medical",
         "title": "医疗配置",
         "level": 2,
-        "key_takeaway": f"圈内医疗设施 {in_circle}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{'可达' if (triad or {}).get('covered') else '1km 内缺失'}",
+        "key_takeaway": f"圈内医疗设施 {in_circle}/{(m or {}).get('total', 0)} 处，最近 {_fmt_min((m or {}).get('min_minutes'))}；药店三要素{_triad_takeaway(triad)}",
         "paragraphs": [
             f"医疗类 POI 检索 {(m or {}).get('total', 0)} 处，可达区内 {in_circle} 处；{_med_cov_sentence(m, lc.get('caliber'))}",
             # 原第 2 段只有一句「最近设施 X 步行约 Y」；机理段含同一信息并交代它与分子的形状关系，
@@ -602,26 +696,24 @@ def _sec_medical(lc: dict) -> dict:
 def _sec_education(lc: dict) -> dict:
     e = _cat(lc, "education")
     triad = _triad(lc, "小学")
-    covered = bool((triad or {}).get("covered"))
     cov = _cov_score(e)
     req = (e or {}).get("required_in_circle")
     edu_mech = _mechanism_sentence(lc, "education")
     return {
         "id": "education", "title": "教育设施", "level": 2,
-        "key_takeaway": f"教育类圈内 {(e or {}).get('in_circle', 0)}/{(e or {}).get('total', 0)} 处；小学三要素{('可达（最近 ' + _fmt_min((triad or {}).get('nearest_minutes')) + '）') if covered else '1km 内缺失'}",
+        "key_takeaway": f"教育类圈内 {(e or {}).get('in_circle', 0)}/{(e or {}).get('total', 0)} 处；小学三要素{_triad_takeaway(triad)}",
         "paragraphs": [
             f"小学/中学/幼儿园共检索 {(e or {}).get('total', 0)} 处，圈内 {(e or {}).get('in_circle', 0)} 处（三类都在这一类的检索范围内）；{_edu_cov_sentence(e, lc.get('caliber'))}",
             # 机理段插在**第 2 位**：第 1 位是缺口注记的落点，`lcEvidenceGapNote` 按 paragraphs[0]
             # 读取，插到它前面会静默改变它读到的内容（段序即契约）。
             *([edu_mech] if edu_mech else []),
-            "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区" + ("最近小学步行在可接受范围" if covered else "1km 内无小学，需关注跨区就学问题") + "。",
+            "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区" + _triad_school_para(triad) + "。",
         ],
         "claims": [{
             "claim_id": "c-lc-education-1",
             # 「达标」与「置信度」两半各挂各的判据 —— 凯里教育今天就是"达标 + medium"同屏
-            # （达标来自小学 1km 事实，medium 来自覆盖度 0.333），不说圆就像两套数字在打架。
-            "text": (f"教育设施{'覆盖达标' if covered else '覆盖不足'}（这一句判的是小学 1km 三要素事实）"
-                     f"：小学{'1km 内缺失' if not covered else '可达'}"
+            # （达标来自小学三要素那把尺，medium 来自覆盖度 0.333），不说圆就像两套数字在打架。
+            "text": (f"教育设施{_triad_claim(triad)}（这一句判的是小学三要素）"
                      + (f"；覆盖度 {_pct(cov)}（分子取门槛项 {req} 处）" if req is not None else f"；覆盖度 {_pct(cov)}")
                      + f" ⇒ 置信度 {'high' if cov >= 0.75 else 'medium'}（判据是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）"),
             "field": "coverage", "evidence_ids": ["ev-lc-poi-education"],
@@ -635,10 +727,9 @@ def _sec_market(lc: dict) -> dict:
     mk = _cat(lc, "market")
     sp = _cat(lc, "shopping")
     triad = _triad(lc, "菜市场")
-    covered = bool((triad or {}).get("covered"))
     return {
         "id": "market", "title": "菜市与购物", "level": 2,
-        "key_takeaway": f"菜市场圈内 {(mk or {}).get('in_circle', 0)}/{(mk or {}).get('total', 0)} 处，购物 {(sp or {}).get('in_circle', 0)}/{(sp or {}).get('total', 0)} 处；菜市场三要素{('可达（最近 ' + _fmt_min((triad or {}).get('nearest_minutes')) + '）') if covered else '1km 内缺失'}",
+        "key_takeaway": f"菜市场圈内 {(mk or {}).get('in_circle', 0)}/{(mk or {}).get('total', 0)} 处，购物 {(sp or {}).get('in_circle', 0)}/{(sp or {}).get('total', 0)} 处；菜市场三要素{_triad_takeaway(triad)}",
         "paragraphs": [
             "以菜市场/生鲜与超市/便利店/商场两组关键词独立检索并去重：",
             f"菜市场 {(mk or {}).get('total', 0)} 处（圈内 {(mk or {}).get('in_circle', 0)}，覆盖 {_pct(_cov_score(mk))}）；购物 {(sp or {}).get('total', 0)} 处（圈内 {(sp or {}).get('in_circle', 0)}，覆盖 {_pct(_cov_score(sp))}）。",
@@ -647,7 +738,7 @@ def _sec_market(lc: dict) -> dict:
         ],
         "claims": [{
             "claim_id": "c-lc-market-1",
-            "text": f"菜市场三要素{('覆盖达标' if covered else '1km 内覆盖缺位')}；购物覆盖 {_pct(_cov_score(sp))}",
+            "text": f"菜市场三要素{_triad_claim(triad)}；购物覆盖 {_pct(_cov_score(sp))}",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-market"],
             "confidence": "high" if _cov_score(mk) >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-004"),
         }],

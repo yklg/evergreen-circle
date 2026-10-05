@@ -20,7 +20,17 @@ import type {
   ReportSection,
 } from '../types'
 import { SAMPLE_COMMUNITIES } from './livingCircleMock'
-import { lcLocPrefix, poiDedupeRuleLabel, poiMetricLabel, samplingReach, scoreGrade } from '../lib/livingCircle'
+import {
+  lcLocPrefix,
+  poiDedupeRuleLabel,
+  poiMetricLabel,
+  samplingReach,
+  scoreGrade,
+  triadClaimText,
+  triadOverviewText,
+  triadSchoolParaText,
+  triadTakeawayText,
+} from '../lib/livingCircle'
 
 /** D4 · 专家署名表（与 backend/app/data/experts.json 及 api 副本的 id 对齐；M2 换血后仅文案微调） */
 export const LC_EXPERT: Record<string, { name: string; role: string }> = {
@@ -166,10 +176,7 @@ function overviewNote(r: LivingCircleReport): string {
   // 分档走唯一口径（timed≠可达）。mock 与真报告必须同源，否则演示态与实时态文案会打架。
   const reach = samplingReach(r)
   const area = r.isochrones.find((z) => z.minutes === 15)?.area_km2 ?? 0
-  const miss = r.scores.triads.filter((t) => !t.covered)
-  const triadNote = miss.length
-    ? `三要素中「${miss.map((t) => t.facility).join('、')}」存在 1km 覆盖缺口`
-    : '菜市场/药店/小学三要素 1km 内均可达'
+  const triadNote = triadOverviewText(r.scores.triads)
   return `本样区综合评分 ${r.scores.total}（${grade.label}），15 分钟步行可达圈约 ${area.toFixed(2)} km²，${reach.inReach}/${reach.total} 个采样点圈内可达（已测时 ${reach.timed}）；设施 ${poiMetricLabel(r)}。${triadNote}，共识别 ${r.blindspots.length} 处服务盲区。`
 }
 
@@ -204,7 +211,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
     key_takeaway: `圈内医疗设施 ${m ? `${m.in_circle}/${m.total}` : '—'} 处，最近 ${fmtMin(m?.min_minutes ?? null)}；社区医院/诊所/药店三类中${(ph?.nearest_name || m?.nearest_name) ? `最近为「${ph?.nearest_name ?? m?.nearest_name}」` : '尚无近端设施'}`,
     paragraphs: [
       `对研究范围内医疗类 POI 按 ${m?.total ?? 0} 处做${poiDedupeRuleLabel(r)}，可达区内 ${m?.in_circle ?? 0} 处；${medCoverageSentence(m, r.caliber)}`,
-      `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一，圈内可达性为「${triad?.covered ? '可达' : '不可达'}」${triad?.nearest_minutes != null ? `（最近 ${triad.nearest_minutes}min）` : ''}。`,
+      `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一：${triadTakeawayText(triad)}。`,
     ],
     claims,
     charts: [
@@ -226,15 +233,15 @@ function secEducation(r: LivingCircleReport): ReportSection {
     id: 'education',
     title: '教育设施',
     level: 2,
-    key_takeaway: `教育类圈内 ${e ? `${e.in_circle}/${e.total}` : '—'} 处；小学为盲区三要素之一，${triad?.covered ? `圈内可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'} `,
+    key_takeaway: `教育类圈内 ${e ? `${e.in_circle}/${e.total}` : '—'} 处；小学为盲区三要素之一，${triadTakeawayText(triad)}`,
     paragraphs: [
       `教育设施统计范围含小学/中学/幼儿园，共检索 ${e?.total ?? 0} 处，可达区内 ${e?.in_circle ?? 0} 处；${eduCoverageSentence(e, r.caliber)}最近设施「${e?.nearest_name ?? '—'}」${fmtMin(e?.min_minutes ?? null)}。`,
-      `就学通勤视角：小学接送是生活圈体检的高频痛点，本样区${triad?.covered ? `最近小学步行 ${triad.nearest_minutes}min，处于可接受范围` : '1km 内无小学，需重点关注跨区就学问题'}。`,
+      `就学通勤视角：小学接送是生活圈体检的高频痛点，本样区${triadSchoolParaText(triad)}。`,
     ],
     claims: [
       {
         claim_id: `c-${r.scene.name}-education-1`,
-        text: `教育设施${triad?.covered ? '覆盖达标' : '覆盖不足'}（这一句判的是小学 1km 三要素事实）：小学${triad?.covered ? `最快 ${fmtMin(triad.nearest_minutes)} 可达` : '1km 内缺失'}；覆盖度 ${e?.coverage != null ? pct(e.coverage) : '—'}${e?.required_in_circle != null ? `（按门槛项 ${e.required_in_circle} 处 ÷ 满分线，圈内共 ${e.in_circle} 处）` : ''} ⇒ 置信度 ${(e?.coverage ?? 0) >= 0.75 ? 'high' : 'medium'}（这一句判的是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）`,
+        text: `教育设施${triadClaimText(triad)}（这一句判的是小学三要素）；覆盖度 ${e?.coverage != null ? pct(e.coverage) : '—'}${e?.required_in_circle != null ? `（按门槛项 ${e.required_in_circle} 处 ÷ 满分线，圈内共 ${e.in_circle} 处）` : ''} ⇒ 置信度 ${(e?.coverage ?? 0) >= 0.75 ? 'high' : 'medium'}（这一句判的是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）`,
         field: 'coverage',
         evidence_ids: [`ev-${r.scene.name}-poi-education`],
         confidence: (e?.coverage ?? 0) >= 0.75 ? 'high' : 'medium',
@@ -254,18 +261,20 @@ function secMarket(r: LivingCircleReport): ReportSection {
     id: 'market',
     title: '菜市与购物',
     level: 2,
-    key_takeaway: `菜市场 ${mk ? `${mk.in_circle}/${mk.total}` : '—'} 处圈内；购物(超市/便利店/商场) ${sp ? `${sp.in_circle}/${sp.total}` : '—'} 处圈内；菜市场三要素${triad?.covered ? `可达（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内缺失'}`,
+    key_takeaway: `菜市场 ${mk ? `${mk.in_circle}/${mk.total}` : '—'} 处圈内；购物(超市/便利店/商场) ${sp ? `${sp.in_circle}/${sp.total}` : '—'} 处圈内；菜市场三要素${triadTakeawayText(triad)}`,
     paragraphs: [
       `以「菜市场/生鲜」与「超市/便利店/综合商场」两组关键词独立检索并做${poiDedupeRuleLabel(r)}：菜市场 ${mk?.total ?? 0} 处（圈内 ${mk?.in_circle ?? 0}，覆盖 ${pct(mk?.coverage ?? 0)}），购物 ${sp?.total ?? 0} 处（圈内 ${sp?.in_circle ?? 0}，覆盖 ${pct(sp?.coverage ?? 0)}）。`,
       // 两个菜市场数字并存是刻意的：类目统计按归并后的设施数，盲区三要素按未归并的坐标集
       // （1km 硬判宁多勿少）。不写出来就会被读成口径打架。
       `注：本处菜市场数为**设施统计口径**；盲区判定另用未归并的三要素坐标集（菜市场/药店/小学是 1km 硬判，宁多勿少），两个数不一致属预期。`,
-      `每日采买的便利度是居民感知最强的民生指标，本样区最近菜市场「${mk?.nearest_name ?? '—'}」${fmtMin(mk?.min_minutes ?? null)}${triad?.covered ? '' : '，缺席于三要素盲区视角'}`,
+      // 尾部原来挂着一段"不可达就说缺席"的三元式 —— 读的是可达尺的 `covered` 却写"缺席"，
+      // 与本章 key_takeaway 会打脸；三要素的结论一律交回 `triadTakeawayText` 等渲染器说。
+      `每日采买的便利度是居民感知最强的民生指标，本样区最近菜市场「${mk?.nearest_name ?? '—'}」${fmtMin(mk?.min_minutes ?? null)}。`,
     ],
     claims: [
       {
         claim_id: `c-${r.scene.name}-market-1`,
-        text: `菜市场三要素${triad?.covered ? `覆盖达标（最近 ${fmtMin(triad.nearest_minutes)}）` : '1km 内覆盖缺位'}；购物配套覆盖 ${sp?.coverage != null ? pct(sp.coverage) : '—'}`,
+        text: `菜市场三要素${triadClaimText(triad)}；购物配套覆盖 ${sp?.coverage != null ? pct(sp.coverage) : '—'}`,
         field: 'coverage',
         evidence_ids: [`ev-${r.scene.name}-poi-market`],
         confidence: (mk?.coverage ?? 0) >= 0.75 ? 'high' : 'medium',
