@@ -95,6 +95,30 @@ interface TaskInput {
 /** 盲区清单默认只摊前 N 条：它是右栏里最高的那块，右栏内部滚之后没必要一次铺完。 */
 const BLIND_TOP_N = 3
 
+/** 运行期常驻提示：组队降级 ＋ 口径告警。
+ *
+ * 与 `runMsg` 的区别是**不被后续 message 冲掉** —— "这次的人是模型挑的还是兜底凑的"、
+ * "名称与中心点可能不同源"都是这一趟体检的可信度信息，一闪而过等于没说。
+ * 有记录态与无记录空态两个横幅共用这一份实现。
+ */
+function RunNotices({ teamNotice, intakeWarns }: { teamNotice: string; intakeWarns: string[] }) {
+  if (!teamNotice && intakeWarns.length === 0) return null
+  return (
+    <>
+      {teamNotice && (
+        <div className="mt-1 rounded-btn border border-warn/40 bg-warn/10 px-2 py-1 text-tag text-warn" role="status">
+          {teamNotice}
+        </div>
+      )}
+      {intakeWarns.map((w) => (
+        <div key={w} className="mt-1 rounded-btn border border-line bg-card/70 px-2 py-1 text-tag text-ink-2" title={w}>
+          {w}
+        </div>
+      ))}
+    </>
+  )
+}
+
 export default function LifeCirclePage() {
   const { sceneId = 'kaili' } = useParams()
   const navigate = useNavigate()
@@ -152,6 +176,10 @@ export default function LifeCirclePage() {
      只在「开始跟随一个新任务」那两处清 —— 不挂在 runMsg 的五个写点上：横幅本身只在
      `runActive` 时渲染，任务一落终态就整块卸载，散五处反而漏一处就把上一轮的账挂到下一轮。 */
   const [roundLines, setRoundLines] = useState<{ text: string; row: ForensicRoundRow }[]>([])
+  /* 本次专家队的**降级提示**与口径告警：两者都要留在屏上，不能像 runMsg 那样被下一条
+     message 冲掉 —— 用户需要知道"这次的人是模型挑的还是兜底凑的"，以及名称与坐标是否同源。 */
+  const [teamNotice, setTeamNotice] = useState('')
+  const [intakeWarns, setIntakeWarns] = useState<string[]>([])
   const lcTasks = useTaskRegistry((s) => s.tasks)
   const regTask = runTaskId ? lcTasks[runTaskId] : null
   const runActive = !!regTask && regTask.status === 'running'
@@ -167,6 +195,12 @@ export default function LifeCirclePage() {
     },
     onRound: (row: ForensicRoundRow, text: string) => {
       setRoundLines((prev) => [...prev, { text, row }])
+    },
+    onTeam: ({ degraded, text }: { degraded: string; text: string }) => {
+      if (degraded) setTeamNotice(text)
+    },
+    onWarn: (_code: string, text: string) => {
+      if (text) setIntakeWarns((prev) => (prev.includes(text) ? prev : [...prev, text]))
     },
     onError: (message: string) => {
       setRunTaskId('')
@@ -197,6 +231,8 @@ export default function LifeCirclePage() {
     setRunTaskId(incomingTaskId)
     setRunMsg('')
     setRoundLines([])
+    setTeamNotice('')
+    setIntakeWarns([])
     setCtaErr('')
     flowRef.current = subscribeLifeCircleTask(incomingTaskId, flowCallbacks)
   }, [incomingTaskId, isFixture])
@@ -301,6 +337,8 @@ export default function LifeCirclePage() {
     setRunTaskId('')
     setRunMsg('正在创建任务…')
     setRoundLines([])
+    setTeamNotice('')
+    setIntakeWarns([])
     try {
       const input = buildTaskInput(opts)
       const handle = await launchLifeCircle(
@@ -360,6 +398,7 @@ export default function LifeCirclePage() {
                   <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
                 </div>
                 {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
+                <RunNotices teamNotice={teamNotice} intakeWarns={intakeWarns} />
               </div>
               <div className="h-1.5 w-24 overflow-hidden rounded-chip bg-line">
                 <div className="h-full rounded-chip bg-primary" style={{ width: `${Math.max(0, Math.min(100, runPercent))}%` }} />
@@ -642,6 +681,7 @@ export default function LifeCirclePage() {
               <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
             </div>
             {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
+            <RunNotices teamNotice={teamNotice} intakeWarns={intakeWarns} />
             {/* 片 5：取证扩容回合的实时账（文案 = 后端 `round` 事件自带 text，唯一措辞出处）。
                 刻意不改 stage/percent：那一格额度花在补算上，但阶段没变（仍是采集）。 */}
             {roundLines.map((l) => (

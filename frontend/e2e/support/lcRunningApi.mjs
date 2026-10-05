@@ -91,6 +91,16 @@ function json(res, status, body) {
 /** 事件序列：一条一条发，让页面真的经历"横幅逐行长高"的过程 */
 function streamSteps(n) {
   return [
+    // 后端 plan 阶段现在会发一条 `kind:'team'` 的 message（携带成员与降级码）。
+    // 这里给一帧**降级态**，让"横幅要把这件事留在屏上"这条真实链路进 e2e：
+    // 走的是生产 `lifeCircleFlow.onFlowEvent` → `onTeam` → `LifeCirclePage` 那一行。
+    [0, sse('message', {
+      stage: 'plan',
+      kind: 'team',
+      members: ['L3-001', 'L3-002', 'L2-001', 'L2-002', 'L2-004', 'L1-025', 'L1-030', 'L1-027', 'L1-032'],
+      degraded: 'llm_error',
+      text: '本次专家队由保底名单编排（llm_error），未经模型按场景挑选',
+    })],
     [0, sse('progress', { stage: 'collect', percent: 24 })],
     [120, sse('message', { text: '采集圈内 POI 与采样点' })],
     ...Array.from({ length: n }, (_, i) => [240 + i * 160, sse('round', roundRow(i))]),

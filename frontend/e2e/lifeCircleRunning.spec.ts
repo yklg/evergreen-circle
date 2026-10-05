@@ -50,6 +50,14 @@ test('真 SSE 下任务停在 running：5 轮取证账逐条上屏，舞台几�
 
   await expect(page.getByText(/^取证扩容 · 第 /)).toHaveCount(5, { timeout: 15_000 })
 
+  // 批 2′：组队降级提示要**留得住**。这里刻意放在"5 轮 message 都到齐之后"再断言 ——
+  // 如果页面把降级当普通进度文案（`runMsg`）渲染，它早被后面的 message 冲掉了。
+  const notice = page.getByText(/本次专家队由保底名单编排/)
+  await expect(notice, '降级提示没出现或被后续 message 冲掉').toBeVisible()
+  const noticeBox = await notice.boundingBox()
+  expect(noticeBox!.height, '降级提示行高异常').toBeGreaterThan(8)
+  expect(noticeBox!.height, '降级提示行高异常').toBeLessThan(80)
+
   const view = page.viewportSize()!
   const cell = await page.locator('main [class*="lg:grid-rows-"] > div').first().boundingBox()
   expect(cell!.height, `地图格被压到 ${cell!.height}px`).toBeGreaterThan(view.height * 0.45)

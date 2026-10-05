@@ -182,3 +182,51 @@ describe('D·registry 单一事实源写入（subscribeLifeCircleTask 收敛层�
     expect(onError).toHaveBeenCalledWith('NetworkError: Failed to fetch')
   })
 })
+describe('组队降级与口径告警分流（批 2′）', () => {
+  it('message + kind:team → onTeam，且不被当普通进度文案冲掉', () => {
+    const cb = { onProgress: vi.fn(), onTeam: vi.fn(), onWarn: vi.fn() }
+    onFlowEvent(
+      'message',
+      { stage: 'plan', kind: 'team', members: ['L3-001', 'L2-001'], degraded: 'llm_error', text: '本次专家队由保底名单编排（llm_error）' },
+      cb,
+    )
+    expect(cb.onTeam).toHaveBeenCalledWith({
+      members: ['L3-001', 'L2-001'],
+      degraded: 'llm_error',
+      text: '本次专家队由保底名单编排（llm_error）',
+    })
+    // 关键：不能再走 onProgress —— 否则下一条 message 一来就把降级提示盖掉
+    expect(cb.onProgress).not.toHaveBeenCalled()
+  })
+
+  it('正常组队（degraded 空串）也要把成员交出去，由页面决定不显示', () => {
+    const cb = { onTeam: vi.fn() }
+    onFlowEvent('message', { kind: 'team', members: ['L3-001'], degraded: '', text: '编排完成：1 位专家就位' }, cb)
+    expect(cb.onTeam).toHaveBeenCalledWith(expect.objectContaining({ degraded: '', members: ['L3-001'] }))
+  })
+
+  it('warn → onWarn(code, text)；缺 code 也不吞掉文本', () => {
+    const cb = { onWarn: vi.fn(), onProgress: vi.fn() }
+    onFlowEvent('warn', { code: 'name_center_mismatch', text: '名称与中心点相距约 12km' }, cb)
+    expect(cb.onWarn).toHaveBeenCalledWith('name_center_mismatch', '名称与中心点相距约 12km')
+    onFlowEvent('warn', { text: '无码告警' }, cb)
+    expect(cb.onWarn).toHaveBeenLastCalledWith('', '无码告警')
+    expect(cb.onProgress).not.toHaveBeenCalled()
+  })
+
+  it('registry 不受这两类事件影响（不推进 stage_seq、不落终态）', async () => {
+    ;(openTaskStream as any).mockImplementation((_id: string, handlers: any) => {
+      fireEvent = (t: string, d: unknown) => handlers.onEvent(t, d)
+      return () => {}
+    })
+    await subscribeLifeCircleTask('lc-reg-1', {})
+    const before = useTaskRegistry.getState().tasks['lc-reg-1']
+    expect(before?.status, '订阅后应是 running').toBe('running')
+    fireEvent('message', { kind: 'team', members: ['L3-001'], degraded: 'team_too_small', text: 'x' })
+    fireEvent('warn', { code: 'name_center_mismatch', text: 'y' })
+    const after = useTaskRegistry.getState().tasks['lc-reg-1']
+    expect(after?.status, 'team/warn 不得改写任务终态').toBe('running')
+    expect(after?.stage, 'team/warn 不得推进 stage').toBe(before?.stage)
+    expect(after?.percent, 'team/warn 不得推进 percent').toBe(before?.percent)
+  })
+})

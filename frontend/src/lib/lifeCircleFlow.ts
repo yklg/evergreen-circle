@@ -38,6 +38,12 @@ export interface LifeCircleFlowCallbacks {
   onError?: (message: string) => void
   /** report_ready：自动取回完整体检报告后回调，由页面写入渲染层。 */
   onReportReady?: (report: LivingCircleReport, reportId: string) => void
+  /** `message` 且 `kind:'team'`：本次专家队的成员与**降级码**。
+   *  `degraded` 为空串＝模型按场景挑的人；非空＝换了保底名单（`llm_error` / `team_too_small`），
+   *  页面要把这件事留在屏上，而不是让它被下一条 message 冲掉。 */
+  onTeam?: (team: { members: string[]; degraded: string; text: string }) => void
+  /** `warn`：非致命的口径告警（如名称与中心点不同源）。 */
+  onWarn?: (code: string, text: string) => void
 }
 
 export interface LifeCircleFlowHandle {
@@ -55,6 +61,11 @@ type Ev = {
   report_id?: string
   message?: string
   round?: ForensicRoundRow
+  /** message 事件的分支标记：`kind:'team'` 带组队结果与降级码；warn 带告警码 */
+  kind?: string
+  degraded?: string
+  members?: string[]
+  code?: string
 }
 
 /** 终端报告 id：report_ready/done 统一取 reportId → report_id 的任一非空。 */
@@ -69,8 +80,20 @@ function onFlowEvent(type: string, data: unknown, cb: LifeCircleFlowCallbacks) {
     cb.onProgress?.(d.stage, d.percent ?? 0, d.text)
     return
   }
+  if (type === 'message' && d.kind === 'team') {
+    // 组队结果（含降级）走独立回调：横幅那句"专家队由保底名单编排"要**留在屏上**，
+    // 不能像普通 progress 文案那样被下一条 message 冲掉。
+    cb.onTeam?.({ members: d.members ?? [], degraded: d.degraded ?? '', text: d.text ?? '' })
+    return
+  }
   if (type === 'message' && d.text) {
     cb.onProgress?.('', 0, d.text)
+    return
+  }
+  if (type === 'warn') {
+    // 后端 `living_circle.py` 的 name_center_mismatch 等告警。此前 `warn` 不在
+    // SSEEventType 里 ⇒ 传输层直接丢弃，这条分支形同虚设（现已登记并补守卫测试）。
+    cb.onWarn?.(d.code ?? '', d.text ?? '')
     return
   }
   if (type === 'round' && d.round) {
