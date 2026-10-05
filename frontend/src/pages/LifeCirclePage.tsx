@@ -69,6 +69,9 @@ import {
   cellsLedgerOf,
   cellVerdict,
   judgeRulerLabel,
+  TRIAD_CHIP_CLASS,
+  triadChipText,
+  triadChipTone,
 } from '../lib/livingCircle'
 import { asBdLngLat } from '../lib/geo'
 import type { CoordSys } from '../lib/geo'
@@ -955,17 +958,18 @@ export default function LifeCirclePage() {
           <div className="rounded-card border border-line bg-card p-4 shadow-card">
             <div className="mb-1 text-aux font-semibold text-ink">必备设施三要素</div>
             <div className="flex flex-wrap gap-2 py-2">
-              {report.scores.triads.map((t) => (
-                <span
-                  key={t.facility}
-                  className={`inline-flex items-center gap-1.5 rounded-chip px-2.5 py-1 text-tag font-medium ${
-                    t.covered ? 'bg-ok/10 text-primary-deep' : 'bg-warn/10 text-ink-2'
-                  }`}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${t.covered ? 'bg-ok' : 'bg-warn'}`} />
-                  {t.facility} · {t.covered ? `最近 ${t.nearest_minutes}min` : '1km 内缺失'}
-                </span>
-              ))}
+              {report.scores.triads.map((t) => {
+                const tone = TRIAD_CHIP_CLASS[triadChipTone(t)]
+                return (
+                  <span
+                    key={t.facility}
+                    className={`inline-flex items-center gap-1.5 rounded-chip px-2.5 py-1 text-tag font-medium ${tone.chip}`}
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+                    {t.facility} · {triadChipText(t)}
+                  </span>
+                )
+              })}
             </div>
             {/* 阶段 2.5：三段式「采集 · 圈内 · 已展示」，走 `poiMetricLabel` 单一实现。
                 旧文案 `N 个（圈内 M）` 与图上点数对不上账（面板数取 `poi.in_circle`、

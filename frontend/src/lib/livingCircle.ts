@@ -1440,12 +1440,22 @@ export function triadChipText(t: TriadFacility | null | undefined): string {
   return '未产出结论'
 }
 
+/** 三要素 chip 的配色档（`TRIAD_CHIP_CLASS` 的键）。 */
+export type TriadChipTone = 'ok' | 'gap' | 'unknown'
+
 /** 三要素 chip 的配色档：`unknown` 走中性，不许借用警告色（那等于替它下"没有"的结论）。 */
-export function triadChipTone(t: TriadFacility | null | undefined): 'ok' | 'gap' | 'unknown' {
+export function triadChipTone(t: TriadFacility | null | undefined): TriadChipTone {
   const s = triadState(t)
   if (s === 'reachable') return 'ok'
   if (s === 'unknown' || s === 'missing') return 'unknown'
   return 'gap'
+}
+
+/** 体检台、报告体检单与预览件三个渲染面共用这一份类名；各写一份就是三处配色实现。 */
+export const TRIAD_CHIP_CLASS: Record<TriadChipTone, { chip: string; dot: string }> = {
+  ok: { chip: 'bg-ok/10 text-primary-deep', dot: 'bg-ok' },
+  gap: { chip: 'bg-warn/10 text-ink-2', dot: 'bg-warn' },
+  unknown: { chip: 'bg-line/60 text-ink-3', dot: 'bg-ink-3' },
 }
 
 /**

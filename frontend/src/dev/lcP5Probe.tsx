@@ -61,6 +61,9 @@ import {
   samplingReach,
   severityOf,
   staleCaliberNotice,
+  TRIAD_CHIP_CLASS,
+  triadChipText,
+  triadChipTone,
   triadRows,
 } from '../lib/livingCircle'
 import type { ForensicAccount, ForensicRoundRow, LngLat, LivingCircleReport } from '../types'
@@ -453,14 +456,17 @@ function ReportScreen({ lc, tier }: { lc: LivingCircleReport; tier: 'now' | 'jia
 
         <div className={`mt-3 rounded-card border border-line bg-card p-4 shadow-card ${tier === 'yi' ? 'fcp-change' : ''}`}>
           {tier === 'yi' && <span className="badge">P2</span>}
-          <div className="mb-1 text-aux font-semibold text-ink">必备设施三要素（1km）</div>
+          <div className="mb-1 text-aux font-semibold text-ink">必备设施三要素</div>
           <div className="flex flex-wrap gap-2 py-2">
-            {triadRows(lc).map((t) => (
-              <span key={t.facility} className={`inline-flex items-center gap-1.5 rounded-chip px-2.5 py-1 text-tag font-medium ${t.covered ? 'bg-ok/10 text-primary-deep' : 'bg-warn/10 text-ink-2'}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${t.covered ? 'bg-ok' : 'bg-warn'}`} />
-                {t.facility} · {t.covered ? `最近 ${t.nearest_minutes}min` : '1km 内缺失'}
-              </span>
-            ))}
+            {triadRows(lc).map((t) => {
+              const tone = TRIAD_CHIP_CLASS[triadChipTone(t)]
+              return (
+                <span key={t.facility} className={`inline-flex items-center gap-1.5 rounded-chip px-2.5 py-1 text-tag font-medium ${tone.chip}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+                  {t.facility} · {triadChipText(t)}
+                </span>
+              )
+            })}
           </div>
           <VStatLine label="POI 采集" value={poiMetricLabel(lc)} />
           {poiConservationNote(lc) && <p className="mt-1 text-tag text-risk">{poiConservationNote(lc)}</p>}

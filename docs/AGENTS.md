@@ -228,6 +228,7 @@ credibility(0-100) · collected_by · brand · domain · freshness_days
 - 后端 `diagnosis_templates.py`：`_triad_state` / `_triad_takeaway` / `_triad_claim` /
   `_triad_overview` / `_triad_school_para`
 - 前端 `lib/livingCircle.ts`：`triadState` / `triadChipText` / `triadChipTone` /
+  `TRIAD_CHIP_CLASS`（chip 的配色也只许这一份，三个渲染面共用）/
   `triadTakeawayText` / `triadClaimText` / `triadOverviewText` / `triadSchoolParaText`
 
 五态：`reachable` / `blocked`（1km 内有但步行到不了）/ `absent` / `unknown` / `missing`。
@@ -238,7 +239,8 @@ credibility(0-100) · collected_by · brand · domain · freshness_days
 写文案时的硬禁令（守卫会红）：
 
 1. 章节函数里**不许**出现「1km」字面量 —— 1km 的说法只能出自上面的渲染器。
-2. 不许再手写 `covered ? … : '1km 内缺失'` 这类三元式。
+2. 不许再手写 `covered ? … : '1km 内缺失'` 这类三元式（守卫按特征现扫 `src/` 全部渲染面，
+   不点名文件 —— 新增一个卡片面不需要有人记得把名字加进列表）。
 3. 正文里凡「圈内」一律写**「可达区内」**，不要出现「15 分钟圈内」——可达阈值是
    `caliber.reach_full_min`（今天 20min，是刻意的满分线），15min 只是四档等值线之一。
 4. 盲区章的「1km」是**真** 1km（由 `missing_facilities` / `nearest[].distance_m` 驱动），

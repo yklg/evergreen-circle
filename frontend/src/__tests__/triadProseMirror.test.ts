@@ -10,7 +10,7 @@
  * 原样存在。任何一侧单独改措辞都会红。
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -93,25 +93,83 @@ describe('三要素措辞 · 状态判定与后端同表', () => {
 
 describe('渲染面不许再自己写三要素的假结论', () => {
   const MOCK = join(process.cwd(), 'src/mocks/livingCircleReports.ts')
-  const VIEW = join(process.cwd(), 'src/components/lifecircle/LifeCircleReportView.tsx')
-  // 这些短语都源自"把可达尺说成 1km 尺"，一律不许再被手写出来
-  const BANNED = ['1km 内缺失', '1km 内覆盖缺位', '1km 内无小学', '1km 内均可达', '1km 覆盖缺口', '小学 1km 三要素事实']
+  // 这些短语都源自"把可达尺说成 1km 尺"，一律不许再被手写出来。
+  // 最后一条是卡片标题：三个渲染面原本各写一份「必备设施三要素（1km）」，而那一排 chip
+  // 一把报分钟、一把报直线米数 —— 标题带上任一把尺，另一半就成了假话。
+  const BANNED = [
+    '1km 内缺失', '1km 内覆盖缺位', '1km 内无小学', '1km 内均可达', '1km 覆盖缺口',
+    '小学 1km 三要素事实', '必备设施三要素（1km）',
+  ]
+  /** 手写 `covered ? …` 二元式 —— 五态塌成两态的机器形态，禁在**除措辞出口以外**的一切文件。 */
+  const HANDWRITTEN = /covered\s*\?(?!\?)/
 
-  it('mock 里不许再出现手写三元式与旧短语', () => {
-    const src = readFileSync(MOCK, 'utf-8')
-    for (const phrase of BANNED) expect(src, `mock 里还有：${phrase}`).not.toContain(phrase)
-    expect(src, 'mock 不许再自己判 `triad?.covered` 出结论').not.toMatch(/triad\?\.covered\s*\?/)
+  /**
+   * 扫描面：`src/` 下全部 `.ts`/`.tsx`，排除两处 —— `lib/livingCircle.ts`（唯一出口本体，
+   * 它的注释里就得写着那句禁令）与测试文件（守卫自己把禁令原文当字符串拿着）。
+   */
+  function shippedFiles(): Array<{ rel: string; src: string }> {
+    const out: Array<{ rel: string; src: string }> = []
+    const walk = (dir: string) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, ent.name)
+        if (ent.isDirectory()) {
+          walk(p)
+          continue
+        }
+        const rel = p.slice(join(process.cwd()).length + 1)
+        if (!/\.(ts|tsx)$/.test(ent.name) || rel.includes('__tests__') || rel.includes('.test.')) continue
+        if (rel === join('src', 'lib', 'livingCircle.ts')) continue
+        out.push({ rel, src: readFileSync(p, 'utf-8') })
+      }
+    }
+    walk(join(process.cwd(), 'src'))
+    return out
+  }
+
+  const files = shippedFiles()
+
+  /**
+   * 谁在画三要素那一排：读本仓 payload 的 `triads`（或走 `triadRows` 取数）**且**产出 chip。
+   * 按特征现扫而不是点名文件 —— 点名列表会跟着新增渲染面一起腐烂（同一形状就有过三份：
+   * 体检台、报告体检单、`dev/` 预览件，只钉报告那一处等于放行另外两处）。
+   */
+  const painters = files.filter((f) => /triads|triadRows/.test(f.src) && f.src.includes('rounded-chip'))
+
+  it('扫描面非空（空扫描面会让下面全部断言恒绿）', () => {
+    expect(files.length).toBeGreaterThan(80)
+    expect(painters.map((f) => f.rel)).toEqual(
+      expect.arrayContaining([
+        'src/components/lifecircle/LifeCircleReportView.tsx',
+        'src/pages/LifeCirclePage.tsx',
+        'src/dev/lcP5Probe.tsx',
+      ]),
+    )
   })
 
-  it('体检单三要素卡的措辞出自共享渲染器（当前仍由 WIP 栅栏挡着，见下）', () => {
-    const src = readFileSync(VIEW, 'utf-8')
-    // 该文件在用户 WIP 内，UI 卡片那一处尚未迁移 —— 这条**故意**记为已知未完成，
-    // 迁移完成后把下面两行改成断言 `triadChipText` 存在。
-    const migrated = src.includes('triadChipText')
-    if (!migrated) {
-      expect(src).toContain('1km 内缺失')   // 现状：仍是旧写法，等第四笔落地后一并迁
-      return
+  /* ⚠️ 短语禁令的作用面是**三要素的渲染面**，不是全仓：`LcMap.tsx:919` 那句「1km 内缺失」
+   * 说的是盲区簇质心的真 1km 判定（由 `missing_facilities` 驱动），合法且与 triad 无关
+   * ——AGENTS §7.3 第 4 条。把它一起禁掉，等于用守卫逼着盲区章把一个真话改薄。 */
+  it('画三要素的渲染面不许出现旧短语', () => {
+    for (const { rel, src } of painters) {
+      for (const phrase of BANNED) expect(src, `${rel} 里还有：${phrase}`).not.toContain(phrase)
     }
-    for (const phrase of BANNED) expect(src, `卡片里还有：${phrase}`).not.toContain(phrase)
+  })
+
+  it('画三要素 chip 的地方一律用共享渲染器出措辞与配色', () => {
+    for (const { rel, src } of painters) {
+      expect(src, `${rel} 自己在画三要素，却没走 triadChipText`).toContain('triadChipText')
+      expect(src, `${rel} 自己在配色，没走 TRIAD_CHIP_CLASS`).toContain('TRIAD_CHIP_CLASS')
+    }
+  })
+
+  it('全仓不许手写 `covered ?` 二元式（五态塌成两态的机器形态）', () => {
+    for (const { rel, src } of files) {
+      expect(src, `${rel} 手写了 covered 二元式`).not.toMatch(HANDWRITTEN)
+    }
+  })
+
+  it('mock 里不许再自己判 `triad?.covered` 出结论', () => {
+    const src = readFileSync(MOCK, 'utf-8')
+    expect(src, 'mock 不许再自己判 `triad?.covered` 出结论').not.toMatch(/triad\?\.covered\s*\?/)
   })
 })
