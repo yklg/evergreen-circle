@@ -189,3 +189,57 @@ credibility(0-100) · collected_by · brand · domain · freshness_days
 4. **可观测**：每个 Agent 的 Prompt、输入输出、Token、决策、引用证据全部落 Trace，可查可回放。
 
 > 这四条铁律是「让每个结论都有出处」这一产品理念的工程化落地。
+
+---
+
+## 7. 量的出处 · 术语表（写代码与写文案前先看这一节）
+
+生活圈体检同时使用**两把互不换算的尺**。把它们混成一个词，是本域已经犯过三次、并且
+每次都要靠人肉才能发现的根因，所以词汇在这里定死。
+
+### 7.1 两把尺
+
+| 名字 | 怎么量 | 唯一生产者 | 落库位置 |
+|---|---|---|---|
+| **可达尺** | 实测步行耗时 + 可达区多边形封顶（`reach_full_min`，今天 20min） | `assemble.py` 的 `field_fn` | `poi.categories[].in_circle` / `min_minutes`、`scores.triads[].in_reach` |
+| **1km 直线尺** | 格心到该类设施的直线距离 ≤ `blind_radius_m`（1000m） | `blindspot._verdict_masks` | `blindspots[].nearest[].distance_m`、逐格台账 `present.*` / `nearest.*`、`scores.triads[].within_blind_radius` |
+
+两把尺**刻意不做换算**（`docs/多源POI数据清洗与服务盲区识别算法.md` 已写明"两把独立的尺"）。
+实测参考量：15min 圈等面积半径 ≈705m（凯里）/748m（劲松），20min ≈934m/1023m，而判盲半径
+1000m —— 也就是说 **1km 那把尺约等于 20min 可达尺，不等于 15min**。
+
+### 7.2 `covered` 一词三义（**按名字搜会全错，必须按字段路径认**）
+
+| 出现处 | 字段 | 真语义 | 属于哪把尺 |
+|---|---|---|---|
+| `scoring.triad_from_points` → `scores.triads[]` | `covered` | 可达区内有该类设施（= `in_reach` 的兼容别名） | **可达尺** |
+| `blindspot` 的 not_blind 判定 | —— | 该类在格心 1km 圆内有设施 | **1km 直线尺** |
+| `anchors.PLAN_COVERED = "covered"` | 取证规划的五种停手原因之一 | 该类证据盘在可达区内**每格都判得动**（无需再扩） | 证据面，不是可达也不是 1km |
+
+⚠️ 三者**没有任何关系**。历史事故：`diagnosis_templates.py` 把第一义当第二义写进正文
+（「药店三要素 1km 内缺失」），于是直线 950m、隔河需 35min 的药店被报成"1km 内没有"，
+而同一份报告的 `blindspots[].nearest[]` 里就躺着它的 `distance_m` —— 一句假话。
+
+### 7.3 唯一出口与禁令
+
+三要素的结论**只许**经这几个渲染器产出，两侧措辞逐字对齐并由
+`frontend/src/__tests__/triadProseMirror.test.ts` 跨端钉住：
+
+- 后端 `diagnosis_templates.py`：`_triad_state` / `_triad_takeaway` / `_triad_claim` /
+  `_triad_overview` / `_triad_school_para`
+- 前端 `lib/livingCircle.ts`：`triadState` / `triadChipText` / `triadChipTone` /
+  `triadTakeawayText` / `triadClaimText` / `triadOverviewText` / `triadSchoolParaText`
+
+五态：`reachable` / `blocked`（1km 内有但步行到不了）/ `absent` / `unknown` / `missing`。
+**`unknown` 是一等状态，不许塌成 `false`** —— 旧快照没有 `within_blind_radius` 这一格时读作
+`unknown`，报"1km 内没有"就是伪造负结论（与逐格台账 `present` 用 int8 `-1/0/1` 而非 bool
+是同一条纪律，见 `judgement.py` 的 ⚠️）。
+
+写文案时的硬禁令（守卫会红）：
+
+1. 章节函数里**不许**出现「1km」字面量 —— 1km 的说法只能出自上面的渲染器。
+2. 不许再手写 `covered ? … : '1km 内缺失'` 这类三元式。
+3. 正文里凡「圈内」一律写**「可达区内」**，不要出现「15 分钟圈内」——可达阈值是
+   `caliber.reach_full_min`（今天 20min，是刻意的满分线），15min 只是四档等值线之一。
+4. 盲区章的「1km」是**真** 1km（由 `missing_facilities` / `nearest[].distance_m` 驱动），
+   合法，不要顺手改掉。
