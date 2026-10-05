@@ -1023,28 +1023,72 @@ export function emptyBlindspotNote(lc: Pick<LivingCircleReport, 'caliber'>): str
  */
 export const SCOPE_POLICY_VERSION = 'ev-2'
 
+/**
+ * 口径轴登记表 —— 差异表/横幅那句"不可比"的**唯一**措辞来源。
+ *
+ * 为什么要有这张表：原来"不可比"那句是按**轴的子集枚举**写死的（`CALIBER_GAP_DESC` /
+ * `COVERAGE_GAP_DESC` / `BOTH_GAP_DESC` 三句），并在 `caliberGapDesc` 与 `rowGapDesc`
+ * 各分了一次支。两把尺是 3 个非空子集，看着还好；**第三根轴就是 7 个子集 × 两处分支 ×
+ * 两端常量** —— 加口径轴的成本会指数涨，而加轴恰恰是这套机制的常态演化。
+ *
+ * 改成组合式后：每轴只贡献一个子句，句子按**表的固定顺序**拼。加一根轴 ＝ 表加一行，
+ * 子集常量与分支都不再增加。
+ *
+ * ⚠️ `clause` 必须**自带解释**，不许为了短而砍掉：`COVERAGE_GAP_DESC` 那句里的
+ * 「（点数 → 门槛项）」是承重的（见下方原注释 —— 判盲轴解释不了 65.4 与 68.4 之间那 3 分
+ * 是分子换代产生的）。组合式若把它丢了，两轴都不同那一档就又回到"只报半句"。
+ */
+export type CaliberAxis = 'ev' | 'cov'
+
+interface CaliberAxisSpec {
+  readonly axis: CaliberAxis
+  /** 差异表/横幅里这一轴的完整子句（自带解释） */
+  readonly clause: string
+}
+
+export const CALIBER_AXES: readonly CaliberAxisSpec[] = [
+  { axis: 'ev', clause: '判盲口径已升级' },
+  { axis: 'cov', clause: '评分口径已升级（点数 → 门槛项）' },
+]
+
+/** 这一对报告**有哪几根**口径轴不同（表的顺序）。加一根轴就在这里多一行 —— 线性，不是子集。 */
+function differingAxes(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): CaliberAxis[] {
+  const out: CaliberAxis[] = []
+  if (caliberPolicyGap(a, b)) out.push('ev')
+  if (coverageCaliberGap(a, b)) out.push('cov')
+  return out
+}
+
+/**
+ * 若干根轴不同 ⇒ 那一句结论（空集 ⇒ null ＝ 可比）。
+ * 顺序恒为表的顺序，与调用方传入的轴顺序无关（否则同一对报告在两个页面上会拼出两种词序）。
+ */
+export function gapDescFor(axes: readonly CaliberAxis[]): string | null {
+  const clauses = CALIBER_AXES.filter((s) => axes.includes(s.axis)).map((s) => s.clause)
+  return clauses.length ? `不可比 · ${clauses.join('、')}` : null
+}
+
 /** 口径版本不同 ⇒ 差异表那两行的结论句（与后端 `_DIFF_DESC_CALIBER_GAP` 逐字同源）。 */
-export const CALIBER_GAP_DESC = '不可比 · 判盲口径已升级'
+export const CALIBER_GAP_DESC = gapDescFor(['ev']) as string
 
 /** 只有**评分口径**那根轴不同 ⇒ 同一格换这句（与后端 `_DIFF_DESC_COVERAGE_GAP` 逐字同源）。
  *  ⚠️ 不许复用上面那句：判盲轴解释不了"65.4 与 68.4 之间那 3 分是分子换代产生的"。 */
-export const COVERAGE_GAP_DESC = '不可比 · 评分口径已升级（点数 → 门槛项）'
+export const COVERAGE_GAP_DESC = gapDescFor(['cov']) as string
 
 /** **两根轴都**不同 ⇒ 第三句（与后端 `_DIFF_DESC_BOTH_GAP` 逐字同源）。
- *  为什么要有第三句而不是"判盲优先"：两轴都换时只报判盲那半，读者仍会把分差归给一把尺。 */
-export const BOTH_GAP_DESC = '不可比 · 判盲与评分口径都已升级'
+ *  为什么要有第三句而不是"判盲优先"：两轴都换时只报判盲那半，读者仍会把分差归给一把尺。
+ *  本笔起这句由表拼出，措辞从「判盲与评分口径都已升级」变成两句子句并列 —— 信息只增不减。 */
+export const BOTH_GAP_DESC = gapDescFor(['ev', 'cov']) as string
 
 /** 两轴对照出的结论句（null = 两轴都同 ⇒ 可比）。差异表与横幅**共用这一处判据**。 */
 export function caliberGapDesc(
   a: Pick<LivingCircleReport, 'caliber'>,
   b: Pick<LivingCircleReport, 'caliber'>,
 ): string | null {
-  const evGap = caliberPolicyGap(a, b)
-  const covGap = coverageCaliberGap(a, b)
-  if (evGap && covGap) return BOTH_GAP_DESC
-  if (evGap) return CALIBER_GAP_DESC
-  if (covGap) return COVERAGE_GAP_DESC
-  return null
+  return gapDescFor(differingAxes(a, b))
 }
 
 /** 每行**受哪几根口径轴影响**（`ev` = 判盲那把尺、`cov` = 覆盖度分子）—— 与后端
@@ -1055,7 +1099,7 @@ export function caliberGapDesc(
  *  「服务盲区」也被写成「不可比 · 评分口径已升级（点数 → 门槛项）」—— 而分子换代影响不到
  *  盲区数（10-03 真库配对实测：两侧 `ev-2` 相同、盲区 1 vs 1，本该「持平」）。横幅那两句
  *  仍按「两轴合起来」说（`caliberGapDesc` 逐字不动），**行级**必须按轴分派。 */
-const GAP_AXES: Record<string, readonly ('ev' | 'cov')[]> = {
+const GAP_AXES: Record<string, readonly CaliberAxis[]> = {
   服务盲区: ['ev'],
   综合评分: ['ev', 'cov'],
 }
@@ -1081,13 +1125,10 @@ export function rowGapDesc(
   a: Pick<LivingCircleReport, 'caliber'>,
   b: Pick<LivingCircleReport, 'caliber'>,
 ): string | null {
-  const axes = GAP_AXES[key] ?? []
-  const ev = caliberPolicyGap(a, b) && axes.includes('ev')
-  const cov = coverageCaliberGap(a, b) && axes.includes('cov')
-  if (ev && cov) return BOTH_GAP_DESC
-  if (ev) return CALIBER_GAP_DESC
-  if (cov) return COVERAGE_GAP_DESC
-  return null
+  // 行级只看"影响得到这一行的轴"∩"这一对确实不同的轴"—— 与 `caliberGapDesc` 共用
+  // `gapDescFor`，所以两轴都不同那一档自然拼出两句并列，不需要再枚举一个子集常量（#83）。
+  const mine = GAP_AXES[key] ?? []
+  return gapDescFor(differingAxes(a, b).filter((ax) => mine.includes(ax)))
 }
 
 /** 判盲口径版本号安全取值：旧快照 / 离线骨架没这个键 ⇒ `null`（不是空串）。 */

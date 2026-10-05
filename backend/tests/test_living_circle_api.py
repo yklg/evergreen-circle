@@ -480,6 +480,54 @@ def test_caliber_gap_literals_match_contract_fixture():
     assert "评分口径" not in gap["desc"]
 
 
+def test_caliber_axes_are_registered_everywhere_they_must_be():
+    """措辞改成按轴子句组合后，加一根轴要同时登记三处 —— 漏一处就是静默漏报，这里全钉住。
+
+    原来"不可比"那句是按**轴子集**枚举的（2 轴 3 句），加第三根轴得写 7 句 × 两端。改成组合式
+    之后子集常量消失了，于是冒出一个**新的**失败模式：有人在 `_GAP_CLAUSES` 加了一行措辞，
+    却忘了给 `reuse_policy` 加那道门 —— 措辞会报"口径已升级"，旧报告却照样被当成本次答案复用。
+    那比原来的漏报更难发现，因为屏幕上看起来是对的。
+
+    三处 = ① 契约夹具 `axes`/`axis_fields`；② 后端 `_GAP_CLAUSES`；③ 复用门 `checks`。
+    （第 ④ 处在前端 `CALIBER_AXES`，由 `compareDiffContract.test.ts` 钉同一份夹具。）
+    """
+    import inspect
+
+    from app.living_circle import report_contract
+    from app.main import _GAP_CLAUSES, _gap_desc
+
+    gap = CONTRACT["caliber_incomparable"]
+    axes = [axis for axis, _clause in _GAP_CLAUSES]
+
+    # ① 轴清单：顺序与内容都必须与夹具一致（顺序也钉，因为组合句的词序是用户可见的）
+    assert gap["axes"] == axes, f"措辞表的轴清单与契约分叉：{axes} vs {gap['axes']}"
+    assert set(gap["axis_fields"]) == set(axes), "`axis_fields` 与轴清单不是一批轴"
+
+    # ② 组合式本身：单轴子句必须原样出现在单轴结论句里，多轴句必须含全部子句
+    for axis, clause in _GAP_CLAUSES:
+        single = _gap_desc((axis,))
+        assert single == f"不可比 · {clause}", f"{axis} 轴的子句没被原样拼进结论句：{single}"
+    both = _gap_desc(tuple(axes))
+    for _axis, clause in _GAP_CLAUSES:
+        assert clause in both, f"多轴结论句丢了 {clause}"
+    assert _gap_desc(()) is None, "零根轴不同必须返回 None（可比），不许拼出一句空话"
+
+    # ③ 复用门：每根轴的版本字段都必须真的被 `reuse_policy` 读 —— 只加措辞不加门即红
+    gate_src = inspect.getsource(report_contract.reuse_policy)
+    for axis in axes:
+        field = gap["axis_fields"][axis]
+        assert field in gate_src, (
+            f"{axis} 轴有措辞（`_GAP_CLAUSES`）但 `reuse_policy` 不读 `{field}` ⇒ "
+            "旧报告会继续被当成本次体检的答案复用，而屏幕上已经写了「口径已升级」")
+
+    # ④ 枚举式不得复活：那三行 `if ev and cov: return _DIFF_DESC_BOTH_GAP` 的形态
+    row_src = inspect.getsource(report_contract.reuse_policy) + "\n"
+    from app.main import _row_gap_desc
+    row_src += inspect.getsource(_row_gap_desc)
+    assert "_DIFF_DESC_BOTH_GAP" not in row_src, (
+        "结论句又回到按子集枚举了 —— 组合式的意义就是加轴不增加子集常量")
+
+
 def test_coverage_gap_blocks_only_the_verdict_rows():
     """第二根轴：只有 `coverage_caliber_version` 不同 ⇒ 只拦**评分轴管得着的那些行**的结论。
 

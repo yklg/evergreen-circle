@@ -927,17 +927,35 @@ _DIFF_VALUE_OFFLINE = "离线估算"
 _DIFF_DESC_NOT_COLLECTED = "离线估算未采集 POI"
 _DIFF_DESC_NOT_COMPARABLE = "不可比 · 离线估算"
 _DIFF_EQUAL_WORD = "持平"
-# 判盲口径版本不一致 ⇒ 盲区数与综合评分不可直接比（字面量由契约夹具钉住）。
-# 为什么必须专门有一条：旧口径只判了可达区一角的格（凯里实测 5/97），盲区天然少报、
-# 分数天然偏高。把 88.4 与折扣后的 80.4 并排放在一起，读者会读成「两个社区不同」，
-# 而不是「同一套判据换了定义」—— 这正是答辩演示路径（双样例对比）上最贵的一次误读。
-_DIFF_DESC_CALIBER_GAP = "不可比 · 判盲口径已升级"
-# 第二根轴：`cov-1` 把覆盖度的**分子**从圈内点数换成门槛项数。它与判盲那把尺互相独立
-# （换分子不改证据域），所以必须**各说一句** —— 只报判盲那半，读者仍会把"凯里 65.4 / 北京
-# 65.8"这种分差归给一把尺（第 21 轮 P1-3）。三句都是与前端 `lib/livingCircle.ts` 逐字同源、
-# 由契约夹具钉住的常量。
-_DIFF_DESC_COVERAGE_GAP = "不可比 · 评分口径已升级（点数 → 门槛项）"
-_DIFF_DESC_BOTH_GAP = "不可比 · 判盲与评分口径都已升级"
+# ── 口径不可比结论句：**按轴子句组合**，不按子集枚举 ─────────────────────────
+# 原来这里是三句写死的常量（判盲一句、评分一句、"两句都不同"再一句），并在前后端各分一次支。
+# 两把尺是 3 个非空子集看着还好，**第三根轴就是 7 个子集 × 两处分支 × 两端逐字同源常量** ——
+# 加口径轴的成本会指数涨，而加轴恰是这套机制的常态演化。改成每轴只贡献一个子句、句子按
+# 固定顺序拼之后，加一根轴 ＝ 这里多一行。前端 `lib/livingCircle.ts` 同形状同处置，
+# 三句字面量仍由契约夹具 `compareDiffContract.json` 在两侧各自钉住。
+#
+# ⚠️ 子句必须**自带解释**，不许为了短砍掉「（点数 → 门槛项）」：判盲轴解释不了
+# "65.4 与 68.4 之间那 3 分是分子换代产生的"（第 21 轮 P1-3）。
+# 为什么必须专门有"两轴都不同"这一档：只报判盲那半，读者仍会把分差归给一把尺。
+_GAP_CLAUSES: Tuple[Tuple[str, str], ...] = (
+    ("ev", "判盲口径已升级"),      # 证据域定义变更（凯里旧口径实测只判了 5/97 的格）
+    ("cov", "评分口径已升级（点数 → 门槛项）"),  # 覆盖度**分子**变更，与证据域互相独立
+)
+
+
+def _gap_desc(axes: Tuple[str, ...]) -> Optional[str]:
+    """若干根轴不同 ⇒ 那一句「不可比 …」（空集 ⇒ None ＝ 可比）。
+
+    顺序恒为 `_GAP_CLAUSES` 的顺序，与调用方传入的轴顺序无关 —— 否则同一对报告在
+    差异表与横幅上会拼出两种词序。
+    """
+    clauses = [clause for axis, clause in _GAP_CLAUSES if axis in axes]
+    return f"不可比 · {'、'.join(clauses)}" if clauses else None
+
+
+_DIFF_DESC_CALIBER_GAP = _gap_desc(("ev",))
+_DIFF_DESC_COVERAGE_GAP = _gap_desc(("cov",))
+_DIFF_DESC_BOTH_GAP = _gap_desc(("ev", "cov"))
 # 每行**受哪几根口径轴影响**（`ev` = 判盲那把尺，`cov` = 覆盖度分子）。
 # ⚠️ #83：原来这里是一行 `_CALIBER_GAP_ROWS = ("服务盲区", "综合评分")` + 一把「任一根轴不同」
 # 的结论句喂给两行 —— 那会替评分轴撒谎。盲区数只由判盲尺决定（1km 内有无菜市场/药店/小学），
@@ -989,15 +1007,9 @@ def _row_gap_desc(metric: str, ev_gap: bool, cov_gap: bool) -> Optional[str]:
     盲区行仍只拿判盲句（分子换代不改盲区数，把第三句挂上去等于把评分账记到判盲头上）。
     """
     axes = _GAP_AXES.get(metric, ())
-    ev = ev_gap and "ev" in axes
-    cov = cov_gap and "cov" in axes
-    if ev and cov:
-        return _DIFF_DESC_BOTH_GAP
-    if ev:
-        return _DIFF_DESC_CALIBER_GAP
-    if cov:
-        return _DIFF_DESC_COVERAGE_GAP
-    return None
+    differing = tuple(axis for axis, gap in (("ev", ev_gap), ("cov", cov_gap)) if gap)
+    # 交集顺序由 `_gap_desc` 按 `_GAP_CLAUSES` 归一，这里只管"这一行吃不吃得到那根轴"。
+    return _gap_desc(tuple(a for a in axes if a in differing))
 
 
 def _lc_diff(a: dict, b: dict) -> List[dict]:

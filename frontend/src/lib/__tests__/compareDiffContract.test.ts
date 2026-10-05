@@ -18,6 +18,7 @@ import { describe, it, expect } from 'vitest'
 
 import {
   BOTH_GAP_DESC,
+  CALIBER_AXES,
   CALIBER_GAP_DESC,
   CALIBER_GAP_ROW_KEYS,
   COMPARE_EQUAL_WORD,
@@ -35,6 +36,7 @@ import {
   confidenceOf,
   coverageCaliberGap,
   coverageCaliberVersionOf,
+  gapDescFor,
   poiConservation,
   policyVersionOf,
   samplingReach,
@@ -44,6 +46,7 @@ import {
   SCOPE_POLICY_VERSION,
 } from '../livingCircle'
 import type { LivingCircleReport } from '../../types'
+import type { CaliberAxis } from '../livingCircle'
 import contractJson from '../../__tests__/fixtures/compareDiffContract.json'
 import kailiJson from '../../mocks/fixtures/livingCircle/kaili.json'
 import jinsongJson from '../../mocks/fixtures/livingCircle/beijing-jinsong.json'
@@ -72,6 +75,11 @@ interface Contract {
     coverage_stale_notice: string
     // #83：评分轴的**行级**作用面（`applies_to` 是并集，不是"每行都吃满两根轴"）
     coverage_applies_to: string[]
+    // 措辞改为按轴子句组合后新增的两格：**有序**轴清单 + 轴→复用门版本字段映射。
+    // 后端 `test_caliber_axes_are_registered_everywhere_they_must_be` 与这里各比对一次，
+    // 钉的是"加一根轴必须同时登记三处"（措辞表 / 复用门 / 夹具）。
+    axes: CaliberAxis[]
+    axis_fields: Record<CaliberAxis, string>
   }
 }
 
@@ -381,6 +389,23 @@ describe('第二根轴 · 评分口径版本守卫', () => {
     // （所以上面那些用例必须自己造差值，不能指望演示对）
     expect(coverageCaliberVersionOf(KAILI)).toBe(COV)
     expect(coverageCaliberVersionOf(JINSONG)).toBe(COV)
+  })
+
+  it('措辞由轴子句按表组合而成：加一根轴只加一行，不新增子集常量', () => {
+    // ① 轴清单与顺序必须与契约夹具一致（顺序是用户可见的词序）
+    expect(CALIBER_AXES.map((s) => s.axis)).toEqual(GAP.axes)
+    expect(Object.keys(GAP.axis_fields).sort()).toEqual([...GAP.axes].sort())
+
+    // ② 单轴结论句 ＝ 前缀 + 该轴子句，逐字；多轴句必须含全部子句
+    for (const { axis, clause } of CALIBER_AXES) {
+      expect(gapDescFor([axis])).toBe(`不可比 · ${clause}`)
+      expect(GAP.both_desc).toContain(clause)
+    }
+    // ③ 零根轴不同 ⇒ null，不许拼出一句「不可比 · 」的空话
+    expect(gapDescFor([])).toBeNull()
+    // ④ 词序由表归一：调用方传反序也必须得同一句（否则两个页面会拼出两种词）
+    expect(gapDescFor(['cov', 'ev'])).toBe(gapDescFor(['ev', 'cov']))
+    expect(gapDescFor(['cov', 'ev'])).toBe(BOTH_GAP_DESC)
   })
 
   it('只有评分轴不同（判盲轴两边相同）⇒ 只拦评分轴管得着的行，盲区行照常', () => {
