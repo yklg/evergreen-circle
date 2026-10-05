@@ -215,10 +215,7 @@ describe('组队降级与口径告警分流（批 2′）', () => {
   })
 
   it('registry 不受这两类事件影响（不推进 stage_seq、不落终态）', async () => {
-    ;(openTaskStream as any).mockImplementation((_id: string, handlers: any) => {
-      fireEvent = (t: string, d: unknown) => handlers.onEvent(t, d)
-      return () => {}
-    })
+    // beforeEach 已把 openTaskStream mock 成"捕获 fireEvent"，这里直接用即可
     await subscribeLifeCircleTask('lc-reg-1', {})
     const before = useTaskRegistry.getState().tasks['lc-reg-1']
     expect(before?.status, '订阅后应是 running').toBe('running')
