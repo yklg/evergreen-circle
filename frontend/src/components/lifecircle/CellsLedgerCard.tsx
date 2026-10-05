@@ -42,7 +42,7 @@ const cellXy = (led: CellsLedgerRaw, i: number, j: number): [number, number] => 
   Math.round(-led.scan_m + i * led.step_m),
 ]
 
-export default function CellsLedgerCard({ led, verdictAt, selected, onPick, foldable }: {
+export default function CellsLedgerCard({ led, verdictAt, selected, onPick, foldable, className = '' }: {
   led: CellsLedgerRaw
   /** 取一格的读数。由页面用 `cellVerdict` 供给 —— 卡片不自己解字符。 */
   verdictAt: (i: number, j: number) => LedgerCellState | null
@@ -51,6 +51,11 @@ export default function CellsLedgerCard({ led, verdictAt, selected, onPick, fold
   /** 体检台右栏（内部滚动）用：格阵 + 计数 + 读数收进 `<details>`，出厂折上。
    *  格阵仍留在 DOM 里，`rect[data-cell]` 的判据不会因为折叠而空过。 */
   foldable?: boolean
+  /** 外层排版契约由调用方给（报告页要 `lg:h-full lg:overflow-y-auto`，见 `stageContract.ts`）。
+   *  刻意**不自己包一层 DOM**：`h-full` 是按父层解析的，多包一层就得重新验一遍百分比高度。
+   *  不传时根 class 必须**逐字不变**（`lcLedgerFoldable` / `lcStageStructure` 两条形状守卫
+   *  按字面串比，多个尾随空格就红）。 */
+  className?: string
 }) {
   const n = led.n
   const side = 240
@@ -157,14 +162,14 @@ export default function CellsLedgerCard({ led, verdictAt, selected, onPick, fold
 
   if (!foldable) {
     return (
-      <div className="rounded-card border border-line bg-card p-4 shadow-card">
+      <div className={`rounded-card border border-line bg-card p-4 shadow-card${className ? ` ${className}` : ''}`}>
         {head}
         {body}
       </div>
     )
   }
   return (
-    <details className="rounded-card border border-line bg-card shadow-card">
+    <details className={`rounded-card border border-line bg-card shadow-card${className ? ` ${className}` : ''}`}>
       <summary className="list-none cursor-pointer p-4">{head}</summary>
       <div className="px-4 pb-4">{body}</div>
     </details>

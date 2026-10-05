@@ -54,3 +54,41 @@ export const LC_LEGEND =
  *  否则勾一下判定尺要先把浮层滚到底。负外边距让这条块铺满浮层内宽并盖住下内边距，读起来像 footer。 */
 export const LC_LEGEND_JUDGE =
   'sticky bottom-0 -mx-3 -mb-3 flex flex-col gap-1.5 rounded-b-btn border-t border-line/70 bg-card/95 px-3 pb-3 pt-1.5 backdrop-blur'
+
+/* ══ 报告页的两栏行（2026-10-05，同一类症状第三次复发才收进来的）════════════════
+ *
+ * 三次症状：主图下方空白 248px → 台账卡右侧幽灵栏 560px → 配对地图下方空白 219px，
+ * 且**选中一格后台账长出读数表（实测 629→794），留白跟着涨到 384px**。三次不是三个 bug，
+ * 是同一个缺失：报告页每一行都没说过"谁的高说了算"，于是某一栏内容的多寡反向决定另一栏的高。
+ * 体检台早就为这件事立过规矩（上面 `LC_SPLIT`/`LC_MAP_CELL`/`LC_ASIDE` 三条；当时地图被
+ * 右栏拉到 1627px），报告页没参与那份契约 ⇒ 症状换个方向又长回来。
+ *
+ * 政策（与体检台同一条，只是落在文档流里的一行上）：
+ *  1. **行高由一个与两栏内容都无关的显式值决定**（`lg:h-[640px]`）；
+ *  2. **地图格铺满行**（`lg:h-full` + 槽 `lg:flex-1`）⇒ 卡下留白在结构上不可能出现；
+ *  3. **会变高的那一栏自己滚**（台账是文档，滚它自己，不许撑行）；
+ *  4. 小屏维持堆叠与显式 px；打印必须放开高与滚动，否则导出 PDF 把读数表整段截掉。
+ *
+ * `LC_REPORT_SPLIT` 被报告页**两行共用**（体检单行、台账配对行）：两行的竖向分栏缝因此
+ * 由构造对齐。上一版一行写 `1.6fr_1fr`、一行等宽，缝差 144px，就是用户说的"不统一"。
+ * 判据：`__tests__/lcLayoutContract.test.tsx`（字面量逐字钉）+ `e2e/lcReportLocalMap.spec.ts`
+ *（几何：选格前后行高不变、地图无留白、台账可内滚）。 */
+
+/** 报告页两行共用的分栏模板：地图在左，与体检单行同一侧、同一比例 */
+export const LC_REPORT_SPLIT = 'lg:grid-cols-[1.6fr_1fr]'
+
+/** 台账 ↔ 配对地图那一行：行高锁死，与两栏内容的多寡无关 */
+export const LC_REPORT_PAIR_ROW =
+  'mt-4 grid grid-cols-1 gap-4 lg:h-[640px] lg:min-h-0 print:h-auto'
+
+/** 配对地图格：大屏铺满整行 */
+export const LC_REPORT_MAP_CELL =
+  'relative flex flex-col overflow-hidden rounded-card border border-line bg-card shadow-card lg:h-full lg:min-h-0'
+
+/** 地图槽：小屏固定 360px，大屏吃掉卡内除图注外的全部高度 */
+export const LC_REPORT_MAP_SLOT =
+  'h-[360px] shrink-0 print:hidden lg:h-auto lg:min-h-0 lg:flex-1'
+
+/** 台账格：内容会长（选中一格多出整张读数表）⇒ 大屏自己滚，打印放开 */
+export const LC_REPORT_DOC_CELL =
+  'lg:h-full lg:min-h-0 lg:overflow-y-auto print:overflow-visible print:h-auto'

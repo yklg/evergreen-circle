@@ -7,9 +7,18 @@
  *
  * M 阶段 BMapGL 接入后仅替换快照渲染层，页面骨架不变。
  */
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { VStatLine } from '../ui'
+/* 报告页两行的高度政策与分栏模板：单一来源在 `stageContract.ts`（与体检台同一份契约的
+   报告页分支）。**这两行共用 `LC_REPORT_SPLIT`** ⇒ 分栏缝由构造对齐，不再各写一份。 */
+import {
+  LC_REPORT_DOC_CELL,
+  LC_REPORT_MAP_CELL,
+  LC_REPORT_MAP_SLOT,
+  LC_REPORT_PAIR_ROW,
+  LC_REPORT_SPLIT,
+} from './stageContract'
 import {
   ChevronLeft,
   MapPin,
@@ -407,6 +416,78 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   const ledger = cellsLedgerOf(lc)
   // 局部图与主图是两个 GL 实例 ⇒ 进视口才挂（P0-7）
   const [blindRef, blindSeen] = useLazyInView<HTMLDivElement>()
+  /* ══ 台账配对地图 + 逐格台账：两张卡放在**同一个数组**里构造，栏数由"实际在场的张数"派生 ══
+   *
+   * 顺序是**地图在左、台账在右**（2026-10-05 明示「把地图放在左边，与上面统一」）：与上面
+   * 体检单行同一侧、同一比例 —— 两行都吃 `LC_REPORT_SPLIT`，分栏缝由构造对齐，不再各写一份。
+   *
+   * 为什么不是 `ledger ? ' lg:grid-cols-2' : ''`：那仍然是**手写一个布尔去猜"另一张在不在"**，
+   * 加第三张卡时必须有人记得改这个三元式。上海那份报告（盲区 0 处、有台账）就是上一版这么写
+   * 出来的现场：只有一张卡在场却摆两栏，右半 560px 成了幽灵栏（自审不过点 1）。
+   *
+   * 高度政策收在 `stageContract.ts`（为什么在那里、四条规矩与三次复发史都写在那段的注释里）：
+   * 行高锁 `lg:h-[640px]` 与两栏内容无关 ⇒ 地图 `lg:h-full` 铺满、台账 `lg:overflow-y-auto`
+   * 自己滚。上一版这里给地图卡写 `self-start` 让它贴内容，是同一个缺陷的另一种糊法 ——
+   * 台账一长出读数表（实测 629→794）地图下面就又空出来，所以那条 `self-start` 已随契约删除。
+   *
+   * 在场判据：
+   *  · 配对地图 —— 有台账（有格可对）或有盲区（有处可聚）才挂；两者皆无 ⇒ 整块不出现，
+   *    因为那时它和主图逐像素相同，纯属多开一个 GL 实例。
+   *  · 台账卡 —— `cellsLedgerOf` 解得出台账才有（`ev-2` 之前的快照与离线骨架没有 ⇒ 不摆空卡）。
+   * 判据（几何层）在 `e2e/lcReportLocalMap.spec.ts`「幽灵栏」「行高不随选格改变」两条。 */
+  const ledgerCards: ReactNode[] = []
+  if (ledger || lc.blindspots.length > 0) {
+    /* 台账配对地图（计划笔 8 的第二张）。挂在台账旁边而不是章节正文里，理由不是省事：这张图的
+       用处就是跟台账卡对指 —— 点一格 → 图上画那格的方框与判定圆，点图上一点 → 卡里选中那格。
+       共用同一个 `ledgerCell` state，两侧通道 `LcMap` 的 selectedCell/onCellPick 已经具备（:104-109）。
+       有盲区时把图层聚到那一处（`blindspots[0]`，与上方清单首行同一处，读者可逐字对上）；
+       **盲区 0 处也照挂**（2026-10-05 拍板）：台账卡上那句「开着判定尺时也可以直接在地图上点
+       一块」在主图里是落空的（主图没接 selectedCell），只有这张配对图做得到。 */
+    const bs = lc.blindspots[0]
+    ledgerCards.push(
+      <div key="pairedMap" ref={blindRef} className={LC_REPORT_MAP_CELL}>
+        <div className={LC_REPORT_MAP_SLOT}>
+          {blindSeen ? (
+            <LcMap
+              report={lc}
+              desensitize={isShared}
+              draggableCenter={false}
+              focusBlindspotId={bs?.id}
+              selectedCell={ledgerCell}
+              onCellPick={setLedgerCell}
+              showJudgeScale
+            />
+          ) : (
+            <div className="grid h-full place-items-center text-tag text-ink-3">滚动到此处加载局部图…</div>
+          )}
+        </div>
+        {/* 图注三出口径**逐句对着现场写**：没盲区就不许提"只留哪一处"，没台账就不许写"与右侧卡互指"。 */}
+        <div className="shrink-0 border-t border-line px-3 py-2 text-tag text-ink-3">
+          {bs
+            ? <>局部视图：盲区图层只留 {bs.id.replace(/^bs-/, '盲区 ')}
+                {lc.blindspots.length > 1 ? `（其余 ${lc.blindspots.length - 1} 处见上方清单与主图）` : ''}
+                ，设施点与等时圈同主图。点绿核补点会展开它的 1km 服务圈</>
+            : <>局部视图：本区未检出服务盲区，这张图专供与逐格台账对指；设施点与等时圈同主图</>}
+          {ledger ? '；选中格与右侧台账卡互指，图上带该格的判定尺圆。' : '。'}
+        </div>
+      </div>,
+    )
+  }
+  if (ledger) {
+    /* C4 · 逐格台账（报告侧接入，计划笔 7）。判盲以格为单位，但报告此前只给「四类计数 + 一处
+       连续盲区环」—— 环 smeared 跨十几格，哪几格判盲、哪几格未定指不出来。解码全走
+       `cellsLedgerOf`/`cellVerdict`，与体检台同一实现。`LC_REPORT_DOC_CELL` = 内容长就自己滚。 */
+    ledgerCards.push(
+      <CellsLedgerCard
+        key="ledger"
+        led={ledger}
+        selected={ledgerCell}
+        onPick={setLedgerCell}
+        verdictAt={(i, j) => cellVerdict(lc, [i, j])}
+        className={LC_REPORT_DOC_CELL}
+      />,
+    )
+  }
   const mainRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const scroller = mainRef.current
@@ -575,7 +656,7 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
 
         {/* ① 顶层体检单（一屏） */}
         <section className="mx-auto max-w-6xl px-6 pt-5" aria-label="体检单">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
+          <div className={`grid grid-cols-1 gap-4 ${LC_REPORT_SPLIT}`}>
             {/* 左：地图 + 图例
                 笔 8：主图改为交互式 `LcMap`（13 层：耗时热力场、补点 plus + 1km 服务圈、
                 严重度语义、gap 连续热力填充、#N·重度 标注、判定尺、证据盘开关…）。
@@ -583,10 +664,21 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                 ⚠️ 三点约束：
                  ① 容器必须给**显式像素高度** —— BMapGL 底图读父容器 px（`stageContract.ts:7-9`
                     同一条），而本页在 `main overflow-y-auto` 内，`h-full` 会塌成 0。
+                    两栏那一行的高度是**右栏（体检单）撑出来的**，所以窄屏给 `h-[480px]`，
+                    lg 起改 `lg:absolute lg:inset-0`：绝对定位的 inset 是相对卡片这个
+                    `relative` 包含块的**已用高度**算的，不是百分比对不定高父级 ⇒ 拿到的是
+                    真实 px（实测槽 480→726、canvas 跟着重画成 668×726），地图因此铺满整行
+                    而不是在卡底下留 248px 空白。
+                    ⚠️ 这条修法的**代价要写明白**：地图高度的权威从"常量 480"换成了
+                    "右栏正文的长度"（实测三份样区右栏 611 / 728 / 728 ⇒ 同一组件差 115px，
+                    正文以后加厚，地图会跟着长）。所以给一个**会真的生效**的下限
+                    `lg:min-h-[640px]`：高于实测最矮那份（ev2 的 611），让正文最短的那页也
+                    是由地图决定下限、而不是被正文压扁 —— 判据在
+                    `e2e/lcReportLocalMap.spec.ts`「主图铺满整行」。不写永不生效的保险。
                  ② `desensitize={isShared}` —— 公开分享链接不得画逐格边界（P0-5）。
                  ③ 静态快照退居**打印替身**：GL canvas 在 `window.print()` 下通常不出图（P0-6）。 */}
-            <div className="relative overflow-hidden rounded-card border border-line bg-card shadow-card">
-              <div className="h-[480px] print:hidden">
+            <div className="relative overflow-hidden rounded-card border border-line bg-card shadow-card lg:min-h-[640px]">
+              <div className="h-[480px] lg:absolute lg:inset-0 lg:h-auto print:hidden">
                 <LcMap report={lc} desensitize={isShared} draggableCenter={false} />
               </div>
               <div className="hidden print:block">
@@ -759,54 +851,12 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             </div>
           )}
 
-          {/* C4 · 逐格台账（报告侧接入，计划笔 7）。
-              判盲以格为单位，但报告此前只给「四类计数 + 一处连续盲区环」——环 smeared 跨十几格，
-              哪几格判盲、哪几格未定指不出来（`CellsLedgerCard` 的建卡理由正是这一层，却只挂在体检台）。
-              **没有台账就不出现**（`ev-2` 之前的快照与离线骨架走这一支）：摆一张只能看不能对的
-              空卡，等于又造一个假入口。解码全走 `cellsLedgerOf`/`cellVerdict`，与体检台同一实现。 */}
-          {(ledger || lc.blindspots.length > 0) && (
-            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {ledger && (
-                <CellsLedgerCard
-                  led={ledger}
-                  selected={ledgerCell}
-                  onPick={setLedgerCell}
-                  verdictAt={(i, j) => cellVerdict(lc, [i, j])}
-                />
-              )}
-              {/* 盲区局部图（计划笔 8 的第二张）。挂在台账卡旁边而不是章节正文里，
-                  理由不是省事：这张图的用处就是跟台账卡对指 —— 点一格 → 图上画那格的
-                  方框与判定圆，点图上一点 → 卡里选中那格。共用同一个 `ledgerCell` state，
-                  两侧通道 `LcMap` 的 selectedCell/onCellPick 已经具备（:104-109）。
-                  焦点取 `blindspots[0]`：与上方清单的首行同一处，读者能逐字对上，不自作
-                  主张另挑一处。没有盲区 ⇒ 整块不渲染（无焦点可聚，摆一张跟主图一样的图是凑数）。
-                  `self-start`：grid 默认 stretch，会把这张约 420px 的卡拉到与台账卡（实测 629px）
-                  等高，图注下面凭空多出一截空白边框 —— 判据见 `e2e/lcReportLocalMap.spec.ts`。 */}
-              {lc.blindspots.length > 0 && (
-                <div ref={blindRef} className="relative self-start overflow-hidden rounded-card border border-line bg-card shadow-card">
-                  <div className="h-[360px] print:hidden">
-                    {blindSeen ? (
-                      <LcMap
-                        report={lc}
-                        desensitize={isShared}
-                        draggableCenter={false}
-                        focusBlindspotId={lc.blindspots[0].id}
-                        selectedCell={ledgerCell}
-                        onCellPick={setLedgerCell}
-                        showJudgeScale
-                      />
-                    ) : (
-                      <div className="grid h-full place-items-center text-tag text-ink-3">滚动到此处加载局部图…</div>
-                    )}
-                  </div>
-                  <div className="border-t border-line px-3 py-2 text-tag text-ink-3">
-                    局部视图：盲区图层只留 {lc.blindspots[0].id.replace(/^bs-/, '盲区 ')}
-                    {lc.blindspots.length > 1 ? `（其余 ${lc.blindspots.length - 1} 处见上方清单与主图）` : ''}
-                    ，设施点与等时圈同主图。点绿核补点会展开它的 1km 服务圈
-                    {ledger ? '；选中格与左侧台账卡互指，图上带该格的判定尺圆。' : '。'}
-                  </div>
-                </div>
-              )}
+          {/* 逐格台账 ↔ 台账配对地图（地图在左）。两张卡的构造与"在场判据"都在上面
+              `ledgerCards` 那一处，这里只负责**按张数决定栏数**：>1 张才分栏（且用与体检单
+              行同一份 `LC_REPORT_SPLIT`，缝对齐由构造保证），1 张就独占整行。 */}
+          {ledgerCards.length > 0 && (
+            <div className={`${LC_REPORT_PAIR_ROW}${ledgerCards.length > 1 ? ` ${LC_REPORT_SPLIT}` : ''}`}>
+              {ledgerCards}
             </div>
           )}
 

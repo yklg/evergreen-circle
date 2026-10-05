@@ -229,3 +229,56 @@ describe('P0/P1 落地状态钉（S1、S3 均已转绿）', () => {
     expect(region).toMatch(/max-h-\[[^\]]+\]\s+overflow-y-auto|overflow-y-auto/)
   })
 })
+
+/* ══ TC-18R · 报告页两行也归同一份契约（2026-10-05，同一类症状第三次复发）══════════
+ *
+ * 三次症状：主图下空白 248px → 台账右幽灵栏 560px → 配对地图下空白 219px，且选格后台账
+ * 长出读数表（实测 629→794）把留白顶到 384px。前两次各打了一个局部补丁（`lg:absolute
+ * inset-0`、`self-start`），第三次才承认缺的是**政策**：这一行没说过"谁的高说了算"。
+ * 体检台早就立过这条规矩（上面那三组 utility），所以修法不是再想一个 CSS 技巧，而是让
+ * 报告页也参加同一份契约。
+ *
+ * 这里钉三件事（几何层归 `e2e/lcReportLocalMap.spec.ts`，jsdom 量不到高度）：
+ *  ① 五组新 utility 逐字只在契约文件里出现恰一次（字面量在下面是**故意重复**的副本）；
+ *  ② 报告页只 `className={常量}`，不留字面量副本；
+ *  ③ `LC_REPORT_SPLIT` 在报告页出现**恰两次**（体检单行 + 台账配对行）—— 两行分栏缝对齐
+ *     就是靠"共用同一份模板"，哪天有人给某一行另写比例，这条会红。 */
+const REPORT_VIEW_FILE = join(process.cwd(), 'src', 'components', 'lifecircle', 'LifeCircleReportView.tsx')
+const reportSrc = readFileSync(REPORT_VIEW_FILE, 'utf8')
+
+const R_SPLIT = 'lg:grid-cols-[1.6fr_1fr]'
+const R_PAIR_ROW = 'mt-4 grid grid-cols-1 gap-4 lg:h-[640px] lg:min-h-0 print:h-auto'
+const R_MAP_CELL =
+  'relative flex flex-col overflow-hidden rounded-card border border-line bg-card shadow-card lg:h-full lg:min-h-0'
+const R_MAP_SLOT = 'h-[360px] shrink-0 print:hidden lg:h-auto lg:min-h-0 lg:flex-1'
+const R_DOC_CELL = 'lg:h-full lg:min-h-0 lg:overflow-y-auto print:overflow-visible print:h-auto'
+
+describe('TC-18R · 报告页两行的高度政策归 stageContract 单一来源', () => {
+  it('正对照：报告页源文件读到了（否则下面的判据全是空过）', () => {
+    expect(reportSrc.length).toBeGreaterThan(10_000)
+    expect(reportSrc).toContain('export default function LifeCircleReportView')
+    expect(contract).toContain('export const LC_REPORT_PAIR_ROW')
+  })
+
+  it('五组 utility 只在契约文件里各出现恰一次', () => {
+    exactlyOnce(contract, R_SPLIT, '报告页两行共用的分栏模板')
+    exactlyOnce(contract, R_PAIR_ROW, '台账配对行（行高锁死，与两栏内容无关）')
+    exactlyOnce(contract, R_MAP_CELL, '配对地图格（铺满行）')
+    exactlyOnce(contract, R_MAP_SLOT, '配对地图槽（大屏吃掉图注以外的全部高度）')
+    exactlyOnce(contract, R_DOC_CELL, '台账格（内容长就自己滚）')
+  })
+
+  it('报告页只消费常量、不留字面量副本；分栏模板必须被两行共用', () => {
+    for (const literal of [R_SPLIT, R_PAIR_ROW, R_MAP_CELL, R_MAP_SLOT, R_DOC_CELL]) {
+      expect(reportSrc, '报告页里出现了契约的字面量副本').not.toContain(literal)
+    }
+    for (const name of ['LC_REPORT_PAIR_ROW', 'LC_REPORT_MAP_CELL', 'LC_REPORT_MAP_SLOT', 'LC_REPORT_DOC_CELL']) {
+      expect(reportSrc, `报告页没有消费 ${name}`).toContain(name)
+    }
+    // 只数**代码里的插值点** `${LC_REPORT_SPLIT}`：常量名在注释里也出现，按名字数会把
+    // 讲解也算成使用（第一轮就是这么红给看的：数出 6 次）。恰两次 = 体检单行 + 台账配对行；
+    // 少一次是某行退回手写比例，多一次是有人又复制了一份分栏模板。
+    const uses = reportSrc.split('${LC_REPORT_SPLIT}').length - 1
+    expect(uses, `分栏模板被 ${uses} 处插值使用（两行共用 ⇒ 应恰为 2）`).toBe(2)
+  })
+})
