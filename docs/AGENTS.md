@@ -6,11 +6,19 @@
 
 ## 1. 设计理念
 
-本系统把调研建模为一支**虚拟咨询团队**的协作过程。系统内置 48 位虚拟专家（定义见 [experts.json](../backend/app/data/experts.json)），按职级分为三层。每次调研由编排引擎根据需求**自动组队**：决策层拆解与终审，策略层与执行层负责具体分析与采集。
+本系统把调研建模为一支**虚拟咨询团队**的协作过程。系统内置 **48 位虚拟专家 × 2 个域**
+（目的地调研见 [experts.json](../backend/app/data/experts.json)，生活圈体检见
+[experts_living_circle.json](../backend/app/data/experts_living_circle.json)），按职级分为三层。
+每次调研由编排引擎根据需求**自动组队**：决策层拆解与终审，策略层与执行层负责具体分析与采集。
 
 > 两个产品域共用这套分层与协议，但**各域有自己的名册与组队实现**：目的地调研用
 > `experts.json`，生活圈体检用 `experts_living_circle.json`（同为 48 条、同一 id 空间，
-> 同 id 在不同域是不同人设），并由 `app/core/pipeline/lc_team.py` 从中按需挑选 8–13 人。
+> 同 id 在不同域是不同人设），并由 `app/core/pipeline/lc_team.py` 从中挑选成员。
+> **取域是必填的**：`app.data.load_experts(domain)` / `expert_by_id(id, domain)` /
+> `experts_by_level(level, domain)` 没有默认域，未知域名直接抛错；HTTP 侧
+> `/api/experts`、`/api/experts/workload`、`/api/experts/{eid}` 收到非法 `?domain=` 返回 422
+> （缺省＝travel 是对外公开契约，没改）。同 id 两域人设不同 ⇒ 任何"按姓名反查 id"都不可用：
+> 实测存在跨域重名（travel `L2-005` 与 living_circle `L3-001` 都叫「温叙白」）。
 > 域包泛化（换域只换名册不换代码）见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 > 注：这里的「专家」是带有领域知识画像（`knowledge_base` / `knowledge_tags`）的角色设定，用于驱动 LLM 以对应专业视角生成论点与分析，并体现在工作台、专家页与报告署名中。
@@ -18,6 +26,8 @@
 ---
 
 ## 2. 专家分层
+
+### 2.1 目的地调研域（`experts.json`）
 
 ```mermaid
 graph TD
@@ -45,13 +55,23 @@ graph TD
 | **L2 策略层** | 9 | strategy | 战略 / 定价 / 用户研究等策略级分析 |
 | **L1 执行层** | 36 | industry(24) + function(12) | 行业与职能维度的具体采集与分析 |
 
-### L3 决策层（核心三人组）
+### 2.2 生活圈体检域（`experts_living_circle.json`）
 
-| ID | 角色 | 一句话职责 |
+层级与人数**逐档同构**（L3 3 / L2 9 / L1 36），差别只在 L1 的两个分组换成了本域的槽位：
+
+| 层级 | 人数 | 分组 | 职责 |
+|---|---|---|---|
+| **L3 决策层** | 3 | decision | 总检统筹、结论裁定、质检复核 |
+| **L2 策略层** | 9 | strategy | 医疗 / 教育 / 养老 / 商业等设施类别的配置顾问 |
+| **L1 执行层** | 36 | **facility(24) + method(12)** | 设施类别维度的采集与方法维度（定位、POI 核验、测时、评分建模） |
+
+### L3 决策层（两域各三位，同 id 不同人设）
+
+| ID | 调研域 | 生活圈域 |
 |---|---|---|
-| L3-001 沈砚 | 调研总监 / Chief Research Director | 拆解需求、组建专家队、终审并签发报告 |
-| L3-002 林清越 | 首席分析官 / Chief Analyst Officer | 把控分析质量与逻辑严谨性，裁定结论是否成立 |
-| L3-003 周翊 | 质检总监 / Chief Quality Officer | 扮演魔鬼代言人，主导事实校验与返工闭环 |
+| L3-001 | 沈砚 · 调研总监 —— 拆解需求、组建专家队、终审并签发报告 | 温叙白 · 社区体检总检 —— 定格中心点与参数、组队、终审体检报告并签发 |
+| L3-002 | 林清越 · 首席分析官 —— 把控分析质量与逻辑严谨性 | 许映川 · 首席规划分析师 —— 把控设施覆盖与评分建模的逻辑严谨性 |
+| L3-003 | 周翊 · 质检总监 —— 魔鬼代言人，事实校验与返工闭环 | 裴砚秋 · 质检总监 —— 对 POI 溯源、采样点可达率、盲区判定逐一复核 |
 
 每位专家含字段：`id` `level` `group` `name` `role_title` `one_liner` `skills` `knowledge_base` `knowledge_tags` `avatar` 等。
 
@@ -59,14 +79,45 @@ graph TD
 
 ## 3. 角色到流水线的映射
 
+### 3.1 目的地调研（`pipeline/research/`）
+
 | 流水线节点 | 主导层级 | 说明 |
 |---|---|---|
 | intake / orchestrator | L3 决策层 | 总监拆解需求、组队、排计划 |
-| collect | L1 执行层 | 行业/职能专家按角度采集证据 |
+| collect | L1 执行层 | 行业/职能专家按角度采集证据（`collected_by` ＝ 实际采集的团队成员 id） |
 | analyze | L2 + L1 | 策略与执行层基于证据产出论点与结构化对象 |
-| write | L2 + L1 | 各章由对应专业视角撰写 |
+| write | L2 + L1 | 论断作者取自队内 `L1*`/`L2*` 成员（`analyze.py` 的 `authors`，兜底 `L2-001`）；出镜数由 `bump_expert_stats` 按作者计数累计 |
 | audit | L3 质检总监 | 事实校验、覆盖度评估、决定是否返工 |
 | done | L3 调研总监 | 终审签发 |
+
+### 3.2 生活圈体检（`pipeline/living_circle.py` + `lc_team.py` + `diagnosis_templates.py`）
+
+**署名级编排**：专家团只在 plan 阶段产出「成员 + 指派理由」，等时圈 / POI / 评分 / 盲区
+全部是确定性规则，没有任何一步由专家执行 —— 这是设计选择。因此"章节谁写的"是一张
+**固定席位表**，而不是动态分工的结果：
+
+| 报告章节（`id` · 屏上标题） | 署名席位 | 域 |
+|---|---|---|
+| `medical` 医疗配置 | L2-001 | living_circle |
+| `education` 教育设施 | L2-002 | living_circle |
+| `elderly` 养老配置 | L2-003 | living_circle |
+| `market` 菜市与购物 | L2-004 | living_circle |
+| `isochrone` 可达性与等时圈 | L2-005 | living_circle |
+| `blindspot` 服务盲区诊断 | L3-002 | living_circle |
+| `conclusion` 体检结论与整改建议 | L3-001 | living_circle |
+
+（`overview` 体检概览不带论断作者，故不在表内。）
+
+三条实测口径，写代码或写文档时都别记错：
+
+1. 席位名一律由 `diagnosis_templates._expert()` **固定取 living_circle 域**派生 —— 早先它
+   走默认域，导致一份真报告 7 章署名 7/7 是旅游人设（现存报告已由
+   `scripts/normalize_report_signatures.py` 按结构性 id 直写规范化完毕）。
+2. 组队降级**必须可见**：`lc_team` 返回 `(ids, reasons, degraded)`，`degraded ∈
+   ""|llm_error|team_too_small`，plan 阶段以 `message` 事件 `kind:'team'` 带 `members`/`degraded`
+   发前端常驻显示。**不新增事件 type**（新增 type 若未进前端 union，传输层按 union 穷举会静默丢弃）。
+3. 证据的 `collected_by` 目前是**硬编码常量**（粗报写槽位 id、精报模板写姓名），且前端
+   **零消费者** —— 别把它当"谁采的"的可信字段用；要上屏之前先统一成 id 并补派生。
 
 ---
 

@@ -299,8 +299,21 @@ DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）�
 所以同 id 在不同域可以是不同人设。
 
 组队按域独立实现：目的地调研由编排引擎自动组队；生活圈由 `pipeline/lc_team.py` 从名册中
-按需挑选 8–13 人（替代早先硬编码的固定名单）。口径绑定挂在**职能槽位**上而非人设上，
+挑选成员 —— **实测只约束下限**：模型返回的队不足 5 人（或调用抛错）就换 10 席保底名单，
+并把 `degraded`（`llm_error` / `team_too_small`）随 `message(kind:'team')` 事件发到前端常驻显示；
+**上限没有任何校验**（早先文档写的"8–13 人"只是观察值，不是约束）。模型给出的不在名册里的
+id 会被逐个丢弃，所以它编不出人。口径绑定挂在**职能槽位**上而非人设上，
 这样换一个领域只需换名册与绑定，不必改核心代码。
+
+同一套槽位纪律也管着出行口径：`travel_mode`（walking / riding / driving）是等时圈与
+缓存键 `_scene_key` 的维度，前端段控**只在用户表态后才发这个键**（不发 ≠ 发 walking ——
+前者是"客户端没表态"，后端才谈得上回落）。两端各自声明了一遍这三个字面量，
+漂移的后果是**静默的**：后端 `else "walking"` 会把未知值直接回落成步行，界面显示骑行、
+报告却是步行的圈，而且这份错口径会按缓存键被复用。因此
+`backend/tests/test_travel_mode_contract.py` 钉住"两边取值集合相等"，
+`frontend/src/__tests__/apiCreateTaskContract.test.ts` 钉住请求体的键与"未表态不发键"。
+名册侧同理：`public/assets/experts*.json` 两份离线回落册由
+`frontend/scripts/gen-static-rosters.mjs` 从后端名册生成，`--check` 模式在漂移时退出 1。
 
 ---
 
@@ -313,11 +326,17 @@ DOM 形状由 `components/lifecircle/LcStage.tsx`（`.Canvas/.Legend/.Panel`）�
 | γ 静态守卫 | `backend/scripts/check_guard_construction.py`（AST，非正则） | 治理闸不得被绕过、断言不得读挂钟、`from_iso` 唯一出口、流水线 import 方向 |
 | 等价类套件 | `backend/tests/test_guard_construction_lint.py` | 上述每条规则「违规必红 + 合法必绿」 |
 | 元守卫自证 | `backend/tests/test_guard_selfvalidation.py`、`tests/test_api_mirror_guard.py`、`tests/test_semantic_residue.py` | **守卫在比对对象消失时必须报错或显式 SKIP，不得静默报绿** |
-| 几何/像素层 | `frontend/e2e/*.spec.ts`（Playwright，两档视口 1440×900 与 1280×720） | jsdom 无排版引擎 ⇒ "真的不滚、真的常驻、容器变了画布真的跟"只能在真浏览器里钉。判据须由**变异测试**证明非空判（把产品改坏看它红），且**要看报错文本**——验法自身的副作用（改 `index.html` 触发 dev server 重启）会伪装成功能红 |
+| 几何/像素层 | `frontend/e2e/*.spec.ts`（Playwright，三个 project：1440×900、1280×720，以及连真 mock 后端的 `running 1280×720`） | jsdom 无排版引擎 ⇒ "真的不滚、真的常驻、容器变了画布真的跟"只能在真浏览器里钉。判据须由**变异测试**证明非空判（把产品改坏看它红），且**要看报错文本**——验法自身的副作用（改 `index.html` 触发 dev server 重启）会伪装成功能红；同理**用 `classList.remove()` 做变异会出假阴性**（有轮询的页面会被 React 重渲染把 className 写回），要改成注入 `<style>` + `!important` |
 
 外加词表闸（`test_expert_caliber_refs.py`）、注册表单一真相源（`test_registry_single_source.py`）、
 前后端夹具契约（`test_fixture_mirror.py`）、前端样式与色 token 完整性
 （`tailwindClassIntegrity.test.ts`、`bmapStyle.test.tsx`、`roadContrast.test.ts`）。
+**跨端单源**是 2026-10 补的一组守卫，专治"两端各自声明、漂移只有一边红甚至两边都绿"：
+`test_sse_event_type_single_source.py`（后端实发的每个事件 type 必须在前端 `SSEEventType` 里，
+否则传输层按 union 穷举时静默丢弃 —— `warn` 自 2026-09 起发了却没前端登记，直到本轮才被守卫抓到）、
+`test_travel_mode_contract.py`（出行方式取值两端集合相等）、
+`frontend/scripts/gen-static-rosters.mjs --check`（离线回落名册不得与人设漂移）、
+`test_team_payload_single_site.py`（专家队 payload 只有一处构造点，防"精报把指派理由清空"那类分叉）。
 `tailwindClassIntegrity.test.ts` 是**两段**判据：① 源码里的 Tailwind 颜色工具类必须来自调色板；
 ② 被消费的 CSS 自定义属性必须在 `index.css` 有定义 —— 扫描同时覆盖 `var(--x)` 与
 `v('--c-x')` 这类"把令牌名当字符串传"的调用点，因为悬空 `var()` 与悬空工具类是**同一种**
