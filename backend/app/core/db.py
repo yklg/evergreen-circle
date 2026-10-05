@@ -1610,7 +1610,10 @@ def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False
     c = _connect()
     rows = c.execute(
         "SELECT report_id, scene_key, scene_name, data_origin, total_score, blindspot_count, created_at"
-        " FROM living_circle_reports ORDER BY created_at DESC LIMIT ?",
+        # 二级排序 rowid DESC：`created_at` 只到秒（`_now()`），同秒落库的多份报告没有可比
+        # 时间键 ⇒ 单按 created_at 排时 SQLite 退化成 rowid 升序，`LIMIT` 窗口会把**刚签发的
+        # 那份**挤出去（历史列表看不见最新报告）。补上后"后落的排前面"才是确定的。
+        " FROM living_circle_reports ORDER BY created_at DESC, rowid DESC LIMIT ?",
         (limit,),
     ).fetchall()
     out = []

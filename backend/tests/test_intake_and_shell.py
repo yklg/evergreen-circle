@@ -458,3 +458,35 @@ def test_exact_cache_hit_stays_idempotent(monkeypatch):
     assert src.backfilled == [], "内容已在缓存里，回填是多余写"
     assert any("复用既有体检结果" in (e["data"].get("text") or "")
                for e in events if e["type"] == "message")
+
+
+def test_listing_order_is_deterministic_within_the_same_second():
+    """同一秒内落库多份报告时，"后落的那份"必须排在最前 —— 排序键要有确定性。
+
+    根因不在业务而在**时间精度**：`db._now()` 只到秒（`db.py:56`），同秒内落库的报告
+    `created_at` 完全相等，而列表查询是 `ORDER BY created_at DESC LIMIT 50`。没有二级排序时
+    SQLite 对相等键退化成 rowid **升序**返回 ⇒ 刚签发的报告被挤出窗口，用户在历史列表里
+    看不到最新那一次体检。实测触发条件：套件里同秒多跑几次生活圈流水线即可复现。
+
+    ⚠ 这 55 条压测行**必须自删**：它们是全库最新的一批，留着会把 LIMIT 窗口整个占满，
+    同库后续用例（历史列表可见性那几条）会因此假红——第一版就踩过。
+    """
+    ids = [f"lc-tie-{i:03d}" for i in range(55)]
+    try:
+        for rid in ids:
+            db.save_living_circle_report(
+                {"id": rid, "created_at": db._now(), "living_circle": {"scene": {"name": "同秒压测"}}},
+                scene_key=f"sk-tie-{rid}",
+            )
+
+        listed = [r["id"] for r in db.list_living_circle_reports(limit=50, include_incomplete=True)]
+        assert len(listed) == 50, "窗口大小即 LIMIT，取满才说明压到了边界"
+        assert listed[0] == ids[-1], (
+            f"最新落库的 {ids[-1]} 没排在首位（实得 {listed[0]}）⇒ created_at 同秒并列时排序不确定"
+        )
+        assert set(ids[-50:]) == set(listed), "窗口内容必须是最近 50 次插入，不能混进更早的"
+    finally:
+        for rid in ids:
+            db.delete_living_circle_report(rid)
+        assert not [r for r in db.list_living_circle_reports(limit=200, include_incomplete=True)
+                    if r["id"].startswith("lc-tie-")], "压测行未清干净，会污染同库后续用例"
