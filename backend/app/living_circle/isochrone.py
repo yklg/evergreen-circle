@@ -145,7 +145,8 @@ def detour_residual(
 
     样本口径 —— 被剔除的点**计数上屏**，不静默丢：
       · 距中心 ≤ ``_DETOUR_CENTER_EPS_M`` 的点（预期场在此坍缩为 0）
-      · 未测时的点（``minutes is None``，只有降级采样路径才产出）
+      · 未测时的点（``minutes is None``，或值是 NaN/Inf 这类非有限数 —— 都算"没量到"，
+        同一个 ``untimed`` 计数；只有降级采样路径与损坏的缓存件会产出这两种形态）
       · ``minutes ≤ 0`` 的点（耗时为 0 意味着「同点」或测时异常，隐含系数无意义）
     样本为空 ⇒ ``detour_factor_measured`` 与 ``residual_min`` 发 ``None`` 而不是发 0
     （「没量到」与「量到 0」是两件事，与逐格台账 int8 三态同一条纪律）。
@@ -157,7 +158,9 @@ def detour_residual(
         if dist <= _DETOUR_CENTER_EPS_M:
             excluded["near_center"] += 1
             continue
-        if m is None:
+        if m is None or not math.isfinite(float(m)):
+            # 非有限的"测时值"就是没测到：它一旦进 `implied`，中位数与全部分位都会染成
+            # NaN/Inf，而 `points_used` 还会把它算成入样点（剔除台账跟着说谎）。
             excluded["untimed"] += 1
             continue
         if float(m) <= 0:

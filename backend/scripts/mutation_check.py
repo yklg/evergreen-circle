@@ -376,6 +376,28 @@ MUTATIONS: list[Mutation] = [
         new='            "isochrones": iso["isochrones"],\n            "iso_compare": iso.get("iso_compare"),',
         test="tests/test_iso_compare_ring.py::test_offline_report_carries_no_compare_ring",
     ),
+    Mutation(
+        label="非有限测时值退回「不筛」（NaN 穿过 `<= 0` 判据）⇒ 标定整块染污而台账还说入样了",
+        rel="app/living_circle/isochrone.py",
+        old="        if m is None or not math.isfinite(float(m)):",
+        new="        if m is None:",
+        test="tests/test_reach_calibration.py::test_non_finite_minutes_are_untimed_and_never_poison_the_block",
+    ),
+    Mutation(
+        label="B14 退回旧闸（只判 ≤0）⇒ `float(nan) <= 0` 为 False，NaN 标定值照样签发",
+        rel="app/living_circle/report_contract.py",
+        old="    if k is not None and not isfinite(float(k)):",
+        new="    if False:",
+        test="tests/test_reach_calibration.py::test_b14_rejects_a_poisoned_calibration_block",
+    ),
+    Mutation(
+        label="B14 丢掉残差分位的有限性检查 ⇒ 非有限分位以「披露」的名义上屏",
+        rel="app/living_circle/report_contract.py",
+        old="        polluted = [name for name, v in res.items()\n"
+            "                    if not isinstance(v, (int, float)) or not isfinite(float(v))]",
+        new="        polluted: List[str] = []",
+        test="tests/test_reach_calibration.py::test_b14_rejects_a_poisoned_calibration_block",
+    ),
 ]
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from math import isfinite
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -156,6 +157,25 @@ def test_zero_minutes_point_is_not_a_sample():
     assert out["detour_factor_measured"] == pytest.approx(1.0, abs=0.01)
 
 
+def test_non_finite_minutes_are_untimed_and_never_poison_the_block():
+    """NaN/Inf 的"测时值"就是没测到：剔进 `untimed`，且整块输出必须处处有限。
+
+    `float(nan) <= 0` 求值为 **False** ⇒ 旧写法下 NaN 会一路穿过三道筛选，把中位数与全部
+    分位染成 NaN，而 `points_used` 还把它算成入样点（剔除台账跟着说谎）。计划「验证」那一节
+    从写下起就欠着一条"断言输出不含 NaN/Inf"，这条就是它 —— 拦在源头，不靠展示层兜。
+    """
+    pts = _pts(4, step_m=300.0)
+    out = _calibrate(pts, [10.0, float("nan"), 14.0, float("inf")])
+    assert out["excluded"] == {"near_center": 0, "untimed": 2, "non_positive": 0}, out["excluded"]
+    assert out["points_used"] == 2
+    assert out["points_used"] + sum(out["excluded"].values()) == len(pts)
+    numbers = [out["detour_factor_measured"], out["implied_detour_p10"],
+               out["implied_detour_p90"], *out["residual_min"].values()]
+    assert all(isfinite(float(v)) for v in numbers), numbers
+    # 载荷侧的同一句话：`allow_nan=False` 会抛，说明真要把 NaN 写进 JSON 就写不出去
+    json.dumps(out, allow_nan=False)
+
+
 # ── ④ 量纲纪律 ──────────────────────────────────────────────────────────────
 
 def test_residual_is_minutes_only_and_no_ratio_key_ever_appears():
@@ -270,6 +290,28 @@ def test_b14_half_published_values_are_violations():
         "residual_min": {"p50": 0.0, "p90": 3.0, "p95": 5.0, "max": 9.0, "min": -2.0},
     }
     assert _reach_calibration_violations(_lc_with(good)) == [], "正对照必须真能过（否则上面三条恒红）"
+
+
+def test_b14_rejects_a_poisoned_calibration_block():
+    """签发闸也得认有限性：`float(nan) <= 0` 是 False ⇒ 旧闸会把 NaN 的标定值一路放行。
+
+    生产侧已经剔了非有限测时值（上一条用例），这条管的是**另一条路**：手改的夹具、外部镜像、
+    旧管线产物都可能带着 NaN/Infinity 进来（`json.dumps` 默认就把 NaN 原样写出去），
+    而残差是披露位 —— 非有限值一上屏就是把"没量到"伪装成一个读数。
+    B15 早就有同一条（`interpolation_power` 非有限即违规），这是补 B14 缺的那半边。
+    """
+    base = {
+        "declared_detour_k": 1.3, "detour_factor_measured": 1.62, "points_used": 900,
+        "excluded": {"near_center": 1, "untimed": 0, "non_positive": 0},
+        "residual_min": {"p50": 0.0, "p90": 3.0, "p95": 5.0, "max": 9.0, "min": -2.0},
+    }
+    assert _reach_calibration_violations(_lc_with(dict(base))) == []   # 正对照：干净的必须空
+    assert _reach_calibration_violations(
+        _lc_with({**base, "detour_factor_measured": float("nan")})), "NaN 标定值必须拦"
+    assert _reach_calibration_violations(
+        _lc_with({**base, "residual_min": {**base["residual_min"], "max": float("inf")}})), "NaN 分位必须拦"
+    assert _reach_calibration_violations(
+        _lc_with({**base, "declared_detour_k": float("nan")})), "口径表里的声明值也不能是非有限数"
 
 
 def test_b14_skips_reports_that_never_declared_rc():

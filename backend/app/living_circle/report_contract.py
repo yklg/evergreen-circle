@@ -710,12 +710,25 @@ def _reach_calibration_violations(lc: Dict[str, Any]) -> List[str]:
         return ["没标定出常态绕行系数却报出残差分位 ⇒ 那几分钟不是这把尺量出来的"]
     if k is not None and not isinstance(res, dict):
         return ["标定出了常态绕行系数却报不出残差分位 —— 残差正是这把尺存在的理由"]
+    if k is not None and not isfinite(float(k)):
+        return [
+            f"常态绕行系数 {k!r} 不是有限数 —— 标定被样本里非有限的测时值染污，这把尺整块不可信"
+            "（剔除发生在源头 `detour_residual`，这里只是不让染污件签发出去）"
+        ]
     if k is not None and float(k) <= 0:
         return [f"常态绕行系数 {k} ≤ 0 不可能来自实测（绕行只会让耗时变长，不会变短）"]
+    if isinstance(res, dict):
+        polluted = [name for name, v in res.items()
+                    if not isinstance(v, (int, float)) or not isfinite(float(v))]
+        if polluted:
+            return [
+                f"残差分位 {sorted(polluted)} 不是有限数 ⇒ 那几分钟不是量出来的，"
+                "残差是披露位，非有限值一上屏就是把「没量到」伪装成一个读数"
+            ]
     if k is not None and not used:
         return f"points_used={used} 却报出标定值 {k} ⇒ 标定不是从样本来的"
-    if declared is not None and float(declared) <= 0:
-        return f"声明的绕行系数 {declared} ≤ 0 —— 口径表本身错了，别让它伪装成实测标定"
+    if declared is not None and (not isfinite(float(declared)) or float(declared) <= 0):
+        return f"声明的绕行系数 {declared} ≤ 0 或非有限数 —— 口径表本身错了，别让它伪装成实测标定"
     return []
 
 
