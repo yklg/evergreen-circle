@@ -17,6 +17,8 @@ import { lcMapStyle } from '../../lib/bmapStyle'
 import { useMapNotesStore } from '../../store/mapNotesStore'
 import { asBdLngLat, asBdLngLatOrNull, bmapEventLngLat, describeBMapEvent, rejectBdLngLatSource, toDiagPair } from '../../lib/geo'
 import type { CoordSys } from '../../lib/geo'
+import { shapeSectors } from './ShapeSectorOverlay'
+import { shapeOfZone, shapeWeakStrong } from '../../lib/livingCircle'
 import { HeatFieldOverlay, minuteHeatColor } from './HeatFieldOverlay'
 import type { HeatSamplePoint } from './HeatFieldOverlay'
 import {
@@ -113,6 +115,18 @@ export interface LcMapProps {
   selectedCell?: [number, number] | null
   /** 地图上点中一格（或点到格阵外）的回调。只有台账在且判定尺开着时才可能触发。 */
   onCellPick?: (cell: [number, number] | null) => void
+  /**
+   * 形状扇区图层（笔三 S13/S14）：把 `isochrones[].shape.bins_m` 画成 8 个方位楔形。
+   * 默认关 —— 它是解释层不是主叙事层，与证据盘/判定尺/口径对照环同一条纪律。
+   * 载荷没发形状键（离线件、骑行/驾车档、5/10min、存量件）时**开关本身不出现**。
+   */
+  showShapeSectors?: boolean
+  /** 图层开关的初值（报告第三屏传 true，主图保持 false）。 */
+  shapeLayerDefault?: boolean
+  /** 选中的方位下标 0–7（与右侧条形卡共用一个 state；`null` ⇒ 不高亮）。 */
+  selectedSector?: number | null
+  /** 点中某个扇区（或扇区外）的回调。 */
+  onSectorPick?: (index: number | null) => void
   /**
    * 分享脱敏（口径 ③-A，计划 P0-5）：为真时盲区**不画逐格边界**，改画面积等价圆，
    * 且不外泄精确中心坐标与缺口指数。
@@ -350,8 +364,30 @@ function NotesToggle({ on, onToggle, disabled }: { on: boolean; onToggle: () => 
   )
 }
 
+/** 形状扇区图层开关：与「底图注记」同一竖列、同一 `role=switch` 写法。 */
+function ShapeToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label="方位形状图层"
+      title={on ? '隐藏各方位最远可达楔形' : '叠画 8 个方位的最远可达楔形（只诊断，不参与评分）'}
+      onClick={onToggle}
+      className={
+        'flex items-center gap-1.5 rounded-full border px-3 py-1 text-tag font-medium shadow-sm transition-colors '
+        + (on ? 'border-primary/50 bg-primary/10 text-primary-deep' : 'border-ink/10 bg-white/95 text-ink-2 hover:bg-ink/5')
+      }
+    >
+      <span className={'h-1.5 w-1.5 rounded-full ' + (on ? 'bg-primary-deep' : 'bg-ink/30')} />
+      方位形状 {on ? '开' : '关'}
+    </button>
+  )
+}
+
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, selectedCell = null, onCellPick, desensitize = false, focusBlindspotId },
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, selectedCell = null, onCellPick, showShapeSectors, shapeLayerDefault = false,
+      selectedSector = null, onSectorPick, desensitize = false, focusBlindspotId },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -399,6 +435,51 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   /** S2 防御②：卡片打开时间戳——GL 若把 overlay click 连带派发成 map click（冒泡），
    *  100ms 内的 map click 视为同一次点击，不关卡（点圈后立刻点空白间隔远大于 100ms，不受影响）。 */
   const lastCardOpenAt = useRef(0)
+  /** 形状扇区图层开关：受控 prop 优先，否则用 `shapeLayerDefault` 起盘。 */
+  const [shapeOnState, setShapeOnState] = useState(Boolean(shapeLayerDefault))
+  const shapeOn = showShapeSectors ?? shapeOnState
+  /** 形状读数只从 `shapeOfZone` 这一颗出口取；null ⇒ 图层与开关都不出现（不发屏）。 */
+  const shapeCal = shapeOfZone(report, 15)
+  /** 扇区覆盖物单独记账（照证据盘那条纪律）：不进 `overlaysRef`，免得被主重绘误摘。 */
+  const sectorRefs = useRef<BMapMapOverlay[]>([])
+  const clearSectors = () => {
+    const map = mapRef.current
+    for (const o of sectorRefs.current) {
+      if (map) map.removeOverlay(o)
+    }
+    sectorRefs.current = []
+  }
+
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (!map || !bmap || typeof bmap.Polygon !== 'function') return
+    clearSectors()
+    if (!shapeOn || !shapeCal || compareReport) return
+    // 原点恒取 report.scene.center —— 键就是按它量的；用 customCenter 会让楔形
+    // 与绝对坐标画的等时圈环各说各话（见 ShapeSectorOverlay 模块头）。
+    const sectors = shapeSectors(report.scene.center, shapeCal)
+    const { weak } = shapeWeakStrong(shapeCal)
+    for (const sec of sectors) {
+      const pts = sec.ring.map((l) => new bmap.Point(l[0], l[1]))
+      const active = selectedSector === sec.index
+      const poly = new bmap.Polygon(pts, {
+        strokeColor: active ? '#A5625B' : '#5F7B69',
+        fillColor: active ? '#B9665E' : '#7C9885',
+        strokeWeight: active ? 1.6 : 1,
+        strokeOpacity: active ? 1 : 0.45,
+        fillOpacity: active ? 0.32 : (sec.index === weak ? 0.2 : 0.08),
+        // 类型面只承认这六个键（`bmap.ts` 的窄声明）；手型指针交给 CSS 容器，
+        // 不往 SDK 选项里塞未声明字段 —— 那会在真 SDK 上被静默忽略、在桩上炸。
+        enableClicking: true,
+      })
+      poly.addEventListener?.('click', () => onSectorPick?.(sec.index))
+      map.addOverlay(poly)
+      sectorRefs.current.push(poly)
+    }
+    return clearSectors
+  }, [mode, shapeOn, shapeCal, selectedSector, report, compareReport, onSectorPick])
+
   /** C6：当前 1km 服务范围圈。走 add() 双登记（重绘随 overlaysRef 摘除）+ 独立 ref 供替换/清除。 */
   const fixCircleRef = useRef<BMapMapOverlay | null>(null)
   /** C7：flyTo 起飞前视口快照（Esc 复位锚点；桩缺 getCenter/getZoom 时放弃快照=放弃复位，不影响飞行） */
@@ -1337,6 +1418,32 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
             <line key={`h${i}`} x1={0} y1={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} x2={LC_CANVAS.W} y2={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} stroke="#e7ebe7" strokeWidth={1} />
           ))}
 
+          {shapeOn && !secondary && shapeCal
+            /* 几何原点恒取 report.scene.center（形状键就是按它量的），**不是**上面那个
+               `center` —— 后者是画布投影原点，在体检台会被 customCenter 拖拽改写。
+               混用会让楔形跟着选点跑、而环留在原地（图面自相矛盾）。 */
+            ? shapeSectors(report.scene.center, shapeCal).map((sec) => {
+                const active = selectedSector === sec.index
+                return (
+                  <polygon
+                    key={`sh-${sec.index}`}
+                    data-sector={sec.index}
+                    points={lcPolyPts(center, sec.ring)}
+                    fill={active ? '#B9665E' : '#7C9885'}
+                    fillOpacity={active ? 0.32 : 0.1}
+                    stroke={active ? '#A5625B' : '#5F7B69'}
+                    strokeOpacity={active ? 1 : 0.4}
+                    strokeWidth={active ? 1.6 : 1}
+                    className="cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSectorPick?.(sec.index)
+                    }}
+                  />
+                )
+              })
+            : null}
+
           {isoZones.map((z, zi) => {
             const ring = z.geojson.coordinates[0] ?? []
             const [lx, ly] = lcRightmost(center, ring)
@@ -1509,6 +1616,18 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
             地图降级 · 静态画布（无 AK / 离线）
           </div>
           {canToggleRaw && <BoundaryToggle value={boundaryView} onChange={setBoundaryView} />}
+          {/* 降级画布也要有这颗开关：live 与降级是两棵 JSX，只在 live 里放开关
+              ⇒ 无 AK 环境下图层既画得出又关不掉。**并进既有这一列**，不另起一列
+              ——`lcStageStructure` 逐节点钉这棵子树，多包一层就是它该红的时候。 */}
+          {shapeCal && (
+            <ShapeToggle
+              on={shapeOn}
+              onToggle={() => {
+                setShapeOnState(!shapeOn)
+                if (shapeOn) onSectorPick?.(null)
+              }}
+            />
+          )}
         </div>
         {/* 阶段 2.4：聚合是**渲染层行为**，必须在图面披露（否则读者会把「少画了几个」
             读成「数据少了」）。与 live 角标同一份 `poiThinNote` 文案。 */}
@@ -1592,6 +1711,15 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       <div className="absolute right-2 top-2 z-30 flex flex-col items-end gap-1">
         {canToggleRaw && <BoundaryToggle value={boundaryView} onChange={setBoundaryView} />}
         <NotesToggle on={notesOn} onToggle={toggleNotes} disabled={transitioning} />
+        {shapeCal && (
+          <ShapeToggle
+            on={shapeOn}
+            onToggle={() => {
+              setShapeOnState(!shapeOn)
+              if (shapeOn) onSectorPick?.(null)
+            }}
+          />
+        )}
       </div>
       {(!compareReport || notesOn) && (
         <MapNoteBadge

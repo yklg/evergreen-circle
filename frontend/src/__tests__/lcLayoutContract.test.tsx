@@ -276,9 +276,10 @@ describe('TC-18R · 报告页两行的高度政策归 stageContract 单一来源
       expect(reportSrc, `报告页没有消费 ${name}`).toContain(name)
     }
     // 只数**代码里的插值点** `${LC_REPORT_SPLIT}`：常量名在注释里也出现，按名字数会把
-    // 讲解也算成使用（第一轮就是这么红给看的：数出 6 次）。恰两次 = 体检单行 + 台账配对行；
+    // 讲解也算成使用（第一轮就是这么红给看的：数出 6 次）。
+    // 三次 = 体检单行 + 台账配对行 + **方位形状第三屏**（2026-10-06 笔三）。
     // 少一次是某行退回手写比例，多一次是有人又复制了一份分栏模板。
     const uses = reportSrc.split('${LC_REPORT_SPLIT}').length - 1
-    expect(uses, `分栏模板被 ${uses} 处插值使用（两行共用 ⇒ 应恰为 2）`).toBe(2)
+    expect(uses, `分栏模板被 ${uses} 处插值使用（三行共用 ⇒ 应恰为 3）`).toBe(3)
   })
 })

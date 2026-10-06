@@ -85,6 +85,8 @@ import {
   freshnessNote,
   generatedOn,
   residualCaliberNote,
+  shapeOfZone,
+  shapeSentence,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
@@ -92,6 +94,7 @@ import CellsLedgerCard from './CellsLedgerCard'
 import { CategoryCaliberNotes } from './CategoryCaliberNotes'
 import ShareModal from './ShareModal'
 import LcMap from './LcMap'
+import DirectionBars from './DirectionBars'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
 import { useExpertStore } from '../../store/expertStore'
@@ -422,6 +425,17 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
   // 逐格台账的选中格（与体检台 `LifeCirclePage.tsx:125` 同一形态）。报告里目前只有台账卡
   // 一个消费者；笔 8 把 LcMap 嵌进来后，两处共用这一个 state 即可拿到点格联动。
   const [ledgerCell, setLedgerCell] = useState<[number, number] | null>(null)
+  /* 形状扇区的选中方位（0–7）。与条形卡共用一个 state ⇒ 点条形图上扇区亮、点图上扇区条亮，
+     照上面 `ledgerCell` / `onCellPick` 那一对现成手法，不新造通道。 */
+  const [shapeSector, setShapeSector] = useState<number | null>(null)
+  /* 第三屏的地图是**第三个 GL 实例** ⇒ 与局部图同一条 P0-7 纪律：进视口才挂。
+     不接这条就是"开局三个 GL"，实测过的那份首屏代价会回来。 */
+  const [shapeRef, shapeSeen] = useLazyInView<HTMLDivElement>()
+  /* 第三屏的在场判据：读侧出口给 null（离线件 / 骑行驾车档 / 5·10min / 存量件 / 口径不符）
+     ⇒ 整屏不挂。这不是省事：挂一张空图等于多开一个 GL 实例，而"没数据也摆个框"
+     会被读成"这个地区没有方向差异"——那是伪造负结论。 */
+  const shapeCal = shapeOfZone(lc, 15)
+  const shapeLine = shapeSentence(lc, 15)
   const ledger = cellsLedgerOf(lc)
   // 局部图与主图是两个 GL 实例 ⇒ 进视口才挂（P0-7）
   const [blindRef, blindSeen] = useLazyInView<HTMLDivElement>()
@@ -497,6 +511,42 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
       />,
     )
   }
+  /* ══ 第三屏：左真实地图（方位图层开着）+ 右条形图 ══
+   * 版式复用第 7 章「局部图＋逐格台账」那一行的两个类，比例与体检单行同缝。
+   * 图注按在场判据逐句对着现场写：报告页 `draggableCenter={false}` ⇒ **不许**写
+   * "拖拽选点与形状无关"那句（那是体检台的事），没发生的事不上屏。 */
+  const shapeScreen: ReactNode = shapeCal ? (
+    <div ref={shapeRef} className={LC_REPORT_MAP_CELL}>
+      <div className={LC_REPORT_MAP_SLOT}>
+        {shapeSeen ? (
+          <LcMap
+            report={lc}
+            desensitize={isShared}
+            draggableCenter={false}
+            shapeLayerDefault
+            selectedSector={shapeSector}
+            onSectorPick={setShapeSector}
+          />
+        ) : (
+          <div className="grid h-full place-items-center text-tag text-ink-3">滚动到此处加载方位图…</div>
+        )}
+      </div>
+      <div className="shrink-0 border-t border-line px-3 py-2 text-tag text-ink-3">
+        方位形状：把 15 分钟圈按 8 个方位切开，楔形长度＝该方向实测最远可达。
+        {shapeLine ? `${shapeLine}。` : ''}
+        分相与后端同式（以方位为中心，45° 一箱）—— 换成从正北起算的 floor 分相，
+        缺口会被相邻方向的最大值掩盖，最弱读数会虚高上百米。
+        形状只作方向诊断，<b>不参与综合评分</b>；点条形或点图上扇区可互指。
+      </div>
+    </div>
+  ) : null
+  /* 第三屏右栏：条形卡与左图共用 `shapeSector` 一个 state。
+     ⚠️ 上一版只画了左图就收工 —— `DirectionBars` 成了未使用 import，
+     是 `tsc -p tsconfig.app.json`（不是那个空转的 solution tsconfig）报出来的。 */
+  const shapeBarsScreen: ReactNode = shapeCal ? (
+    <DirectionBars lc={lc} minutes={15} selected={shapeSector} onPick={setShapeSector} className={LC_REPORT_DOC_CELL} />
+  ) : null
+
   const mainRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const scroller = mainRef.current
@@ -998,6 +1048,17 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                     ⚠️ 分享态必须走 `maskGridForShare`：明细表的 source 列原本带着盲区中心
                     精确经纬度与 gap 值（后端 `diagnosis_templates._sec_blindspot` 与 TS mock 同源），
                     而 `?share=1` 是公开无鉴权链接 —— 地图脱敏了、表没脱，等于没脱。 */}
+                {/* 第三屏只属于「可达性与等时圈」章：它是那颗口径的上屏面，
+                    放进别章会让读者以为"每章都有一张形状图"。 */}
+                {/* 行模板复用契约常量（`LC_REPORT_PAIR_ROW`）—— 手写 `grid grid-cols-1 gap-4`
+                    会被 `lcLayoutContract` 的"字面量副本"判据打死，那是它该打的。 */}
+                {sec.id === 'isochrone' && shapeScreen && (
+                  <div className={`${LC_REPORT_PAIR_ROW} ${LC_REPORT_SPLIT}`}>
+                    {shapeScreen}
+                    {shapeBarsScreen}
+                  </div>
+                )}
+
                 {sec.data_grid && (
                   <div className="mt-5">
                     <VDataGrid

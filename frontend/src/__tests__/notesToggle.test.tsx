@@ -111,8 +111,13 @@ describe('TC-05 · 降级态隐藏开关（② 集成，抓 T3/B）', () => {
     render(<LcMap report={REPORT} />)
     await waitFor(() => expect(screen.getByText('地图降级 · 静态画布（无 AK / 离线）')).toBeTruthy())
     expect(screen.queryByRole('switch', { name: '底图注记' })).toBeNull()
-    // 结构断言：fallback return 内不含注记开关节点
-    expect(document.querySelectorAll('[role="switch"]')).toHaveLength(0)
+    /* 结构断言：降级画布里**只有方位形状那一颗** switch。
+       原写法是"整页零 switch"，那是"注记开关被隐藏"的过强代理 —— 它把一个与本用例无关的
+       事实（降级画布上没有任何别的控件）也钉住了。方位形状图层在静态画布上照样画得出、
+       照样要能关，所以它出现在这里是对的。改成按 aria-label 数，判据更窄也更准。 */
+    const labels = Array.from(document.querySelectorAll('[role="switch"]'))
+      .map((el) => el.getAttribute('aria-label'))
+    expect(labels).toEqual(['方位形状图层'])
   })
 })
 

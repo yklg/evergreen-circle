@@ -120,34 +120,39 @@ describe('生活圈报告 · 盲区局部图挂载（笔 8 / P0-7）', () => {
 
   it('无 IO 环境 ⇒ 局部图直接挂载（退化成永久空骨架不可接受）', async () => {
     await renderReport(mockReport('lc-kaili-ev2'))
-    expect(mapsMounted()).toBe(2)
+    // 3 = 主图 + 局部图 + 方位形状第三屏（2026-10-06 笔三）。无 IO ⇒ 三张全挂。
+    expect(mapsMounted()).toBe(3)
     expect(document.body.textContent).toContain(CAPTION)
   })
 
   it('有 IO 时第二张进视口才挂：未进视口只有主图 + 占位，进视口后两张都在场', async () => {
-    let fire: (() => void) | null = null
+    /* 回调**全部记账**而不是覆盖：页面上现在有两张懒挂图（局部图 + 方位第三屏），
+       旧写法 `fire = () => cb(...)` 只留最后一个 observer，fire 一次只会挂一张 ——
+       那会让"未进视口 1 张 / 进视口 N 张"这两条断言各测到错误的对象。 */
+    const ios: ((entries: { isIntersecting: boolean }[]) => void)[] = []
     class FakeIO {
       constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
-        fire = () => cb([{ isIntersecting: true }])
+        ios.push(cb)
       }
       observe() {}
       unobserve() {}
       disconnect() {}
     }
+    const fire = () => ios.forEach((cb) => cb([{ isIntersecting: true }]))
     vi.stubGlobal('IntersectionObserver', FakeIO)
     await renderReport(mockReport('lc-kaili-ev2'))
-    expect(mapsMounted(), '未进视口就挂第二张 ⇒ P0-7 回到原点').toBe(1)
+    expect(mapsMounted(), '未进视口就挂懒挂图 ⇒ P0-7 回到原点').toBe(1)
     expect(document.body.textContent).toContain('滚动到此处加载局部图…')
 
-    act(() => fire!())
+    act(() => fire())
     for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0))
-    expect(mapsMounted()).toBe(2)
+    expect(mapsMounted()).toBe(3)
     expect(document.body.textContent).not.toContain('滚动到此处加载局部图…')
   })
 
   it('盲区清零但有台账 ⇒ 配对图照挂（不聚焦）、图注换口径、两栏照旧', async () => {
     await renderReport(ev2WithoutBlindspots())
-    expect(mapsMounted(), '0 盲区就不挂配对图 ⇒ 台账卡那句"直接在地图上点一块"再次落空').toBe(2)
+    expect(mapsMounted(), '0 盲区就不挂配对图 ⇒ 台账卡那句"直接在地图上点一块"再次落空').toBe(3)
     expect(document.body.textContent).toContain('本区未检出服务盲区')
     expect(document.body.textContent).not.toContain('盲区图层只留')
     expect(document.body.textContent).not.toContain('点绿核补点')
@@ -160,7 +165,7 @@ describe('生活圈报告 · 盲区局部图挂载（笔 8 / P0-7）', () => {
   it('有盲区但没台账 ⇒ 只剩地图一张卡，栏数必须收回单栏（防幽灵栏）', async () => {
     await renderReport(ev2WithoutLedger())
     expect(document.querySelectorAll('rect[data-cell]').length).toBe(0)
-    expect(mapsMounted()).toBe(2)
+    expect(mapsMounted()).toBe(3)
     expect(gridEl().className, '只有一张卡还摆两栏 ⇒ 右半栏空着（图二那个缺陷）').not.toContain(SPLIT)
     // 没有台账就没有"右侧卡"可互指，图注也不许再这么写
     expect(document.body.textContent).not.toContain('选中格与右侧台账卡互指')

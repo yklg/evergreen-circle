@@ -17,6 +17,7 @@ import type {
   LngLat,
   LivingCircleReport,
   PoiPoint,
+  ShapeCaliber,
   TriadFacility,
 } from '../types'
 
@@ -2128,3 +2129,131 @@ export function lcLocPrefix(scene: { city?: string | null; address?: string | nu
     .join(' · ')
   return joined ? `${joined}｜` : ''
 }
+
+/* ── 形状口径（第五把尺：只诊断，不入分）· 前端唯一出口 ───────────────────── */
+
+/**
+ * 「太圆＝可疑」的告警阈值。真测件 15min 圆度最高 0.795（北京劲松），
+ * 而库里那三份 `fixture_sample`（模型造形）是 0.970 —— 0.95 是**分得开**的界，
+ * 不是统计显著的分位（样本只有 2 城 + 3 份假件）。所以它只配触发一句告警，
+ * 绝不参与评分，也不许在文案里写成"圆度超过 0.95 即数据造假"。
+ */
+export const SHAPE_SUSPECT_CIRCULARITY = 0.95
+
+/** 与后端 `geo_utils.SHAPE_*` 逐字同值的四件口径声明。 */
+const SHAPE_EXPECT = {
+  bin_deg: 45,
+  bin_phase: 'center',
+  origin: 'scene.center',
+  azimuth_fn: 'bearing',
+} as const
+
+/**
+ * 形状读数的**唯一取值口**：拿不到、或口径声明与生产不符 ⇒ `null`。
+ *
+ * 为什么读侧还要再判一次（后端契约 B17 已经拦过）：B17 是**签发时**的闸，
+ * 而历史列表里的旧件、手写 mock、外部导入的镜像都可能绕过它。屏上把
+ * "floor 分相的读数"当成"中心分相的读数"讲，收不回来 —— 实测换分相最弱方位
+ * 会从 438m 变成 547m，缺口被相邻方向的最大值掩盖掉。宁可不画。
+ */
+export function shapeOfZone(
+  lc: Pick<LivingCircleReport, 'isochrones'> | null | undefined,
+  minutes: number,
+): ShapeCaliber | null {
+  const zone = lc?.isochrones?.find((z) => Number(z.minutes) === Number(minutes))
+  const sh = zone?.shape
+  if (!sh) return null
+  if (sh.bin_deg !== SHAPE_EXPECT.bin_deg) return null
+  if (sh.bin_phase !== SHAPE_EXPECT.bin_phase) return null
+  if (sh.origin !== SHAPE_EXPECT.origin) return null
+  if (sh.azimuth_fn !== SHAPE_EXPECT.azimuth_fn) return null
+  const bins = sh.bins_m
+  if (!Array.isArray(bins) || bins.length !== 8) return null
+  if (bins.some((v) => !Number.isFinite(v) || v <= 0)) return null
+  if (!Array.isArray(sh.bins_word) || sh.bins_word.length !== 8) return null
+  if (sh.bins_word.some((w) => !w)) return null
+  const rMax = Math.max(...bins)
+  const rMin = Math.min(...bins)
+  // 两颗标量必须能由这一档自己的数复算出来（面积出处是本档 area_km2，不许反推）
+  if (!Number.isFinite(sh.weak_ratio) || Math.abs(sh.weak_ratio - rMin / rMax) > 1e-3) return null
+  const area = Number(zone?.area_km2)
+  if (!Number.isFinite(area) || area <= 0) return null
+  if (!Number.isFinite(sh.circularity) || sh.circularity <= 0 || sh.circularity > 1) return null
+  const wantC = Math.sqrt((area * 1e6) / Math.PI) / rMax
+  if (Math.abs(sh.circularity - wantC) > 1e-2) return null
+  return sh
+}
+
+/** 最弱 / 最强方位的下标（同值时取靠前者，保证跨端稳定）。 */
+export function shapeWeakStrong(sh: ShapeCaliber): { weak: number; strong: number } {
+  let weak = 0
+  let strong = 0
+  sh.bins_m.forEach((v, i) => {
+    if (v < sh.bins_m[weak]) weak = i
+    if (v > sh.bins_m[strong]) strong = i
+  })
+  return { weak, strong }
+}
+
+/**
+ * 屏上那句方位读数（唯一文案出口，体检台与报告页共用）。
+ *
+ * 只说**方向**，不说好坏：圆度测的是各向均匀性（方差），"好不好"是水平（均值），
+ * 拿方差冒充均值这条推断已被自有数据证伪（同址重跑圆度极差 0.309 > 地点间差 0.110；
+ * 控制面积后与可达维偏相关翻负 −0.38）。
+ */
+export function shapeSentence(
+  lc: Pick<LivingCircleReport, 'isochrones'> | null | undefined,
+  minutes: number,
+): string | null {
+  const sh = shapeOfZone(lc, minutes)
+  if (!sh) return null
+  const { weak, strong } = shapeWeakStrong(sh)
+  return (
+    `最弱方向：${sh.bins_word[weak]} ${Math.round(sh.bins_m[weak])} m`
+    + `（最强 ${sh.bins_word[strong]} ${Math.round(sh.bins_m[strong])} m，比值 ${sh.weak_ratio}）`
+  )
+}
+
+/** 「太圆＝可疑」那句告警；未命中返回 `null` ⇒ 整句不出现（不是返回空串）。 */
+export function shapeSuspectNote(
+  lc: Pick<LivingCircleReport, 'isochrones'> | null | undefined,
+  minutes: number,
+): string | null {
+  const sh = shapeOfZone(lc, minutes)
+  if (!sh) return null
+  if (sh.circularity < SHAPE_SUSPECT_CIRCULARITY) return null
+  return (
+    `形态接近平圆（圆度 ${sh.circularity} ≥ ${SHAPE_SUSPECT_CIRCULARITY}），`
+    + '疑为模型造形，不反映路网 —— 该件的形状读数不参与任何横向比较'
+  )
+}
+
+/** 常驻防误读声明：与评分无关这件事，只在这里写一份。 */
+export function shapeCaveatNote(
+  lc: Pick<LivingCircleReport, 'isochrones'> | null | undefined,
+  minutes: number,
+): string | null {
+  const sh = shapeOfZone(lc, minutes)
+  if (!sh) return null
+  return (
+    `形状只作方向诊断，不参与综合评分（圆度 ${sh.circularity}）。`
+    + `原点 ${sh.origin} · ${sh.bin_deg}° 分箱 · 分相 ${sh.bin_phase} · 方位角 ${sh.azimuth_fn}`
+  )
+}
+
+/**
+ * 点位落在哪个方位箱（前端唯一实现，渲染层与条形图共用）。
+ *
+ * 用的是等距平面 `atan2`，而后端键里声明的是球面 `bearing()` —— 两者在 1km 尺度
+ * 单点差 ≤0.0024°，实测三份真件**无一个顶点压在箱界上**，故逐箱读数相同
+ * （判据见 `__tests__/shapeCaliber.test.ts` 的跨端镜像那条：它拿真环逐箱对账，
+ * 哪天出现临界顶点，红的是这条判据而不是屏上的错方向）。
+ */
+export function shapeBinOf(center: LngLat, lng: number, lat: number): number {
+  const [mx, my] = lcMeters(center, lng, lat)
+  const az = (Math.atan2(mx, my) * 180) / Math.PI          // 自北顺时针，(-180,180]
+  const norm = (((az + 22.5) % 360) + 360) % 360           // 与后端 (方位角+22.5)//45 同分桶
+  return Math.floor(norm / 45) % 8
+}
+
