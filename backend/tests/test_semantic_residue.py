@@ -55,6 +55,10 @@ _ALLOW = [
      "产品品牌模块（BRAND = EvergreenCircle 常青圈），与竞品语义无关"),
     (r"^frontend/src/lib/brand\.test\.ts$", r".",
      "同上：品牌漂移守卫，文件名与 describe 沿用模块名"),
+    (r"^frontend/src/lib/faviconSvg\.test\.ts$",
+     r"brand\.test\.ts|make_brand_icon\.py|preview-brand-icon\.html",
+     "favicon 事故复盘里点名的三个**真实在仓文件**（品牌图标链：旧图标测试、生成脚本、验收页），"
+     "作用是让读者能按名去查，不是竞品语义；本文件其余行不豁免"),
     (r"^frontend/src/lib/persist\.test\.ts$", r"BRAND|describe\('brand'",
      "断言产品品牌常量字段齐备"),
     (r"^frontend/src/(main\.tsx|layout/VSidebar\.tsx|pages/SlidesPage\.tsx|lib/cover\.ts)$",
