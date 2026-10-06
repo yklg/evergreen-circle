@@ -69,6 +69,7 @@ import {
   cellsLedgerOf,
   cellVerdict,
   judgeRulerLabel,
+  freshnessNote,
   residualCaliberNote,
   TRIAD_CHIP_CLASS,
   triadChipText,
@@ -381,8 +382,12 @@ export default function LifeCirclePage() {
     return { query: explicitName || typed || '生活圈体检', coord_sys: 'bd09' }
   }
 
-  /** M3：以当前输入（或地图新中心点）发起真实体检任务 → 回落本页 SSE 进度（不再进工作台） */
-  async function startRealCheck(opts: { pending?: PendingCenter; nameOverride?: string } = {}) {
+  /** M3：以当前输入（或地图新中心点）发起真实体检任务 → 回落本页 SSE 进度（不再进工作台）
+   *
+   * `opts.force`（4b）＝**用户点名要重测**，只有一个调用点传它：图上那枚「重新体检」。
+   * 「开始体检」与输入新目标都不传 —— 那里的默认行为（同口径 30 天内、中心 500m 内直接复用
+   * 并如实标注来源）是省配额的既定设计，不该被一次普通点击悄悄换成全额重测。 */
+  async function startRealCheck(opts: { pending?: PendingCenter; nameOverride?: string; force?: boolean } = {}) {
     if (ctaBusy || runActive) return
     setCtaErr('')
     setCtaBusy(true)
@@ -400,6 +405,7 @@ export default function LifeCirclePage() {
           coord_sys: input.coord_sys,
           // city 有意不传：由后端按中心点逆地理（见 buildTaskInput 注释）
           ...(travelMode ? { travel_mode: travelMode } : {}),
+          ...(opts.force ? { force: true } : {}),
         },
         flowCallbacks,
       )
@@ -905,7 +911,13 @@ export default function LifeCirclePage() {
                     setDragging(false)
                   } else {
                     setDragging(false)
-                    startRealCheck({ pending: customCenter ? { lnglat: customCenter, coordSys: customCoordSys } : undefined })
+                    // 4b：这是全站唯一带 `force` 的调用点。「重新体检」四个字承诺的就是一次
+                    // 新测量，而默认路径在同口径 30 天内会被直接复用（屏上另有来源徽标说明这点）——
+                    // 承诺与行为不一致才是问题，所以修的是通路，不是把标签改软。
+                    startRealCheck({
+                      pending: customCenter ? { lnglat: customCenter, coordSys: customCoordSys } : undefined,
+                      force: true,
+                    })
                   }
                 }}
                 className="ml-2 inline-flex items-center gap-1 rounded-chip bg-primary px-2.5 py-1 text-tag font-medium text-white hover:bg-primary-deep"
@@ -1013,6 +1025,11 @@ export default function LifeCirclePage() {
                 那两句意味着"重跑会更准"，只是这份报告量到了什么解释；缺键时整块不出现。 */}
             {residualCaliberNote(report) && (
               <p className="mt-1 text-tag text-ink-3">{residualCaliberNote(report)}</p>
+            )}
+            {/* 4b · 时效与复用条件：这份数据多旧、什么条件会被直接复用、以及"要点哪里才真重测"。
+                阈值读自 payload（`reuse_window`），存量件缺这块时只报时点与年龄。 */}
+            {freshnessNote(report) && (
+              <p className="mt-1 text-tag text-ink-3">{freshnessNote(report)}</p>
             )}
             
             {/* R2/R6：口径举证对象 */}

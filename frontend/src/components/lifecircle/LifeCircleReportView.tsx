@@ -82,6 +82,8 @@ import {
   TRIAD_CHIP_CLASS,
   triadChipText,
   triadChipTone,
+  freshnessNote,
+  generatedOn,
   residualCaliberNote,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
@@ -237,12 +239,8 @@ function ShareWatermark({ lc }: { lc: LivingCircleReport }) {
     offline: '离线估算',
     fixture_sample: '演示数据',
   }
-  const gen = lc.generated_at ? new Date(lc.generated_at) : null
-  const dateStr =
-    gen && !Number.isNaN(gen.getTime())
-      ? `${gen.getFullYear()}-${String(gen.getMonth() + 1).padStart(2, '0')}-${String(gen.getDate()).padStart(2, '0')}`
-      : ''
-  const line = `常青圈 · 生活圈体检 · 出处：${source}（${originLabel[lc.data_origin] ?? lc.data_origin}）${dateStr ? ` · 生成：${dateStr}` : ''}`
+  const gen = generatedOn(lc)
+  const line = `常青圈 · 生活圈体检 · 出处：${source}（${originLabel[lc.data_origin] ?? lc.data_origin}）${gen ? ` · 生成：${gen}` : ''}`
   return (
     <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden" aria-hidden="true">
       <div className="grid h-full grid-cols-3 gap-x-16 gap-y-10 p-10 opacity-[0.08]">
@@ -368,7 +366,8 @@ function coverageNote(lc: LivingCircleReport) {
 function caliberNote(lc: LivingCircleReport) {
   const notes = staleCaliberNotices(lc)
   const residual = residualCaliberNote(lc)
-  if (!notes.length && !residual) return null
+  const fresh = freshnessNote(lc)
+  if (!notes.length && !residual && !fresh) return null
   return (
     <>
       {notes.map((n) => (
@@ -376,8 +375,10 @@ function caliberNote(lc: LivingCircleReport) {
           {n}
         </p>
       ))}
-      {/* `rc-1` 的残差耗时那句：中性 `text-ink-3`，不挂"建议重新体检"—— 那两句承诺的是
-          "重跑答案会更准"，而 rc-1 一个读数都没改。缺 `sampling.detour` 时整块不出现。 */}
+      {/* `rc-1` 的残差耗时那句与 4b 的时效那句：都是**中性 `text-ink-3`**，不挂"建议重新体检"——
+          上面那两句承诺的是"重跑答案会更准"，而这两句只是把已经生产出来的事实摆出来。
+          缺键（升级前落库的存量件）时整块不出现，不印 0、不猜。 */}
+      {fresh && <p className="mt-2 text-tag text-ink-3">{fresh}</p>}
       {residual && <p className="mt-2 text-tag text-ink-3">{residual}</p>}
     </>
   )

@@ -30,6 +30,7 @@ from app.living_circle.caliber import (
 )
 from app.living_circle.data_source import (
     CheckParams,
+    NEARBY_CACHE_M,
     live_forensic_steps,
     refine_live_with_profile,
     STEP_COLLECT,
@@ -93,6 +94,7 @@ class TaskParams(TypedDict, total=False):
     travel_mode: str  # walking / riding / driving
     data_mode: str  # 'live' | 'fixture'
     mode: str  # 历史遗留别名，仅作读取兼容
+    force: bool  # 4b：用户点名重测 ⇒ 跳过两级缓存复用（缺省 False＝今天的形状）
 
 
 def _ev(type_: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -263,6 +265,10 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         study_radius_m=float(params.get("study_radius_m", 2500)),
         sample_profile=sample_profile,
         travel_mode=travel_mode,
+        # 4b：把"用户点名要重测"传到唯一的读缓存入口。读法刻意用 `.get(...) is True`
+        # 而不是 `bool(params.get("force"))`：任何非 `True` 的值（缺键、None、字符串）
+        # 都退回今天的默认行为，不给"一个坏值意外把复用关掉、每次体检都重打配额"留缝。
+        force=params.get("force") is True,
     )
     scene_key = _scene_key(params)
 
@@ -322,7 +328,10 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 " scene_key 落库，不复用不相干的旧行 id",
                 served_from, scene_key,
             )
-            report_id, reason, report = _finalize_living_report(report_data, scene_key, replace_scene=False)
+            # 4b：门的依据是**这次跑的是哪种模式**，不是"这条分支必然是 live"——
+            # 拿分支当依据，哪天数据源工厂多包一层缓存，屏幕上的复用声明就会静默长出来。
+            report_id, reason, report = _finalize_living_report(
+                report_data, scene_key, replace_scene=False, data_mode=data_mode)
             if reason is not None:
                 msg = f"质检未通过：{reason}。请更换中心点或检查配额"
                 db.set_task_failed(task_id, msg)
@@ -549,7 +558,10 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     #   · Tier A 内容缺件（live 无等时圈/无 POI）        → 报告不成立
     #   · Tier B 几何不自洽（盲区越出可达区、圈外点混入） → 报告会误导，同样不签发
     # 配额降级为 offline 的空白是**有意降级**（已有 P0-2 标注）→ 契约内部豁免，不受此守卫影响。
-    report_id, reason, report = _finalize_living_report(report_data, scene_key, replace_scene=False)
+    # 4b：`reuse_window` 的发与不发由 `_finalize_living_report` 按 `data_mode` 判（演示态不发——
+    # 那条链里没有 `CachingDataSource`、没有任何复用可言），这里只负责把**这次真实的模式**递进去。
+    report_id, reason, report = _finalize_living_report(
+        report_data, scene_key, replace_scene=False, data_mode=data_mode)
     yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report.get("evidence") or [])})
 
     if reason is not None:
@@ -568,13 +580,42 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     yield _ev("done", {"reportId": report_id, "report_id": report_id})
 
 
-def _finalize_living_report(report_data, scene_key, replace_scene: bool = False):
+def _reuse_window() -> Dict[str, float]:
+    """这份答复"在什么条件下会被直接复用"的三个真值（4b）。
+
+    全部**引用现成常量**，不在这里再写一遍数字：屏上那句说明、以及"要不要给重算入口"的
+    判断，都只能读自这些真值 —— 否则就是本仓第三次犯"文案与数据分家"（阈值改一次，
+    屏幕上的话不会跟着改，而全量测试零红）。局部 import 与文件里其它 repository 引用同一条
+    理由（`repository` 反向依赖 pipeline 侧的装配，模块级易生环）。
+    """
+    from app.living_circle.repository import DEFAULT_AUX_TTL_S, DEFAULT_REPORT_TTL_S
+
+    return {
+        "report_ttl_s": float(DEFAULT_REPORT_TTL_S),
+        "aux_ttl_s": float(DEFAULT_AUX_TTL_S),
+        "nearby_radius_m": float(NEARBY_CACHE_M),
+    }
+
+
+def _finalize_living_report(report_data, scene_key, replace_scene: bool = False, *,
+                            data_mode: str):
     """组装外层 Report + 几何质检 + 落库；返回 `(report_id, 不合规原因或 None, Report)`。
 
     写路径**唯一收口**（粗报与后台精报共用）：避免两处各自拼报告 / 判契约 / 落库而漂移。
     ``replace_scene=True`` 时先清掉同 ``scene_key`` 旧报告（精报替换粗报，同场景仅保留最新）。
+
+    ``data_mode`` 是**必填关键字参数**（不给默认值）：发不发 `reuse_window` 取决于"这次跑的是
+    哪种模式"，而不是"走了哪个分支"。默认值存在 ＝ 新增调用点可以省略它、静默按 live 发；
+    必填则逼每个调用点显式表态（与 `triad_from_points` 的 `blind_center` 同一条理由）。
+    演示态（`'fixture'`）**不发**：那条链路里没有 `CachingDataSource`、没有任何复用可言，
+    发出去就是让屏幕上那句"同参数 30 天内会被直接复用"承诺一条当下模式下不成立的规则。
+    缺这一位时前端的降级是"只报时点与年龄"（`freshnessNote`），所以不发不等于功能坏掉。
     """
     report_id = _report_id(scene_key)
+    # 4b · 复用条件随产物一起发出去。放在这个唯一收口而不是放在两个命中分支里：
+    # 缓存命中、精扫重算、后台精报三条路都过这里 ⇒ 载荷不会出现"有时有、有时没有"的第二种形状。
+    if data_mode != "fixture":
+        report_data["reuse_window"] = _reuse_window()
     report = assemble_report(report_data, report_id, scene_key, "")
     issues = assess_geometry(report_data)
     if not issues.ok:
@@ -611,7 +652,10 @@ def _schedule_refine(client, check, repo, scene_key, dispatch_ids, dispatch_reas
                 )
                 return
             refined["team"] = _team_payload(dispatch_ids, dispatch_reasons)
-            _, reason, _ = _finalize_living_report(refined, scene_key, replace_scene=True)
+            # 精报只由 live 路径调度（`refine_live_with_profile` 是 live 专属），故这里写死 live；
+            # 它不省略参数是硬要求 —— `data_mode` 无默认值，漏传当场 TypeError 而不是静默按某档发。
+            _, reason, _ = _finalize_living_report(
+                refined, scene_key, replace_scene=True, data_mode="live")
             if reason is not None:
                 logger.warning("[living_circle] 精报几何不成立，保留粗报：%s", reason)
             else:

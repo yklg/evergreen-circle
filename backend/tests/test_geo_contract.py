@@ -172,6 +172,29 @@ def test_bd09_center_passes_through_unchanged():
     assert clar["center"] == KAILI
 
 
+def test_force_flag_reaches_the_task_params_and_defaults_to_off():
+    """4b：`force` 从请求体一路进到任务参数，且**不发就是关**。
+
+    两头都要钉：默认那条若哪天被改成缺省 True，每一次普通体检都会跳过复用、烧全额配额，
+    而且不会有任何报错——它"工作得好好的"，只是每次都比以前贵一百倍。所以这里显式断言
+    "没发这一位 ⇒ 存下来的参数里它是假"，而不是靠"没人会写错"。
+    后半段（参数 → `CheckParams.force` → `peek` 早退）由 `test_caching_datasource` 与
+    `test_pipeline_living_circle` 那几条接上，本条只管"请求侧到任务侧这一段没断"。
+    """
+    from app.core import db
+
+    plain = client.post("/api/tasks", json={"query": "凯里老街-4b默认", "type": "living_circle"})
+    assert plain.status_code == 200, plain.text
+    clar_off = db.get_task_full(plain.json()["taskId"])["clarifications"]
+    assert not clar_off.get("force"), "没发 force 却存成真的 ⇒ 普通体检全部强制重测，静默烧配额"
+
+    forced = client.post("/api/tasks", json={"query": "凯里老街-4b点名", "type": "living_circle",
+                                             "force": True})
+    assert forced.status_code == 200, forced.text
+    clar_on = db.get_task_full(forced.json()["taskId"])["clarifications"]
+    assert clar_on.get("force") is True, "force 在请求体到任务参数这一段被丢掉了（R0 的静默丢弃形状）"
+
+
 def test_wgs84_center_without_ak_is_rejected(monkeypatch):
     """缺 AK 时**拒绝**而不是照抄：错中心一旦落库，每次打开都复现。"""
     _patch_ak(monkeypatch, "")

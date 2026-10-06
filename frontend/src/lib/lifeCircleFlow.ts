@@ -29,6 +29,11 @@ export interface LifeCircleLaunchInput {
   /** 出行方式。**未表态时不要传**：后端缺省会回落 walking，但"客户端没选"与
    *  "客户端选了步行"在缓存键与口径追溯上是两件事，前端不替用户预先表态。 */
   travel_mode?: TravelMode
+  /** 4b · 用户点名重测 ⇒ 请求带 `force`，后端跳过两级缓存复用真的重跑。
+   *  只有「重新体检」这一个控件传它；「开始体检」与输入新目标都**不传** —— 那里的默认
+   *  行为（同口径 30 天内、中心 500m 内直接复用并如实标注来源）是省配额的既定设计，
+   *  不能被一次普通点击悄悄变成全额重测。 */
+  force?: boolean
 }
 
 export interface LifeCircleFlowCallbacks {
@@ -201,6 +206,7 @@ export async function launchLifeCircle(
     city?: string
     address?: string
     travel_mode?: TravelMode
+    force?: boolean
   } = {
     query: input.query,
     mode: input.mode ?? 'standard',
@@ -210,6 +216,10 @@ export async function launchLifeCircle(
   if (input.city) payload.city = input.city
   if (input.address) payload.address = input.address
   if (input.travel_mode) payload.travel_mode = input.travel_mode
+  // 与 city/address 同一条形状纪律：**只在点名重测时才带这一位**，false/缺省一律不发。
+  // 写成 `payload.force = input.force ?? false` 会让每次普通体检的载荷都多一个键，
+  // 而"省配额的默认路径"与"用户要求重测"本来就该在请求上可分辨（后端守卫也只看有没有这一位）。
+  if (input.force) payload.force = true
   const { taskId } = await createLivingCircleTask(payload)
   const close = subscribeLifeCircleTask(taskId, callbacks)
   return { taskId, close }

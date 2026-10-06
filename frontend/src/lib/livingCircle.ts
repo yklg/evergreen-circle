@@ -1308,6 +1308,65 @@ export function staleCaliberNotices(lc: Pick<LivingCircleReport, 'caliber'>): st
   return [staleCaliberNotice(lc), staleCoverageCaliberNotice(lc)].filter((s): s is string => !!s)
 }
 
+const DAY_S = 86400
+
+/** `generated_at` 排成 `YYYY-MM-DD`；坏值/缺值 ⇒ `''`（不猜一个日期上屏）。
+ *
+ * ⚠️ **按 UTC 排，不按运行机器的时区排**。时间戳本身是 `...Z`（UTC），用 `getFullYear()`
+ * 这类本地读法会让同一份报告在 CI（UTC）与 +08 的笔记本上印出两个"生成日期"——
+ * `2026-09-30T16:00:25Z` 一台说 09-30、另一台说 10-01，而年龄算法用的是绝对时刻、两边都
+ * 算得出 5 天 ⇒ 日期与年龄自相矛盾。这条是打印水印原本就带着的形状，这里统一收进来改对。
+ */
+export function generatedOn(lc: Pick<LivingCircleReport, 'generated_at'>): string {
+  const t = Date.parse(lc?.generated_at ?? '')
+  if (Number.isNaN(t)) return ''
+  const d = new Date(t)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
+}
+
+/** 这份数据距今多少**天**（向下取整，最小 0）；时间戳坏 ⇒ `null`。
+ *  `now` 是**参数**而不是内部 `new Date()` —— 判据要能确定性地跑（同一份载荷在 CI 里
+ *  不能因为今天几号而给出不同的话）。 */
+export function dataAgeDays(
+  lc: Pick<LivingCircleReport, 'generated_at'>,
+  now: Date = new Date(),
+): number | null {
+  const t = Date.parse(lc?.generated_at ?? '')
+  if (Number.isNaN(t) || Number.isNaN(now.getTime())) return null
+  return Math.max(0, Math.floor((now.getTime() - t) / 1000 / DAY_S))
+}
+
+/**
+ * 时效与复用条件那一句（4b 的唯一上屏出口）。
+ *
+ * 守的是"承诺与行为对齐"：这条链今天在同参数 30 天内、或中心 500m 内会**直接复用**旧答复
+ * （省配额，是既定设计，`served_from` 也已经把来源标在屏上了）。缺的从来不是披露，而是
+ * ⑴ 看不见这份数据多旧、⑵ 没有强制重测的入口。⑵这次补上了（图上「重新体检」带 `force`），
+ * 这句就是把⑴与阈值一起说清 —— **三个数字全部读自 payload**（`reuse_window`），
+ * 前端不抄一份 30/7/500：抄的那份会在阈值改动的那天开始说谎（本仓为这个形状立过多次规矩）。
+ *
+ * 缺 `reuse_window`（升级前落库的存量件）⇒ 只报时点与年龄，不编阈值。
+ */
+export function freshnessNote(
+  lc: Pick<LivingCircleReport, 'generated_at' | 'reuse_window'>,
+  now: Date = new Date(),
+): string | null {
+  const dateStr = generatedOn(lc)
+  if (!dateStr) return null
+  const age = dataAgeDays(lc, now)
+  const ageStr = age == null ? '' : age === 0 ? '（今天）' : `（${age} 天前）`
+  const w = lc?.reuse_window
+  if (!w || !(w.report_ttl_s > 0) || !(w.nearby_radius_m > 0)) {
+    return `数据时点 ${dateStr}${ageStr}`
+  }
+  return (
+    `数据时点 ${dateStr}${ageStr} · 同参数 ${Math.round(w.report_ttl_s / DAY_S)} 天内、`
+    + `中心 ${Math.round(w.nearby_radius_m)}m 内的既有体检会被直接复用（不重测）；`
+    + '要重测点图上「重新体检」'
+  )
+}
+
 /**
  * 类别旁那句门槛项口径说明（片 1c-β C1 甲档）。
  *

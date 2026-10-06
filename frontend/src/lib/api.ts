@@ -187,6 +187,11 @@ export async function createLivingCircleTask(input: {
   /** 出行方式。缺省即**不发该键**：后端缺省回落 walking，但"没表态"与"选了步行"在
    *  缓存键与口径追溯上不是同一件事，前端不替用户预先选。 */
   travel_mode?: TravelMode
+  /** 4b · 点名重测：跳过后端两级缓存复用（精确 + 邻近 500m），真的重跑一次。
+   *  与 `travel_mode` 同一条纪律 —— **不为 false 发这个键**：后端 `extra="forbid"`，
+   *  发了 `force:false` 与不发在载荷形状上是两件事，而默认那条路是"省配额"的既定行为。
+   *  它只表达意图，不参与缓存键（后端 `CheckParams.force` 的 docstring 同一条）。 */
+  force?: boolean
 }): Promise<CreateTaskResp> {
   // 坐标契约：前端唯一写入口。非法坐标当场抛错，**绝不**送进库
   // （一旦落库，报告 scene.center 就是坏的，之后每次打开都复现）。
@@ -206,6 +211,8 @@ export async function createLivingCircleTask(input: {
       data_mode: input.data_mode ?? (isFixtureMode() ? 'fixture' : 'live'),
       // 后端 CreateTaskBody 是 extra="forbid"：这里漏转发，上游传了也会被静默丢掉
       ...(input.travel_mode ? { travel_mode: input.travel_mode } : {}),
+      // 只在"点名重测"时发这一位（见上面 `force?` 那条注释：false 不发，保持默认载荷形状）
+      ...(input.force ? { force: true } : {}),
     }),
   })
   const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }

@@ -360,6 +360,11 @@ class CreateTaskBody(BaseModel):
     # 必须显式声明：`extra="forbid"` 下未声明的键会被 pydantic 静默丢弃，
     # 而这条键一丢，用户填的网址就只是"看起来提交了"。
     source_urls: Optional[List[str]] = None
+    # 4b · 强制重算（只对生活圈体检有意义；research 侧今天忽略它，不新造第二套语义）。
+    # 同样**必须显式声明**：`extra="forbid"` 下前端发一个模型没写的键会得到 422 而不是静默
+    # 丢弃 —— 这是"键没声明"的响亮失败（`test_request_body_contract.py` 在守整体封闭性），
+    # 但 422 也是坏体验，所以在这里写清：它是请求侧的**意图**，不参与缓存键。
+    force: bool = False
 
     @field_validator("center", mode="before")
     @classmethod
@@ -436,6 +441,9 @@ async def post_task(body: CreateTaskBody):
             "center": center, "study_radius_m": float(caliber.study_radius_m),
             "sample_profile": _lc_sample_profile(body),
             "travel_mode": travel_mode, "data_mode": body.data_mode,
+            # 4b：用户点名重测 ⇒ 一路传到 `CheckParams.force` ⇒ `CachingDataSource.peek` 早退。
+            # 缺省 False ⇒ 今天的全部复用行为逐字不变（U22/U23/U39 那四条零新增调用的不变式照旧）。
+            "force": bool(body.force),
         })
         return {"taskId": task_id}
 

@@ -148,14 +148,19 @@ def test_declared_fields_have_no_undocumented_senders():
     src = api_ts.read_text(encoding="utf-8")
 
     lc_launched = {"query", "sample_profile", "type", "center", "coord_sys", "city", "address",
-                   "data_mode"}
+                   "data_mode",
+                   # `travel_mode` 与 `force` 都是**条件发送**（`...(x ? { k: x } : {})`）：
+                   # "没表态"与"表态了取默认值"在这两条上都是要分辨的事，所以不发时是真的不发。
+                   # `travel_mode` 原先被列在下面"无发送方"那一侧，是清单没跟上线上形状 ——
+                   # 放在那里不影响安全性（两个键都非必填，下面的断言仍在守），但它是句假话。
+                   "travel_mode", "force"}
     research_launched = {"query", "mode", "model", "type", "source_urls"}
     launched = lc_launched | research_launched
     for key in launched:
         assert key in src, f"发送方清单里的 {key} 在 api.ts 里已找不到 ⇒ 清单漂移，判据在空转"
 
     unsent = set(CreateTaskBody.model_fields) - launched
-    assert unsent == {"purpose", "travel_mode"}, (
+    assert unsent == {"purpose"}, (
         f"`CreateTaskBody` 的无发送方字段清单变了，须回计划 §0 登记：{sorted(unsent)}"
     )
     for field in sorted(unsent):

@@ -1108,6 +1108,14 @@ export interface LivingCircleReport {
   served_from?: 'cache' | 'nearby_cache'
   /** 缓存命中时间（ISO） */
   cached_at?: string
+  /**
+   * 4b · 「这份答复在什么条件下会被直接复用」的三个真值（后端唯一产出口
+   * `pipeline/living_circle._finalize_living_report`，值全部引用现成常量）。
+   *
+   * 屏上那句复用条件**只许读这里**，不许在前端抄一份 30/7/500 —— 阈值改一次、屏幕上的话
+   * 就说一次谎，正是本仓反复立规要消灭的"文案与数据分家"。缺键 ⇒ 那句里的阈值部分不印。
+   */
+  reuse_window?: { report_ttl_s: number; aux_ttl_s: number; nearby_radius_m: number } | null
   /** R-7：降级标记（存在即降级）。文案请走 `degradeDetailLabel()`，不要在消费点自己 switch。 */
   degraded?: LifeCircleDegraded
   /** 片 4/5：部分完成标记（存在即"有格/类没查到"，**不是**降级）。文案走 `partialBanner()`。 */

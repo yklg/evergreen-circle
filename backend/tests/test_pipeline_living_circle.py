@@ -368,6 +368,84 @@ def test_u22_pipeline_cache_hit_zero_client_calls(monkeypatch):
     assert db.get_task_full(tid2)["status"] == "done"
 
 
+def test_force_param_makes_重新体检_actually_remeasure(monkeypatch):
+    """4b：`force` 一路传到 `peek` ⇒ 用户点名重测时**真的重测**（U22 相反的那一半）。
+
+    U22 钉"默认路径必须零新增调用"（省配额是既定设计，不许被削弱）；这条钉"点名要重测时
+    那条省钱路径必须让路"。两条合起来才是完整语义：**默认省、点名重**。
+    顺带钉脏值：读法用 `params.get("force") is True` 而不是 `bool(...)` —— 一个字符串或 `1`
+    就能把省配额那条路静默关掉、每次体检都重打 1049 点矩阵，那是要花真钱的方向性错误。
+    """
+    stub = PipelineStubBaidu(KAILI_CENTER)
+    _live_source(stub, monkeypatch)
+    _run_pipeline(create_living_circle_task(_live_params(scene_name="凯里老街-4b")))
+    after_first = (stub.matrix_batches, stub.poi_calls)
+    assert after_first != (0, 0)
+
+    # 先确认默认路径仍然零新增（否则下面"force 让计数涨了"没有对照意义）
+    _run_pipeline(create_living_circle_task(_live_params(scene_name="凯里老街-4b")))
+    assert (stub.matrix_batches, stub.poi_calls) == after_first
+
+    for dirty in ("yes", 1, None, 0):
+        _run_pipeline(create_living_circle_task(_live_params(scene_name="凯里老街-4b", force=dirty)))
+        assert (stub.matrix_batches, stub.poi_calls) == after_first, (
+            f"脏值 {dirty!r} 把复用关掉了 ⇒ 每次体检都重打配额")
+
+    _run_pipeline(create_living_circle_task(_live_params(scene_name="凯里老街-4b", force=True)))
+    assert (stub.matrix_batches, stub.poi_calls) > after_first, (
+        "force=True 没带来重测 ⇒ 「重新体检」还是拿的旧快照")
+
+
+def test_signed_report_carries_the_reuse_window(monkeypatch):
+    """4b：每条签发的载荷都带 `reuse_window`，三个数**引用真常量**（不是抄一份）。
+
+    屏上那句"什么条件会被复用"只能读这里 —— 数字写成两份，阈值改一次屏幕上的话就说一次谎
+    （本仓把这类"文案与数据分家"记过至少三次）。两条路都要有：第一次实跑、以及复用别人那份
+    的命中路径，因为读这句话的人是拿到答复的那个人。
+    """
+    from app.living_circle.data_source import NEARBY_CACHE_M
+    from app.living_circle.repository import DEFAULT_AUX_TTL_S, DEFAULT_REPORT_TTL_S
+
+    expect = {
+        "report_ttl_s": DEFAULT_REPORT_TTL_S,
+        "aux_ttl_s": DEFAULT_AUX_TTL_S,
+        "nearby_radius_m": NEARBY_CACHE_M,
+    }
+    stub = PipelineStubBaidu(KAILI_CENTER)
+    _live_source(stub, monkeypatch)
+    params = _live_params(scene_name="凯里老街-窗口")
+
+    rid1 = _done_id(_run_pipeline(create_living_circle_task(params)))
+    fresh = db.get_living_circle_report(rid1)["living_circle"]
+    assert fresh["reuse_window"] == expect, fresh.get("reuse_window")
+
+    rid2 = _done_id(_run_pipeline(create_living_circle_task(params)))
+    hit = db.get_living_circle_report(rid2)["living_circle"]
+    assert hit["reuse_window"] == expect, "命中路径没带 ⇒ 屏上那句在最常见的情况下不出现"
+
+
+def test_fixture_mode_does_not_claim_a_reuse_window():
+    """演示态**不发** `reuse_window`：那条链路里没有 `CachingDataSource`、没有任何复用可言。
+
+    ⚠️ 这条**不能**并进上面那条 live 用例：本文件的 `_live_source(stub, monkeypatch)` 把
+    `get_data_source` 整个换成了带缓存的源，在它的作用域里跑 fixture 模式，拿到的是
+    `served_from='nearby_cache'` 的 live 件 —— 那不是产品行为，是我的台架。
+    （第一版就并进去过，红得完全合理，红的是用例。）演示态的真实产品形状是：
+    `get_data_source('fixture')` 返回裸 `FixtureDataSource`，没有 peek，也就没有复用。
+    前端对缺这一位的降级是"只报时点与年龄"（`freshnessNote`），所以不发不等于功能坏掉。
+    """
+    rid = _done_id(_run_pipeline(create_living_circle_task({
+        "scene_name": "凯里老街-窗口fx", "city": "黔东南苗族侗族自治州",
+        "address": "凯里市西门街道老街片区", "center": [107.9758, 26.5734],
+        "study_radius_m": 2500.0, "mode": "standard", "data_mode": "fixture",
+    })))
+    lc = db.get_living_circle_report(rid)["living_circle"]
+    assert lc.get("served_from") is None, "演示态不该有缓存命中标识 ⇒ 台架又被 live 源替换了？"
+    assert "reuse_window" not in lc, (
+        f"演示态发出了复用窗口 ⇒ 屏上会承诺一条该模式下不存在的规则（scene={lc['scene']['name']!r}）")
+    assert lc.get("generated_at"), "前提：演示件要有时间戳，否则『只报时点』那半也没了"
+
+
 def test_u27_u30_cache_hit_idempotent_report_id_and_rows(monkeypatch):
     """U27+U30：同一 scene 两次缓存命中（幂等全链路）→ report_id 相同、报告表行数不变、事件顺序完整。"""
     stub = PipelineStubBaidu(KAILI_CENTER)

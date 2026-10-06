@@ -12,7 +12,12 @@ import pytest
 
 from app.living_circle.caliber import facility_merge_enabled
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
-from app.living_circle.data_source import CheckParams, CachingDataSource, LiveDataSource
+from app.living_circle.data_source import (
+    CheckParams,
+    CachingDataSource,
+    LiveDataSource,
+    wanted_caliber,
+)
 from app.living_circle.facility_rule import FACILITY_RULE_VERSION
 from app.living_circle.repository import MemoryCache, Repository
 from app.living_circle.scope import SCOPE_POLICY_VERSION
@@ -296,6 +301,63 @@ def test_u23_peek_nearby_cache_hit_zero_calls():
     # 中心未解析（0,0）→ 跳过邻近（无意义且易误命中），返回 None
     p0 = CheckParams(scene_name="未定位", center=(0.0, 0.0), study_radius_m=2500.0, sample_profile="standard")
     assert ds.peek(p0) is None
+
+
+# ── 4b · 强制重算（force）────────────────────────────────────────────────────
+
+def test_force_skips_both_reuse_tiers_and_actually_recomputes():
+    """`force=True` ⇒ **两级都跳**（精确 + 邻近 500m），并真的重算一次。
+
+    为什么两级都得跳：只跳精确那一级的话，同社区 500m 内那份**别人中心点**的结果照样会被端上来
+    —— 用户点的是"重新体检"，拿到的却是邻居的体检，那比改造前更糟（改造前至少屏上明写着
+    「邻近既有体检结果 · 原中心距此 ≤500m」）。所以邻近那一支单独断一次。
+    """
+    repo, src = Repository(), CountingSource()
+    ds = _ds(repo, src)
+    p = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734),
+                    study_radius_m=2500.0, sample_profile="standard")
+    asyncio.run(ds.compute(p))
+    assert src.calls == 1
+    assert ds.peek(p) is not None, "前提不成立：默认路径本来就该命中 ⇒ 这条用例什么都没测"
+
+    forced = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734),
+                         study_radius_m=2500.0, sample_profile="standard", force=True)
+    assert ds.peek(forced) is None, "force 没跳过精确命中"
+
+    near_forced = CheckParams(scene_name="凯里老街", center=(107.9787, 26.5734),
+                              study_radius_m=2500.0, sample_profile="standard", force=True)
+    assert ds.peek(near_forced) is None, "只跳了精确一级 ⇒ 邻近那一级还在替用户端别人的结果"
+
+    fresh = asyncio.run(ds.compute(forced))
+    assert src.calls == 2, "force 没带来重算（点了「重新体检」还是旧快照，就是 4-前置 查实的那个洞）"
+    assert "served_from" not in fresh, "重算出来的答复被标成了缓存命中 ⇒ 来源标注开始说谎"
+
+
+def test_force_never_touches_the_cache_key_or_the_caliber_triple():
+    """`force` 只改"读不读缓存"，**不许**改身份：不进缓存键、不进复用门的三元组。
+
+    进了键 ⇒ 同一地点裂成"强制那条"与"普通那条"两份历史，重算后覆盖再也对不上原行；
+    进了 `wanted_caliber` ⇒ 复用门开始比较一个"用户并没有请求"的东西（10-01 从 `wanted`
+    取版本键那次全量 9 红 + 逼出假键，同一个形状）。
+    还有第三条：普通路径重算后必须**覆盖**同一条键（第二次普通 peek 仍命中）—— 这才是
+    "重算完成为下一次的缓存"，不需要任何额外状态。
+    """
+    repo, src = Repository(), CountingSource()
+    ds = _ds(repo, src)
+    plain = CheckParams(scene_name="凯里老街", center=(107.9758, 26.5734),
+                        study_radius_m=2500.0, sample_profile="standard")
+    forced = CheckParams(**{**plain.__dict__, "force": True})
+    assert CachingDataSource._payload(plain) == CachingDataSource._payload(forced), (
+        "force 漏进了缓存键 ⇒ 同一地点会裂成两条历史")
+    assert "force" not in wanted_caliber(forced), "force 漏进了复用门的口径三元组"
+
+    asyncio.run(ds.compute(plain))
+    asyncio.run(ds.compute(forced))          # 强制重算，覆盖同一条键
+    assert src.calls == 2
+    assert ds.peek(plain) is not None, "重算结果没回填成下一次的缓存 ⇒ 键被 force 分叉了"
+
+    # 默认值钉死：谁把它翻成 True，U22/U23/U39 那几条"零新增调用"的不变式会一起红
+    assert CheckParams(scene_name="x").force is False
 
 
 def test_u24_caliber_payload_key_five_params_agree():

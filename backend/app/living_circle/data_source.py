@@ -138,6 +138,11 @@ class CheckParams:
     R5 命名治理：
     - mode → sample_profile（采样档位：quick/standard/precise）
     - travel_mode（出行方式：walking/riding/driving，默认 walking）
+
+    `force`（4b）：用户**点名要重测**时为真 —— 只让 `peek` 早退，不改任何键、不改任何门。
+    ⚠️ 它**绝不进缓存键**（`_payload` 不读它）也不进 `wanted_caliber`：进了就等于把
+    "我这次是强制重算的"写进身份 —— 同一地点会裂成两条历史，而重算后覆盖再也对不上原行
+    （口径版本号为什么走载荷不走键，理由在 `scope.SCOPE_POLICY_VERSION` 那段，同一条）。
     """
 
     scene_name: str
@@ -147,6 +152,7 @@ class CheckParams:
     study_radius_m: float = 2500.0
     sample_profile: str = "standard"  # quick / standard / precise（原 mode）
     travel_mode: str = "walking"  # walking / riding / driving
+    force: bool = False  # 4b：用户点名重测 ⇒ `peek` 早退（见类 docstring，绝不进缓存键）
 
 
 class DataSource:
@@ -377,7 +383,15 @@ class CachingDataSource(DataSource):
           **不污染缓存原值**（调用方注入 team 等元数据不影响下次命中）；
         - 精确未命中才查邻近（`repo.find_recent_report_near`，SQL 预过滤 D25）；
           中心未解析（(0,0)）时跳过邻近（无意义且易误命中原点附近缓存）。
+        - ``params.force`` ⇒ **整道门跳过、直接判未命中**（4b 的重算入口）。放在这里而不是
+          各调用点各自判断：`compute` 与管线 live 分支共用本函数（E0 的"单一入口"），
+          只要还有第二条读缓存的路，force 就得在两处各记一遍 —— 漏一处就是"点了没重测"。
+          跳过之后 `compute` 照常委托内层源重算并 `backfill` 覆盖同一把键 ⇒ 重算的结果
+          成为下一次的缓存，不需要额外状态。
         """
+        if params.force:
+            _logger.info("显式要求重测（force）：跳过精确与邻近两级复用，走完整实跑")
+            return None
         payload = self._payload(params)
         wanted = wanted_caliber(params)
         hit = self._reusable(self.repo.get_report(self.data_mode, payload), wanted)
