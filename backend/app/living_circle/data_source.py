@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import datetime as _dt
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import (TYPE_CHECKING, Any, AsyncIterator, Dict, List, Mapping, Optional, Sequence,
@@ -162,24 +163,48 @@ class DataSource:
 
 
 class FixtureDataSource(DataSource):
-    """内置样例数据源：读 fixtures/*.json（与前端 mock 同构），按中心点就近返回。"""
+    """内置样例数据源：读 fixtures/*.json（与前端 mock 同构），按中心点就近返回。
+
+    ⚠️ **为什么这里不许依赖目录顺序**（2026-10-06 真实事故）：`kaili.json` 与
+    `kaili-ev2.json` 的 `scene.center` **逐字相同** ⇒ 就近匹配必然平手，而 `min()` 平手时返回
+    "先遇到的那个"。旧写法用未排序的 `Path.glob` 加载 ⇒ 谁先遇到取决于文件系统列目录的顺序，
+    于是同一个中心点在开发机上给出 65.4、在 CI（`actions/checkout` 全新写盘）给出 68.4，
+    两条测试只在 CI 红。本地复现不出来也是这个原因：换一种目录创建方式，顺序就变了。
+    现在两半都钉死：加载按文件名排序（`sample_names()` 给前端的顺序也因此稳定），
+    平手另走下面那把显式的键，不再靠运气。
+    """
 
     def __init__(self, fixtures_dir: Optional[Path] = None) -> None:
-        self._fixtures: List[Dict[str, Any]] = []
-        for f in (fixtures_dir or _FIXTURES_DIR).glob("*.json"):
-            import json
+        import json
 
+        self._fixtures: List[Tuple[str, Dict[str, Any]]] = []
+        # 排序键取 `stem` 而不是 `Path` 本身：`sorted(Path)` 排的是整条路径（含 `.json`），
+        # 于是 `kaili-ev2.json` 会排在 `kaili.json` 前面（`-` 的码位小于 `.`）—— 与"按名字排"
+        # 的直觉相反，也和下面 `_pick_key` 末档用的 `stem` 不是同一个序。两处必须同一个键。
+        for f in sorted((fixtures_dir or _FIXTURES_DIR).glob("*.json"), key=lambda p: p.stem):
             with open(f, encoding="utf-8") as fh:
-                self._fixtures.append(json.load(fh))
+                self._fixtures.append((f.stem, json.load(fh)))
+
+    @staticmethod
+    def _pick_key(stem: str, distance_m: float) -> Tuple[float, int, str]:
+        """就近匹配的排序键：距离优先，其次"是不是变体副本"，最后才是文件名。
+
+        第二档是这里唯一的实质决定：**带 `-evN` 后缀的是取证层/逐格台账的变体副本**，
+        它靠 report id 被显式点名使用（前端样例列表与 e2e 都走 id），不参与"随便给个中心点"
+        的兜底匹配 —— 否则变体会把基础样本顶掉，而两份的分数是不一样的。
+        末档 `stem` 只为彻底消除残余平手，不承担语义。
+        """
+        return (distance_m, 1 if re.search(r"-ev\d+$", stem) else 0, stem)
 
     def sample_names(self) -> List[str]:
-        return [r.get("scene", {}).get("name", "") for r in self._fixtures]
+        return [doc.get("scene", {}).get("name", "") for _, doc in self._fixtures]
 
     def sample_scenes(self) -> List[Dict[str, Any]]:
         """样例场景快照（名称→中心），供无坐标输入的兜底匹配。"""
         return [
-            {"name": r.get("scene", {}).get("name", ""), "center": r.get("scene", {}).get("center", [0, 0])}
-            for r in self._fixtures
+            {"name": doc.get("scene", {}).get("name", ""),
+             "center": doc.get("scene", {}).get("center", [0, 0])}
+            for _, doc in self._fixtures
         ]
 
     async def compute(self, params: CheckParams) -> Dict[str, Any]:
@@ -190,9 +215,11 @@ class FixtureDataSource(DataSource):
 
         best = min(
             self._fixtures,
-            key=lambda r: haversine_m(params.center, tuple(r["scene"]["center"])),
+            key=lambda stem_doc: self._pick_key(
+                stem_doc[0], haversine_m(params.center, tuple(stem_doc[1]["scene"]["center"]))
+            ),
         )
-        return annotate_blindspots(best)
+        return annotate_blindspots(best[1])
 
 
 class LiveDataSource(DataSource):

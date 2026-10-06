@@ -61,6 +61,44 @@ def test_fixture_source_nearby_match():
     assert r2["scene"]["name"] == "北京劲松"
 
 
+def test_fixture_center_tie_is_order_independent():
+    """同中心点的两份夹具打平时，选中结果不许取决于目录被读取的顺序。
+
+    `kaili.json` 与 `kaili-ev2.json` 的 `scene.center` 逐字相同 ⇒ 就近匹配必然平手。
+    旧写法用未排序 `glob` + 只按距离取 `min`，平手时"谁先遇到"由文件系统列目录顺序决定 ⇒
+    开发机给基础样本、CI（`actions/checkout` 全新写盘）给变体副本，同一个社区两个分数，
+    而且**只在 CI 红、本机怎么复现都是绿**（2026-10-06 那条真事故）。
+
+    这里不钉任何具体分值（本文件另一条用例已经写明"钉分值会在重算夹具后假红"），
+    钉的是三件事：加载顺序确定、结果与顺序无关、平手判给非变体那份。
+    """
+    ds = FixtureDataSource()
+    dist = lambda stem: haversine_m(KAILI_CENTER, tuple(dict(ds._fixtures)[stem]["scene"]["center"]))  # noqa: E731
+
+    # ① 加载顺序按文件名排序 ⇒ 跨文件系统稳定（`sample_names()` 给前端的顺序也因此确定）
+    stems = [s for s, _ in ds._fixtures]
+    assert stems == sorted(stems), stems
+
+    # ② 平手是真的存在（两份凯里中心点距离都是 0）——否则下面两条会恒真
+    tied = [s for s in stems if dist(s) == 0.0]
+    assert len(tied) >= 2, f"平手前提不成立，本用例失去意义：{tied}"
+
+    # ③ 选中结果与内部顺序无关
+    won = asyncio.run(ds.compute(CheckParams(scene_name="x", center=KAILI_CENTER)))["generated_at"]
+    ds._fixtures.reverse()
+    again = asyncio.run(ds.compute(CheckParams(scene_name="x", center=KAILI_CENTER)))["generated_at"]
+    assert again == won, "反转加载顺序就换了样本 ⇒ 平手仍交给了目录顺序"
+
+    # ④ 平手判给非变体那份（`-evN` 是取证层副本，只应被 id 显式点名）
+    winner = [s for s, d in ds._fixtures if d["generated_at"] == won]
+    assert winner and all("-ev" not in s for s in winner), winner
+
+    # ⑤ 反证（防恒真）：把键退化成"只看距离"就是旧写法，它在同一份数据上随顺序翻转
+    legacy = lambda seq: min(seq, key=lambda t: dist(t[0]))[0]  # noqa: E731
+    assert legacy(ds._fixtures) != legacy(list(reversed(ds._fixtures))), \
+        "退化写法都不翻转了 ⇒ 说明平手前提已消失，③④ 需要重新设计"
+
+
 def test_fixture_source_returns_expected_fixture_data():
     """M5：内置快照为真实百度实跑数据（live / IDW）。
 
