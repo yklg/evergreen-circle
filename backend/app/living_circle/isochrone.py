@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequ
 
 import numpy as np
 
-from app.living_circle.caliber import ReachCaliber, get_caliber
+from app.living_circle.caliber import (ISO_COMPARE_BASIS, ReachCaliber, get_caliber)
 from app.living_circle.contour import mask_connect_center, smooth_ring, trace_exterior
 from app.living_circle.geo_utils import (
     LngLat,
@@ -492,6 +492,37 @@ class IsochroneEngine:
         grid = np.stack([gx.ravel(), gy.ravel()], axis=1)
         return grid, step
 
+    def _ring_zone_at(self, field2d: np.ndarray, minutes_th: float, center: LngLat,
+                      study_radius_m: float, step: float, row_c: int,
+                      col_c: int) -> Optional[Dict[str, Any]]:
+        """把耗时场在 `minutes_th` 这一档切出**唯一一条含中心的环** → 环 + 面积；切不出就 `None`。
+
+        四档等值线与口径对比环**共用这一颗**（旧写法是循环体里的六行，第二条环要复用就得
+        抄一遍 —— 抄的那份会漂移，而"两条环的连通域判据不一致"正是本域反复出事的那类形状）。
+        `mask_connect_center` 保证只取含中心的那个连通域：中心都不连通时返回 `None`，
+        不返回一个"看起来像环"的碎片。
+        """
+        mask = field2d <= minutes_th
+        if not mask.any():
+            return None
+        comp = mask_connect_center(mask, (int(row_c), int(col_c)))
+        if not comp.any():
+            return None
+        xy_ring = smooth_ring(trace_exterior(comp, step))
+        if len(xy_ring) < 4:
+            return None
+        # 像素(x=列,y=行) → 相对 center 的米：网格原点在 (-half,-half)，中心在网格中点
+        ring_lnglat = [
+            xy_to_lnglat(center, v[0] - study_radius_m, v[1] - study_radius_m)
+            for v in xy_ring
+        ]
+        closed = ensure_closed(ring_lnglat)
+        return {
+            "minutes": minutes_th,
+            "geojson": {"type": "Polygon", "coordinates": [closed]},
+            "area_km2": round(ring_area_km2(closed, center), 3),
+        }
+
     async def compute(
         self,
         center: LngLat,
@@ -541,28 +572,26 @@ class IsochroneEngine:
 
         zones: List[Dict[str, Any]] = []
         for minutes_th in sorted(ISO_MINUTES, reverse=True):
-            mask = field2d <= minutes_th
-            if not mask.any():
-                continue
-            comp = mask_connect_center(mask, (int(row_c), int(col_c)))
-            if not comp.any():
-                continue
-            xy_ring = smooth_ring(trace_exterior(comp, step))
-            if len(xy_ring) < 4:
-                continue
-            # 像素(x=列,y=行) → 相对 center 的米：网格原点在 (-half,-half)，中心在网格中点
-            ring_lnglat = [
-                xy_to_lnglat(center, v[0] - study_radius_m, v[1] - study_radius_m)
-                for v in xy_ring
-            ]
-            closed = ensure_closed(ring_lnglat)
-            area = ring_area_km2(closed, center)
-            zones.append({
-                "minutes": minutes_th,
-                "geojson": {"type": "Polygon", "coordinates": [closed]},
-                "area_km2": round(area, 3),
-            })
+            zone = self._ring_zone_at(field2d, minutes_th, center, study_radius_m,
+                                     step, row_c, col_c)
+            if zone is not None:
+                zones.append(zone)
         zones.sort(key=lambda z: z["minutes"])
+
+        # ── 口径对比环（笔 B）：同一份场按文献阈值再多切一条，**不并进 `isochrones`** ──
+        # 四档是硬契约（配色表钉 `length === 4`、面积单调性、前端图例按四档渲染），把 8min
+        # 塞进那个数组＝把第五档冒充成政策档；单独发一块，读者才看得出它是"另一把尺的对照"。
+        # 判不了就不发：档未给值（骑行/驾车）、掩码空、环退化 ⇒ 整块缺席，前端缺键不渲染。
+        compare_min = get_caliber(travel_mode).iso_compare_min
+        iso_compare: Optional[Dict[str, Any]] = None
+        if compare_min is not None:
+            zone = self._ring_zone_at(field2d, compare_min, center, study_radius_m,
+                                     step, row_c, col_c)
+            if zone is not None:
+                iso_compare = {**zone,
+                               "basis": ISO_COMPARE_BASIS,
+                               # 机器可读的断言边界：这句是**口径对比**，不是人群能力判断。
+                               "claim": "caliber_comparison_only"}
 
         # ── 采样点可达性：两个字段，语义互不重叠（见模块顶部 REACH_FULL_MIN 说明）──
         # timed    = 测时返回了分钟值 → 可参与插值（与「可达」无关）
@@ -624,11 +653,16 @@ class IsochroneEngine:
                 declared_k=_run_cal.detour_k,
             ),
         }
-        return {
+        out = {
             "isochrones": zones,
             "sampling": sampling,
             "sample_count": len(sample_pts),
         }
+        # 切不出就**整位缺席**（不是发 null）：读侧统一"缺键即不渲染"，既省掉每个消费点都要
+        # 防的 `x && x.y`，也不让一个 null 冒充"量过了但没有环"（三态纪律，同 `detour` 那句）。
+        if iso_compare is not None:
+            out["iso_compare"] = iso_compare
+        return out
 
 
 def hour_to_minutes(distance_m: float, speed: float = WALK_SPEED_M_PER_MIN) -> float:

@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from app.living_circle.caliber import REACH_CALIBER_VERSION
+from app.living_circle.caliber import REACH_CALIBER_VERSION, get_caliber
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
 from app.living_circle.isochrone import interpolation_form_keys
@@ -764,6 +764,88 @@ def _interpolation_form_violations(lc: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _iso_compare_violations(lc: Dict[str, Any]) -> List[str]:
+    """B16 · 口径对比环（笔 B）：发出来了就得是"另一把尺的对照"，不能是第五条等值线。
+
+    缺席＝合法（骑行/驾车档本来不声明这个阈值、离线链刻意不接、几何退化时也切不出环），
+    与 B14/B15 同一分档：**这条不罚"没说"，只罚"说了但说不圆"**。四件必须自洽的事：
+
+      ① 键齐 —— `minutes` / `geojson` / `area_km2` / `basis` / `claim` 少一个都是半吊子发布；
+      ② 断言边界 —— `claim` 必须是 `caliber_comparison_only`。这一位是给机器读的：
+         文献量的是**群体有效窗口**，把它写成对具体居民的能力判断就越过了证据；
+         文案守卫能拦字面，拦不住"载荷里带着一个可以被误读的数字"，所以边界要进载荷。
+      ③ 与四档互斥 —— 它的分钟数不许出现在 `caliber.iso_minutes` 里（那叫第五档等值线，
+         而前端配色表、面积单调性、图例都按"恰好四档"钉），并且必须等于**当前口径表**
+         给该出行方式声明的值 ⇒ 手改的、或从别的档搬来的环在这里现形。
+      ④ 几何自洽 —— 环闭合且 ≥4 点；面积可举证且**落在相邻两档面积之间**
+         （同一条耗时场切出来的环，分钟数居中而面积越界 ⇒ 那条环不是这个场切的）。
+    """
+    cmp_zone = lc.get("iso_compare")
+    if cmp_zone is None:
+        return []
+    if not isinstance(cmp_zone, dict):
+        return [f"iso_compare 不是对象（{type(cmp_zone).__name__}）⇒ 口径对比环无法举证"]
+
+    missing = [k for k in ("minutes", "geojson", "area_km2", "basis", "claim")
+               if k not in cmp_zone]
+    if missing:
+        return [f"iso_compare 缺 {missing} —— 阈值、几何、面积、依据、断言边界是同一次发布的五半"]
+    if cmp_zone.get("claim") != "caliber_comparison_only":
+        return [f"iso_compare.claim={cmp_zone.get('claim')!r} 不是 caliber_comparison_only "
+                "⇒ 这条环被当成能力断言发出去了；文献量的是群体有效窗口，不是具体居民"]
+    basis = (cmp_zone.get("basis") or "").strip()
+    if len(basis) < 12:
+        return [f"iso_compare 的依据只写了 {len(basis)} 字 ⇒ 一个没有出处的阈值不该上屏"]
+
+    minutes = cmp_zone.get("minutes")
+    try:
+        level = float(minutes)
+    except (TypeError, ValueError):
+        return [f"iso_compare.minutes={minutes!r} 不是数"]
+    if not isfinite(level) or level <= 0:
+        return [f"iso_compare.minutes={minutes!r} ≤ 0 或非有限值 ⇒ 这不是一个可比的阈值"]
+
+    cal = lc.get("caliber") or {}
+    iso_minutes = [float(m) for m in (cal.get("iso_minutes") or [])]
+    if level in iso_minutes:
+        return [f"iso_compare.minutes={minutes} 与四档等值线重合 ⇒ 它是第五条线，不是口径对照"]
+    travel_mode = cal.get("travel_mode") or "walking"
+    declared = get_caliber(travel_mode).iso_compare_min
+    if declared is None:
+        return [f"{travel_mode} 档没有声明口径对比阈值，载荷却发了 iso_compare ⇒ 这条尺只属于步行档"]
+    if abs(level - float(declared)) > 1e-6:
+        return [f"iso_compare.minutes={minutes} 与当前口径表声明的 {declared} 不一致 "
+                "⇒ 环不是按这把尺切的（手改或从别处搬来）"]
+
+    coords = ((cmp_zone.get("geojson") or {}).get("coordinates") or [[]])[0]
+    if len(coords) < 4:
+        return [f"iso_compare 环只有 {len(coords)} 个点 ⇒ 连一条闭合边界都撑不起来"]
+    if coords[0] != coords[-1]:
+        return ["iso_compare 环未闭合（首尾不同点）⇒ 前端取 coordinates[0] 画多边形会开出缺口"]
+    area = cmp_zone.get("area_km2")
+    try:
+        av = float(area)
+    except (TypeError, ValueError):
+        return [f"iso_compare.area_km2={area!r} 不是数"]
+    if not isfinite(av) or av <= 0:
+        return [f"iso_compare.area_km2={area!r} ≤ 0 ⇒ 闭合环有面积才可比"]
+
+    zones = lc.get("isochrones") or []
+    below = [z for z in zones if float(z.get("minutes") or 0) < level and z.get("area_km2") is not None]
+    above = [z for z in zones if float(z.get("minutes") or 0) > level and z.get("area_km2") is not None]
+    if below:
+        lo = max(below, key=lambda z: float(z["minutes"]))
+        if av < float(lo["area_km2"]):
+            return [f"iso_compare 面积 {av} km² 小于 {lo['minutes']}min 档的 {lo['area_km2']} km² "
+                    "⇒ 阈值更大却圈更小，这条环不是同一份耗时场切出来的"]
+    if above:
+        hi = min(above, key=lambda z: float(z["minutes"]))
+        if av > float(hi["area_km2"]):
+            return [f"iso_compare 面积 {av} km² 大于 {hi['minutes']}min 档的 {hi['area_km2']} km² "
+                    "⇒ 阈值更小却圈更大，与同批四档不自洽"]
+    return []
+
+
 def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     """报告的**完整**几何契约体检 → :class:`GeometryIssues`。
 
@@ -801,6 +883,8 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     violations.extend(_reach_calibration_violations(lc))
     # B15 · 实测场的形态参数（幂次与近邻数）—— 也是只读 payload，必须在 center 早退之前
     violations.extend(_interpolation_form_violations(lc))
+    # B16 · 口径对比环（笔 B）—— 同样只读 payload；缺席即整套跳过，存量件零影响
+    violations.extend(_iso_compare_violations(lc))
 
     if center is None:
         # 中心点不可用 ⇒ 一切「距中心」判据都判不了（不判违规）

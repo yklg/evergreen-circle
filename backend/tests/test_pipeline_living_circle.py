@@ -424,6 +424,33 @@ def test_signed_report_carries_the_reuse_window(monkeypatch):
     assert hit["reuse_window"] == expect, "命中路径没带 ⇒ 屏上那句在最常见的情况下不出现"
 
 
+def test_signed_live_report_carries_the_compare_ring(monkeypatch):
+    """B 笔端到端：签发的 live 载荷里带着那条口径对比环，而**四档仍是四条**。
+
+    只测引擎不算数 —— 装配层与签发链都可能把键丢掉（`sampling` 那段就是被透传规则坑过的地方：
+    `assemble` 只带 `iso["sampling"]`，顶层字段无声消失）。这里跑真管线到落库，再读回载荷核：
+    ① 五半齐备且阈值等于口径表声明值；② `isochrones` 长度与分钟数一字不变（对照环混进去
+    就是把第五条线冒充成政策档，前端配色表与面积单调性都按四档钉）；③ B16 在这份真载荷上过。
+    """
+    from app.living_circle.caliber import get_caliber
+    from app.living_circle.report_contract import _iso_compare_violations
+
+    stub = PipelineStubBaidu(KAILI_CENTER)
+    _live_source(stub, monkeypatch)
+    params = _live_params(scene_name="凯里老街-对照环")
+
+    rid = _done_id(_run_pipeline(create_living_circle_task(params)))
+    fresh = db.get_living_circle_report(rid)["living_circle"]
+
+    assert [z["minutes"] for z in fresh["isochrones"]] == [5, 10, 15, 20], fresh["isochrones"]
+    cmp_zone = fresh.get("iso_compare")
+    assert cmp_zone, "管线跑完却没把对照环带进载荷 ⇒ 前端那颗勾选项永远是灰的"
+    assert set(cmp_zone) == {"minutes", "geojson", "area_km2", "basis", "claim"}
+    assert cmp_zone["minutes"] == get_caliber("walking").iso_compare_min
+    assert cmp_zone["claim"] == "caliber_comparison_only"
+    assert _iso_compare_violations(fresh) == []
+
+
 def test_fixture_mode_does_not_claim_a_reuse_window():
     """演示态**不发** `reuse_window`：那条链路里没有 `CachingDataSource`、没有任何复用可言。
 

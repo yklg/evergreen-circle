@@ -311,6 +311,71 @@ MUTATIONS: list[Mutation] = [
         new='DEADBEEF = ""        # 阴性对照键：任何真实接口都不该认识它',
         test="tests/test_probe_timeaxis_shape.py::test_negative_controls_are_declared_not_improvised",
     ),
+    # ── 笔 B｜口径对照环 7 条（`tests/test_iso_compare_ring.py`）──────────
+    # 其中第二条就是 10-06 当天的真实事故：`_apply_manifest_caliber` 逐字段手抄重建，
+    # 新字段 `iso_compare_min` 没进清单 ⇒ 步行档写了 8.0、`get_caliber` 拿回来是 None，
+    # 整条对照环静默不产出。改成 `dataclasses.replace` 之后，这条变异必须撞红哨兵往返判据。
+    Mutation(
+        label="口径表取消步行档的对照阈值 ⇒ 勾选项永远是灰的",
+        rel="app/living_circle/caliber.py",
+        old="        iso_compare_min=8.0,\n",
+        new="",
+        test="tests/test_iso_compare_ring.py::test_walking_field_produces_the_compare_ring_alongside_four_zones",
+    ),
+    Mutation(
+        label="manifest 重建退回逐字段手抄（今天的真实漏抄形状）",
+        rel="app/living_circle/caliber.py",
+        old="    return replace(caliber, api=api, measured=measured)",
+        new="    return ReachCaliber(travel_mode=caliber.travel_mode, speed_m_per_min=caliber.speed_m_per_min,\n"
+            "        detour_k=caliber.detour_k, study_radius_m=caliber.study_radius_m,\n"
+            "        iso_minutes=caliber.iso_minutes, reach_full_min=caliber.reach_full_min, api=api,\n"
+            "        basis=caliber.basis, measured=measured, blind_radius_m=caliber.blind_radius_m)",
+        test="tests/test_iso_compare_ring.py::test_manifest_application_touches_only_api_and_measured",
+    ),
+    Mutation(
+        label="引擎不发对照环（整位消失）",
+        rel="app/living_circle/isochrone.py",
+        old='        if iso_compare is not None:\n            out["iso_compare"] = iso_compare\n',
+        new="",
+        test="tests/test_iso_compare_ring.py::test_walking_field_produces_the_compare_ring_alongside_four_zones",
+    ),
+    Mutation(
+        label="把对照环并进四档 ⇒ 第五条线冒充政策档（配色表与面积单调性都会误读）",
+        rel="app/living_circle/isochrone.py",
+        old='        if iso_compare is not None:\n            out["iso_compare"] = iso_compare',
+        new='        if iso_compare is not None:\n'
+            '            zones.append({k: iso_compare[k] for k in ("minutes", "geojson", "area_km2")})\n'
+            '            out["iso_compare"] = iso_compare',
+        test="tests/test_iso_compare_ring.py::test_walking_field_produces_the_compare_ring_alongside_four_zones",
+    ),
+    Mutation(
+        label="引擎抄第二份阈值 ⇒ 骑行/驾车也跟着发（把步行文献贴到车速上）",
+        rel="app/living_circle/isochrone.py",
+        old="        compare_min = get_caliber(travel_mode).iso_compare_min",
+        new="        compare_min = 8.0",
+        test="tests/test_iso_compare_ring.py::test_non_walking_modes_declare_nothing_and_emit_nothing",
+    ),
+    Mutation(
+        label="B16 把「缺席」判成违规 ⇒ 离线件与所有存量报告一起从历史列表里消失",
+        rel="app/living_circle/report_contract.py",
+        old="    if cmp_zone is None:\n        return []",
+        new='    if cmp_zone is None:\n        return ["对照环缺席"]',
+        test="tests/test_iso_compare_ring.py::test_absent_compare_ring_is_legal",
+    ),
+    Mutation(
+        label="B16 不罚能力断言式 claim ⇒ 群体窗口被写成具体居民走不到",
+        rel="app/living_circle/report_contract.py",
+        old='    if cmp_zone.get("claim") != "caliber_comparison_only":',
+        new="    if False:",
+        test="tests/test_iso_compare_ring.py::test_capability_claim_is_rejected",
+    ),
+    Mutation(
+        label="离线链把对照环接回去 ⇒ 用估算场做的对照冒充实测读数",
+        rel="app/living_circle/data_source.py",
+        old='            "isochrones": iso["isochrones"],',
+        new='            "isochrones": iso["isochrones"],\n            "iso_compare": iso.get("iso_compare"),',
+        test="tests/test_iso_compare_ring.py::test_offline_report_carries_no_compare_ring",
+    ),
 ]
 
 

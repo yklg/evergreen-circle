@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 # ── 第三把口径版本键：可达口径 `rc-*`（笔 3-B）─────────────────────────────────
@@ -68,6 +68,15 @@ class ReachCaliber:
     # ⚠️ 三个档位今天**同值**，这是现状不是巧合的省略：判盲半径分档属于阶段 3-5 的政策决定，
     # 本片只把住所搬对、不改任何一格的结论（验收线 = 默认路径逐字节不变）。
     blind_radius_m: float = 1000.0
+    # 口径对比档（笔 B）：把**同一份实测耗时场**按文献里的另一个阈值再多切一条等值线，
+    # 用来让"满分线 20min、四档 5/10/15/20"这把**我们选的**尺与文献那把尺并排看得见。
+    # ⚠️ 它不是"第五档等值线"：四档 `iso_minutes` 与 `isochrones` 的长度是硬契约（配色表、
+    #    面积单调性、前端图例都按四档钉），这条环单独发在 `living_circle.iso_compare` 里。
+    #    它也只作**口径对比**，不作任何人群能力断言 —— 文献量的是群体有效窗口，
+    #    不是某个具体居民能走多远。
+    # 只有步行档给值：8min 出自「基准 80 m/min 是健康成年人、高龄有效步行窗口可能仅 5–8min」
+    # 的文献，同一个数换到骑行/驾车档量的是完全不同的东西 ⇒ 那两档 `None` ⇒ 不发环、不渲染。
+    iso_compare_min: Optional[float] = None
 
     @property
     def innermost_radius_m(self) -> float:
@@ -110,6 +119,17 @@ class ReachCaliber:
 
 # ── 默认口径表（步行有政策依据，骑行/驾车为近似口径，待探针验证）───────────
 
+# 口径对比环的依据原文（笔 B）。措辞是**纪律的一部分**，不是装饰：
+# ① 主语必须是"口径/阈值"，不能是"老年人能走多远"——文献量的是群体有效窗口，
+#    把它写成对具体社区/具体居民的能力断言，就违反了"无证据不立论"；
+# ② 必须写出"同一份实测耗时场按该阈值重切"，让读者知道这不是第二次测量、也没有第二次测量；
+# ③ 标明出处与取区间保守侧（5–8min ⇒ 取 8min）这一选择本身。
+ISO_COMPARE_BASIS = (
+    "口径对照（非第五档）：文献指出 80 m/min 的基准步速是健康成年人，高龄有效步行窗口"
+    "可能仅 5–8min ⇒ 此处取区间保守侧 8min，把**同一份实测耗时场**重切一条等值线。"
+    "它是两把尺的对比，不构成对任何具体个体步行能力的判断。"
+)
+
 DEFAULT_CALIBERS: Dict[str, ReachCaliber] = {
     "walking": ReachCaliber(
         travel_mode="walking",
@@ -118,6 +138,8 @@ DEFAULT_CALIBERS: Dict[str, ReachCaliber] = {
         study_radius_m=2500,
         iso_minutes=(5, 10, 15, 20),
         reach_full_min=20.0,
+        # 口径对比档：只有步行给值（依据与措辞纪律见 `ISO_COMPARE_BASIS`）。骑行/驾车留 None。
+        iso_compare_min=8.0,
         basis="商务部 2021《城市一刻钟便民生活圈建设意见》「步行约15分钟的服务半径」；"
               "《城市规划》2022.5 实测步行 15min ≈ 0.8–1.2km",
         measured=True,
@@ -199,21 +221,16 @@ def _apply_manifest_caliber(caliber: ReachCaliber, manifest: Dict[str, Any]) -> 
     
     # 返回更新后的 caliber（measured 标记为 True 若有实测数据）
     measured = cap.get("measured", caliber.measured)
-    return ReachCaliber(
-        travel_mode=caliber.travel_mode,
-        speed_m_per_min=caliber.speed_m_per_min,
-        detour_k=caliber.detour_k,
-        study_radius_m=caliber.study_radius_m,
-        iso_minutes=caliber.iso_minutes,
-        reach_full_min=caliber.reach_full_min,
-        api=api,
-        basis=caliber.basis,
-        measured=measured,
-        # ⚠️ 这个重建是**逐字段手抄**的：漏一行不会报错，只会把该字段打回 dataclass 默认值
-        # （`blind_radius_m` 漏抄 ⇒ 分档静默失效，且默认值恰好等于原值 ⇒ 无人能发现）。
-        # `test_manifest_rebuild_preserves_blind_radius` 钉的就是这一行。
-        blind_radius_m=caliber.blind_radius_m,
-    )
+    # **只覆盖这两个字段，其余一律原样带走** —— 这里曾是逐字段手抄的 `ReachCaliber(...)`
+    # 重建清单，漏抄一行不会报错、只会把那个字段悄悄打回 dataclass 默认值：
+    # `blind_radius_m` 当年就是这么漏的（默认值恰好等于原值 ⇒ 无人发现），而 10-06 加
+    # `iso_compare_min` 时**又漏了一次**（步行档明明写了 8.0，`get_caliber` 拿回来却是 None）。
+    # 两次同形 ⇒ 这是结构问题，不是手抖：清单的正确长度永远是"全部字段"，而人只记得住改过的
+    # 那两个。`dataclasses.replace` 让"新增字段自动带走"成为机制而非纪律。
+    # 判据：`tests/test_interpolation_form` 同批新增的 `test_get_caliber_keeps_every_field`
+    # 逐字段对比 `DEFAULT_CALIBERS` 与 `get_caliber` 的读数（覆盖路径非空时才有意义，
+    # 而装了 manifest 的仓里它总是非空）。
+    return replace(caliber, api=api, measured=measured)
 
 
 # 加载 manifest 并应用实测值

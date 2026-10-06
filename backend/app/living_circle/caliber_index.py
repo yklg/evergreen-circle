@@ -302,6 +302,11 @@ def _populate_index() -> None:
         # （这里是两个平铺标量，不是嵌套块 —— 与 `forensic` / `detour` 的情况相反）。
         ("interpolation_power", "插值幂次（IDW 的 p）", "living_circle.sampling.interpolation_power"),
         ("interpolation_neighbors", "插值近邻数（IDW 的 k）", "living_circle.sampling.interpolation_neighbors"),
+        # 口径对比环（笔 B）。登记的必须是**块本身**：它是一次原子发布（阈值＋几何＋面积＋
+        # 依据＋断言边界），浅一层到 `iso_compare.minutes` 会让"ref 指向的键真在产出对象里"
+        # 那条核对恒绿（与 `forensic` / `cells_ledger` / `detour` 同一条纪律）。
+        # 它不是第五档等值线 ⇒ 故意不并进 `isochrones` 那族，也不进四档配色与面积单调性判据。
+        ("iso_compare", "口径对比环（文献阈值重切，非能力断言）", "living_circle.iso_compare"),
         ("confidence", "评分置信度", "living_circle.scores.confidence"),
         ("evidence", "盲区扣分证据链", "living_circle.scores.evidence"),
     ):

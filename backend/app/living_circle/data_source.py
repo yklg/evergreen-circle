@@ -318,6 +318,10 @@ class OfflineDataSource(DataSource):
             "data_origin": "offline",
             "caliber": caliber_report,
             "isochrones": iso["isochrones"],
+            # ⚠️ **这里刻意不接 `iso_compare`**（笔 B）：引擎在离线上也会切出那条 8min 对照环，
+            # 但离线那个场是恒等式（`直线 × detour_k ÷ 速度`）算出来的 —— 拿它再切一刀只是
+            # "用估算做估算的对照"，屏幕上有它就会出现"按文献阈值实测对照出 1.3 km²"这种话。
+            # 与上面摘 `detour` 是同一条纪律：估算件不自称测量，缺席就是诚实，不是功能缺失。
             # 摘掉 `detour`（理由见上面剥离它那段）：离线没有实测标定可声明，键与键集必须同批缺席。
             "sampling": sampling,
             "poi": {"categories": [], "total": 0, "in_circle": 0, "points": []},

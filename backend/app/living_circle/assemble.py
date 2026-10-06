@@ -375,6 +375,11 @@ def assemble_living_circle(
     }
     if partial is not None:
         out["partial"] = partial
+    # 口径对比环（笔 B）：引擎切得出来才透传，切不出就整位缺席 —— 不在这里补一个 null，
+    # 也不在这里重新计算（几何的唯一出处是 `IsochroneEngine._ring_zone_at`，装配层再算一遍
+    # 就是第二处实现，两条环的连通域判据迟早分叉）。
+    if iso.get("iso_compare"):
+        out["iso_compare"] = iso["iso_compare"]
     return out
 
 
