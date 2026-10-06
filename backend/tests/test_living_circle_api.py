@@ -440,7 +440,51 @@ def test_caliber_gap_blocks_only_the_verdict_rows():
                 "两份出厂快照已同代际，守卫必须随之收起 —— 否则演示态永远显示不可比")
 
 
-def test_caliber_gap_literals_match_contract_fixture():
+def test_rc_axis_is_aligned_on_shipped_pair_and_blocks_no_row():
+    """第三根轴在**真数据对**上的两半：出厂两份快照都带 `rc-1` ⇒ 不许误亮；抹掉一边 ⇒ 横幅该亮，
+    但差异表里**任何一行都不许被它拦住**（`reach_applies_to == []` 这条决定的真链路版）。
+
+    为什么还要再拿真夹具跑一遍：前面那些判定用例都在合成载荷上验"逻辑存在"，而
+    「我们自己的演示数据其实合规」只能由真夹具证 —— 这里两半都必要：
+      · 同版本 ⇒ 不许亮。若亮了，演示对比页会永远挂着一句与本笔无关的"口径已升级"；
+      · 造出差值 ⇒ 必须亮在横幅上。若不亮，守卫就是只在合成输入上生效的空壳。
+    第二半同时验反面：横幅说得出 rc，行级却一律拦不住 —— 这正是 #83 那条"并集不是每行吃满"
+    在第三根轴上的延续（rc-1 一个读数都没改，拦任何一行都是替它撒谎）。
+    """
+    import copy
+
+    from app.living_circle.caliber import REACH_CALIBER_VERSION
+    from app.main import _differing_axes, _gap_desc, _lc_diff
+
+    gap = CONTRACT["caliber_incomparable"]
+    a, b = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
+    rc = REACH_CALIBER_VERSION
+    assert a["caliber"]["reach_caliber_version"] == b["caliber"]["reach_caliber_version"] == rc, (
+        "前提变了：出厂两份快照的可达口径不再同代际，本用例的两半要一起重指")
+
+    def by_metric(rows):
+        return {r["metric"]: r for r in rows}
+
+    # ⚠️ 出厂两份在**判盲轴**上本来就不同代际（kaili 没这把键、jinsong 是 ev-1）—— 这是实测到的
+    # 事实，不是本用例造的。所以要先把 `ev` 与 `cov` 抹平，让 rc 成为唯一变量，否则"只有 rc 不同"
+    # 这个前提根本不成立。手法与 `test_coverage_gap_blocks_only_the_verdict_rows` 同一条：
+    # 拿"抹平另两根轴后的同一对样本"当参照。
+    for side in (a, b):
+        side["caliber"]["scope_policy_version"] = "ev-x"
+        side["caliber"]["coverage_caliber_version"] = "cov-x"
+
+    for metric, row in by_metric(_lc_diff(a, b)).items():
+        assert "可达口径" not in row["desc"], f"{metric} 被 rc 误拦（真数据对上根本不同版本都没成立）"
+
+    b2 = copy.deepcopy(b)
+    b2["caliber"]["reach_caliber_version"] = "rc-0"
+    assert _differing_axes(a, b2) == ("rc",), "轴对照只该发现 rc 这一根"
+    rows2 = by_metric(_lc_diff(a, b2))
+    for metric, row in rows2.items():
+        assert "可达口径" not in row["desc"], (
+            f"{metric} 被 rc 拦下 ⇒ 空集作用面失效，rc-1 在替一把没改读数的尺撒谎")
+    # 而**横幅**那一句必须说得出 rc（后端没有横幅出口，直接验组合式本身）
+    assert _gap_desc(_differing_axes(a, b2)) == gap["reach_desc"]
     """P0-3 的字面量单一真源是契约夹具：后端常量 + 判盲口径版本必须与它逐字相同。
 
     `policy_version_current` 与前端 `SCOPE_POLICY_VERSION` 各自钉向同一份夹具 ⇒ 换版本

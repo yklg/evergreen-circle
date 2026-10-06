@@ -56,7 +56,8 @@
     "cells_unknown": 78,
     "cells_blind": 0,
     "sample_profile": "standard",
-    "coverage_caliber_version": "cov-1"
+    "coverage_caliber_version": "cov-1",
+    "reach_caliber_version": "rc-1"
   },
   "isochrones": [
     {
@@ -9758,7 +9759,26 @@
     "interpolation": "idw",
     "is_scattered": true,
     "timed_count": 1049,
-    "in_reach_count": 162
+    "in_reach_count": 162,
+    "detour": {
+      "declared_detour_k": 1.3,
+      "detour_factor_measured": 1.529,
+      "implied_detour_p10": 1.343,
+      "implied_detour_p90": 1.75,
+      "points_used": 1047,
+      "excluded": {
+        "near_center": 1,
+        "untimed": 0,
+        "non_positive": 1
+      },
+      "residual_min": {
+        "p50": 0.0,
+        "p90": 3.9,
+        "p95": 5.4,
+        "max": 23.1,
+        "min": -9.4
+      }
+    }
   },
   "poi": {
     "categories": [

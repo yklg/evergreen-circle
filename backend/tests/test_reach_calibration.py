@@ -272,16 +272,35 @@ def test_b14_half_published_values_are_violations():
     assert _reach_calibration_violations(_lc_with(good)) == [], "正对照必须真能过（否则上面三条恒红）"
 
 
-@pytest.mark.parametrize("file", sorted(p.name for p in FIXTURES.glob("*.json")))
-def test_b14_is_silent_for_reports_that_never_declared_rc(file: str):
-    """**存量零影响**：没声明 `rc` 的旧件整套跳过。
+def test_b14_skips_reports_that_never_declared_rc():
+    """没声明 `rc` 的载荷 ⇒ 整套跳过 —— 用**合成件**验，不拿真夹具当样本（夹具已被烘进键）。
 
-    这条是"加一根轴不重烘历史"的落点。若反过来（缺键即违规），27 份存量报告会在页面上
-    集体挂红字，把"这次没做过标定"说成"这份报告坏了"—— 本仓为这个形态立过两次规矩。
+    这条的存在保证"加一根轴不重烘历史"仍然成立：读侧对没有这把键的载荷不加任何违规，
+    否则 27 份存量会在页面上集体挂红字，把"这次没做过标定"说成"这份报告坏了"。
+    """
+    legacy = _lc_with(_OMIT, declare=False)
+    assert _reach_calibration_violations(legacy) == []
+    # 只缺半边的合成件也不能被跳过（那不是"旧件"，是"新件发坏了"）
+    assert _reach_calibration_violations(_lc_with(_OMIT)) != []
+
+
+@pytest.mark.parametrize("file", sorted(p.name for p in FIXTURES.glob("*.json")))
+def test_shipped_fixtures_carry_both_halves(file: str):
+    """三份出厂夹具（`bcefdda` 之后）必须**两半同批**：声明 `rc-1` 且带 `sampling.detour`。
+
+    烘法见 `scripts/backfill_fixture_detour.py`：标定值由生产函数从各份夹具自己的点集现算
+    （零外呼），逐字段证明改动面恰好等于 `{caliber.reach_caliber_version, sampling.detour}`。
+    这条同时是**正对照**：如果哪天有人只摘块、留键（或反之），B14 必须在这里咬住 ——
+    合成件那两条只验"判定逻辑存在"，真夹具这条验"我们自己的出厂数据真合规"。
     """
     lc = json.loads((FIXTURES / file).read_text(encoding="utf-8"))
-    assert "reach_caliber_version" not in (lc.get("caliber") or {}), (
-        f"{file} 已被烘进 rc 键 ⇒ 本条的前提变了，期望值要一起重指")
+    cal = lc.get("caliber") or {}
+    det = (lc.get("sampling") or {}).get("detour")
+    assert cal.get("reach_caliber_version") == caliber_mod.REACH_CALIBER_VERSION, file
+    assert isinstance(det, dict), f"{file}: 声明了 rc 却没有标定块 ⇒ B14 该判违规"
+    assert det["detour_factor_measured"] and det["points_used"] > 0, det
+    # 标定是从这份夹具自己的点集算的：分母要能与点数对上账
+    assert det["points_used"] + sum(det["excluded"].values()) == len(lc["sampling"]["points"])
     assert _reach_calibration_violations(lc) == []
 
 
