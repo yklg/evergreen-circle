@@ -9,6 +9,27 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+# ── 第三把口径版本键：可达口径 `rc-*`（笔 3-B）─────────────────────────────────
+#
+# 三把键各管一根轴，谁也不许替谁说话（前两根的来历见 `scope.SCOPE_POLICY_VERSION`
+# 与 `category_rule.COVERAGE_CALIBER_VERSION`）：
+#   `ev-*`   判盲口径 —— 证据域 / 判定半径 / 逐格台账怎么算（改它 ⇒ 盲区数与清单变）
+#   `cov-*`  评分口径 —— 覆盖度的分子是"点数"还是"门槛项"（改它 ⇒ 覆盖维与总分变）
+#   `rc-*`   可达口径 —— 实测耗时场**怎么被解释**：本次标定出的常态绕行系数与残差耗时
+#
+# 为什么第三根独立成键而不并进 `ev-*`：残差耗时回答的是"同一份实测场里，哪儿比同城常态
+# 更难达"，它既不改判定域也不改分子，只改耗时场派生出的解释。并进任何一根，版本记录就又
+# 在撒谎 —— `cov-1` 那次正是因为评分口径借了判盲的键表达，两份分母不同的报告被当成可比。
+#
+# `rc-1` = 在 `sampling` 段内发射 `detour`（唯一生产者 `isochrone.detour_residual`：
+# 声明值 vs 本次实测中位数、隐含系数 p10/p90、入样点数与三类剔除计数、残差分钟分位）。
+# ⚠️ 版本号与键集是**同一次发布的两半**：声明 `rc-1` 却没有 `sampling.detour` ⇒ 读侧契约
+#    （`report_contract`）直接报错，半吊子发布不许过。
+# ⚠️ 本版本**还不碰分数**（`scoring.reach_dim` 仍只按实测分钟算）⇒ 存量报告重算只补键、
+#    不改读数。分数换代是下一档（届时 `rc-2`：措辞表加一行 + 复用门加一行 + 夹具两项，
+#    组合式措辞自 3-前置 起已把加轴的成本压到这里）。
+REACH_CALIBER_VERSION = "rc-1"
+
 
 @dataclass(frozen=True)
 class ApiCapability:

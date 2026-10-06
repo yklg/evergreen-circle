@@ -23,7 +23,11 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, TypedDict
 
 from app.core import db
 from app.core.config import get_settings
-from app.living_circle.caliber import caliber_payload_key
+from app.living_circle.caliber import (
+    REACH_CALIBER_VERSION,
+    caliber_payload_key,
+    get_caliber,
+)
 from app.living_circle.data_source import (
     CheckParams,
     live_forensic_steps,
@@ -37,7 +41,7 @@ from app.living_circle.data_source import (
 )
 from app.living_circle.degrade_policy import detail_label
 from app.living_circle.geo_utils import haversine_m
-from app.living_circle.isochrone import REACH_FULL_MIN, IsochroneEngine, reach_flags
+from app.living_circle.isochrone import REACH_FULL_MIN, IsochroneEngine, detour_residual, reach_flags
 from app.living_circle.report_contract import assess_geometry
 
 from .diagnosis_templates import assemble_report
@@ -473,6 +477,27 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         fx_flags = reach_flags(fx_points)  # 与 live 分支同一实现
         fx_sampling["timed_count"] = fx_flags.timed_count
         fx_sampling["in_reach_count"] = fx_flags.in_reach_count
+        # 残差耗时 / 常态绕行标定**同样按点重算后覆盖**（与上面两个汇总数同一条纪律）：
+        # 夹具里存着的那一份是烘快照那次量的，直接读它等于把「当时的解释」当
+        # 「本次的解释」报给读者 —— 而 `rc-*` 这把版本键要的恰恰是后者。
+        # ⚠️ **只对实测场做**（`interpolation == 'idw'`）：`circular_approx` 那份是距离模型的
+        # 恒等式，标定会得到 k≡声明值、残差处处 0（`data_source.OfflineDataSource` 那段注释）。
+        # 那种块发出去就是替一次没发生的测量举证，所以既不重算、也不声明这把版本键。
+        if fx_sampling.get("interpolation") == "idw":
+            _fx_mode = (report_data.get("caliber") or {}).get("travel_mode") or check.travel_mode
+            _fx_cal = get_caliber(_fx_mode)
+            fx_sampling["detour"] = detour_residual(
+                tuple(report_data["scene"]["center"]),
+                [(p["lng"], p["lat"]) for p in fx_points],
+                [p.get("minutes") for p in fx_points],
+                speed_m_per_min=_fx_cal.speed_m_per_min,
+                declared_k=_fx_cal.detour_k,
+            )
+            # 键与键集同批发布：既然这次现算出了 `sampling.detour`，就**必须**声明这把版本。
+            # 但只在口径块本来就存在时声明 —— 整块缺失的载荷（B0 要抓的那种）不该由这里
+            # 凭空造一个 `caliber` 出来替它举证，那会把"没声明口径"洗成"声明了 rc-1"。
+            if isinstance(report_data.get("caliber"), dict):
+                report_data["caliber"]["reach_caliber_version"] = REACH_CALIBER_VERSION
         report_data["sampling"] = fx_sampling
         iso = {"isochrones": report_data["isochrones"], "sampling": fx_sampling,
                "sample_count": len(fx_points)}

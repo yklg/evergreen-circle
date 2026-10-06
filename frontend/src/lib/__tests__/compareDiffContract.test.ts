@@ -26,6 +26,7 @@ import {
   COVERAGE_CALIBER_VERSION,
   COVERAGE_GAP_DESC,
   COVERAGE_GAP_ROW_KEYS,
+  REACH_GAP_ROW_KEYS,
   caliberGapDesc,
   caliberPolicyGap,
   compareCaliberNotice,
@@ -75,9 +76,18 @@ interface Contract {
     coverage_stale_notice: string
     // #83：评分轴的**行级**作用面（`applies_to` 是并集，不是"每行都吃满两根轴"）
     coverage_applies_to: string[]
-    // 措辞改为按轴子句组合后新增的两格：**有序**轴清单 + 轴→复用门版本字段映射。
+    // 第三根轴（笔 3-B `rc-1`）：可达口径。⚠️ 这里**刻意没有** `reach_stale_notice` ——
+    // rc-1 不改任何读数，挂那句「建议重新体检」就是空承诺；它被消费的两处是对比页横幅
+    // （`gapDescFor` 拼得出 `reach_desc`/`all_desc`）与残差句的 presence 判据。
+    reach_version_current: string
+    reach_desc: string
+    /** 三根轴全不同那一句（组合式的存在证明：2 轴时它等于 `both_desc`，3 轴起不等于） */
+    all_desc: string
+    /** rc 的行级作用面 —— 今天必须是**空数组**，这条空集本身就是判据 */
+    reach_applies_to: string[]
+    // 措辞改为按轴子句组合后新增的两格：**有序**轴清单 + 轴→版本字段映射。
     // 后端 `test_caliber_axes_are_registered_everywhere_they_must_be` 与这里各比对一次，
-    // 钉的是"加一根轴必须同时登记三处"（措辞表 / 复用门 / 夹具）。
+    // 钉的是"加一根轴必须同时登记四处"（措辞表 / 版本字段 / 归边决定 / 前端表）。
     axes: CaliberAxis[]
     axis_fields: Record<CaliberAxis, string>
   }
@@ -264,6 +274,12 @@ describe('P0-3 · 判盲口径版本守卫', () => {
     expect(COVERAGE_GAP_ROW_KEYS, '盲区数只由判盲那把尺决定，评分轴拦不到它').not.toContain(
       '服务盲区',
     )
+    // 第三根轴（笔 3-B）：作用面必须是**空集**，且与后端 `_REACH_GAP_ROWS` 各钉一次夹具。
+    // 空集不是"没测到"——它记的是「rc-1 不改任何一行的读数」这件事，将来残差进评分时必须
+    // 与 `GATED_CALIBER_VERSIONS` 同批改掉，两端不同步就在这里红。
+    expect([...REACH_GAP_ROW_KEYS]).toEqual(GAP.reach_applies_to)
+    expect(GAP.reach_applies_to).toEqual([])
+    expect(REACH_GAP_ROW_KEYS).not.toContain('综合评分')
     for (const key of COVERAGE_GAP_ROW_KEYS) {
       expect(CALIBER_GAP_ROW_KEYS, `${key} 不在并集里 ⇒ 并集在说谎`).toContain(key)
     }
@@ -396,16 +412,22 @@ describe('第二根轴 · 评分口径版本守卫', () => {
     expect(CALIBER_AXES.map((s) => s.axis)).toEqual(GAP.axes)
     expect(Object.keys(GAP.axis_fields).sort()).toEqual([...GAP.axes].sort())
 
-    // ② 单轴结论句 ＝ 前缀 + 该轴子句，逐字；多轴句必须含全部子句
+    // ② 单轴结论句 ＝ 前缀 + 该轴子句，逐字；**全轴句**（`all_desc`）必须含全部子句。
+    //    原来这里循环比的是 `both_desc` —— 那在两根轴时恰好等于"全轴句"，第三根轴进来后
+    //    它只是 ev+cov 那一档的子集，拿它当"含全部子句"的参照会把 rc 子句判成缺失。
     for (const { axis, clause } of CALIBER_AXES) {
       expect(gapDescFor([axis])).toBe(`不可比 · ${clause}`)
-      expect(GAP.both_desc).toContain(clause)
+      expect(GAP.all_desc).toContain(clause)
     }
+    // 两轴那一档仍然只在两根里拼，不许把第三根渗进来
+    expect(GAP.both_desc).toContain(GAP.desc.replace('不可比 · ', ''))
+    expect(GAP.both_desc).not.toContain('可达口径')
     // ③ 零根轴不同 ⇒ null，不许拼出一句「不可比 · 」的空话
     expect(gapDescFor([])).toBeNull()
     // ④ 词序由表归一：调用方传反序也必须得同一句（否则两个页面会拼出两种词）
     expect(gapDescFor(['cov', 'ev'])).toBe(gapDescFor(['ev', 'cov']))
     expect(gapDescFor(['cov', 'ev'])).toBe(BOTH_GAP_DESC)
+    expect(gapDescFor(['rc', 'cov', 'ev'])).toBe(GAP.all_desc)
   })
 
   it('只有评分轴不同（判盲轴两边相同）⇒ 只拦评分轴管得着的行，盲区行照常', () => {

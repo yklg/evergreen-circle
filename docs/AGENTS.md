@@ -208,6 +208,22 @@ credibility(0-100) · collected_by · brand · domain · freshness_days
 实测参考量：15min 圈等面积半径 ≈705m（凯里）/748m（劲松），20min ≈934m/1023m，而判盲半径
 1000m —— 也就是说 **1km 那把尺约等于 20min 可达尺，不等于 15min**。
 
+**派生出来的第三把：残差耗时（受阻代理）** —— 它不是新的原始测量，而是把可达尺那个标量拆开：
+`残差 = 实测分钟 −（直线米数 × 本次标定的常态绕行系数 ÷ 声明速度）`。
+
+| 项 | 值 |
+|---|---|
+| 唯一生产者 | `isochrone.detour_residual`（零外呼，只吃已落库的采样点） |
+| 落库位置 | `sampling.detour`（标定系数 / 隐含系数 p10-p90 / 入样点数 / 三类剔除计数 / 残差分钟分位） |
+| 口径版本键 | `caliber.reach_caliber_version`（`rc-*`，定义在 `caliber.REACH_CALIBER_VERSION`） |
+| 唯一上屏出口 | 前端 `lib/livingCircle.residualCaliberNote`（缺键或无样本 ⇒ `null`，整块不出现） |
+
+三条纪律：**① 只按分钟呈现，不许换算成百分比**（那会把一次减法重新写成除法，也让"远"和"堵"
+重新粘在一起）；**② 是代理量，不指认因果**——河道、铁路、封闭街区与单次测时噪声在这份数据里
+不可区分，对外一律写「残差耗时 / 受阻代理」，不宣称微观可达性精度；**③ 剔除的点要计数上屏**
+（中心点、未测时、零耗时三类），不许静默丢。实测标定值：凯里 1.620、劲松 1.529，而口径表声明
+的是 1.3、文献 +14%≈1.14 —— 三者并列披露，不挑一个当唯一真值。
+
 ### 7.2 `covered` 一词三义（**按名字搜会全错，必须按字段路径认**）
 
 | 出现处 | 字段 | 真语义 | 属于哪把尺 |
@@ -230,6 +246,9 @@ credibility(0-100) · collected_by · brand · domain · freshness_days
 - 前端 `lib/livingCircle.ts`：`triadState` / `triadChipText` / `triadChipTone` /
   `TRIAD_CHIP_CLASS`（chip 的配色也只许这一份，三个渲染面共用）/
   `triadTakeawayText` / `triadClaimText` / `triadOverviewText` / `triadSchoolParaText`
+- 残差耗时那句（第三把派生尺）：前端 `lib/livingCircle.ts` 的 `residualCaliberNote` 一颗，
+  两处渲染面（体检台右栏、报告体检单）都调它；它**不在**后端正文模板里另写一份 —— 判读辅助句
+  归前端这一条与 `judgeRulerLabel`（判定尺那句）同例。
 
 五态：`reachable` / `blocked`（1km 内有但步行到不了）/ `absent` / `unknown` / `missing`。
 **`unknown` 是一等状态，不许塌成 `false`** —— 旧快照没有 `within_blind_radius` 这一格时读作

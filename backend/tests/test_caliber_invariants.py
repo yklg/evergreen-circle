@@ -188,6 +188,11 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         # 放进来的效果：拿 `s.payload(...)` 这份**生产产出**去验 `coverage_caliber_version` 确实在里面
         # —— 删掉 `scope.py` 那行发射会当场红，而不是"2296 条全绿、每份新报告被自家门拒"。
         "report::coverage_caliber_version",
+        # 第三根轴（笔 3-B `rc-1`）：与上面那把一样是**发射在 caliber 里**的版本声明，
+        # 所以进这份按 caliber 产出核对的白名单；它的**读数块** `sampling.detour` 不在这儿
+        # （发在 sampling 段，核对走真生产者 ⇒ 见 `tests/test_reach_calibration.py`）。
+        # 删掉 `scope.py` 那行发射 ⇒ 本条当场红，而不是"全绿但每份新报告没人能引用这个口径"。
+        "report::reach_caliber_version",
         "report::confidence", "report::evidence",
         # 片 4：取证回合账目。放进这份名单才有意义 —— 名册登记与产出核对是两条腿，
         # 少前者是"引用不到"，少后者是"登记了个不存在的键"。

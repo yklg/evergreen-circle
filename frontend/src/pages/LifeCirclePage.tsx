@@ -69,6 +69,7 @@ import {
   cellsLedgerOf,
   cellVerdict,
   judgeRulerLabel,
+  residualCaliberNote,
   TRIAD_CHIP_CLASS,
   triadChipText,
   triadChipTone,
@@ -1008,6 +1009,11 @@ export default function LifeCirclePage() {
             {staleCaliberNotices(report).map((n) => (
               <p key={n} className="mt-1 text-tag font-medium text-warn">{n}</p>
             ))}
+            {/* `rc-1` 的残差耗时那句（受阻代理）。**中性色、不挂"建议重新体检"**：它不像上面
+                那两句意味着"重跑会更准"，只是这份报告量到了什么解释；缺键时整块不出现。 */}
+            {residualCaliberNote(report) && (
+              <p className="mt-1 text-tag text-ink-3">{residualCaliberNote(report)}</p>
+            )}
             
             {/* R2/R6：口径举证对象 */}
             {report.caliber && (

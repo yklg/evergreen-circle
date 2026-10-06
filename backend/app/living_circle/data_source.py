@@ -271,6 +271,17 @@ class OfflineDataSource(DataSource):
             center, meter_fn, study_radius_m=params.study_radius_m,
             mode=params.sample_profile, travel_mode=params.travel_mode,
         )
+        # ⚠️ 引擎顺手算出的那份**常态绕行标定 / 残差耗时**（`sampling.detour`）在这里必须摘掉。
+        # 离线链的 `meter_fn` 是距离模型的恒等式（`直线 × detour_k ÷ 速度`），拿它去标定会得到
+        # `detour_factor_measured ≡ caliber.detour_k`、残差处处 0 —— 那是**代数量自己和自己相等**，
+        # 不是一次测量。留着它，屏幕上就会出现「按本次实测标定的常态绕行 1.3×…最堵的一档 0min」
+        # 这种替一次没发生的测量举证的话（`interpolation` 改成 `circular_approx` 是同一条纪律）。
+        # 下面那份 caliber 也不声明 `reach_caliber_version`：没有键集就不发版本号，
+        # 读侧契约 B14 才不会把离线件判成"声明了却缺键"。
+        sampling = {
+            k: v for k, v in iso["sampling"].items() if k != "detour"
+        }
+        sampling.update({"interpolation": "circular_approx", "is_scattered": False})
 
         # R2/R6：离线报告也增 caliber 举证对象
         caliber_report = {
@@ -297,7 +308,8 @@ class OfflineDataSource(DataSource):
             "data_origin": "offline",
             "caliber": caliber_report,
             "isochrones": iso["isochrones"],
-            "sampling": {**iso["sampling"], "interpolation": "circular_approx", "is_scattered": False},
+            # 摘掉 `detour`（理由见上面剥离它那段）：离线没有实测标定可声明，键与键集必须同批缺席。
+            "sampling": sampling,
             "poi": {"categories": [], "total": 0, "in_circle": 0, "points": []},
             "blindspots": [],
             "scores": {

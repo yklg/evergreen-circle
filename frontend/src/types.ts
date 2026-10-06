@@ -1175,6 +1175,10 @@ export interface LivingCircleReport {
      *  缺 ⇒ 这份产物的分数是**点数口径**算的；读侧只能按旧定义解释覆盖度，
      *  不得挂"门槛项"那句新文案（后端 `reuse_policy` 的「评分口径」那一拦用的就是这把键）。 */
     coverage_caliber_version?: string
+    /** **第三根轴**：可达口径版本号（当前 `rc-1` = `sampling.detour` 那段实测标定与残差解释）。
+     *  它管的是「同一份实测耗时场被怎么解释」，既不改证据域也不改分子 ⇒ 三把键各自独立，
+     *  谁也不许替谁说话。缺 ⇒ 这份快照从来没做过标定（屏幕上不该出现残差那句）。 */
+    reach_caliber_version?: string
     /** 采集证据余量 = 判定半径（由「判盲需要 1km 完整证据」导出，不是可填的名义值） */
     evidence_margin_m?: number
     /** **实测**证据边界（登记类逐类边界的最小值）；null ⇒ 本次没绑定实测证据 */
@@ -1254,6 +1258,26 @@ export interface LivingCircleReport {
       sample_step_m?: number
       degraded?: boolean
     }
+    /**
+     * 常态绕行标定与**残差耗时**（`rc-1` 的那段解释；后端唯一生产者 `isochrone.detour_residual`）。
+     *
+     * 语义要点（写文案前先看这三条）：
+     *  · `residual_min` 是**分钟**，正数＝比本次标定出的同城常态多花几分钟。**不许**换算成
+     *    百分比 —— 那会把一次减法重新变成除法，也会把"没量到"和"量到 0"混成一个数。
+     *  · 它是**代理量**：河道、铁路、封闭街区与单次测时噪声在数据里不可区分，所以对外只说
+     *    「残差耗时 / 受阻代理」，不宣称因果，也不宣称微观可达性精度。
+     *  · `detour_factor_measured === null` 且 `residual_min === null` ⇒ 本次**没有可用样本**
+     *    （全是未测时点或只剩中心点）。缺这个键同样按"没有"处理，不得回落成 0。
+     */
+    detour?: {
+      declared_detour_k: number
+      detour_factor_measured: number | null
+      implied_detour_p10?: number | null
+      implied_detour_p90?: number | null
+      points_used: number
+      excluded: { near_center: number; untimed: number; non_positive: number }
+      residual_min: { p50: number; p90: number; p95: number; max: number; min: number } | null
+    } | null
   }
   poi: {
     categories: FacilityCategoryStat[]

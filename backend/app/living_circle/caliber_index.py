@@ -281,6 +281,18 @@ def _populate_index() -> None:
         # 「证据域/判盲怎么算」，这把管「同样的点位算出什么分」。不登记 ⇒ 专家口径引用不到、
         # prose 里提到就撞词表闸，而载荷每天都在发射它（`scope.py` 唯一写点）。
         ("coverage_caliber_version", "评分口径版本声明", "living_circle.caliber.coverage_caliber_version"),
+        # **第三根轴的登记**（笔 3-B）。它管的是「同一份实测耗时场被怎么解释」，与前两把
+        # 各管一件事 ⇒ 独立命名。不登记 ⇒ 专家口径引用不到、prose 提到就撞词表闸。
+        ("reach_caliber_version", "可达口径版本声明", "living_circle.caliber.reach_caliber_version"),
+        # 常态绕行标定与残差耗时（`isochrone.detour_residual` 的唯一产物）。与上面
+        # `timed_count` / `in_reach_count` 同一族：**发在 `sampling` 段而不是 `caliber` 段**，
+        # 所以它不在 `test_caliber_invariants` 那份按 caliber 产出核对的白名单里 ——
+        # 那条核对会恒判它缺键（第十六轮 P2-4 说过的"浅一层就恒绿"反过来用也一样错）。
+        # 它的产出核对走真生产者：`tests/test_reach_calibration.py` 拿 `IsochroneEngine.compute()`
+        # 的产物验键集，比在白名单里数末段键名强一格。
+        # ⚠️ 登记的是**块本身**（`detour`），不是 `detour.residual_min` —— 与 `forensic` /
+        # `cells_ledger` 同一条纪律：浅一层会让核对恒绿。
+        ("detour", "常态绕行标定与残差耗时", "living_circle.sampling.detour"),
         ("confidence", "评分置信度", "living_circle.scores.confidence"),
         ("evidence", "盲区扣分证据链", "living_circle.scores.evidence"),
     ):

@@ -51,7 +51,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from app.living_circle.baidu_client import STOP_SERVER_CAP, is_exhausted, is_server_cap
-from app.living_circle.caliber import ReachCaliber, get_caliber
+from app.living_circle.caliber import REACH_CALIBER_VERSION, ReachCaliber, get_caliber
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import (
     LngLat,
@@ -934,6 +934,11 @@ class SpatialScope:
             #    miss、并在用户打开页面时静默烧掉重采配额；复用门拦得住同一件事（旧 payload 缺这把
             #    键 ⇒ `got is None` ⇒ 拒），成本却是零。见计划 §六 的"跳步理由"。
             "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
+            # **第三把键**：可达口径（实测耗时场怎么被解释）。发射在这里、值却在
+            # `sampling.detour`（由 `isochrone.detour_residual` 产）—— 键与值的分工与
+            # `ev-*`/`cells_ledger` 完全同构：本函数只管声明"这套解释是哪一档"，
+            # 读数长在产物自己的段落里，读侧契约（`report_contract`）负责把两半对上。
+            "reach_caliber_version": REACH_CALIBER_VERSION,
         }
         # R23-I · 成本账（欠账出处：计划 §22⑧ —— 真跑那轮预登记了要发几次外呼，报告里却没有
         # 任何一位能核销它）。值是 `CollectionEvidence.pages_returned`：**成功返回的页数**，

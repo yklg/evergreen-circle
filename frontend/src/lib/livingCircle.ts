@@ -1038,7 +1038,7 @@ export const SCOPE_POLICY_VERSION = 'ev-2'
  * 「（点数 → 门槛项）」是承重的（见下方原注释 —— 判盲轴解释不了 65.4 与 68.4 之间那 3 分
  * 是分子换代产生的）。组合式若把它丢了，两轴都不同那一档就又回到"只报半句"。
  */
-export type CaliberAxis = 'ev' | 'cov'
+export type CaliberAxis = 'ev' | 'cov' | 'rc'
 
 interface CaliberAxisSpec {
   readonly axis: CaliberAxis
@@ -1049,6 +1049,11 @@ interface CaliberAxisSpec {
 export const CALIBER_AXES: readonly CaliberAxisSpec[] = [
   { axis: 'ev', clause: '判盲口径已升级' },
   { axis: 'cov', clause: '评分口径已升级（点数 → 门槛项）' },
+  // 第三根轴：实测耗时场**怎么被解释**（本次标定的常态绕行系数 + 残差耗时，笔 3-B）。
+  // 与后端 `_GAP_CLAUSES` 逐字同源；子句同样必须自带解释。
+  // ⚠️ 它今天**不拦差异表里的任何一行**（见下面 `GAP_AXES` 的注释），但横幅照报 ——
+  // 横幅问的是"这对报告能不能并排看"，一侧有残差解释、一侧没有，本来就是两套解释。
+  { axis: 'rc', clause: '可达口径已升级（耗时场新增常态绕行与残差解释）' },
 ]
 
 /** 这一对报告**有哪几根**口径轴不同（表的顺序）。加一根轴就在这里多一行 —— 线性，不是子集。 */
@@ -1059,6 +1064,7 @@ function differingAxes(
   const out: CaliberAxis[] = []
   if (caliberPolicyGap(a, b)) out.push('ev')
   if (coverageCaliberGap(a, b)) out.push('cov')
+  if (reachCaliberGap(a, b)) out.push('rc')
   return out
 }
 
@@ -1083,6 +1089,13 @@ export const COVERAGE_GAP_DESC = gapDescFor(['cov']) as string
  *  本笔起这句由表拼出，措辞从「判盲与评分口径都已升级」变成两句子句并列 —— 信息只增不减。 */
 export const BOTH_GAP_DESC = gapDescFor(['ev', 'cov']) as string
 
+/** 只有**可达口径**那根轴不同 ⇒ 同一格换这句（与后端 `_DIFF_DESC_REACH_GAP` 逐字同源）。 */
+export const REACH_GAP_DESC = gapDescFor(['rc']) as string
+
+/** **三根轴都**不同 ⇒ 由表拼出的最长那句（与后端 `_DIFF_DESC_ALL_GAP` 逐字同源）。
+ *  这一档存在的意义是证明组合式没退化成"只报前两根"：句子必须三段子句全在、顺序恒定。 */
+export const ALL_GAP_DESC = gapDescFor(['ev', 'cov', 'rc']) as string
+
 /** 两轴对照出的结论句（null = 两轴都同 ⇒ 可比）。差异表与横幅**共用这一处判据**。 */
 export function caliberGapDesc(
   a: Pick<LivingCircleReport, 'caliber'>,
@@ -1102,6 +1115,10 @@ export function caliberGapDesc(
 const GAP_AXES: Record<string, readonly CaliberAxis[]> = {
   服务盲区: ['ev'],
   综合评分: ['ev', 'cov'],
+  // ⚠️ `rc` **刻意不在任何一行的轴清单里**（与后端 `_GAP_AXES` 同一条决定）：rc-1 只新增
+  // 对耗时场的解释，两侧同 ev/cov 时每一行的读数逐位相同。把 rc 写进某行 ⇒ 那一行被一句
+  // 影响不到它的话拦住，正是 #83 抓过的形态（那次是评分轴去拦盲区行）反过来重演。
+  // 残差进评分那一档（rc-2）再把 综合评分 扩成 ['ev','cov','rc']。
 }
 
 /** 受**某根**轴影响的行并集（契约 `gap.applies_to`）。「POI 采集」那类**事实计数**不在其列：
@@ -1111,6 +1128,13 @@ export const CALIBER_GAP_ROW_KEYS: readonly string[] = Object.keys(GAP_AXES)
 /** 评分轴拦得住的行（契约 `gap.coverage_applies_to`）⇒ **盲区行不在其列**，这条就是 #83。 */
 export const COVERAGE_GAP_ROW_KEYS: readonly string[] = CALIBER_GAP_ROW_KEYS.filter((key) =>
   GAP_AXES[key]?.includes('cov'),
+)
+
+/** 可达轴拦得住的行（契约 `gap.reach_applies_to`）⇒ **今天这个集合必须是空的**。
+ *  空集本身就是判据：它记的是"rc-1 不改任何一行的读数"这件事。哪天残差进了评分，
+ *  这个数组会非空、契约夹具的 `reach_applies_to` 必须同时改 —— 两边不同步即红。 */
+export const REACH_GAP_ROW_KEYS: readonly string[] = CALIBER_GAP_ROW_KEYS.filter((key) =>
+  GAP_AXES[key]?.includes('rc'),
 )
 
 /**
@@ -1206,12 +1230,79 @@ export function staleCoverageCaliberNotice(lc: Pick<LivingCircleReport, 'caliber
     : `评分口径已升级（本报告 ${v}，当前 ${COVERAGE_CALIBER_VERSION}），类别覆盖度与综合评分不可与新报告直接比 —— 建议重新体检`
 }
 
+/* ── 第三根轴：可达口径（耗时场怎么被解释）──────────────────────────────────
+ *
+ * `rc-1` 在 `sampling.detour` 里发射「本次实测标定的常态绕行系数 + 残差耗时分位」，与
+ * `ev-*`（证据域）和 `cov-*`（覆盖度分子）是三件独立的事：换解释不改证据域、也不改分子。
+ * 借前任何一根的键表达它，等于在版本记录上撒谎（`cov-1` 那次立的规矩）。
+ *
+ * 版本常量**三方同源**：后端 `caliber.REACH_CALIBER_VERSION`、契约夹具
+ * `caliber_incomparable.reach_version_current`、这里。
+ *
+ * ⚠️ 这根轴**有意不发单份报告那句「建议重新体检」**（即它不在 `staleCaliberNotices` 里），
+ * 两条理由都要记住：
+ *  ① `rc-1` 没改任何读数 ⇒ 那句 CTA 会承诺一件重跑之后并不会发生的事（分数不变）。
+ *     "报告偏乐观所以重跑"那两句只对 `ev`/`cov` 成立，套到 `rc` 上就是替它撒谎。
+ *  ② 单份报告的正确形态是**缺键就不印**（与逐格台账 `cells_ledger`、取证账 `forensic` 同一
+ *     条纪律）：没有 `sampling.detour` ⇒ 残差那一句整块不出现，而不是挂一条红字。
+ * 它今天被消费的两处是：**对比页横幅**（两份载荷并排时"一根轴不同"是真事实，
+ * `differingAxes` 自动带上 `rc`）与**残差句的 presence 判据**（`residualCaliberNote`）。
+ * 等残差真的进了评分（rc-2，答案会变），再把它接进 `staleCaliberNotices`。
+ */
+export const REACH_CALIBER_VERSION = 'rc-1'
+
+/** 可达口径版本号安全取值：这把键上线前冻结的快照没这个键 ⇒ `null`（不是空串）。 */
+export function reachCaliberVersionOf(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = lc?.caliber?.reach_caliber_version
+  return typeof v === 'string' && v ? v : null
+}
+
+/** 两份报告用的是不是**同一把耗时解释尺**（含一侧根本没声明）。 */
+export function reachCaliberGap(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): boolean {
+  return reachCaliberVersionOf(a) !== reachCaliberVersionOf(b)
+}
+
+/**
+ * 残差耗时那句口径说明（`rc-1` 的**唯一**上屏出口）。缺 `sampling.detour`、或本次没有可用
+ * 样本 ⇒ `null`，**整块不出现** —— 与逐格台账（`cellsLedgerOf` 取不到就不摆空卡）、取证账
+ * （`forensic` 缺键就不写"跑了 0 轮"）同一条纪律：这里印 0 会被读成"量到了 0 分钟残差"。
+ *
+ * 三件事必须同时说清，缺一句就是一句半真话：
+ *  ① 这把尺是**本次实测标定**的，不是口径表里那个声明值（两者并列报出，差多少是明账）；
+ *  ② 残差只有**分钟**，不换算是百分比（那是把减法重新写成除法，也让"远"和"堵"分不开）；
+ *  ③ 它是**受阻代理**，不指认河道/天桥/围挡中的任何一个（数据里区分不开，综述也明确
+ *     几何交互模型不适用微观尺度 ⇒ 不许宣称微观可达性精度）。
+ */
+export function residualCaliberNote(
+  lc: Pick<LivingCircleReport, 'sampling'>,
+): string | null {
+  const d = lc?.sampling?.detour
+  if (!d) return null
+  const k = d.detour_factor_measured
+  const res = d.residual_min
+  if (k == null || !res) return null
+  const e = d.excluded
+  return (
+    `残差耗时（受阻代理，不指认具体障碍）：按本次实测标定的常态绕行 ${k}× 扣除后`
+    + `（口径声明值是 ${d.declared_detour_k}×），中位 ${res.p50}min、p90 ${res.p90}min、`
+    + `最堵的一档 ${res.max}min；入样 ${d.points_used} 点，剔除 中心 ${e.near_center}`
+    + `·未测时 ${e.untimed}·零耗时 ${e.non_positive}`
+  )
+}
+
 /**
  * 陈旧提示清单（**渲染层只调这一个**）：判盲句在前、评分句在后，各自独立出现。
  *
  * 为什么不合并成一句：两轴同时陈旧时合并只能报一半（"判盲口径已升级"里塞不进"分子换代"，
  * 反过来也一样），而每少报一半就少拦一种误读。两页（报告页 `caliberNote` / 体检台右栏）
  * 各写一遍"哪句该出现"正是漂移的形态 ⇒ 判断收在这里，页面只管渲。
+ *
+ * ⚠️ 第三根轴 `rc` **有意不在这份清单里**（理由与它被消费的两处都写在上面那段 `rc-1` 注释里）：
+ * 那两句的共同点是"重跑一次答案会更准"，而 rc-1 不改任何读数 ⇒ 挂它等于挂一个空承诺。
+ * 残差进评分（rc-2）时把它接进来，同时 `GATED_CALIBER_VERSIONS` 也要挪。
  */
 export function staleCaliberNotices(lc: Pick<LivingCircleReport, 'caliber'>): string[] {
   return [staleCaliberNotice(lc), staleCoverageCaliberNotice(lc)].filter((s): s is string => !!s)

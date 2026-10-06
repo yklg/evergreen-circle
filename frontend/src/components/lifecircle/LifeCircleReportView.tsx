@@ -82,6 +82,7 @@ import {
   TRIAD_CHIP_CLASS,
   triadChipText,
   triadChipTone,
+  residualCaliberNote,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
@@ -366,7 +367,8 @@ function coverageNote(lc: LivingCircleReport) {
  *  这里只渲清单 —— 页面各写一遍判据正是两页文案漂移的形态（旧版报告页写了、体检台没写）。 */
 function caliberNote(lc: LivingCircleReport) {
   const notes = staleCaliberNotices(lc)
-  if (!notes.length) return null
+  const residual = residualCaliberNote(lc)
+  if (!notes.length && !residual) return null
   return (
     <>
       {notes.map((n) => (
@@ -374,6 +376,9 @@ function caliberNote(lc: LivingCircleReport) {
           {n}
         </p>
       ))}
+      {/* `rc-1` 的残差耗时那句：中性 `text-ink-3`，不挂"建议重新体检"—— 那两句承诺的是
+          "重跑答案会更准"，而 rc-1 一个读数都没改。缺 `sampling.detour` 时整块不出现。 */}
+      {residual && <p className="mt-2 text-tag text-ink-3">{residual}</p>}
     </>
   )
 }

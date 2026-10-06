@@ -940,6 +940,11 @@ _DIFF_EQUAL_WORD = "持平"
 _GAP_CLAUSES: Tuple[Tuple[str, str], ...] = (
     ("ev", "判盲口径已升级"),      # 证据域定义变更（凯里旧口径实测只判了 5/97 的格）
     ("cov", "评分口径已升级（点数 → 门槛项）"),  # 覆盖度**分子**变更，与证据域互相独立
+    # 第三根轴：实测耗时场**怎么被解释**（本次标定的常态绕行系数 + 残差耗时）。
+    # 子句同样必须自带解释，"可达口径已升级"这五个字不说明升级了什么＝没说。
+    # ⚠️ 它今天**不拦任何一行**（见 `_GAP_AXES` 里那条注释）：rc-1 只新增解释、不改任何
+    # 一行的读数，写进行级归属就是替这把尺撒谎 —— #83 教训的反面。
+    ("rc", "可达口径已升级（耗时场新增常态绕行与残差解释）"),
 )
 
 
@@ -955,7 +960,28 @@ def _gap_desc(axes: Tuple[str, ...]) -> Optional[str]:
 
 _DIFF_DESC_CALIBER_GAP = _gap_desc(("ev",))
 _DIFF_DESC_COVERAGE_GAP = _gap_desc(("cov",))
+_DIFF_DESC_REACH_GAP = _gap_desc(("rc",))
 _DIFF_DESC_BOTH_GAP = _gap_desc(("ev", "cov"))
+_DIFF_DESC_ALL_GAP = _gap_desc(("ev", "cov", "rc"))
+# 每根轴读载荷里**哪个版本字段**（契约夹具 `gap.axis_fields` 钉同一张表）。
+# 有了这张表，`_lc_diff` 不再为每根轴多一个布尔形参 —— 加轴只改两张表，不改函数签名。
+_GAP_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("ev", "scope_policy_version"),
+    ("cov", "coverage_caliber_version"),
+    ("rc", "reach_caliber_version"),
+)
+
+
+def _differing_axes(a: dict, b: dict) -> Tuple[str, ...]:
+    """两份载荷之间**哪几根口径轴**不同（含一侧根本没声明）。
+
+    ⚠️ 只比两份载荷自带的声明，**不许**把代码常量（`SCOPE_POLICY_VERSION` 等）塞进来当
+    对照值：那会把「两份都缺键」判成不可比（本批刚在复用门那边犯过一次），而两份旧报告
+    互相比较时尺子确实是同一把 —— 它们只是都没有这把尺的读数而已。
+    """
+    ca, cb = a.get("caliber") or {}, b.get("caliber") or {}
+    return tuple(axis for axis, field in _GAP_FIELDS if ca.get(field) != cb.get(field))
+
 # 每行**受哪几根口径轴影响**（`ev` = 判盲那把尺，`cov` = 覆盖度分子）。
 # ⚠️ #83：原来这里是一行 `_CALIBER_GAP_ROWS = ("服务盲区", "综合评分")` + 一把「任一根轴不同」
 # 的结论句喂给两行 —— 那会替评分轴撒谎。盲区数只由判盲尺决定（1km 内有无菜市场/药店/小学），
@@ -965,11 +991,19 @@ _DIFF_DESC_BOTH_GAP = _gap_desc(("ev", "cov"))
 _GAP_AXES: Dict[str, Tuple[str, ...]] = {
     "服务盲区": ("ev",),
     "综合评分": ("ev", "cov"),  # 分数两把尺都吃：证据域会变、分子也会变
+    # ⚠️ `rc` **刻意不在任何一行的轴清单里**（笔 3-B）。rc-1 只新增"耗时场怎么被解释"
+    # （标定绕行系数 + 残差分钟），一行的读数都没改：盲区数、总分、面积、可达点数在
+    # 两侧同 ev/cov 时逐位相同。把它写进去 ⇒ 那一行被一句影响不到它的话拦住，
+    # 正是 #83 抓过的形态（那次是评分轴去拦盲区行）反过来重演一遍。
+    # 等残差进评分那一档（`rc-2`，β 落地）再把 "综合评分" 扩成 ("ev","cov","rc") ——
+    # 那才是加一根轴的**全部**成本：两张表各一行 + 夹具两项。
 }
 # 受**某根**轴影响的行并集（契约夹具 `gap.applies_to` 钉的是这个集合与顺序）。
 _CALIBER_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if ax)
 # 评分轴拦得住的行（契约夹具 `gap.coverage_applies_to`）⇒ 盲区行**不在**其列，这条就是 #83。
 _COVERAGE_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "cov" in ax)
+# 可达轴拦得住的行（契约夹具 `gap.reach_applies_to`）⇒ 今天**是空的**，这条空集本身就是判据。
+_REACH_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "rc" in ax)
 
 
 def _as_num(x: Any) -> float:
@@ -998,16 +1032,18 @@ def _diff_desc(better: str, template: str, na: float, nb: float,
     return f"{name_a if a_wins else name_b}{template}"
 
 
-def _row_gap_desc(metric: str, ev_gap: bool, cov_gap: bool) -> Optional[str]:
+def _row_gap_desc(metric: str, differing: Tuple[str, ...]) -> Optional[str]:
     """**这一行**的口径不可比结论（None ⇒ 这一行可比），只看影响得到它的那几根轴（#83）。
 
-    与「两轴合起来那一句」分家是必须的：横幅问的是「这对报告整体能不能并排看」（那两句在
+    与「多轴合起来那一句」分家是必须的：横幅问的是「这对报告整体能不能并排看」（那几句在
     前端 `lib/livingCircle.compareCaliberNotices()` 由两份载荷现算，后端没有出口），行级问的是
     「这一行的两个数是不是同一把尺量出来的」。两轴都不同那一档两者就不同 —— 评分行拿第三句、
     盲区行仍只拿判盲句（分子换代不改盲区数，把第三句挂上去等于把评分账记到判盲头上）。
+
+    形参是一把**轴名列表**而不是每轴一个布尔：加一根轴不改签名、不加一个形参位，
+    调用方也不会漏传（漏传第三根 = 那一根永远拦不住任何东西，静默失效）。
     """
     axes = _GAP_AXES.get(metric, ())
-    differing = tuple(axis for axis, gap in (("ev", ev_gap), ("cov", cov_gap)) if gap)
     # 交集顺序由 `_gap_desc` 按 `_GAP_CLAUSES` 归一，这里只管"这一行吃不吃得到那根轴"。
     return _gap_desc(tuple(a for a in axes if a in differing))
 
@@ -1051,19 +1087,14 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     pa, pb = a.get("poi", {}), b.get("poi", {})
     a_off, b_off = a.get("data_origin") == "offline", b.get("data_origin") == "offline"
     off = a_off or b_off
-    # 判盲口径版本对照：两侧不同（含一侧根本没声明）⇒ 那两个数不是同一把尺量出来的。
-    a_pol = (a.get("caliber") or {}).get("scope_policy_version")
-    b_pol = (b.get("caliber") or {}).get("scope_policy_version")
-    # 评分口径版本对照（第二根轴）：两侧不同 ⇒ 连"覆盖度是多少"这件事都换了算分子的方法。
-    # ⚠️ 这里**只比载荷自带的两个声明**，不 import `COVERAGE_CALIBER_VERSION` 当对照值 ——
-    # 把代码常量塞进请求侧那支会当场 KeyError（本批刚犯过），而且"两份都缺键"必须算可比。
-    a_cov = (a.get("caliber") or {}).get("coverage_caliber_version")
-    b_cov = (b.get("caliber") or {}).get("coverage_caliber_version")
-    ev_gap = a_pol != b_pol
-    cov_gap = a_cov != b_cov
-    # ⚠️ 这里**不再**先塌成一句「两轴合起来的结论句」（#83）：那把句在旧实现里同时喂给
-    # 「服务盲区」与「综合评分」两行，于是评分轴的差异会去拦一个它影响不到的行。两轴各自
-    # 传给 `_row_gap_desc()`，由它按行的轴归属决定拦不拦、说哪句。对比页**横幅**那两句不在
+    # 口径轴对照：两侧**任一根**版本声明不同（含一侧根本没声明）⇒ 那几个数不是同一把尺量出来的。
+    # 三根轴（判盲 `ev` / 评分 `cov` / 可达 `rc`）由 `_GAP_FIELDS` 一张表读，不再逐轴开布尔 ——
+    # 逐轴布尔的形状是"每加一根轴就改四处"，漏一根就是静默失效（`_differing_axes` 的注释）。
+    # ⚠️ 只比载荷自带的声明，不 import 代码常量当对照值：那会把"两份都缺键"判成不可比。
+    differing = _differing_axes(a, b)
+    # ⚠️ 这里**不再**先塌成一句「多轴合起来的结论句」（#83）：那把句在旧实现里同时喂给
+    # 「服务盲区」与「综合评分」两行，于是评分轴的差异会去拦一个它影响不到的行。各轴
+    # 一起交给 `_row_gap_desc()`，由它按行的轴归属决定拦不拦、说哪句。对比页**横幅**那几句不在
     # 后端（前端 `lib/livingCircle.compareCaliberNotices()` 由两份载荷现算），故此处不留共用值。
     sa, sb = a.get("scores", {}).get("total", 0), b.get("scores", {}).get("total", 0)
     ba, bb = len(a.get("blindspots", [])), len(b.get("blindspots", []))
@@ -1105,7 +1136,7 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
             desc = off_desc
         else:
             # 行级按轴分派（#83）：这一行受哪几根轴影响，就只有那几根轴的差异拦得住它。
-            desc = _row_gap_desc(metric, ev_gap, cov_gap) or _diff_desc(better, template, na, nb)
+            desc = _row_gap_desc(metric, differing) or _diff_desc(better, template, na, nb)
         rows.append({"metric": metric, "a_value": va, "b_value": vb, "desc": desc})
     return rows
 

@@ -447,12 +447,16 @@ def test_caliber_gap_literals_match_contract_fixture():
     只改 `scope.SCOPE_POLICY_VERSION` + 夹具，两侧测试同时报警（不会一边新一边旧）。
     """
     from app.main import (
+        _DIFF_DESC_ALL_GAP,
         _DIFF_DESC_BOTH_GAP,
         _DIFF_DESC_CALIBER_GAP,
         _DIFF_DESC_COVERAGE_GAP,
+        _DIFF_DESC_REACH_GAP,
         _CALIBER_GAP_ROWS,
         _COVERAGE_GAP_ROWS,
+        _REACH_GAP_ROWS,
     )
+    from app.living_circle.caliber import REACH_CALIBER_VERSION
     from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
     from app.living_circle.scope import SCOPE_POLICY_VERSION
 
@@ -479,6 +483,24 @@ def test_caliber_gap_literals_match_contract_fixture():
     assert "判盲" not in gap["coverage_desc"]
     assert "评分口径" not in gap["desc"]
 
+    # 第三根轴（笔 3-B `rc-1`）：句子、版本、行级作用面各钉一次，其中行级那条是**空集**判据
+    assert _DIFF_DESC_REACH_GAP == gap["reach_desc"]
+    assert _DIFF_DESC_ALL_GAP == gap["all_desc"]
+    assert REACH_CALIBER_VERSION == gap["reach_version_current"], (
+        "可达口径版本换了却没改契约夹具 ⇒ 前端那句「本报告没有那一段读数」会静默失灵")
+    assert list(_REACH_GAP_ROWS) == gap["reach_applies_to"], (
+        "rc 的行级作用面与契约分叉 ⇒ rc-1 会去拦它根本影响不到的行（#83 的反面）")
+    assert gap["reach_applies_to"] == [], (
+        "rc-1 一行的读数都没改 ⇒ 这里必须是空集。残差真进评分那一档（rc-2）才允许非空，"
+        "届时这张表与 `GATED_CALIBER_VERSIONS` 要同批改")
+    # 五句互不相同（三句单轴 + 一句 ev/cov + 一句三轴全不同）＝ 三根轴各自都在守
+    singles = {gap["desc"], gap["coverage_desc"], gap["reach_desc"]}
+    assert len(singles) == 3, "单轴句两两相同＝有一把键在替另一把说话"
+    assert len({*singles, gap["both_desc"], gap["all_desc"]}) == 5
+    assert "判盲" not in gap["reach_desc"] and "评分口径" not in gap["reach_desc"]
+    assert "可达口径" not in gap["desc"] and "可达口径" not in gap["coverage_desc"]
+    assert gap["all_desc"].count("、") == 2, "三轴句必须由三个子句拼成，少一个就是漏报一根"
+
 
 def test_caliber_axes_are_registered_everywhere_they_must_be():
     """措辞改成按轴子句组合后，加一根轴要同时登记三处 —— 漏一处就是静默漏报，这里全钉住。
@@ -488,8 +510,18 @@ def test_caliber_axes_are_registered_everywhere_they_must_be():
     却忘了给 `reuse_policy` 加那道门 —— 措辞会报"口径已升级"，旧报告却照样被当成本次答案复用。
     那比原来的漏报更难发现，因为屏幕上看起来是对的。
 
-    三处 = ① 契约夹具 `axes`/`axis_fields`；② 后端 `_GAP_CLAUSES`；③ 复用门 `checks`。
+    三处 = ① 契约夹具 `axes`/`axis_fields`；② 后端 `_GAP_CLAUSES`；③ 轴归属登记表
+    （`GATED_CALIBER_VERSIONS` / `UNGATED_CALIBER_VERSIONS`，门只读前一张）。
     （第 ④ 处在前端 `CALIBER_AXES`，由 `compareDiffContract.test.ts` 钉同一份夹具。）
+
+    ⚠️ 第 ③ 处原写的是"每根轴都必须被 `reuse_policy` 读"。10-05 加第三根轴 `rc` 时这条把
+    正确做法判成了错做法：`rc-1` 只新增一段**解释**（标定绕行 + 残差分钟），盲区数/分数/面积
+    一个都没改 ⇒ 按这条门自己的问题（「换我重跑，答案会不会不同」）它**不该**拦复用。
+    硬塞进门里的直接后果是 27 份存量与每次 500m 邻近复用全部 miss、全部重打 1049 点矩阵，
+    而 `test_pages_returned.test_new_key_does_not_move_the_reuse_gate` 与
+    `test_subkind_caliber.test_second_caliber_version_gate_three_shapes` ③ 当场红 ——
+    那两条早就把"新增口径键不得移动复用门"立成不变式了。⇒ 判据改成**必须显式归边**：
+    既不放过"加了措辞忘了决定"，也不放过"决定了但没写理由"。
     """
     import inspect
 
@@ -512,13 +544,36 @@ def test_caliber_axes_are_registered_everywhere_they_must_be():
         assert clause in both, f"多轴结论句丢了 {clause}"
     assert _gap_desc(()) is None, "零根轴不同必须返回 None（可比），不许拼出一句空话"
 
-    # ③ 复用门：每根轴的版本字段都必须真的被 `reuse_policy` 读 —— 只加措辞不加门即红
-    gate_src = inspect.getsource(report_contract.reuse_policy)
+    # ③ 轴归属：每根轴必须在两张登记表里**恰好出现一次**，且字段名与夹具一致。
+    # 两张表刻意是模块私有的（不给生产代码当旁路用），所以判据走 `vars()` 而不走属性访问：
+    # 读得到＝私有但存在；哪天有人把它改成公开导出并拿去做第二处判定，这里的红只是先兆，
+    # 真正的守是 `test_rc_key_does_not_move_the_reuse_gate` 与 `test_new_key_does_not_move_the_reuse_gate`。
+    gated = vars(report_contract)["_GATED_CALIBER_VERSIONS"]
+    ungated = vars(report_contract)["_UNGATED_CALIBER_VERSIONS"]
+    assert "GATED_CALIBER_VERSIONS" not in vars(report_contract), (
+        "登记表被改名回公开导出了 ⇒ 生产代码可以绕开门自己判「该不该拦」，那是第二处判定实现")
+    assert set(gated) | set(ungated) == set(axes), (
+        f"有轴没归边或多了轴：表 {sorted(set(gated) | set(ungated))} vs 措辞 {sorted(axes)}")
+    assert not (set(gated) & set(ungated)), "同一根轴既进门又不进门 —— 两张表必须互斥"
     for axis in axes:
         field = gap["axis_fields"][axis]
+        table_field = gated[axis] if axis in gated else ungated[axis][0]
+        assert table_field == field, f"{axis} 轴登记的字段名与夹具分叉：{table_field} vs {field}"
+    for axis, (_field, reason) in ungated.items():
+        assert len(reason) > 80, (
+            f"{axis} 轴登记为不进门，却没把理由写成**数据**（{len(reason)} 字）⇒ "
+            "空登记＝把「为什么不拦」这件事推给下一个人读注释")
+
+    # ③b 进门的每一根，`reuse_policy` 必须**真的**读那个字段 —— 只登记不加门即红
+    gate_src = inspect.getsource(report_contract.reuse_policy)
+    for axis, field in gated.items():
         assert field in gate_src, (
-            f"{axis} 轴有措辞（`_GAP_CLAUSES`）但 `reuse_policy` 不读 `{field}` ⇒ "
+            f"{axis} 轴登记进门但 `reuse_policy` 不读 `{field}` ⇒ "
             "旧报告会继续被当成本次体检的答案复用，而屏幕上已经写了「口径已升级」")
+    for axis, (field, _reason) in ungated.items():
+        assert field not in gate_src, (
+            f"{axis} 轴登记为不进门，`reuse_policy` 却在读 `{field}` ⇒ 存量报告与邻近复用"
+            "会在没人改判据的情况下集体 miss（重跑取证花真配额）")
 
     # ④ 枚举式不得复活：那三行 `if ev and cov: return _DIFF_DESC_BOTH_GAP` 的形态
     row_src = inspect.getsource(report_contract.reuse_policy) + "\n"

@@ -186,11 +186,18 @@
       "综合评分"
     ],
     "coverage_stale_notice": "评分口径已升级（本报告按圈内点数计分，当前按门槛项数计分），类别覆盖度与综合评分不可与新报告直接比 —— 建议重新体检",
-    "_axes_note": "口径轴清单（**有序**）。措辞已改成按轴子句组合，所以加一根轴不再需要枚举子集常量 —— 但三处必须同时登记，漏一处就是静默漏报：① 这里的 `axes`/`axis_fields`；② 后端 `main.py:_GAP_CLAUSES` 与 `report_contract.reuse_policy` 的 checks 行；③ 前端 `lib/livingCircle.ts:CALIBER_AXES` 与 `differingAxes`。`axes` 由后端 `test_caliber_gap_literals_match_contract_fixture` 与前端 `compareDiffContract.test.ts` 各自比对；`axis_fields` 额外钉住「每根轴都得进复用门」——只加措辞不加门，旧报告会继续被当成本次答案复用。",
-    "axes": ["ev", "cov"],
+    "_reach_note": "第三根轴（10-05 `rc-1`，笔 3-B）：`caliber.reach_caliber_version` 不同 ⇒ 同一份**实测耗时场被怎么解释**换了 —— 本次标定出的常态绕行系数（`sampling.detour.detour_factor_measured`：凯里实测 1.620、劲松 1.529，而声明值 1.3、文献 +14%≈1.14）与扣除它之后的**残差耗时**（分钟；代理量，不宣称因果、不换算是百分比）。它与 `ev`/`cov` 都不是一件事：换解释既不改证据域也不改分子 ⇒ 第三根轴独立命名、独立取值。⚠️ 与另两根不同的是它**有意不进复用门**（登记在 `report_contract.UNGATED_CALIBER_VERSIONS`，理由写在那张表里）：rc-1 一个读数都没改，拦复用只会把 27 份存量与每次 500m 邻近复用推去重打 1049 点矩阵。它也**不拦差异表里的任何一行**（`reach_applies_to` 是空集，这条空集本身就是判据：哪天残差进了评分，这个数组非空而夹具没同改即红），但**横幅照报** —— 一侧有残差解释、一侧没有，本来就是两套解释。",
+    "reach_version_current": "rc-1",
+    "reach_desc": "不可比 · 可达口径已升级（耗时场新增常态绕行与残差解释）",
+    "all_desc": "不可比 · 判盲口径已升级、评分口径已升级（点数 → 门槛项）、可达口径已升级（耗时场新增常态绕行与残差解释）",
+    "reach_applies_to": [],
+    "_reach_consumers_note": "上面那句 `reach_desc` 与 `reach_applies_to: []` 就是这把轴在前端的**全部**消费面：它**不进** `staleCaliberNotices`。理由与 `ev`/`cov` 那两句的共同点有关 —— 那两句都在承诺「重跑一次答案会更准」，而 rc-1 一个读数都没改，挂它就是挂一个空承诺；单份报告的正确形态是**缺 `sampling.detour` 就不印残差那句**（与 `cells_ledger`、`forensic` 同一条纪律）。所以这里刻意**没有** `reach_stale_notice` 这一格：留着没人读＝本仓最恨的「零消费者字段」。",
+    "_axes_note": "口径轴清单（**有序**）。措辞已改成按轴子句组合，所以加一根轴不再需要枚举子集常量 —— 但四处必须同时登记，漏一处就是静默漏报：① 这里的 `axes`/`axis_fields`；② 后端 `main.py:_GAP_CLAUSES`；③ 后端 `report_contract.GATED_CALIBER_VERSIONS` 与 `UNGATED_CALIBER_VERSIONS` **二选一**（进门的才被 `reuse_policy` 读；不进门的必须写满理由）；④ 前端 `lib/livingCircle.ts:CALIBER_AXES` 与 `differingAxes`。`axes` 由两侧测试各自比对；轴归属由 `test_caliber_axes_are_registered_everywhere_they_must_be` 钉成「不重不漏 ＋ 字段名与夹具一致 ＋ 不进门那条有理由」。10-05 加 `rc` 时把第 ③ 处从「每根都得进门」改成「必须显式归边」，因为门的问题只是「换我重跑，答案会不会不同」。",
+    "axes": ["ev", "cov", "rc"],
     "axis_fields": {
       "ev": "scope_policy_version",
-      "cov": "coverage_caliber_version"
+      "cov": "coverage_caliber_version",
+      "rc": "reach_caliber_version"
     }
   }
 }

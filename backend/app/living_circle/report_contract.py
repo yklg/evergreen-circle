@@ -62,6 +62,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.living_circle.caliber import REACH_CALIBER_VERSION
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
@@ -673,6 +674,49 @@ def _cells_ledger_violations(cal: Dict[str, Any], ledger: Dict[str, Any]) -> Lis
 
 
 # ── Tier A + Tier B：完整几何契约 ───────────────────────────────
+def _reach_calibration_violations(lc: Dict[str, Any]) -> List[str]:
+    """可达口径（`rc-*`）的版本号与 ``sampling.detour`` 键集必须同批发布（笔 3-B）。
+
+    门禁**只看自己那把键**，不看 ``ev-*``：三根轴各自独立声明、独立拦。拿别人的版本号给
+    自己作前提＝把一根轴塌进另一根（评分口径曾借 `ev-*` 表达，结果两份分母不同的报告被
+    当成可比，那才是 `cov-1` 独立成键的原因）。
+    存量件没有这把键 ⇒ 整套跳过 ⇒ 本次发布对既有报告的**可见性零影响**（可见性由
+    :func:`assess_geometry` 管，这里只给它新增一条属于可达轴自己的违规）。
+    """
+    cal = lc.get("caliber") or {}
+    if cal.get("reach_caliber_version") != REACH_CALIBER_VERSION:
+        return []
+    det = (lc.get("sampling") or {}).get("detour")
+    if not isinstance(det, dict):
+        return [
+            f"声明了 reach_caliber_version={REACH_CALIBER_VERSION} 却缺 sampling.detour"
+            " —— 版本号与键集是同一次发布的两半，没有标定读数就等于替一次没发生的解释举证"
+        ]
+    absent = [k for k in ("declared_detour_k", "detour_factor_measured",
+                          "points_used", "excluded", "residual_min") if k not in det]
+    absent += [f"excluded.{k}" for k in ("near_center", "untimed", "non_positive")
+               if k not in (det.get("excluded") or {})]
+    if absent:
+        return [
+            f"sampling.detour 缺 {absent} —— 声明了 {REACH_CALIBER_VERSION} 就得能举证"
+            "样本口径（含三类剔除计数）与残差分位"
+        ]
+    used, k, res, declared = det.get("points_used"), det.get("detour_factor_measured"), \
+        det.get("residual_min"), det.get("declared_detour_k")
+    # 两半必须同进同退：标定值与残差分位是一套解释的两半，只发一半就是半吊子发布
+    if k is None and res is not None:
+        return ["没标定出常态绕行系数却报出残差分位 ⇒ 那几分钟不是这把尺量出来的"]
+    if k is not None and not isinstance(res, dict):
+        return ["标定出了常态绕行系数却报不出残差分位 —— 残差正是这把尺存在的理由"]
+    if k is not None and float(k) <= 0:
+        return [f"常态绕行系数 {k} ≤ 0 不可能来自实测（绕行只会让耗时变长，不会变短）"]
+    if k is not None and not used:
+        return f"points_used={used} 却报出标定值 {k} ⇒ 标定不是从样本来的"
+    if declared is not None and float(declared) <= 0:
+        return f"声明的绕行系数 {declared} ≤ 0 —— 口径表本身错了，别让它伪装成实测标定"
+    return []
+
+
 def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     """报告的**完整**几何契约体检 → :class:`GeometryIssues`。
 
@@ -706,6 +750,8 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
 
     # B5/B10/B11/B12 · 证据相四条（只读 payload 数值，不吃几何参照系 ⇒ 必须在 center 早退之前）
     violations.extend(_evidence_phase_violations(lc))
+    # B14 · 可达口径那把轴（同样只读 payload，与上面三根轴互不顶替）
+    violations.extend(_reach_calibration_violations(lc))
 
     if center is None:
         # 中心点不可用 ⇒ 一切「距中心」判据都判不了（不判违规）
@@ -860,6 +906,49 @@ def report_is_presentable(lc: Dict[str, Any]) -> bool:
 
 
 # ── 复用门：口径版本 ────────────────────────────────────────────
+# 口径版本轴的**归属登记表**（三根轴，每根必须在这里二选一）
+#
+# 这张表回答的是一个以前只能靠读代码才知道的问题：**一根口径轴换代，到底该不该让旧报告
+# 停止复用？** 判据不是"它是不是版本号"，而是这条门自己的那句 ——「换我重跑一次，答案会不会
+# 不同」。答"会"的进 `_GATED_CALIBER_VERSIONS`（旧报告 miss、重跑），答"不会、只是多了一段
+# 解释"的进 `_UNGATED_CALIBER_VERSIONS`（照常复用，换代由**对比页横幅 + 契约 B14 + 残差句按
+# presence 上不出现**这三条披露路径负责）。
+#
+# 为什么做成表而不是散在注释里：加第四根轴时，"忘了决定"和"决定错边"都必须是**红**的，
+# 而不是靠下一个人读到哪条注释。判据：
+# `tests/test_living_circle_api.py::test_caliber_axes_are_registered_everywhere_they_must_be`
+# 钉「`_GAP_CLAUSES` 的轴集 == 这两张表的键集（不重不漏）＋每张表的字段名与门内实际读的字段
+# 一致＋`_UNGATED` 每条都把理由写成了数据」。
+#
+# ⚠️ 刻意**不加 `__all__` 导出**：它们是登记表而不是公开 API。判据用
+# `vars(report_contract)["_GATED_CALIBER_VERSIONS"]` 读，读得到＝私有但存在，
+# 而任何生产代码想拿它当"该不该拦"的旁证都拿不到（那是本仓最典型的旁路形状）。
+_GATED_CALIBER_VERSIONS: Dict[str, str] = {
+    # 证据域/判盲算法变更 ⇒ 盲区数与判定覆盖率本身就是另一把尺量的（凯里旧口径实测只判 5/97 格）
+    "ev": "scope_policy_version",
+    # 覆盖度**分子**变更 ⇒ 同一批点位算出不同的分（第 21 轮 P1-3：凯里那 3 分落差全来自换代）
+    "cov": "coverage_caliber_version",
+}
+# ⚠️ `_UNGATED` 的值是**二元组 (字段名, 理由)**：理由必须是数据而不是注释 —— 注释会随下一次
+# 重构漂走，而"为什么不进门"恰恰是最需要被下一个人读到、并且由判据强制填写的东西
+# （`len(理由) > 80` 那条判据在第一版里就抓到了我自己：我把理由写进了注释、表里只留字段名，
+# 于是那条判据量的是一串 21 个字符的键名，恒真）。
+_UNGATED_CALIBER_VERSIONS: Dict[str, Tuple[str, str]] = {
+    "rc": (
+        "reach_caliber_version",
+        "rc-1 只新增对实测耗时场的解释（标定常态绕行系数 + 残差耗时分钟），盲区数、综合评分、"
+        "等时圈面积、可达点数一个都没改 ⇒ 重跑一次的答案与它逐位相同，不满足这条门自己的问题。"
+        "拦它的代价是实测的：27 份存量与每次 500m 邻近复用全部 miss，全部重打 1049 点距离矩阵"
+        "与逐类检索（真配额），而换来的正确性是零 —— 与 10-01 拒绝「判定覆盖率低于 ⇒ 不可复用」"
+        "是同一条判断。它的换代由三条披露路径负责：对比页横幅（`_GAP_CLAUSES` 的 rc 子句）、"
+        "契约 B14（声明却缺键即红）、残差句的 presence 判据（没有 `sampling.detour` 就不印，"
+        "与逐格台账/取证账同一条纪律）。⚠️ 残差进评分那一档（rc-2）必须把 `rc` 从这里挪进 "
+        "`_GATED_CALIBER_VERSIONS` —— 那时答案真的会不同，而前端 `staleCaliberNotices` 也要"
+        "同批接上那句「建议重新体检」（现在不接，是因为重跑并不会让分数变好）。",
+    ),
+}
+
+
 def _radius_key(value: Any) -> Any:
     """研究半径的比较键：数值归一（`2500` 与 `2500.0` 是同一个档，不是两个）。
 
@@ -959,6 +1048,15 @@ def reuse_policy(
         # 那份 88.6/68.7 当作本次答案上屏，而页面上没有任何一处能看出它是旧分子算的。
         ("评分口径", str, cal.get("coverage_caliber_version"),
          COVERAGE_CALIBER_VERSION),
+        # ⚠️ **第三根轴 `rc-*` 有意不进来**（归边决定与理由都写在上面 `_UNGATED_CALIBER_VERSIONS`
+        # 那条数据里，不在注释里）。
+        # 判据是这条门自己的问题 ——「换我重跑一次，答案会不会不同」：rc-1 不改盲区数、不改
+        # 分数、不改面积，重跑的答案与它逐位相同，只是多了一段解释。把它拦进门里 ⇒ 27 份存量
+        # 与每次邻近复用全部 miss、全部重跑取证（真配额），换来的正确性是零 —— 与 10-01 那次
+        # 拒绝「判定覆盖率低于下限 ⇒ 不可复用」是同一条判断，也正是
+        # `test_pages_returned.test_new_key_does_not_move_the_reuse_gate` 与
+        # `test_subkind_caliber.test_second_caliber_version_gate_three_shapes` ③ 在守的不变式
+        # （本笔第一版把它放进了 checks，这两条当场红：红的是我，不是它们）。
     )
     for label, coerce, got, want in checks:
         if got is None:

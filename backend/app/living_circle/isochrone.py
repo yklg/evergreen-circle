@@ -25,6 +25,7 @@ from app.living_circle.contour import mask_connect_center, smooth_ring, trace_ex
 from app.living_circle.geo_utils import (
     LngLat,
     ensure_closed,
+    haversine_m,
     ring_area_km2,
     to_local_xy,
     xy_to_lnglat,
@@ -80,6 +81,86 @@ def _flag_of(m: Optional[float]) -> Tuple[bool, bool]:
     避免 20.0000001 这类浮点噪声被误判为不可达。"""
     timed = m is not None
     return timed, bool(timed and round(float(m), 1) <= REACH_FULL_MIN)
+
+
+# 预期耗时场在这一点上坍缩为 0（分母），隐含系数随之发散 ⇒ 中心点不入标定样本。
+_DETOUR_CENTER_EPS_M = 1.0
+
+
+def detour_residual(
+    center: LngLat,
+    sample_pts: Sequence[LngLat],
+    minutes: Sequence[Optional[float]],
+    *,
+    speed_m_per_min: float,
+    declared_k: float,
+) -> Dict[str, Any]:
+    """把实测耗时场拆成「同城常态绕行」与**残差耗时**两部分（纯函数，零外呼）。
+
+    为什么要拆：``minutes`` 把「距离 × 曲折 × 障碍」揉成一个标量 ⇒ 一处 12 分钟究竟是
+    因为远，还是因为隔河/跨铁路，报告回答不了。赛题点名的「红绿灯、过街天桥、施工围挡」
+    正落在这第二个问题上，而全仓没有任何字段承载它。残差 = 实测 −（直线距离 × detour ÷ 速度），
+    正值就是「比同城常态多花的那几分钟」。
+
+    ⚠️ **代理量，不宣称因果**：河道、铁路、封闭街区与单次测时噪声在数据里不可区分
+    （北大学报综述那句「常规几何交互模型不适用微观尺度可达性研究」就是这条边界），
+    所以对外一律叫「残差耗时 / 受阻代理」。
+    ⚠️ **量纲纪律**：残差按**分钟**呈现，不许换算成百分比 —— 那会把一次减法重新变成除法。
+
+    ``detour_factor`` 用**本次实测分布的中位数反标定**，不预设常数：仓内声明值（步行 1.3）
+    与文献值（+14% ≈ 1.14）长期并存、从未校准，而三份实跑件量出的隐含系数是 1.53–1.62。
+    扣掉中位数那部分常态绕行，剩下的才是各处的异常，且这把尺对每座城各自成立。
+
+    样本口径 —— 被剔除的点**计数上屏**，不静默丢：
+      · 距中心 ≤ ``_DETOUR_CENTER_EPS_M`` 的点（预期场在此坍缩为 0）
+      · 未测时的点（``minutes is None``，只有降级采样路径才产出）
+      · ``minutes ≤ 0`` 的点（耗时为 0 意味着「同点」或测时异常，隐含系数无意义）
+    样本为空 ⇒ ``detour_factor_measured`` 与 ``residual_min`` 发 ``None`` 而不是发 0
+    （「没量到」与「量到 0」是两件事，与逐格台账 int8 三态同一条纪律）。
+    """
+    pairs: List[Tuple[float, float]] = []  # (直线米数, 实测分钟) —— 一遍定口径，两遍用同一份
+    excluded = {"near_center": 0, "untimed": 0, "non_positive": 0}
+    for pt, m in zip(sample_pts, minutes):
+        dist = haversine_m(center, pt)
+        if dist <= _DETOUR_CENTER_EPS_M:
+            excluded["near_center"] += 1
+            continue
+        if m is None:
+            excluded["untimed"] += 1
+            continue
+        if float(m) <= 0:
+            excluded["non_positive"] += 1
+            continue
+        pairs.append((dist, float(m)))
+    if not pairs:
+        return {
+            "declared_detour_k": float(declared_k),
+            "detour_factor_measured": None,
+            "implied_detour_p10": None,
+            "implied_detour_p90": None,
+            "points_used": 0,
+            "excluded": excluded,
+            "residual_min": None,
+        }
+    implied = np.asarray([obs * speed_m_per_min / dist for dist, obs in pairs], dtype=float)
+    k_med = float(np.median(implied))
+    vals = np.asarray([obs - dist * k_med / speed_m_per_min for dist, obs in pairs], dtype=float)
+    return {
+        "declared_detour_k": float(declared_k),
+        "detour_factor_measured": round(k_med, 3),
+        "implied_detour_p10": round(float(np.percentile(implied, 10)), 3),
+        "implied_detour_p90": round(float(np.percentile(implied, 90)), 3),
+        "points_used": len(pairs),
+        "excluded": excluded,
+        "residual_min": {
+            "p50": round(float(np.percentile(vals, 50)), 1),
+            "p90": round(float(np.percentile(vals, 90)), 1),
+            "p95": round(float(np.percentile(vals, 95)), 1),
+            "max": round(float(vals.max()), 1),
+            "min": round(float(vals.min()), 1),
+        },
+    }
+
 
 # 采样档位预设（与 travel_mode 解耦；travel_mode 的半径/grid_n 由 caliber 提供）
 MODE_PARAMS = {
@@ -457,6 +538,7 @@ class IsochroneEngine:
                 "in_reach": is_in_reach,
             })
         flags = reach_flags(point_rows)  # 统一实现，不在产出处另算一遍
+        _run_cal = get_caliber(travel_mode)
         sampling = {
             "points": point_rows,
             "interpolation": "idw",
@@ -488,6 +570,15 @@ class IsochroneEngine:
             "timed_count": flags.timed_count,
             # 真正可达点数（≤ REACH_FULL_MIN 分钟）；「可达率」只能用它算
             "in_reach_count": flags.in_reach_count,
+            # ── 残差耗时场（受阻代理）：与上面两个汇总数同一出处 ──
+            # 放这里而不是让装配层从 `points` 反推：反推要把点集再遍历一遍、并把
+            # `speed_m_per_min`/`detour_k` 第二条链读一遍 —— 那正是「实测场」与「对其的解释」
+            # 分家的形态（本仓已为此写过三次勘误）。
+            "detour": detour_residual(
+                center, sample_pts, minutes,
+                speed_m_per_min=_run_cal.speed_m_per_min,
+                declared_k=_run_cal.detour_k,
+            ),
         }
         return {
             "isochrones": zones,
