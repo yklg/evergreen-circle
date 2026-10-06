@@ -293,6 +293,15 @@ def _populate_index() -> None:
         # ⚠️ 登记的是**块本身**（`detour`），不是 `detour.residual_min` —— 与 `forensic` /
         # `cells_ledger` 同一条纪律：浅一层会让核对恒绿。
         ("detour", "常态绕行标定与残差耗时", "living_circle.sampling.detour"),
+        # 实测场的**形态**参数（笔 4a 后续）：`sampling.interpolation` 一直只说方法名，
+        # 幂次与近邻数躲在 `idw_from_local` 的字面量与默认形参里 ⇒ 拿到载荷的人只能信、
+        # 不能复算。现在它们是有名常量（`isochrone.IDW_POWER` / `IDW_NEIGHBORS`）、由发射口
+        # 进载荷、并被结论章那句「经 IDW 插值推导（幂次 2、每格取 8 个最近实测点）」引用
+        # ⇒ 不登记就会撞词表闸（prose 提到而未登记＝引用不到口径）。两键各自独立登记：
+        # 名册核对只看末段键名，登记成 `interpolation_form` 那种"块"反而对不上真实载荷形状
+        # （这里是两个平铺标量，不是嵌套块 —— 与 `forensic` / `detour` 的情况相反）。
+        ("interpolation_power", "插值幂次（IDW 的 p）", "living_circle.sampling.interpolation_power"),
+        ("interpolation_neighbors", "插值近邻数（IDW 的 k）", "living_circle.sampling.interpolation_neighbors"),
         ("confidence", "评分置信度", "living_circle.scores.confidence"),
         ("evidence", "盲区扣分证据链", "living_circle.scores.evidence"),
     ):

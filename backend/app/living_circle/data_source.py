@@ -31,7 +31,7 @@ from app.living_circle.blindspot import judge_once
 from app.living_circle.geo_index.offline_geocoder import OfflineGeocoder
 from app.living_circle.geo_utils import LngLat, haversine_m
 from app.living_circle.caliber import get_caliber, caliber_payload_key
-from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes
+from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes, interpolation_form_keys
 from app.living_circle.degrade_policy import degrade_reason, degraded_block, partial_for
 from app.living_circle.judgement import STAT_KEYS
 from app.living_circle.poi_collector import (
@@ -282,10 +282,14 @@ class OfflineDataSource(DataSource):
         # `detour_factor_measured ≡ caliber.detour_k`、残差处处 0 —— 那是**代数量自己和自己相等**，
         # 不是一次测量。留着它，屏幕上就会出现「按本次实测标定的常态绕行 1.3×…最堵的一档 0min」
         # 这种替一次没发生的测量举证的话（`interpolation` 改成 `circular_approx` 是同一条纪律）。
+        # 场形态那两键（`interpolation_power` / `interpolation_neighbors`）**一起摘**：这一份的
+        # `interpolation` 已改口成 `circular_approx`，却留着引擎那次 IDW 的幂次与近邻数，
+        # 就是一份自相矛盾件（契约 B15 正是判这个）。键名取自发射口，不在这里抄第二遍。
         # 下面那份 caliber 也不声明 `reach_caliber_version`：没有键集就不发版本号，
         # 读侧契约 B14 才不会把离线件判成"声明了却缺键"。
+        _stripped = {"detour"} | set(interpolation_form_keys())
         sampling = {
-            k: v for k, v in iso["sampling"].items() if k != "detour"
+            k: v for k, v in iso["sampling"].items() if k not in _stripped
         }
         sampling.update({"interpolation": "circular_approx", "is_scattered": False})
 

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.data import expert_by_id
 from app.living_circle.category_rule import CATEGORY_RULES
-from app.living_circle.isochrone import reach_flags
+from app.living_circle.isochrone import has_interpolation_form, reach_flags
 
 
 def sampling_counts(lc: Dict[str, Any]) -> Tuple[int, int, int]:
@@ -1133,8 +1133,14 @@ def _origin_note(lc: dict) -> str:
     """
     origin = (lc.get("data_origin") or "")
     if origin == "live":
-        interp = (lc.get("sampling") or {}).get("interpolation") or "—"
-        return (f"提醒：本报告为真实接口取证（data_origin=live），分级等时圈由采样点测时经 {interp} 插值推导；"
+        sp = lc.get("sampling") or {}
+        interp = sp.get("interpolation") or "—"
+        # 场形态只在**完整声明**时才上屏：两半皆缺＝这条口径生效之前冻结的存量件，
+        # 缺键就不印（不印 ≠ 功能坏掉）；只有一半那种自相矛盾件由契约 B15 在写路径挡掉，
+        # 走不到这里。幂次用 :g 打印（2.0 ⇒ 「2」），别让它写成"幂次 2.00000"那种伪精度。
+        form = (f"（幂次 {sp.get('interpolation_power'):g}、每格取 {sp.get('interpolation_neighbors')} 个最近实测点）"
+                if has_interpolation_form(sp) else "")
+        return (f"提醒：本报告为真实接口取证（data_origin=live），分级等时圈由采样点测时经 {interp} 插值推导{form}；"
                 "正式结论以 M5 阶段实地测时为准。")
     if origin in ("fixture", "fixture_sample"):
         return "提醒：结论基于演示数据（fixture），正式结论以 M5 阶段真实路网测时为准。"

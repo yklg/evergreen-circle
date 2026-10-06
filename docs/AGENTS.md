@@ -224,6 +224,25 @@ credibility(0-100) · collected_by · brand · domain · freshness_days
 （中心点、未测时、零耗时三类），不许静默丢。实测标定值：凯里 1.620、劲松 1.529，而口径表声明
 的是 1.3、文献 +14%≈1.14 —— 三者并列披露，不挑一个当唯一真值。
 
+**可达尺那个场本身的形态**（`sampling.interpolation_*`，笔 4a 后续）—— 它不是第四把尺，而是
+"可达尺的读数是怎么从采样点插出来的"。此前 `sampling.interpolation` 只说方法名 `idw`，
+幂次躲在 `idw_from_local` 的一句 `p = 2.0` 里、近邻数躲在默认形参里 ⇒ 拿到载荷的人只能信、
+不能复算（§7 这条术语表存在的同一根因）。现在：
+
+| 项 | 值 |
+|---|---|
+| 唯一生产者 | `isochrone.IDW_POWER` / `IDW_NEIGHBORS`（发射口 `interpolation_form_keys()`） |
+| 落库位置 | `sampling.interpolation_power` / `sampling.interpolation_neighbors`（**只有真造过场的 `IsochroneEngine.compute` 才发**） |
+| 契约 | B15 `report_contract._interpolation_form_violations`：半份声明、非 IDW 却带 IDW 参数、`p ≤ 0`/非有限、`k < 1`/非整数 各判违规；**两半皆缺＝合法**（存量件不许被这条打死） |
+| 唯一上屏出口 | 结论章 `diagnosis_templates._origin_note`（缺键 ⇒ 那半句整个不印） |
+| 离线链 | 随 `sampling.detour` 一起摘键（`interpolation` 已改口 `circular_approx`，留着就是自相矛盾件） |
+
+敏感性实测（凯里/劲松两份实跑快照，复算先与生产函数逐位对账）：p 从 2 改 1 或 3、k 从 8 改
+4/16 ⇒ 圈内格平均绝对差 0.24–0.44min、最坏单格 17.1min、12–18 个圈内格跨过 20min 满分线 ——
+**与残差信号同量级**，所以它是口径、不是实现细节；讨论残差的解释力时必须把它一起摆出来。
+另记一条：`idw_from_local` 的 `k` 默认值写成 `None` 再在函数里解析，不许写 `k: int = IDW_NEIGHBORS`
+—— 形参默认值在**定义时**求值一次，那种写法等于把第三个副本烤进签名。
+
 ### 7.2 `covered` 一词三义（**按名字搜会全错，必须按字段路径认**）
 
 | 出现处 | 字段 | 真语义 | 属于哪把尺 |

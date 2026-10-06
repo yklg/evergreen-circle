@@ -60,11 +60,13 @@ Tier B 的「盲区 ⊆ 可达区」；7 份旧算法 live 报告必然缺 ``cal
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.caliber import REACH_CALIBER_VERSION
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
+from app.living_circle.isochrone import interpolation_form_keys
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
 # 台账的三个字符 `1/0/.` 一旦有两份定义，读侧守卫就会在写侧改字母表的那天开始说谎。
 # 依赖方向是 读侧守卫 → 判定模块，与既有 `scope.BLIND_RADIUS_M` 同一条，不构成环
@@ -717,6 +719,51 @@ def _reach_calibration_violations(lc: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _interpolation_form_violations(lc: Dict[str, Any]) -> List[str]:
+    """B15 · 说了场是怎么插出来的，就得说全（笔 4a 后续：IDW 的 p、k 从函数体字面量升为口径）。
+
+    分档刻意照 B14 那条纪律走，**两半皆缺＝合法**：那是场形态口径生效之前冻结的存量件，
+    判它违规等于把三十来份历史报告从列表里抹掉——可见性不是这条该管的事。
+    四种真违规：
+      ① 只有一半（有幂次没近邻数，或反之）：读者仍复不出这个场，而"看起来声明过"
+         比明确没声明更误导；
+      ② `interpolation` 已改口成非 IDW 却带着 IDW 的形态参数 —— 一份载荷同时说两种造法
+         （离线链就是靠摘键来避免这一格的，见 `data_source.OfflineDataSource.compute`）；
+      ③ 值不合法：`p ≤ 0`／非有限值会让 `1/d^p` 变成常数或发散，`k < 1` 是空加权，
+         两者都会**静默**产出一个无意义的场；
+      ④ `k` 不是整数：它是"取几个邻居"的个数，2.5 个近邻不存在。
+    """
+    sp = lc.get("sampling") or {}
+    keys = set(interpolation_form_keys())
+    present = keys & set(sp)
+    if not present:
+        return []                      # 存量件：整套跳过，不影响任何可见性
+    if present != keys:
+        return [
+            f"sampling 只声明了场形态的一半（在场的是 {sorted(present)}）"
+            " —— 幂次与近邻数缺一半就复不出这个场，半份声明比不声明更容易被误信"
+        ]
+    method = sp.get("interpolation")
+    if method not in (None, "idw"):
+        return [
+            f"interpolation={method!r} 不是 idw，却带着 IDW 的场形态参数"
+            "（sampling.interpolation_power / interpolation_neighbors）⇒ 同一份载荷说了两种造法"
+        ]
+    power = sp.get("interpolation_power")
+    neigh = sp.get("interpolation_neighbors")
+    try:
+        pv = float(power)
+    except (TypeError, ValueError):
+        return [f"interpolation_power={power!r} 不是数 ⇒ 插值口径无法举证"]
+    if not isfinite(pv) or pv <= 0:
+        return [f"插值幂次 {power!r} ≤ 0 或非有限值 —— 1/距离^p 会退化成常数权重或发散"]
+    if isinstance(neigh, bool) or not isinstance(neigh, int):
+        return [f"近邻数 {neigh!r} 不是整数 —— 它是「取几个最近实测点」的个数，2.5 个近邻不存在"]
+    if neigh < 1:
+        return [f"近邻数 {neigh} < 1 ⇒ 没有任何实测点参与加权，这个场不是插值出来的"]
+    return []
+
+
 def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     """报告的**完整**几何契约体检 → :class:`GeometryIssues`。
 
@@ -752,6 +799,8 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     violations.extend(_evidence_phase_violations(lc))
     # B14 · 可达口径那把轴（同样只读 payload，与上面三根轴互不顶替）
     violations.extend(_reach_calibration_violations(lc))
+    # B15 · 实测场的形态参数（幂次与近邻数）—— 也是只读 payload，必须在 center 早退之前
+    violations.extend(_interpolation_form_violations(lc))
 
     if center is None:
         # 中心点不可用 ⇒ 一切「距中心」判据都判不了（不判违规）

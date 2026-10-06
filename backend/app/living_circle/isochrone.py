@@ -43,6 +43,38 @@ ISO_MINUTES = list(get_caliber("walking").iso_minutes)
 #   in_reach = timed 且 minutes ≤ 本阈值（这才是「可达」）
 REACH_FULL_MIN = float(get_caliber("walking").reach_full_min)
 
+# ── 实测场的**形态**参数（插值口径）───────────────────────────
+# 为什么从函数体字面量提成有名常量：`sampling.interpolation` 一直在说"这个场是 IDW 造的"，
+# 但**造法本身没处可查** —— 幂次是 `idw_from_local` 里的一个 `p = 2.0`，邻域数是默认形参 `k=8`。
+# 拿得到载荷的人知道方法名却复不出这个场，这正是 P1 那条根因（量的出处没做成一等公民）的形状。
+# 实测过它有多吃紧（两份实跑快照，复算先与生产函数逐位对账）：p 从 2 改 1 或 3、k 从 8 改 4/16
+# ⇒ 圈内格平均绝对差 0.24–0.44min，最坏单格 17.1min，且有 12–18 个圈内格跨过 20min 满分线
+# —— 与残差信号（八类最近设施 −1.9…+4.3min）**同量级**。所以它是口径，不是实现细节。
+# ⚠️ 声明只由**产生这个场的那一层**发出（`IsochroneEngine.compute`）：演示链不重跑 IDW，
+#    就不该替历史快照里的场作保；离线链随 `detour` 一起摘掉（`data_source.py`）。
+IDW_POWER = 2.0        # 反距离加权的幂次 p：权重 = 1 / 距离^p
+IDW_NEIGHBORS = 8      # 每个格点取最近 k 个实测点加权（不是全量加权，理由见 `idw_from_local`）
+
+
+def interpolation_form_keys() -> Dict[str, float]:
+    """实测场形态的**唯一发射口**（`sampling` 里那两个键的两半由这一个函数给）。
+
+    返回的是"当前这份场是怎么造的"，因此只允许在真造过场之后调用；把常量抄进别处的
+    `sampling` 字典＝第二处实现，两处一改就出现"方法名说 IDW、参数说别的"那种自相矛盾件。
+    """
+    return {"interpolation_power": float(IDW_POWER),
+            "interpolation_neighbors": int(IDW_NEIGHBORS)}
+
+
+def has_interpolation_form(sampling: Mapping[str, Any]) -> bool:
+    """这份载荷是否**完整地**声明了场形态（两半齐备才算数）。
+
+    存在性判据与发射口必须共用同一个键名表，否则判据会比键名、发射口改键名，
+    两边各自漂移后这条判据就再也不看任何东西（本仓出过两次的那类空转）。
+    """
+    keys = set(interpolation_form_keys())
+    return keys <= set(sampling)
+
 
 @dataclass(frozen=True)
 class ReachFlags:
@@ -384,7 +416,7 @@ def idw_from_local(
     sample_xy: np.ndarray,
     minutes: Sequence[Optional[float]],
     grid_xy: np.ndarray,
-    k: int = 8,
+    k: Optional[int] = None,
 ) -> np.ndarray:
     """IDW 插值（k-近邻反距离加权，numpy 向量化）。
 
@@ -392,9 +424,18 @@ def idw_from_local(
     minutes: 同 N 长（None=不可达，不参与加权）；grid_xy: 插值格点 (G,2) 局部坐标。
     返回 (G,) 耗时（分钟）向量。
 
-    用 k-近邻（默认 8）而非全量加权：避免稀疏粗网格中心区被远处高值样本
-    全局平均拉高（全量加权下 200m 处曾被拉到 10min，实际应 ≈4min）。
+    用 k-近邻（默认取 `IDW_NEIGHBORS`）而非全量加权：避免稀疏粗网格中心区被远处高值样本
+    全局平均拉高（全量加权下 200m 处曾被拉到 10min，实际应 ≈4min）。幂次取 `IDW_POWER`
+    —— 这两个数现在同时是**被声明的口径**（`sampling.interpolation_*`，发射口
+    :func:`interpolation_form_keys`），所以这里不许再出现第三种写法。
+
+    ⚠️ 默认值写成 `None` 而不是 `k: int = IDW_NEIGHBORS`：形参默认值在**定义时**求值一次，
+    那种写法会把数烤进函数签名，之后无论常量怎么改、载荷声明的都是旧值 —— 判据要测
+    "改常量 ⇒ 场跟着变"时它照样绿（等价于把口径藏进签名的第二份字面量）。运行时解析
+    才让这里只有一份事实。
     """
+    if k is None:
+        k = IDW_NEIGHBORS
     assert sample_xy.shape[0] == len(minutes), (sample_xy.shape, len(minutes))
     valid_idx = [i for i in range(len(minutes)) if minutes[i] is not None]
     if not valid_idx:
@@ -410,7 +451,7 @@ def idw_from_local(
     kd = np.take_along_axis(d, order, axis=1)
     kv = np.take_along_axis(np.broadcast_to(vals[None, :], d.shape), order, axis=1)
     kd = np.maximum(kd, 1e-3)
-    p = 2.0
+    p = IDW_POWER
     kw = 1.0 / (kd**p)
     eps = 1e-9
     w_sum = kw.sum(axis=1, keepdims=True)
@@ -542,6 +583,9 @@ class IsochroneEngine:
         sampling = {
             "points": point_rows,
             "interpolation": "idw",
+            # 方法名与场形态是**同一件事的两半**：说了 IDW 就必须说清幂次与近邻数，
+            # 否则拿到载荷的人只能信、不能复算。抄常量＝第二处实现，一律走发射口。
+            **interpolation_form_keys(),
             # 实际用了什么就报什么：`plan.fine_m` 在预算受限路径下是 None，
             # 于是 `is_scattered` 不再替"名义上有边界加密"作证（旧写法读 MODE_PARAMS
             # 的 fine，即使加密带已被丢弃也照样返回 True）。
