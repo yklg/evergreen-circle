@@ -273,6 +273,44 @@ MUTATIONS: list[Mutation] = [
         new='    override = ""',
         test="tests/test_repository.py::test_u5_2_env_redirects_every_write",
     ),
+    # ── 4a 探针四条（`tests/test_probe_timeaxis_shape.py`）───────────────
+    # 这组变异打的是 **脚本文件**而不是 `app/`：探针花真实额度，它自己的形状判据
+    # 与生产判据同等重要（首跑就因为坐标顺序写反把 13 次调用换成零行数据）。
+    Mutation(
+        label="4a 事故本身：destinations 退回 lng,lat ⇒ 整批 status=2、零行数据",
+        rel="scripts/probe_baidu.py",
+        old='        "destinations": f"{dest_latlng[0]},{dest_latlng[1]}",',
+        new='        "destinations": f"{dest_latlng[1]},{dest_latlng[0]}",',
+        test="tests/test_probe_timeaxis_shape.py::test_matrix_request_sends_both_origins_and_destinations_as_lat_lng",
+    ),
+    Mutation(
+        label="探针另打一条端点（directionlite）⇒ 能力结论对生产链不再适用",
+        rel="scripts/probe_baidu.py",
+        old='MATRIX_PATHS = {"walking": "/routematrix/v2/walking", "riding": "/routematrix/v2/riding",',
+        new='MATRIX_PATHS = {"walking": "/directionlite/v1/walking", "riding": "/routematrix/v2/riding",',
+        test="tests/test_probe_timeaxis_shape.py::test_matrix_path_is_read_from_the_same_table_as_production",
+    ),
+    Mutation(
+        label="边界选点取消「点数不足就拒绝」⇒ 偏样本照样自称 n=20",
+        rel="scripts/probe_baidu.py",
+        old="    if len(pts) < want or len(center) != 2:",
+        new="    if len(center) != 2:",
+        test="tests/test_probe_timeaxis_shape.py::test_boundary_sample_is_stratified_deterministic_and_refuses_thin_bands",
+    ),
+    Mutation(
+        label="把花额度的组并进默认列表 ⇒ 任何一次裸跑都静默烧一整轮额度",
+        rel="scripts/probe_baidu.py",
+        old='    groups = sys.argv[1:] or ["geo", "poi", "route", "matrix", "conv", "geocode"]',
+        new='    groups = sys.argv[1:] or ["geo", "poi", "route", "matrix", "conv", "geocode", "timeaxis", "rowfields"]',
+        test="tests/test_probe_timeaxis_shape.py::test_quota_spending_groups_are_not_in_the_default_run",
+    ),
+    Mutation(
+        label="丢掉阴性对照键 ⇒ 「值没变」被读成「接口不支持」（假结论）",
+        rel="scripts/probe_baidu.py",
+        old='DEADBEEF = "probe_deadbeef_4a"        # 阴性对照键：任何真实接口都不该认识它',
+        new='DEADBEEF = ""        # 阴性对照键：任何真实接口都不该认识它',
+        test="tests/test_probe_timeaxis_shape.py::test_negative_controls_are_declared_not_improvised",
+    ),
 ]
 
 
@@ -286,6 +324,12 @@ def _run_test(node: str) -> tuple[bool, str]:
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(Path.home()),
         "TMPDIR": tb,
+        # ⚠️ **不许写字节码缓存** —— 这条不是洁癖，是 2026-10-06 真实踩到的假阴性：
+        # importlib 的 .pyc 校验只看 `(源文件 mtime 的整秒, 字节数)`。有些变异**恰好等长**
+        # （例：`f"{a[0]},{a[1]}"` → `f"{a[1]},{a[0]}"`），而注入与还原发生在同一秒内
+        # ⇒ 子进程加载到上一轮的旧 .pyc，变异没生效、判据照样绿，机器留证会把它误报成
+        # "该守卫是摆设"。等长变异是常态而不是巧合，所以闸必须打在台架上，不是打在选词上。
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     r = subprocess.run(
         [PY, "-m", "pytest", node, "-q", "--no-header", "-p", "no:cacheprovider"],

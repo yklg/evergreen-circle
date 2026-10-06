@@ -1,7 +1,9 @@
 {
   "generated_at": "2026-09-20T00:00:00Z",
   "ak_masked": "iB2****4ol",
-  "probe_version": "0.2",
+  "probe_version": "0.3",
+  "updated_at": "2026-10-06T01:59:30Z",
+  "updated_by": "probe_version 0.3 新增 `isochrone_service`（D 笔·已实测权限边界）与 `time_axis`（4a 笔·时刻/路况能力核实 + 测时可重复性自证 + 未消费字段核实）。原有各块读数一律不动。",
   
   "capacity": {
     "walking": {
@@ -36,6 +38,76 @@
     "notes": "status=2 indicates parameter error (out of range), not unreachable. Use result[0].elements[0].duration.value == null for unreachable detection."
   },
   
+  "isochrone_service": {
+    "probe_group": "一次性手工探针（2026-10-04，凯里中心点，foot_fastest / timeLimit=900）",
+    "endpoint": "GET /logistics_truck/v1/isochrone?profile=foot_fastest|foot_shortest|car_*|bike_*|avoid_toll_*&point=经度,纬度&timeLimit=秒(0,43200)&inputCrs=bd09ll|bd09mc|gcj02|wgs84&outputCrs=bd09ll|bd09mc|gcj02&ak=",
+    "doc_updated": "2026-04-01",
+    "measured": true,
+    "http_status": 200,
+    "latency_ms": 421,
+    "body_bytes": 36,
+    "status": 240,
+    "status_meaning": "「APP 服务被禁用」＝该服务未为此 AK 开通，**不是 AK 失效**（同一把 AK 的 routematrix/place 当天仍返回真实数据）。接口真实存在且可达（非 404、非网络失败）。",
+    "usable_with_current_ak": false,
+    "quota_attribution": "未核到（权限这一层先挡住，已无必要）",
+    "notes": "本笔（D）据此关闭并**不申请开通**：按服务条款 2.3/2.6 条，该物流产品线很可能落在「商业目的需付费或书面许可」一侧；且赛题 30% 明文要求「不取底层路网、由分散点位 API 测时做空间插值/扇形采样」，即便打通也**只能当旁证**，不得替换主引擎（换了等于把该得分点交还厂商）。这条实测本身是交付资产：它把「百度自己有等时圈你们为什么不用」从推测变成已核实。"
+  },
+
+  "time_axis": {
+    "probe_group": "timeaxis + rowfields（scripts/probe_baidu.py，显式点名才跑，不在默认组里）",
+    "ran_at_utc": "2026-10-06T01:57:34Z",
+    "ran_at_local": "2026-10-06 09:57（+08）",
+    "calls_spent": 29,
+    "calls_breakdown": "13（首次运行把 destinations 写成 lng,lat ⇒ 全部 status=2「destinations is invalid」、零行数据，白烧）+ 14（修正后完整跑）+ 2（未消费字段核实）",
+    "budget_accounting": "⚠️ 探针用 urllib 直连，**绕开 CallGuard** 的进程内并发闸与日额度计数 ⇒ 这里的 calls_spent 是脚本自己记的账；百度侧当日剩余额度未核（不读 .env、不查控制台）。止损闸已补进脚本：跑 14 次之前先用 1 个 origin 预检，基线 status≠0 或行数不足 ⇒ 立即停手。",
+    "walking_determinism_same_window": {
+      "points": 40, "identical": 40, "max_abs_delta_min": 0.0,
+      "shape": "同参数连跑两次，间隔 1.2s（凯里 20 + 劲松 20，全部取自已落库实跑点位中「满分线 20min ±4min」边界带、按 in_reach 各 10、45° 方位分桶轮转、无随机数 ⇒ 可逐位复跑）"
+    },
+    "walking_determinism_cross_snapshot": {
+      "points": 40, "identical": 40, "max_abs_delta_min": 0.0,
+      "stored_at": {"凯里": "2026-09-30T16:00:25Z（当地 10-01 00:00）", "劲松": "2026-09-30T07:56:18Z（当地 15:56）"},
+      "vs": "2026-10-06 09:57（当地）",
+      "meaning": "跨 6 天、且凯里那一批是「当地午夜 vs 工作日上午」的对照 ⇒ 逐位同值"
+    },
+    "param_variants": {
+      "tested": ["departure_time=秒级时间戳(now+2h)", "departure_time=\"YYYY-MM-DD HH:MM:SS\"", "time=秒级时间戳", "traffic=1"],
+      "each_status": 0,
+      "points_changed_beyond_floor": 0,
+      "candidate_source": "候选名来自百度自己文档页的标题与命名族（direction 系有「未来驾车路线规划」「驾车路线历史耗时」两页），但正文是 JS 渲染、抓不到参数表 ⇒ 按**候选**处理，不照抄文档当已证"
+    },
+    "unknown_param_control": {
+      "key": "probe_deadbeef_4a=1",
+      "status": 0,
+      "points_changed": 0,
+      "verdict": "百度这一层对**未知键没有鉴别力**（静默忽略）⇒ 上面四条阴性只能表述为「未观察到可观测差异」，**不得**表述为「接口不支持该参数」。这枚对照就是为了让所有阴性结论带上这个折扣而存在的。"
+    },
+    "malformed_known_param": {
+      "example": "destinations 写成 lng,lat（正确是 lat,lng）",
+      "status": 2,
+      "message": "destinations is invalid",
+      "verdict": "接口会**校验已知参数的形状**并明确报错，只是不校验未知键 ⇒ 「status=0」在能力核实上不构成证据"
+    },
+    "driving_tier": {
+      "row_fields": ["distance", "duration"],
+      "traffic_fields_observed": false,
+      "same_window_repeat": {"points": 20, "identical": 20, "max_abs_delta_min": 0.0},
+      "cross_time_of_day": "未测：存量报告全是步行档，没有可比的驾车快照 ⇒ 驾车档「未回带路况字段、同窗确定」只是同窗读数，不能外推成「驾车档不含实时路况」"
+    },
+    "unconsumed_fields": {
+      "walking_row_fields": ["distance", "duration", "restrictions_status", "retrograde_dist"],
+      "retrograde_dist": {"nonnull_points": 40, "nonzero_points": 0, "distinct_values": ["0"]},
+      "restrictions_status": {"nonnull_points": 40, "distinct_values": ["0"]},
+      "verdict": "两个字段在步行档是**常量 0**（两社区 40/40 点）⇒ 无信息可消费，生产只读 `duration.value` 并没有错过上游障碍信号。这条是用实测关掉的，不是靠推断（先盘已算好却没消费的数据，盘完发现是空的）。"
+    },
+    "consequences": [
+      "单点测时噪声地板实测 = 0.0min ⇒ 残差（八类最近设施 −1.9…+4.3min）不可能由测时抖动解释；rc-2 的 β 不再需要等「误差率」，其不确定性来源要改写成**模型**（IDW 平滑 + 社区内中位反标定），不是测量。",
+      "跨日、跨午夜/上午逐位同值 ⇒ 存量报告的实测场可复算：3b 后半重算 scores 时即便重打矩阵也会得到同一批分钟数（迁移是确定性的）。",
+      "步行侧「动态/实时路况」这条能力**拿不到** ⇒ P3 的「动态」只能落在数据时效，已由 4b 落地（数据时点 + 年龄 + 复用条件上屏 + force 重算通路）。"
+    ],
+    "notes": "结论一句话：百度步行测时是**确定性几何函数**，没有时刻这根轴；我们既不能靠它建模红绿灯/围挡，也不必担心残差是噪声。残差的解释力问题因此从「测得准不准」转成「模型假设站不站得住」——那属 rc-2，不属本探针。"
+  },
+
   "poi_search": {
     "probe_group": "place + frontier (scripts/probe_baidu.py)",
     "page_size_max": 20,
