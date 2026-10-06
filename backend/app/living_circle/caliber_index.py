@@ -76,6 +76,7 @@ def _populate_index() -> None:
         blindspot,
         caliber,
         facility_rule,
+        geo_utils,
         isochrone,
         poi,
         report_contract,
@@ -197,6 +198,20 @@ def _populate_index() -> None:
         _INDEX[f"isochrone::{mode}.grid_n"] = CaliberView(
             ref=f"isochrone::{mode}.grid_n", kind="param",
             module="isochrone", label=f"{mode}·grid_n", value=str(params["grid_n"]),
+        )
+
+    # 5b. isochrone / geo_utils :: 形状口径（第五把尺：只诊断，不入分）
+    #     四件"怎么量的"必须进名册：分箱宽度、分相、原点、方位角实现。它们不是实现细节
+    #     ——实测换原点圆度动 0.056（城市间差才 0.082），换分相最弱读数虚高 108m。
+    for name in ("SHAPE_EMIT", "SHAPE_MINUTES"):
+        _INDEX[f"isochrone::{name}"] = CaliberView(
+            ref=f"isochrone::{name}", kind="param", module="isochrone",
+            label=f"形状·{name}", value=str(_require_attr(isochrone, name, f"isochrone::{name}")),
+        )
+    for name in ("SHAPE_BIN_DEG", "SHAPE_BIN_PHASE", "SHAPE_ORIGIN", "SHAPE_AZIMUTH_FN"):
+        _INDEX[f"geo_utils::{name}"] = CaliberView(
+            ref=f"geo_utils::{name}", kind="param", module="geo_utils",
+            label=f"形状·{name}", value=str(_require_attr(geo_utils, name, f"geo_utils::{name}")),
         )
 
     # 6. report :: 契约字段 + 采样点分档（timed_count / in_reach_count / sample_count）

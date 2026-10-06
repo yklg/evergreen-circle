@@ -398,6 +398,35 @@ MUTATIONS: list[Mutation] = [
         new="        polluted: List[str] = []",
         test="tests/test_reach_calibration.py::test_b14_rejects_a_poisoned_calibration_block",
     ),
+    Mutation(
+        label="B17 形状口径：分相退回 floor（缺口被相邻方向最大值掩盖）",
+        rel="app/living_circle/geo_utils.py",
+        old="        k = int(((bearing(center, p) + 22.5) % 360.0) // SHAPE_BIN_DEG) % 8",
+        new="        k = int((bearing(center, p) % 360.0) // SHAPE_BIN_DEG) % 8",
+        test="tests/test_shape_caliber.py::test_bin_phase_is_a_caliber_not_an_implementation_detail",
+    ),
+    Mutation(
+        label="B17 形状口径：圆度改由 bins_m 反推面积（长出第二个面积真源）",
+        rel="app/living_circle/geo_utils.py",
+        old="    eq_r = math.sqrt(area_km2 * 1_000_000.0 / math.pi)",
+        new="    eq_r = sum(bins) / len(bins)",
+        test="tests/test_shape_caliber.py::test_shape_scalars_are_derived_from_this_zone_only",
+    ),
+    Mutation(
+        label="B17 契约整体早退（半代发、口径漂移全部静默）",
+        rel="app/living_circle/report_contract.py",
+        old="    if not with_shape:\n        return []                                   # 这套载荷没声明形状口径 ⇒ 整套跳过",
+        new="    if True:\n        return []",
+        test="tests/test_shape_caliber.py::test_b17_catches_half_emission",
+    ),
+    Mutation(
+        label="离线链不再摘形状键（数学正圆带着圆度 1.000 上屏）",
+        rel="app/living_circle/data_source.py",
+        old='        iso_zones = [{k: v for k, v in z.items() if k not in shape_zone_keys()}\n                     for z in iso["isochrones"]]',
+        new='        iso_zones = list(iso["isochrones"])',
+        test="tests/test_shape_caliber.py::test_offline_report_carries_no_shape_keys",
+    ),
+
 ]
 
 

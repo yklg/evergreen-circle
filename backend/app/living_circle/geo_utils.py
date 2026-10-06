@@ -181,3 +181,52 @@ def point_in_ring(pt: LngLat, ring: Sequence[LngLat]) -> bool:
             inside = not inside
         j = i
     return inside
+
+
+# ── 形状口径（第五把尺：只诊断，不入分）────────────────────────────────────
+# 半径与方位都必须相对**某一个点**量。实测：同两颗环只把原点从定格中心点换成
+# 多边形质心，凯里 15min 的圆度就动 0.056（城市之间总共只差 0.082），最弱方位还会
+# 从「正北」改口成「西北」——所以原点/分相/方位角实现三件事必须钉死并随键下发。
+SHAPE_BIN_DEG = 45.0          # 分箱宽度：与 direction_word 的 8 词 45° 分桶对齐
+SHAPE_BIN_PHASE = "center"    # 分相：以方位为中心。floor 分相会把缺口并进隔壁方向取最大值
+SHAPE_ORIGIN = "scene.center" # 原点：报告定格中心点，不是质心（polygon_centroid 零消费者）
+SHAPE_AZIMUTH_FN = "bearing"  # 方位角实现：球面 bearing()，与 direction_word 同源
+
+
+def shape_of(ring: Sequence[LngLat], center: LngLat, area_km2: float) -> dict:
+    """等时圈环的形状读数（纯几何、零外呼）。
+
+    `area_km2` 是**入参不是自算**：面积的唯一出处是 `ring_area_km2`（由发键方把
+    同一档已算好的 `area_km2` 递进来）。这里再算一遍就会长出第二个面积真源，
+    而 `circularity` 恰好只依赖它 —— 那是本域「同一量两处生产」反复出事的老形态。
+
+    分箱：`k = ((方位角 + 22.5) % 360) // 45`，与 `direction_word` 逐字同式。
+    半径取**箱内最大**并 round 到 0.1m —— 与 `scope.reach_circumradius_m`（同为
+    `max(haversine_m(center, p))`，落库 round 1 位）保持可精确对账的精度。
+    """
+    if not ring:
+        raise ValueError("shape_of：空环无从量形状")
+    if area_km2 is None or area_km2 <= 0 or not math.isfinite(area_km2):
+        raise ValueError(f"shape_of：面积必须是正的有限值，拿到 {area_km2!r}")
+    bins: List[float] = [0.0] * 8
+    for p in ring:
+        k = int(((bearing(center, p) + 22.5) % 360.0) // SHAPE_BIN_DEG) % 8
+        r = haversine_m(center, p)
+        if r > bins[k]:
+            bins[k] = r
+    bins = [round(r, 1) for r in bins]
+    r_max = max(bins)
+    r_min = min(bins)
+    if r_max <= 0:
+        raise ValueError("shape_of：环上所有顶点与中心点同址，形状无定义")
+    eq_r = math.sqrt(area_km2 * 1_000_000.0 / math.pi)
+    return {
+        "bins_m": bins,
+        "bins_word": [_DIRECTIONS[k] for k in range(8)],   # 词表只有一份：随键下发，前端不另抄
+        "bin_deg": SHAPE_BIN_DEG,
+        "bin_phase": SHAPE_BIN_PHASE,
+        "origin": SHAPE_ORIGIN,
+        "azimuth_fn": SHAPE_AZIMUTH_FN,
+        "circularity": round(eq_r / r_max, 3),
+        "weak_ratio": round(r_min / r_max, 3),
+    }

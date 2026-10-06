@@ -31,7 +31,8 @@ from app.living_circle.blindspot import judge_once
 from app.living_circle.geo_index.offline_geocoder import OfflineGeocoder
 from app.living_circle.geo_utils import LngLat, haversine_m
 from app.living_circle.caliber import get_caliber, caliber_payload_key
-from app.living_circle.isochrone import IsochroneEngine, hour_to_minutes, interpolation_form_keys
+from app.living_circle.isochrone import (IsochroneEngine, hour_to_minutes,
+                                interpolation_form_keys, shape_zone_keys)
 from app.living_circle.degrade_policy import degrade_reason, degraded_block, partial_for
 from app.living_circle.judgement import STAT_KEYS
 from app.living_circle.poi_collector import (
@@ -292,6 +293,12 @@ class OfflineDataSource(DataSource):
             k: v for k, v in iso["sampling"].items() if k not in _stripped
         }
         sampling.update({"interpolation": "circular_approx", "is_scattered": False})
+        # 形状键一并摘（与上面摘 `detour` 同一条纪律，键名取自发射口不抄第二份）：
+        # 离线那个 `meter_fn` 与各向同性的距离模型是恒等式，切出来的环**在数学上就是正圆**
+        # ——圆度恒等于 1.000。留着它，屏上就会出现"猜的那份比真测的那份更像好圈"，
+        # 而 `test_caliber_invariants` 早就把正圆判成算法退化（cv>0.01 那条红线）。
+        iso_zones = [{k: v for k, v in z.items() if k not in shape_zone_keys()}
+                     for z in iso["isochrones"]]
 
         # R2/R6：离线报告也增 caliber 举证对象
         caliber_report = {
@@ -317,7 +324,7 @@ class OfflineDataSource(DataSource):
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "data_origin": "offline",
             "caliber": caliber_report,
-            "isochrones": iso["isochrones"],
+            "isochrones": iso_zones,
             # ⚠️ **这里刻意不接 `iso_compare`**（笔 B）：引擎在离线上也会切出那条 8min 对照环，
             # 但离线那个场是恒等式（`直线 × detour_k ÷ 速度`）算出来的 —— 拿它再切一刀只是
             # "用估算做估算的对照"，屏幕上有它就会出现"按文献阈值实测对照出 1.3 km²"这种话。

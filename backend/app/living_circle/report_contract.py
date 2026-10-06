@@ -59,6 +59,8 @@ Tier B 的「盲区 ⊆ 可达区」；7 份旧算法 live 报告必然缺 ``cal
 """
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -66,7 +68,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from app.living_circle.caliber import REACH_CALIBER_VERSION, get_caliber
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
-from app.living_circle.isochrone import interpolation_form_keys
+from app.living_circle.isochrone import interpolation_form_keys, shape_zone_keys
+from app.living_circle.geo_utils import SHAPE_AZIMUTH_FN, SHAPE_BIN_DEG, SHAPE_BIN_PHASE, SHAPE_ORIGIN
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
 # 台账的三个字符 `1/0/.` 一旦有两份定义，读侧守卫就会在写侧改字母表的那天开始说谎。
 # 依赖方向是 读侧守卫 → 判定模块，与既有 `scope.BLIND_RADIUS_M` 同一条，不构成环
@@ -777,6 +780,110 @@ def _interpolation_form_violations(lc: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
+    """B17 · 形状口径（第五把尺：只诊断，不入分）—— 发出来了就得自洽、可复算。
+
+    与 B14/B15/B16 同一分档：**缺席＝合法**（存量件、离线件、骑行/驾车档、5/10min
+    都不发这个键，一套都不该被这条打死），只罚"说了但说不圆"。罚五格：
+
+      ① 半份发布 —— `shape` 里七件（bins_m / bin_deg / bin_phase / origin /
+         azimuth_fn / circularity / weak_ratio）缺任一件。半份比不发更误导：读者拿到
+         一串米数却不知道怎么分的箱、相对谁量的，而自己复算必然复不出同一个数。
+      ② 口径漂移 —— 分箱必须是 45°、分相必须是 `center`、原点必须是 `scene.center`、
+         方位角实现必须是球面 `bearing()`。这四件不是实现细节而是**口径**：实测把原点
+         换成质心，凯里 15min 圆度动 0.056（城市之间总共只差 0.082）；把分相换成 floor，
+         最弱读数从 438m 虚高到 547m —— 缺口被相邻方向的最大值掩盖 108m。
+      ③ 值不合法 —— `bins_m` 必须是 8 个正的有限值；比值/圆度必须是 (0,1] 内的有限值。
+         NaN 或 0 会让"最弱方位"变成一个指不到任何方向的数。
+      ④ 派生自洽 —— 两颗标量必须由这一档自己的数推出：
+         `circularity == sqrt(area_km2·1e6/π)/max(bins_m)`、`weak_ratio == min/max`。
+         面积的出处是 `area_km2`（**不许由 bins_m 反推面积**，那是第二个面积真源）。
+      ⑤ 外接半径不重复定义（**条件式**）—— 当且仅当这一档就是可达档
+         （`minutes == caliber.reach_full_min` 且该分钟数在 `caliber.iso_minutes` 里），
+         恒有 `max(bins_m) == caliber.reach_circumradius_m`（同式同点，`scope.py:530`）。
+         前提守卫必须写在判据里：满分线一旦挪到不在四档内的值，这条要自动失效，
+         否则就是拿配置漂移制造假红。
+    """
+    shape_key = next(iter(shape_zone_keys()))   # 键名取自发射口，不在判据里抄第二份
+    zones = lc.get("isochrones") or []
+    with_shape = [z for z in zones if isinstance(z, dict) and shape_key in z]
+    if not with_shape:
+        return []                                   # 这套载荷没声明形状口径 ⇒ 整套跳过
+    cal = lc.get("caliber") or {}
+    need = {"bins_m", "bins_word", "bin_deg", "bin_phase", "origin", "azimuth_fn",
+            "circularity", "weak_ratio"}
+    out: List[str] = []
+    minutes_present = {float(z.get("minutes") or -1) for z in zones if isinstance(z, dict)}
+    for m in (15.0, 20.0):
+        if m in minutes_present and m not in {float(z.get("minutes") or -1) for z in with_shape}:
+            out.append(f"{m:g}min 档缺 {shape_key} 键，但同载荷另有档带它 ⇒ 形状口径半代发（漏发的那档屏上会整块缺席）")
+    for z in with_shape:
+        m = z.get("minutes")
+        sh = z.get(shape_key)
+        tag = f"isochrones[{m}min].{shape_key}"
+        if not isinstance(sh, dict):
+            out.append(f"{tag} 不是对象（{type(sh).__name__}）⇒ 形状读数无法举证")
+            continue
+        miss = need - set(sh)
+        if miss:
+            out.append(f"{tag} 缺 {sorted(miss)} —— 半份形状声明比不发更容易被误信")
+            continue
+        bins = sh["bins_m"]
+        if not isinstance(bins, (list, tuple)) or len(bins) != 8:
+            out.append(f"{tag}.bins_m 必须是 8 个方位的最远可达半径，拿到 {bins!r}")
+            continue
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in bins):
+            out.append(f"{tag}.bins_m 含非数值 ⇒ 无法比对分箱")
+            continue
+        if any((not isfinite(float(v))) or float(v) <= 0 for v in bins):
+            out.append(f"{tag}.bins_m 含 0/负数/非有限值 ⇒ 有方位被当成「一步都出不去」，那不是测量")
+            continue
+        words = sh.get("bins_word")
+        if not isinstance(words, (list, tuple)) or len(words) != 8 or any(not str(w) for w in words):
+            out.append(f"{tag}.bins_word 必须是 8 个方位词（与 bins_m 同序）—— 词表只有一份，"
+                       "随键下发；渲染面各自抄一份就会在「正北/北」这种地方分叉")
+            continue
+        if float(sh["bin_deg"]) != SHAPE_BIN_DEG or sh["bin_phase"] != SHAPE_BIN_PHASE:
+            out.append(f"{tag} 分箱/分相声明与生产口径不符（拿到 {sh['bin_deg']}/{sh['bin_phase']!r}，"
+                       f"口径 {SHAPE_BIN_DEG}/{SHAPE_BIN_PHASE!r}）⇒ 换分相会把缺口并进相邻方向取最大值")
+            continue
+        if sh["origin"] != SHAPE_ORIGIN or sh["azimuth_fn"] != SHAPE_AZIMUTH_FN:
+            out.append(f"{tag} 原点/方位角实现与口径不符（{sh['origin']!r}/{sh['azimuth_fn']!r}）"
+                       " —— 换原点圆度会动 0.056，球面与平面方位角也确有差")
+            continue
+        try:
+            circ, weak = float(sh["circularity"]), float(sh["weak_ratio"])
+        except (TypeError, ValueError):
+            out.append(f"{tag} 的两颗标量不是数 ⇒ 无法复算")
+            continue
+        if not all(isfinite(v) and 0.0 < v <= 1.0 for v in (circ, weak)):
+            out.append(f"{tag} 圆度/最弱方位比必须落在 (0,1]，拿到 {circ}/{weak}")
+            continue
+        area = z.get("area_km2")
+        if area is None or not isfinite(float(area)) or float(area) <= 0:
+            out.append(f"{tag} 所在档没有可举证的 area_km2 ⇒ 圆度的面积出处断了")
+            continue
+        want_c = math.sqrt(float(area) * 1_000_000.0 / math.pi) / max(float(v) for v in bins)
+        if abs(want_c - circ) > 1e-3:
+            out.append(f"{tag}.circularity={circ} 与 sqrt(area_km2·1e6/π)/max(bins_m)={want_c:.3f} 对不上"
+                       " —— 面积只准取本档 area_km2，不许由 bins_m 反推")
+        want_w = min(float(v) for v in bins) / max(float(v) for v in bins)
+        if abs(want_w - weak) > 1e-3:
+            out.append(f"{tag}.weak_ratio={weak} 与 min(bins_m)/max(bins_m)={want_w:.3f} 对不上")
+        try:
+            iso_minutes = [float(x) for x in (cal.get("iso_minutes") or [])]
+            reach_min = float(cal.get("reach_full_min") or -1)
+        except (TypeError, ValueError):
+            continue
+        if m is not None and abs(float(m) - reach_min) < 1e-6 and reach_min in iso_minutes:
+            cr = cal.get("reach_circumradius_m")
+            if cr is not None and isfinite(float(cr)) and abs(max(float(v) for v in bins) - float(cr)) > 0.6:
+                out.append(f"{tag}: 可达档的 max(bins_m)={max(float(v) for v in bins)} 与 "
+                           f"caliber.reach_circumradius_m={cr} 不是同一个数（同式同点应相等）"
+                           " ⇒ 外接半径出现了两个真源")
+    return out
+
+
 def _iso_compare_violations(lc: Dict[str, Any]) -> List[str]:
     """B16 · 口径对比环（笔 B）：发出来了就得是"另一把尺的对照"，不能是第五条等值线。
 
@@ -898,6 +1005,8 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     violations.extend(_interpolation_form_violations(lc))
     # B16 · 口径对比环（笔 B）—— 同样只读 payload；缺席即整套跳过，存量件零影响
     violations.extend(_iso_compare_violations(lc))
+    # B17 · 形状口径（第五把尺，只诊断不入分）—— 缺席即整套跳过，存量件零影响
+    violations.extend(_shape_caliber_violations(lc))
 
     if center is None:
         # 中心点不可用 ⇒ 一切「距中心」判据都判不了（不判违规）

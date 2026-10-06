@@ -27,9 +27,31 @@ from app.living_circle.geo_utils import (
     ensure_closed,
     haversine_m,
     ring_area_km2,
+    shape_of,
     to_local_xy,
     xy_to_lnglat,
 )
+
+# ── 形状口径的发键条件（口径决策，不放 geo_utils：那里只回答"怎么量"）──────
+# 只发 15/20 两档：5/10min 内圈踩在 B8 已知缺陷上（`inside==1`、`step > inner_r/4`），
+# 读数会被网格而不是城市决定；骑行/驾车档"出不去"指高速与匝道，同一句屏上文案会撒谎。
+SHAPE_EMIT = True
+SHAPE_MINUTES = (15, 20)
+
+
+def shape_zone_keys() -> Dict[str, str]:
+    """等时圈档里形状块的**唯一发射口**（照 `interpolation_form_keys` 的同一条纪律）。
+
+    离线链要摘掉它时引这个函数，不抄键名 —— 抄的那份一改就静默失效，
+    而"正圆的假件带着形状读数排到真件前面"正是这条判据要拦的事。
+    """
+    return {"shape": "shape"}
+
+
+def shape_emit_for(travel_mode: str, minutes_th: float) -> bool:
+    """这一档这次要不要发形状键（唯一判据，发键处与契约判据共用同一颗）。"""
+    return bool(SHAPE_EMIT) and travel_mode == "walking" and float(minutes_th) in SHAPE_MINUTES
+
 
 # ── 兼容旧接口：保留常量名但改为引用 caliber（防外部直接 import 断裂）───
 ISO_MINUTES = list(get_caliber("walking").iso_minutes)
@@ -497,7 +519,7 @@ class IsochroneEngine:
 
     def _ring_zone_at(self, field2d: np.ndarray, minutes_th: float, center: LngLat,
                       study_radius_m: float, step: float, row_c: int,
-                      col_c: int) -> Optional[Dict[str, Any]]:
+                      col_c: int, emit_shape: bool = False) -> Optional[Dict[str, Any]]:
         """把耗时场在 `minutes_th` 这一档切出**唯一一条含中心的环** → 环 + 面积；切不出就 `None`。
 
         四档等值线与口径对比环**共用这一颗**（旧写法是循环体里的六行，第二条环要复用就得
@@ -520,11 +542,16 @@ class IsochroneEngine:
             for v in xy_ring
         ]
         closed = ensure_closed(ring_lnglat)
-        return {
+        area = round(ring_area_km2(closed, center), 3)
+        zone = {
             "minutes": minutes_th,
             "geojson": {"type": "Polygon", "coordinates": [closed]},
-            "area_km2": round(ring_area_km2(closed, center), 3),
+            "area_km2": area,
         }
+        if emit_shape:
+            # 面积走上面这一份，不在 shape_of 里重算（形状口径的面积唯一出处就是 area_km2）
+            zone["shape"] = shape_of(closed, center, area)
+        return zone
 
     async def compute(
         self,
@@ -576,7 +603,8 @@ class IsochroneEngine:
         zones: List[Dict[str, Any]] = []
         for minutes_th in sorted(ISO_MINUTES, reverse=True):
             zone = self._ring_zone_at(field2d, minutes_th, center, study_radius_m,
-                                     step, row_c, col_c)
+                                     step, row_c, col_c,
+                                     emit_shape=shape_emit_for(travel_mode, minutes_th))
             if zone is not None:
                 zones.append(zone)
         zones.sort(key=lambda z: z["minutes"])
