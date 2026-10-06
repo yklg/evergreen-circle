@@ -19,6 +19,10 @@
  * ## 效力上限
  * jsdom 没有排版引擎（`getBoundingClientRect` 恒 0×0），"折叠标题会不会把图例撑到内滚"
  * 这条**不在这里销账** —— 那是 Playwright 的活（`e2e/stageChecks.ts` 图例底边那四条）。
+ * live 档"勾一次会不会把视野弹走"已经在这里钉住（假件把每次地图方法调用记了账，零网络常驻）；
+ * 而"那条虚线在真机上到底画没画出来、吃不吃鼠标事件"**这里证不了**，10-06 由一次性真机 spike
+ * 答过（`skip/tmp/iso_compare_live_spike*.mjs`：真实例回读 dashed/#B45309/35 点、overlay +1、
+ * 中心与缩放逐字不动、`e.overlay === ring` 为 false），它要真 AK＋外网 ⇒ 不适合当常驻守卫。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -84,6 +88,22 @@ beforeEach(() => {
 function renderFallback(report: LivingCircleReport, showIsoCompare: boolean = true) {
   mapConfig.browserAk = ''
   return render(<LcMap report={report} showIsoCompare={showIsoCompare} />)
+}
+
+/** 假件注册表没有类型（它是测试替身），这里只声明用例真正关心的那几个入参，
+ *  不用 any 把断言对象糊掉 —— 糊掉之后 `enableClicking` 拼错也会绿。 */
+type FakePoly = {
+  opts?: { strokeColor?: string; strokeStyle?: string; enableClicking?: boolean; fillOpacity?: number }
+}
+
+/**
+ * 从假件的 poly 注册表里挑出**这条环**。
+ *
+ * 按描边色认，**不按 `strokeStyle`**：盲区面在 `LcMap.tsx:795` 也是 `dashed`，而主绘制 effect
+ * 声明在环之前 ⇒ 按线型 `find` 会先撞上别人那一层，等于拿别人的属性给自己作证（第一版就是这么写的）。
+ */
+function ringPolys(): FakePoly[] {
+  return (instances.polys as unknown as FakePoly[]).filter((q) => q.opts?.strokeColor === LC_ISO_COMPARE_COLOR)
 }
 
 describe('① 取值口与那句口径', () => {
@@ -215,15 +235,67 @@ describe('③ 落图：live 与降级两档都要画得出来', () => {
 
   it('live：走 bmap.Polygon，且 enableClicking:false + fillOpacity:0（不吃点击、不压色阶）', async () => {
     render(<LcMap report={withCmp()} showIsoCompare />)
-    await waitFor(() => expect(instances.polys.length).toBeGreaterThan(0))
+    await waitFor(() => expect(ringPolys().length).toBe(1))
     // 假件注册表没有类型（它是测试替身），这里只声明本用例真正关心的那几个入参，
     // 不用 any 把断言对象糊掉 —— 糊掉之后 `enableClicking` 拼错也会绿。
-    type FakePoly = { opts?: { strokeStyle?: string; enableClicking?: boolean; fillOpacity?: number } }
-    const polys = instances.polys as unknown as FakePoly[]
-    const cmp = polys.find((q) => q.opts?.strokeStyle === 'dashed')
-    expect(cmp, 'live 档没画对照环 ⇒ 只有降级有，两档迟早分叉').toBeTruthy()
-    expect(cmp!.opts?.enableClicking).toBe(false)
-    expect(cmp!.opts?.fillOpacity).toBe(0)
+    const [cmp] = ringPolys()
+    expect(cmp.opts?.enableClicking).toBe(false)
+    expect(cmp.opts?.fillOpacity).toBe(0)
+    expect(cmp.opts?.strokeStyle).toBe('dashed')
+  })
+
+  /**
+   * 相机不动这条，是 10-06 真机 spike 里唯一**不需要真 AK** 就能常驻的一条，所以留在这儿。
+   *
+   * 机制：主绘制 effect 的 deps 里没有 `showIsoCompare`，但它收尾那句是
+   * `centerAndZoom(center, 15)`（`LcMap.tsx:1067`）⇒ 谁哪天图省事把对照环**并进**那个 effect，
+   * 屏幕上就是"每勾一次图例，地图跳回中心 15 级"。真 AK 那条 e2e 在 CI 里恒 skip（拿不到
+   * 网络和 key 就自我跳过、报表里还算通过），守不住这件事；这里假件把每次方法调用都记了账，
+   * 于是同一句话可以零网络常驻。
+   *
+   * 恒真防线照 `lifeCircleForensicUi.test.tsx:297` 那条：先钉"挂载时确实复位过"，
+   * 否则"次数没变多"会因为一次都没发生而恒成立。
+   */
+  it('live：勾一次只多一条线，不复位相机（视图开关不许并进主绘制 effect）', async () => {
+    const CAM = new Set(['centerAndZoom', 'setViewport', 'panTo', 'setZoom', 'flyTo'])
+    // 三次渲染必须喂**同一份** report 对象：主 effect 的 deps 里有 `report`，每轮现造一个新
+    // 对象会让它照常重跑并复位相机，那条就测不出"是不是勾选项触发的"（第一版红在此，2≠1）。
+    const lc = withCmp()
+    const { rerender } = render(<LcMap report={lc} />)
+    await waitFor(() => expect(instances.maps.length).toBe(1))
+    const map = instances.maps[0] as { calls: [string, unknown[]][] }
+    const camMoves = () => map.calls.filter(([m]) => CAM.has(m)).length
+    await waitFor(() => expect(camMoves()).toBeGreaterThan(0)) // 前提守卫：一次都没动过 ⇒ 下面恒真
+    const before = camMoves()
+    expect(ringPolys()).toHaveLength(0)
+
+    rerender(<LcMap report={lc} showIsoCompare />)
+    await waitFor(() => expect(ringPolys()).toHaveLength(1))
+    expect(camMoves(), '勾开就把相机复位了 ⇒ 环被并进了主绘制 effect').toBe(before)
+
+    rerender(<LcMap report={lc} />)
+    await waitFor(() => expect(instances.removed).toContain(ringPolys()[0])) // 摘干净，不留残影
+    expect(camMoves(), '取消勾选同样不该动视野').toBe(before)
+  })
+
+  /**
+   * 上一条的**正对照**（红先审判据与台架）：数相机次数的这把尺，得在相机真动的时候真的数到。
+   *
+   * 这里不动盘上的生产文件，而是走一条**真实存在**的触发链：每轮换一个新 `report` 对象 ⇒
+   * 主绘制 effect 的 deps 变化 ⇒ 它照常重跑并 `centerAndZoom`。上一条用例红过一次（2≠1）就是
+   * 这条链，把它固化下来当反证 —— 否则"次数没变多"可能只是因为那个计数器根本看不见调用。
+   */
+  it('正对照：换了 report 对象（主 effect 照常重跑）⇒ 那条判据必须数到相机复位', async () => {
+    const CAM = new Set(['centerAndZoom', 'setViewport', 'panTo', 'setZoom', 'flyTo'])
+    const { rerender } = render(<LcMap report={withCmp()} />)
+    await waitFor(() => expect(instances.maps.length).toBe(1))
+    const map = instances.maps[0] as { calls: [string, unknown[]][] }
+    const camMoves = () => map.calls.filter(([m]) => CAM.has(m)).length
+    await waitFor(() => expect(camMoves()).toBeGreaterThan(0))
+    const before = camMoves()
+
+    rerender(<LcMap report={withCmp()} />) // ← 新对象，等同"勾一次把环并进主 effect"的效果
+    await waitFor(() => expect(camMoves()).toBeGreaterThan(before))
   })
 })
 
