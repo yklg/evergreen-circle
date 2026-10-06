@@ -734,6 +734,25 @@ export interface IsochroneZone {
   area_km2: number
 }
 
+/**
+ * 口径对照环（笔 B）：把**同一份实测耗时场**按文献阈值（步行 8min）再切一刀。
+ *
+ * 它刻意不是 `IsochroneZone[]` 的第五个元素 —— 四档是硬契约（配色表钉 `length === 4`、
+ * 面积单调性、图例按四档渲染），混进去就是把第五条线冒充成政策档。
+ * 五半（阈值／几何／面积／依据／断言边界）由后端一次发布，**缺一半整位缺席**：
+ * 骑行/驾车档不声明这个阈值、离线链不接（恒等式场再切一刀是「用估算对照估算」）、
+ * 几何退化时切不出 ⇒ 三种情况下前端都拿不到，拿不到就不渲染（不猜、不写死）。
+ */
+export interface IsoCompare {
+  minutes: number
+  geojson: GeojsonPolygon
+  area_km2: number
+  /** 出处原文（政策/文献），后端唯一发射口 `caliber.ISO_COMPARE_BASIS` */
+  basis: string
+  /** 断言边界：只有这个值才允许上屏；换成别的（能力断言）后端契约 B16 直接判违规 */
+  claim: 'caliber_comparison_only'
+}
+
 /** 采样点（渔网/网格测时结果；fixture 阶段为圆形近似合成点） */
 export interface SamplingPoint {
   idx: number
@@ -1238,6 +1257,9 @@ export interface LivingCircleReport {
      *  ⇒ 格级图层与逐格卡都不出现，经 `cellsLedgerOf()` 取，取不到就是 `null`（不猜、不抛） */
     cells_ledger?: CellsLedgerRaw
   }
+  /** 口径对照环（笔 B）；**缺 ⇒ 这份载荷没发过**（骑行/驾车档、离线件、或早于本口径的存量件）
+   *  ⇒ 图例里那一行整个不出现，经 `isoCompareOf()` 取，取不到就是 `null`（不猜、不抛） */
+  iso_compare?: IsoCompare
   isochrones: IsochroneZone[]
   sampling: {
     points: SamplingPoint[]

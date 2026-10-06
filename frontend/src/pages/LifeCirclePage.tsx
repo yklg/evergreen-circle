@@ -68,6 +68,7 @@ import {
   evidenceDiscs,
   cellsLedgerOf,
   cellVerdict,
+  isoCompareLabel,
   judgeRulerLabel,
   freshnessNote,
   residualCaliberNote,
@@ -191,6 +192,14 @@ export default function LifeCirclePage() {
   /** C1：判定尺图层开关（同样默认关）。它回答的是"判一格用的圆有多大"，
    *  与证据盘回答的"查到哪儿"是两件事，所以不合并成一个开关。 */
   const [judgeScaleOn, setJudgeScaleOn] = useState(false)
+  /** 笔 B：口径对照环图层开关（默认关）。它回答的是"按文献那把尺重切还剩多大"，
+   *  与判定尺（判一格用多大）、证据盘（查到哪儿）是三件事 ⇒ 不合并成同一个开关。 */
+  const [isoCompareOn, setIsoCompareOn] = useState(false)
+  /** 笔 B 方案②：那一行**默认收起**，图例里只常驻一枚标题按钮。这不是审美选择，是量出来的：
+   *  1280×720 档图例已被 `max-h` 夹住（可视 544px），常驻第三行会把内容推到 599 ⇒ 内滚 55px；
+   *  只常驻标题时内容 551 ⇒ 内滚 7px。判读控件在吸底块（`LC_LEGEND_JUDGE`）里，
+   *  内滚深度直接决定"勾一次要不要先把图例滚到底"。 */
+  const [compareOpen, setCompareOpen] = useState(false)
   /** 图例浮层的收起态。默认展开 —— 色块与那两个勾选是判读入口，不该出厂就藏起来。 */
   const [legendOpen, setLegendOpen] = useState(true)
   /** 盲区清单「查看全部」的展开态（默认只摊前 BLIND_TOP_N 条） */
@@ -326,6 +335,9 @@ export default function LifeCirclePage() {
   /** C6：判定尺那句口径的半径部分。取自产物（台账 → 盲区条目），取不到就整块不出现 ——
    *  写死 "1km" 会在分档后变成一句假话。 */
   const rulerLabel = report ? judgeRulerLabel(report) : null
+  /** 笔 B：对照环那句口径。取不到（骑行/驾车档、离线件、早于本口径的存量件）⇒ `null`
+   *  ⇒ 标题按钮整块不出现（摆一个点开没内容的折叠，等于摆一个假入口）。 */
+  const compareLabel = report ? isoCompareLabel(report) : null
   /** C4：逐格台账。取不到（`ev-2` 之前的报告、离线骨架、或台账半截不合形）⇒ 整张卡不出现。 */
   const ledger = report ? cellsLedgerOf(report) : null
 
@@ -791,6 +803,7 @@ export default function LifeCirclePage() {
             onBlindHover={setBlindHoverSev}
             showEvidenceDiscs={evidenceOn}
             showJudgeScale={judgeScaleOn}
+            showIsoCompare={isoCompareOn}
             selectedCell={selectedCell}
             onCellPick={setSelectedCell}
           />
@@ -894,6 +907,36 @@ export default function LifeCirclePage() {
                     </span>
                   </span>
                 </label>
+              )}
+              {/* 笔 B · 口径对照环。方案②：常驻的只有这枚标题（+1 行标题 ≈ 21px，实测内滚 7px），
+                  勾选与那句口径**点开才出现**。标题用 button 而不是 label —— 它不驱动任何勾选，
+                  只是展开；aria-expanded 让屏幕阅读器与 e2e 都能读到真实状态。 */}
+              {compareLabel && (
+                <div className="mt-1.5 border-t border-line/70 pt-1.5">
+                  <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2"
+                    aria-expanded={compareOpen}
+                    onClick={() => setCompareOpen((v) => !v)}
+                  >
+                    <span aria-hidden="true">{compareOpen ? '▾' : '▸'}</span>
+                    更多口径对比
+                  </button>
+                  {compareOpen && (
+                    <label className="mt-1.5 flex cursor-pointer items-start gap-1.5 text-tag font-medium text-ink-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-3.5 w-3.5"
+                        checked={isoCompareOn}
+                        onChange={(e) => setIsoCompareOn(e.target.checked)}
+                      />
+                      <span>
+                        口径对照环（文献阈值）
+                        <span className="mt-0.5 block font-normal text-ink-3">{compareLabel}</span>
+                      </span>
+                    </label>
+                  )}
+                </div>
               )}
             </div>
           </LcStage.Legend>

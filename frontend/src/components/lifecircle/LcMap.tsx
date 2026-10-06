@@ -27,11 +27,13 @@ import {
   LC_FIX_DOT,
   LC_ISO_COLORS,
   LC_ISO_COLORS_B,
+  LC_ISO_COMPARE_COLOR,
   LC_JUDGE_SCALE_COLOR,
   cellCenter,
   cellIndex,
   cellsLedgerOf,
   lcMeters,
+  isoCompareOf,
   judgeRulerM,
   judgeRulerLabel,
   affectedOf,
@@ -102,6 +104,10 @@ export interface LcMapProps {
    *  它是解释层不是主叙事层。人眼在 15 级视野里只能看到 250–680m，而判定问的是 1km 圆，
    *  尺度差 3–6 倍 ⇒ 没有这一层，"这块看着空"就永远会被读成"这里该判盲"。 */
   showJudgeScale?: boolean
+  /** 口径对照环图层（笔 B）：同一实测场按文献 8min 阈值重切的那条线。默认关 ——
+   *  它是**两把尺的对比**，不是主叙事层；且载荷没发（骑行/驾车档、离线件、存量件）
+   *  时这一层根本不存在，页面那颗开关也就不出现（`isoCompareOf` 返回 null）。 */
+  showIsoCompare?: boolean
   /** C5：选中的判定格 `(行i, 列j)`，与逐格台账卡（C4）双向 —— 卡里点一格、或地图上点一块，
    *  都画同一枚方框 + 该格的判定圆。`null` ⇒ 不画。 */
   selectedCell?: [number, number] | null
@@ -345,7 +351,7 @@ function NotesToggle({ on, onToggle, disabled }: { on: boolean; onToggle: () => 
 }
 
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, selectedCell = null, onCellPick, desensitize = false, focusBlindspotId },
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, selectedCell = null, onCellPick, desensitize = false, focusBlindspotId },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -357,6 +363,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   const discOverlaysRef = useRef<BMapMapOverlay[]>([])
   /** 判定尺图层（C2）的覆盖物同样单独记账 —— 与证据盘是同一条理由：视图开关不该复位相机。 */
   const scaleOverlaysRef = useRef<BMapMapOverlay[]>([])
+  const compareOverlaysRef = useRef<BMapMapOverlay[]>([])
   /** C5（选中格方框 + 该格判定圆）的覆盖物，单独记账 —— 同上一条理由。 */
   const cellOverlaysRef = useRef<BMapMapOverlay[]>([])
   /** 地图 click 监听器只注册一次（挂在主 effect 上），读不到后续 render 的 props ⇒
@@ -1139,6 +1146,34 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     }
   }, [mode, report, compareReport, showJudgeScale])
 
+  /* 笔 B · 口径对照环（live）。单独一个 effect、单独一组 overlay 句柄，理由与判定尺同例：
+   * 解释层不该混进主色阶的绘制循环（那里按 `i % colors.length` 取色，多一条线就会串色）。
+   * 三条纪律照抄判定尺：① `enableClicking: false`（不吃点击）；② 只描边不填充；
+   * ③ **不进 `fitPts`** —— 勾开它不该改变自动视野，否则一次勾选会把地图弹走。 */
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (mode !== 'live' || !map || !bmap) return
+    for (const o of compareOverlaysRef.current) map.removeOverlay(o)
+    compareOverlaysRef.current = []
+    if (!showIsoCompare || compareReport || typeof bmap.Polygon !== 'function') return
+    const cmp = isoCompareOf(report)
+    if (!cmp) return
+    const ring = cmp.geojson.coordinates[0] ?? []
+    if (ring.length < 4) return
+    const poly = new bmap.Polygon(ring.map((p) => new bmap.Point(p[0], p[1])), {
+      strokeColor: LC_ISO_COMPARE_COLOR,
+      strokeWeight: 2,
+      strokeOpacity: 0.9,
+      strokeStyle: 'dashed',
+      fillColor: LC_ISO_COMPARE_COLOR,
+      fillOpacity: 0,
+      enableClicking: false,
+    })
+    map.addOverlay(poly)
+    compareOverlaysRef.current.push(poly)
+  }, [mode, report, compareReport, showIsoCompare])
+
   /* C5 · 选中格：方框 + **这一格自己的**判定圆，让卡片上的文字与图上的圈一一对应。
    *
    * 与 C2 同一套三条硬约束（只描边、不参与命中、不进 fitPts）。**这里没有可命中的格层** ——
@@ -1257,6 +1292,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // 取不到 ⇒ 空数组 ⇒ 整层不画 —— 这就是工作台那颗开关 `{rulerLabel && …}` 同一条纪律
     // （缺席即未发生，摆一个勾了没反应的复选框等于摆假入口）。
     const scaleRulerM = judgeRulerM(report)
+    // 口径对照环（降级画布）：同一份 `isoCompareOf`，与 BMap 分支同一个取值口 ——
+    // 两条路径各读各的键，早晚会一条画得出、一条画不出（本域为这类分叉写过勘误）。
+    const cmpZone = showIsoCompare && !secondary ? isoCompareOf(report) : null
+    const cmpPts = cmpZone ? lcPolyPts(center, cmpZone.geojson.coordinates[0] ?? []) : ''
     const scaleRings =
       showJudgeScale && !secondary && scaleRulerM !== null
         ? (report.blindspots ?? []).map((b) => ({
@@ -1310,6 +1349,17 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               </g>
             )
           })}
+
+          {cmpPts && (
+            <g data-lc-iso-compare>
+              <polygon points={cmpPts} fill="none" stroke={LC_ISO_COMPARE_COLOR}
+                      strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
+              <text x={LC_CANVAS.W / 2} y={22} fontSize={11} fill={LC_ISO_COMPARE_COLOR}
+                    textAnchor="middle" fontWeight={600}>
+                口径对照 {cmpZone?.minutes} min · {cmpZone?.area_km2} km²
+              </text>
+            </g>
+          )}
 
           {secondary &&
             secondary.isochrones.map((z, zi) => {

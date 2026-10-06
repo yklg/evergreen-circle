@@ -11,6 +11,7 @@ import type {
   FacilityCategoryStat,
   ForensicAccount,
   ForensicRoundRow,
+  IsoCompare,
   LifeCircleDegraded,
   LifeCirclePartial,
   LngLat,
@@ -71,6 +72,10 @@ export const LC_FIX_DOT = '#1f9e63'
  *  选它是因为它**不在**严重度色阶（红/橙/黄）与等时圈五级色里：这一层说的是"尺子多大"，
  *  不该被读成"这里多严重"。两处必须同一个色，否则图例与概览说的不是一回事。 */
 export const LC_JUDGE_SCALE_COLOR = '#8FA8C0'
+
+/** 口径对照环的线色（笔 B）：与四档色阶、判定尺蓝都拉开，且**只描边不填充** ——
+ *  解释层填了就会把五级等时圈色阶压掉（与判定尺、证据盘同一条纪律）。 */
+export const LC_ISO_COMPARE_COLOR = '#B45309'
 /** 固有尺寸（G5 定版）：SVG 串自带 18×18，图例等消费方用 CSS 缩放 —— 同源=串，尺寸归消费方 */
 export const LC_FIX_ICON_SIZE = 18
 
@@ -1291,6 +1296,47 @@ export function residualCaliberNote(
     + `最堵的一档 ${res.max}min；入样 ${d.points_used} 点，剔除 中心 ${e.near_center}`
     + `·未测时 ${e.untimed}·零耗时 ${e.non_positive}`
   )
+}
+
+/**
+ * 口径对照环的**唯一取值口**（笔 B）：拿不到、或载荷的断言边界不是"只做口径对比"，就返回 `null`。
+ *
+ * `claim` 这一位不是装饰：后端契约 B16 会挡住非 `caliber_comparison_only` 的载荷，但那是**签发时**
+ * 的闸；读侧（历史列表里的旧件、外部导入的镜像）可能绕过它。渲染层在这里再判一次，
+ * 是因为"把群体有效窗口读成某个居民走不到"这句话一旦上屏就收不回来 —— 宁可不画。
+ */
+export function isoCompareOf(
+  lc: Pick<LivingCircleReport, 'iso_compare'> | null | undefined,
+): IsoCompare | null {
+  const c = lc?.iso_compare
+  if (!c || c.claim !== 'caliber_comparison_only') return null
+  if (!(Number.isFinite(c.minutes) && c.minutes > 0)) return null
+  if (!(Number.isFinite(c.area_km2) && c.area_km2 > 0)) return null
+  if (!c.geojson?.coordinates?.[0]?.length) return null
+  return c
+}
+
+/**
+ * 口径对照那句（**渲染层只调这一颗**，图例副行与右栏口径区共用）。
+ *
+ * 措辞是纪律的一部分，不是文风：
+ * ① 主语必须是**口径**（"按文献 X 分钟阈值重切"），不能是人群 —— 文献量的是群体有效窗口，
+ *    写成"老人只能走到 X"就是把群体结论变成对具体社区/具体居民的能力断言；
+ * ② 阈值一律读载荷的 `minutes`，不写死 8（写死＝第二个事实源，口径表改一次屏幕说一次谎）；
+ * ③ 百分比的分母取 **15min 那档的面积**（政策原文是"约 15 分钟"，这个对比才有落点），
+ *    且只在该档存在时才说 —— 拿 20min 圈当分母会把差距说小。
+ * 缺载荷 ⇒ `null`（整行不出现，不是出现一句"暂无"）。
+ */
+export function isoCompareLabel(
+  lc: Pick<LivingCircleReport, 'iso_compare' | 'isochrones'> | null | undefined,
+): string | null {
+  const c = isoCompareOf(lc)
+  if (!c) return null
+  const fifteen = (lc?.isochrones ?? []).find((z) => z.minutes === 15)
+  const head = `口径对照：同一实测场按文献 ${c.minutes} 分钟阈值重切 = ${c.area_km2} km²`
+  if (!fifteen || !(fifteen.area_km2 > 0)) return `${head}（两把尺的对比，不指认个体能力）`
+  return `${head}，是 15 分钟圈的 ${Math.round((c.area_km2 / fifteen.area_km2) * 100)}%`
+    + '（两把尺的对比，不指认个体能力）'
 }
 
 /**
