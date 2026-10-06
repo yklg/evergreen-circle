@@ -1610,6 +1610,29 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               </g>
             )
           })()}
+          {shapeOn && !secondary && shapeCal
+            /* 命中层：楔形本身画在设施点**之下**（视觉上半透明底纹不该盖住数据点），
+               但那样点上有设施点的方位就永远点不动 —— e2e 实测被 `circle r=5` 拦截。
+               这里在顶层铺一层同形状的透明面专职接点击，手法照 live 分支那条
+               `strokeOpacity: 0.01` 的命中线（同一个"视觉层与命中层分离"的决定）。 */
+            ? shapeSectors(report.scene.center, shapeCal).map((sec) => {
+                return (
+                  <polygon
+                    key={`sh-hit-${sec.index}`}
+                    data-sector-hit={sec.index}
+                    points={lcPolyPts(center, sec.ring)}
+                    fill="transparent"
+                    stroke="none"
+                    className="cursor-pointer"
+                    aria-hidden
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSectorPick?.(sec.index)
+                    }}
+                  />
+                )
+              })
+            : null}
         </svg>
         <div className="absolute right-2 top-2 z-10 flex flex-col items-end gap-1">
           <div className="rounded-chip border border-warn/50 bg-warn/10 px-2.5 py-1 text-tag font-medium text-ink-2">
@@ -1618,8 +1641,11 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
           {canToggleRaw && <BoundaryToggle value={boundaryView} onChange={setBoundaryView} />}
           {/* 降级画布也要有这颗开关：live 与降级是两棵 JSX，只在 live 里放开关
               ⇒ 无 AK 环境下图层既画得出又关不掉。**并进既有这一列**，不另起一列
-              ——`lcStageStructure` 逐节点钉这棵子树，多包一层就是它该红的时候。 */}
-          {shapeCal && (
+              ——`lcStageStructure` 逐节点钉这棵子树，多包一层就是它该红的时候。
+              ⚠️ 只在 `shapeLayerDefault`（第三屏）那一个实例上出现：报告页同时挂着
+              主图 / 局部图 / 第三屏三个 LcMap 实例，每块都长一颗同名 switch 会让
+              无障碍名冲突，读者也不知道关的是哪一张（e2e 实测数出 2 颗）。 */}
+          {shapeCal && shapeLayerDefault && (
             <ShapeToggle
               on={shapeOn}
               onToggle={() => {
@@ -1711,7 +1737,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       <div className="absolute right-2 top-2 z-30 flex flex-col items-end gap-1">
         {canToggleRaw && <BoundaryToggle value={boundaryView} onChange={setBoundaryView} />}
         <NotesToggle on={notesOn} onToggle={toggleNotes} disabled={transitioning} />
-        {shapeCal && (
+        {shapeCal && shapeLayerDefault && (
           <ShapeToggle
             on={shapeOn}
             onToggle={() => {

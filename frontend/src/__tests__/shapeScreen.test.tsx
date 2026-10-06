@@ -91,16 +91,24 @@ describe('LcMap · 方位形状图层（降级画布分支）', () => {
     expect(container.querySelectorAll('[data-sector]').length).toBe(0)
   })
 
-  it('开关存在且可开 ⇒ 画出 8 个扇区；再点关 ⇒ 归零', async () => {
-    const { container } = render(<LcMap report={report} draggableCenter={false} />)
+  it('第三屏那个实例有开关且可开 ⇒ 8 扇区；关 ⇒ 归零；别的实例不长同名开关', async () => {
+    const { container } = render(
+      <LcMap report={report} draggableCenter={false} shapeLayerDefault />,
+    )
+    // 同页再挂一块普通主图（体检台/局部图那种），它不许也长出第二颗同名开关
+    const { container: other } = render(<LcMap report={report} draggableCenter={false} />)
     await settle()
+    expect(other.querySelectorAll('[aria-label="方位形状图层"]')).toHaveLength(0)
     const toggle = screen.getByRole('switch', { name: '方位形状图层' })
+    // 第三屏是"为这张图而开"的实例 ⇒ 起盘即开（`shapeLayerDefault`），主图那类实例
+    // 起盘关且不长开关（上面那条已钉）。
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(container.querySelectorAll('[data-sector]').length).toBe(8)
+    fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(container.querySelectorAll('[data-sector]').length).toBe(0)
     fireEvent.click(toggle)
     expect(container.querySelectorAll('[data-sector]').length).toBe(8)
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
-    fireEvent.click(toggle)
-    expect(container.querySelectorAll('[data-sector]').length).toBe(0)
   })
 
   it('点扇区 ⇒ 回调带出正确下标', async () => {

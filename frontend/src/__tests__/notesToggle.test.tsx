@@ -117,7 +117,10 @@ describe('TC-05 · 降级态隐藏开关（② 集成，抓 T3/B）', () => {
        照样要能关，所以它出现在这里是对的。改成按 aria-label 数，判据更窄也更准。 */
     const labels = Array.from(document.querySelectorAll('[role="switch"]'))
       .map((el) => el.getAttribute('aria-label'))
-    expect(labels).toEqual(['方位形状图层'])
+    // 空数组 = 降级主图上**一颗 switch 都没有**。方位形状开关只属于第三屏那个实例
+    // （`shapeLayerDefault`）：报告页同时挂着主图/局部图/第三屏三个 LcMap，
+    // 每块都长一颗同名 switch 会让无障碍名冲突，读者也不知道关的是哪一张。
+    expect(labels).toEqual([])
   })
 })
 

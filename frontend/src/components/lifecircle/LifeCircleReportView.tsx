@@ -86,7 +86,6 @@ import {
   generatedOn,
   residualCaliberNote,
   shapeOfZone,
-  shapeSentence,
 } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
@@ -435,7 +434,6 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
      ⇒ 整屏不挂。这不是省事：挂一张空图等于多开一个 GL 实例，而"没数据也摆个框"
      会被读成"这个地区没有方向差异"——那是伪造负结论。 */
   const shapeCal = shapeOfZone(lc, 15)
-  const shapeLine = shapeSentence(lc, 15)
   const ledger = cellsLedgerOf(lc)
   // 局部图与主图是两个 GL 实例 ⇒ 进视口才挂（P0-7）
   const [blindRef, blindSeen] = useLazyInView<HTMLDivElement>()
@@ -533,10 +531,9 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
       </div>
       <div className="shrink-0 border-t border-line px-3 py-2 text-tag text-ink-3">
         方位形状：把 15 分钟圈按 8 个方位切开，楔形长度＝该方向实测最远可达。
-        {shapeLine ? `${shapeLine}。` : ''}
         分相与后端同式（以方位为中心，45° 一箱）—— 换成从正北起算的 floor 分相，
         缺口会被相邻方向的最大值掩盖，最弱读数会虚高上百米。
-        形状只作方向诊断，<b>不参与综合评分</b>；点条形或点图上扇区可互指。
+        点条形或点图上扇区可互指（不参与评分那句只在右栏声明一次，图注不复述）。
       </div>
     </div>
   ) : null
