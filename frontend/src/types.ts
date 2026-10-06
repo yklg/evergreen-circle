@@ -727,11 +727,46 @@ export interface LifeCircleScene {
   study_radius_m: number
 }
 
+/**
+ * 形状口径（第五把尺：**只诊断，不入分**）。后端唯一生产者 `geo_utils.shape_of`，
+ * 前端唯一出口 `lib/livingCircle.shapeReadout`。
+ *
+ * 四件"怎么量的"随键下发，不是实现细节 —— 实测换原点圆度动 0.056（城市之间总共只差
+ * 0.082），换分相最弱读数从 438m 虚高到 547m（缺口被相邻方向最大值掩盖 108m）。
+ * 因此渲染面**只准读这颗键**，不许自己从 `bins_m` 反推圆度或面积（守卫按特征扫 `src/`）。
+ */
+export interface ShapeCaliber {
+  /** 8 个方位的最远可达半径(m)，下标 0=正北、顺时针每 45° 一档（与 `direction_word` 同分桶） */
+  bins_m: number[]
+  /**
+   * 与 `bins_m` 同序的 8 个方位词，**随键下发**（后端 `geo_utils._DIRECTIONS` 是唯一词表）。
+   * 前端另抄一份就会在「正北 / 北」这种地方分叉 —— 上一版就漏过这一件，靠真检查才发现。
+   */
+  bins_word: string[]
+  /** 分箱宽度(度)：固定 45 */
+  bin_deg: number
+  /** 分相：`center`＝以方位为中心；`floor` 会掩盖缺口，生产不用 */
+  bin_phase: 'center' | string
+  /** 原点：半径与方位相对谁量。生产恒为 `scene.center`（不是质心） */
+  origin: 'scene.center' | string
+  /** 方位角实现：生产恒为球面 `bearing()` */
+  azimuth_fn: 'bearing' | string
+  /** 等面积半径 ÷ 最远可达半径，∈(0,1]；面积唯一出处是本档 `area_km2` */
+  circularity: number
+  /** 最弱方位 ÷ 最强方位，∈(0,1]；由 `bins_m` 的 min/max 派生 */
+  weak_ratio: number
+}
+
 /** 分级等时圈（5/10/15/20 分钟） */
 export interface IsochroneZone {
   minutes: number
   geojson: GeojsonPolygon
   area_km2: number
+  /**
+   * 形状读数。**可选**：离线估算件（数学正圆）、骑行/驾车档、5/10min 内圈都不发；
+   * 存量件整套缺席。缺键 ⇒ 第三屏与方位图层整块不出现，**不许**塌成 0 或"很圆"。
+   */
+  shape?: ShapeCaliber
 }
 
 /**

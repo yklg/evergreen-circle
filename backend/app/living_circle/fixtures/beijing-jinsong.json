@@ -751,7 +751,35 @@
           ]
         ]
       },
-      "area_km2": 1.758
+      "area_km2": 1.758,
+      "shape": {
+        "bins_m": [
+          941.4,
+          817.2,
+          891.1,
+          782.2,
+          881.5,
+          782.2,
+          754.8,
+          787.8
+        ],
+        "bins_word": [
+          "正北",
+          "东北",
+          "正东",
+          "东南",
+          "正南",
+          "西南",
+          "正西",
+          "西北"
+        ],
+        "bin_deg": 45.0,
+        "bin_phase": "center",
+        "origin": "scene.center",
+        "azimuth_fn": "bearing",
+        "circularity": 0.795,
+        "weak_ratio": 0.802
+      }
     },
     {
       "minutes": 20,
@@ -1358,7 +1386,35 @@
           ]
         ]
       },
-      "area_km2": 3.285
+      "area_km2": 3.285,
+      "shape": {
+        "bins_m": [
+          1273.0,
+          1125.6,
+          1273.0,
+          1074.7,
+          1248.7,
+          1028.4,
+          1146.1,
+          1074.7
+        ],
+        "bins_word": [
+          "正北",
+          "东北",
+          "正东",
+          "东南",
+          "正南",
+          "西南",
+          "正西",
+          "西北"
+        ],
+        "bin_deg": 45.0,
+        "bin_phase": "center",
+        "origin": "scene.center",
+        "azimuth_fn": "bearing",
+        "circularity": 0.803,
+        "weak_ratio": 0.808
+      }
     }
   ],
   "iso_compare": {
