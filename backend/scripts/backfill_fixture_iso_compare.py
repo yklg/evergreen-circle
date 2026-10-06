@@ -55,6 +55,10 @@ from app.living_circle.isochrone import (  # noqa: E402
 from app.living_circle.report_contract import _iso_compare_violations  # noqa: E402
 
 ALLOWED_PATHS = {"iso_compare"}
+
+
+class AlreadyBaked(Exception):
+    """该份夹具已带这一位且与现算结果逐字相同 ⇒ 幂等跳过，不是错误。"""
 AREA_TOL = 0.005          # 复算四档的容差（0.5%）；超了就说明这份场不是当前代码复现得出来的
 
 
@@ -185,6 +189,19 @@ def build(f: Path) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
     if cmp_block["minutes"] in stored:
         raise AssertionError(f"{f.name}: {level}min 与已有档位重合 ⇒ 会变成第五条政策档，拒绝")
 
+    # 幂等：已经烘过 ⇒ 逐字相同就是"无事可做"，不同就是有人手改过夹具（那才是要报警的）。
+    # ⚠️ 不能让它掉进下面那条"改动面超出允许集合"的判据里 —— 那会把"已经是对的"报成
+    # "少了 iso_compare"，一条假错误；下一个人会去"修"一个没坏的东西。
+    already = lc.get("iso_compare")
+    if already is not None:
+        # 按**盘上形态**比：生产函数给的是元组，JSON 读回来是数组 —— 直接 `==` 会把
+        # "已经烘对了"判成"有人手改过"（本工具第一次幂等复跑就是这么假报的）。
+        if json.dumps(already, sort_keys=True) == json.dumps(cmp_block, sort_keys=True):
+            raise AlreadyBaked(f.name)
+        raise AssertionError(
+            f"{f.name}: 已存在 iso_compare 但与现算结果不同 ⇒ 有人手改过夹具，"
+            f"请核对后再决定（不静默覆盖你的在制品）")
+
     new_doc = dict(doc)
     new_lc = _insert_after(lc, "isochrones", "iso_compare", cmp_block)
     if "living_circle" in doc:
@@ -211,12 +228,16 @@ def main() -> int:
     # 两趟：任一不过就一份都不写（写成"边验边写"会让第 5 份失败时前 4 份已落盘 ⇒ 镜像分叉）
     pending: List[Tuple[Path, str]] = []
     errors: List[str] = []
+    baked: List[str] = []
     for f in FIXTURES:
         if not f.exists():
             errors.append(f"✗ {f.relative_to(PROJECT)}: 文件不存在")
             continue
         try:
             src, trailing, doc, cmp_block, grid_n, max_drift = build(f)
+        except AlreadyBaked as e:
+            baked.append(e.args[0])
+            continue
         except AssertionError as e:
             errors.append(f"✗ {e}")
             continue
@@ -235,11 +256,16 @@ def main() -> int:
               f"｜环点数 {len(cmp_block['geojson']['coordinates'][0])}"
               f"｜+{len(body) - len(src)} 字节")
 
+    if baked:
+        print(f"○ {len(baked)} 份已烘过且逐字相同 ⇒ 幂等跳过：{', '.join(baked)}")
     for line in errors:
         print(line)
     if errors:
         print(f"\n{len(errors)} 份未通过核对 ⇒ **一份都没写**（原子性）。")
         return 1
+    if not pending:
+        print("\n全部已烘过，本次零写入（幂等）。")
+        return 0
     if not apply:
         print(f"\n{len(pending)} 份全部通过核对。加 --apply 才写盘。")
         return 0
