@@ -122,7 +122,9 @@ for r in linspace(lo, hi, n_fine):
 
 ### 2.2 批量测时
 
-对全部采样点一次 `routematrix/v2/walking`（N×1：N 个采样点 → 中心），每块上限由 `capability_manifest.json` 实测登记（步行/骑行 **100** 起源/块，驾车仍是 25 —— 50 起即 401，非早期文档一律写的 25）。返回 `result` 行数组，`duration.value`（秒）→ 分钟；`restrictions_status!=0` 记不可达（None）。步行速度基准住在 `caliber.py`（现值 **80 m/min**，`R7` 由 75 上调），合成场与最坏情形估算都从这**同一份**读数（`data_source.py` 取 `caliber.speed_m_per_min`），真实测时以 API 返回为唯一口径。
+对全部采样点一次 `routematrix/v2/walking`（N×1：N 个采样点 → 中心），每块上限由 `capability_manifest.json` 实测登记（步行/骑行 **100** 起源/块，驾车仍是 25 —— 50 起即 401，非早期文档一律写的 25）。返回 `result` 行数组，`duration.value`（秒）→ 分钟；**不可达的判据是 `duration.value == null`**（同见名册 `unreachable_detection`）。
+
+⚠️ 这句此前写作「`restrictions_status!=0` 记不可达」，**与代码和实测都不符**，10-06 更正：`baidu_client._measure_batch` 只看 `duration.value`；而 4a 真实探针在两社区 40/40 个点上量到 `restrictions_status` **恒为 `0`**（同批还量到 `retrograde_dist` 也恒 `0` ⇒ 步行档这两个字段都不携带可消费信息，名册 `time_axis.unconsumed_fields`）。按那句旧写法实现会把"字段没给值"读成"不可达"，或反过来让一个恒零的字段替不可达作证 —— 两种都是把判据挂在没有信息的读数上。步行速度基准住在 `caliber.py`（现值 **80 m/min**，`R7` 由 75 上调），合成场与最坏情形估算都从这**同一份**读数（`data_source.py` 取 `caliber.speed_m_per_min`），真实测时以 API 返回为唯一口径。
 
 ### 2.3 IDW 反距离加权插值（`idw_from_local`）
 
