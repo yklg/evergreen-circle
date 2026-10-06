@@ -170,6 +170,41 @@ zone  = {minutes, geojson: Polygon(ring_lnglat), area_km2}
 
 **选用理由**：赛题限定「地图开放能力」，个人 AK 免费额度内用批量算路 + IDW 逼近网络服务区效果；通过边界带加密、k-近邻 IDW、中心连通约束三类手段把插值误差控制在演示可接受范围，并全流程披露（报告 `sampling.interpolation='idw'` + 界面横幅标注）。
 
+### 2.6 同一份场按文献阈值再切一刀：口径对照环（`iso_compare`）
+
+四档（5/10/15/20min）是**政策档位**，而文献给的另一把尺是：基准步速 80 m/min 描述的是健康成年人，
+高龄者的有效步行窗口可能只有 5–8min ⇒ 取区间保守侧 **8min**，把**同一个已经实测出来的耗时场**
+重切一条等值线。它回答的是"两把尺差多少"，不是"第五个政策档"。
+
+实现上只有三条值得一提：
+
+```python
+compare_min = get_caliber(travel_mode).iso_compare_min      # 只有步行档给 8.0，其余 None
+if compare_min is not None:
+    zone = self._ring_zone_at(field2d, compare_min, center, study_radius_m, step, row_c, col_c)
+    if zone is not None:                                    # 切不出含中心的环 ⇒ 整位不发
+        iso_compare = {**zone, "basis": ISO_COMPARE_BASIS, "claim": "caliber_comparison_only"}
+...
+if iso_compare is not None:                                 # 缺席＝不发这一位，不发 null
+    out["iso_compare"] = iso_compare
+```
+
+1. **几何零新代码**：连通域必须含中心、追踪、平滑、闭合、面积全走 §2.4 同一颗函数 —— 第二条环
+   若另写一份，迟早和"中心连通"分叉。阈值不住在代码里，住 `caliber.ReachCaliber.iso_compare_min`，
+   **只有步行档给值**（骑行/驾车为 `None` ⇒ 整位不发，把"老年人走不到"贴到车速上是错的类比）。
+2. **单独发一位，不并进 `isochrones`**：四档是硬契约（前端配色表钉 `length === 4`、面积单调、
+   图例按四档渲染），混进去就是冒充第五个政策档。契约 B16 反过来罚"半份发布"与"越界"：
+   `claim` 必须是 `caliber_comparison_only`、依据必须带出处、环必须闭合且 ≥4 点、
+   **面积必须落在相邻两档之间**（这条是几何自证 —— 切不出来的环宁可整位不发）。
+3. **离线估算链刻意不接**：圆形近似是距离模型的恒等式，在恒等式场上再切一刀等于**用估算对照估算**，
+   会把"没测过"伪装成"测过之后差这么多"。同理，从没声明过这一位的存量报告**判合法**
+   （缺席＝合法，只罚说不圆的那几种）。
+
+出厂夹具里的实测读数（与载荷同源，非手填）：凯里 8min 环 **0.255 km²** ＝ 该件 15min 档
+1.562 km² 的 **16.3%**；北京劲松 **0.161 km²** ＝ 1.758 km² 的 **9.2%** —— 同一个阈值落在两个
+社区上的差近一倍，这正是"它只是对照、不是判据"的证据。措辞与落库字段的真源见
+`docs/AGENTS.md` §7「口径对照环」那条（本文不重复那张表）。
+
 ---
 
 ## 3. 实测结果（真实 AK · M5）
