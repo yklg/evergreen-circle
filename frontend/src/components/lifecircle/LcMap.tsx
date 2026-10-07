@@ -1267,7 +1267,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     if (mode !== 'live' || !map || !bmap) return
     for (const o of cellOverlaysRef.current) map.removeOverlay(o)
     cellOverlaysRef.current = []
-    if (!selectedCell || compareReport || typeof bmap.Polygon !== 'function') return
+    // P0-5：公开分享链接不得画**逐格地理边界**。这枚方框是真实米制下的格界（`fillOpacity: 0.08`），
+    // 与右侧台账那张**示意**网格（无地理比例）不是一回事，别拿"台账本来就露了"当放行理由。
+    // 做法是整层不画（缺席即不渲染，不是画个灰框打码），但**选格通道照旧通着**：点一格，台账仍高亮。
+    if (!selectedCell || compareReport || desensitize || typeof bmap.Polygon !== 'function') return
     const led = cellsLedgerOf(report)
     if (!led) return
     const [i, j] = selectedCell
@@ -1300,7 +1303,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       map.addOverlay(ring)
       cellOverlaysRef.current.push(ring)
     }
-  }, [mode, report, compareReport, selectedCell])
+  }, [mode, report, compareReport, selectedCell, desensitize])
 
   useEffect(() => {
     onMapMode?.(mode)

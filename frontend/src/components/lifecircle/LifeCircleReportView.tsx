@@ -482,14 +482,18 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
             <div className="grid h-full place-items-center text-tag text-ink-3">滚动到此处加载局部图…</div>
           )}
         </div>
-        {/* 图注三出口径**逐句对着现场写**：没盲区就不许提"只留哪一处"，没台账就不许写"与右侧卡互指"。 */}
+        {/* 图注三出口径**逐句对着现场写**：没盲区就不许提"只留哪一处"，没台账就不许写"与右侧卡互指"。
+            分享态再补一条同族禁令（P0-5）：那枚逐格方框与判定圆在脱敏下**整层不画**，所以这句也不许
+            声称"图上带该格的判定尺圆" —— 声称一层没人画的东西，就是本仓在消灭的那种"口径与数据分家"。 */}
         <div className="shrink-0 border-t border-line px-3 py-2 text-tag text-ink-3">
           {bs
             ? <>局部视图：盲区图层只留 {bs.id.replace(/^bs-/, '盲区 ')}
                 {lc.blindspots.length > 1 ? `（其余 ${lc.blindspots.length - 1} 处见上方清单与主图）` : ''}
                 ，设施点与等时圈同主图。点绿核补点会展开它的 1km 服务圈</>
             : <>局部视图：本区未检出服务盲区，这张图专供与逐格台账对指；设施点与等时圈同主图</>}
-          {ledger ? '；选中格与右侧台账卡互指，图上带该格的判定尺圆。' : '。'}
+          {ledger && !isShared ? '；选中格与右侧台账卡互指，图上带该格的判定尺圆。'
+            : ledger ? '；选中格与右侧台账卡互指（分享视图不画逐格边界，图上不出现那一格的方框与判定圆）。'
+            : '。'}
         </div>
       </div>,
     )

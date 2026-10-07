@@ -182,3 +182,27 @@ describe('生活圈报告 · 盲区局部图挂载（笔 8 / P0-7）', () => {
     expect(document.body.textContent).toContain('选中格与右侧台账卡互指')
   })
 })
+
+/**
+ * P0-5 的另一半：闸关上"画"之后，**图注那句声称也得跟着改口**。
+ *
+ * 上面那条用例钉的是非共享态 —— 那句「图上带该格的判定尺圆」在 `desensitize` 下是**假话**
+ * （方框与判定圆整层不画，见 `lcMapCellClick.test.tsx` 的 P0-5 三条）。这正是本仓反复在消灭的
+ * "口径与数据分家"：一句话在两档同印，只有一档兑现。
+ * 正对照就是上面那条『顺序』用例（非共享态必须含那句）—— 两条一对，才排除"这句根本没印出来"。
+ */
+describe('分享态（?share=1）· 图注不许声称画不出来的东西', () => {
+  it('同一份 ev2：共享态换成实话，且台账卡照在（闸只关图上的格框，不关通道）', async () => {
+    window.history.replaceState({}, '', '/report/lc-1?share=1')
+    try {
+      await renderReport(mockReport('lc-kaili-ev2'))
+      expect(document.body.textContent).toContain('分享视图不画逐格边界')
+      expect(document.body.textContent, '声称"图上带判定尺圆"而那一层根本不画 ⇒ 就是 P0-5 那句假话').not.toContain('图上带该格的判定尺圆')
+      expect(document.querySelectorAll('rect[data-cell]').length, '关图上的格框不等于撤台账卡').toBeGreaterThan(0)
+      expect(document.body.textContent, '互指还在（台账侧高亮），只该改掉"图上"那半句').toContain('选中格与右侧台账卡互指')
+    } finally {
+      // 不还原就会污染本文件后面的用例（isShared 读的是 window.location.search）
+      window.history.replaceState({}, '', '/report/lc-1')
+    }
+  })
+})

@@ -36,7 +36,7 @@ import { act, cleanup, render, waitFor } from '@testing-library/react'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
 import contract from './fixtures/cellsLedgerContract.json'
 import type { CellsLedgerRaw, LivingCircleReport } from '../types'
-import { cellCenter } from '../lib/livingCircle'
+import { cellCenter, LC_JUDGE_SCALE_COLOR } from '../lib/livingCircle'
 import { instances, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
 
 const h = vi.hoisted(() => ({ warnings: [] as string[] }))
@@ -94,8 +94,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function mount(report: LivingCircleReport, onCellPick = vi.fn()) {
-  render(<LcMap report={report} showJudgeScale selectedCell={null} onCellPick={onCellPick} />)
+async function mount(report: LivingCircleReport, onCellPick = vi.fn(), extra: Record<string, unknown> = {}) {
+  render(<LcMap report={report} showJudgeScale selectedCell={null} onCellPick={onCellPick} {...extra} />)
   await waitFor(() => expect(typeof clickHandler()).toBe('function'))
   return onCellPick
 }
@@ -175,5 +175,56 @@ describe('LcMap 地图点选格 · 坐标契约与四条静默分支', () => {
     expect(probeLines()).toHaveLength(1)
     const line = probeLines()[0]
     for (const key of ['实际键=', '经纬度=', '台账=', '格=']) expect(line).toContain(key)
+  })
+})
+
+/**
+ * P0-5 · 分享链接上**不许画逐格地理边界**。
+ *
+ * 规矩写在 `LifeCircleReportView.tsx:734`（「公开分享链接不得画逐格边界」），闸却一直没写：
+ * `desensitize` 在 `LcMap` 里原先只管三件事（`:857`/`:1534` 粗化盲区足迹、`:943` 盲区卡片点击），
+ * 而选中格那枚方框（`:1280` 起，真实米制下的格界、`fillOpacity: 0.08`）+ 它的判定圆只看
+ * `selectedCell`/`compareReport`。配对图那边 `:474-479` 是**同时**传 `desensitize={isShared}` 与
+ * `selectedCell`/`onCellPick` 的 ⇒ 分享链接上点一格就把格框画了出来，且此前**一条断言都没有**。
+ *
+ * 半边顺序照本文件惯例：**先证明画得出**，否则下面那个 0 只是"没渲染"的另一个名字。
+ * 另外一条不许顺手做过头：闸只关"画"，**不关"点"** —— 右侧台账还得高亮那一格。
+ */
+/** 那枚逐格方框的唯一指纹：判定尺色描边 + `fillOpacity: 0.08`（形状扇面是别的描边色、
+ *  判定尺圆在 `circles` 里且 fill 为 0）⇒ 不会与别的图层混数。 */
+const cellBoxPolys = () => (instances.polys as Array<{ opts: Record<string, unknown> }>).filter(
+  (p) => p.opts.strokeColor === LC_JUDGE_SCALE_COLOR && p.opts.fillOpacity === 0.08,
+)
+
+describe('LcMap 点选格 · 脱敏态（分享链接）P0-5', () => {
+  it('先证非共享态画得出（1 枚且不吃点击），同一份报告换 desensitize ⇒ 必须 0 枚', async () => {
+    const on = render(<LcMap report={WITH_LEDGER} selectedCell={[1, 1]} />)
+    await waitFor(() => expect(cellBoxPolys()).toHaveLength(1))
+    expect(cellBoxPolys()[0].opts.enableClicking, '方框接管点击 ⇒ 圈内采样点 tooltip 会被静默清零').toBe(false)
+    on.unmount()
+    resetInstances()
+
+    render(<LcMap report={WITH_LEDGER} selectedCell={[1, 1]} desensitize />)
+    // 前提守卫：这棵树确实走到 live，且别的图层照常建（闸不许顺手关掉等时圈/盲区面）
+    await waitFor(() => expect(instances.polys.length).toBeGreaterThan(0))
+    expect(cellBoxPolys(), '分享态仍画逐格方框 ⇒ P0-5 破防').toHaveLength(0)
+  })
+
+  it('脱敏态只关"画"：点 (i,j) 的格心仍必须报回 (i,j)，右侧台账那条高亮不许被一起关掉', async () => {
+    const onCellPick = await mount(WITH_LEDGER, vi.fn(), { desensitize: true })
+    const [i, j] = INSIDE[0]
+    const [lng, lat] = cellCenter(LEDGER, i, j)
+    fire({ latlng: { lng, lat } })
+    expect(onCellPick, `不画格框不等于不许选格：(${i},${j}) 应仍报回自己`).toHaveBeenCalledWith([i, j])
+  })
+
+  it('反面半边：报告没有台账 ⇒ 两种模式下都一枚都不建（缺席即不渲染，不是画个灰框打码）', async () => {
+    for (const extra of [{}, { desensitize: true }]) {
+      resetInstances()
+      const { unmount } = render(<LcMap report={BASE} selectedCell={[1, 1]} {...extra} />)
+      await waitFor(() => expect(instances.maps.length).toBeGreaterThan(0))
+      expect(cellBoxPolys(), JSON.stringify(extra)).toHaveLength(0)
+      unmount()
+    }
   })
 })
