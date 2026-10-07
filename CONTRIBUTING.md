@@ -104,6 +104,33 @@ docs(readme): 补充 Vercel 部署说明
 
 ---
 
+## 推送前检查（CI 的每个 job 都要在**干净树**上验过）
+
+「提交前检查」答的是"我的改动对不对"；CI 跑的是**每一个 job**（api 运行时校验 / 后端 pytest /
+前端 vitest / Playwright 排版回归 / docker）。本地那棵树里躺着他未提交的在制品时，
+"我这边全绿"和"远端在干净树上跑出来的结果"不是一回事 —— 所以这一段单开。
+
+- [ ] `git fetch <远端>` 后 `git rev-list --count HEAD..<远端>/<分支>` **为 0** 才推。
+      非 fast-forward 就先查远端多出来的是谁的什么（`git log 远端 ^本地`），绝不 `--force`。
+- [ ] `git diff --name-only <远端>..HEAD` 枚举待推文件：扫一遍密钥样式
+      （`api_key|secret|password|token|access_key|PRIVATE`），确认没有 `.env` / `*.db` / 日志产物。
+- [ ] **在 pristine worktree 上跑**：`git worktree add --detach /tmp/x HEAD`
+      + 软链 `frontend/node_modules`，然后把 `.github/workflows/ci.yml` 里**每个 job 的命令**
+      各跑一遍（typecheck、vitest、`npx playwright test`、后端 pytest、变异台架）。
+      ⚠️ 只跑了 vitest ≠ e2e 会绿；只跑了后端 ≠ 台架锚点还在。
+- [ ] 任何红先做**归属判定**：把同一条在**远端基线**（`git worktree add` 到 `<远端>/<分支>`）再跑一次。
+      基线也红 ⇒ 不是这批引入的：把成因与修法写进报告、交给对应的人，**别顺手修别人的账**；
+      只有本批引入的才当场修。
+- [ ] 跑不到的部分（要真 AK、真网络、真实视口）**写成未验证项并标缺口类型**（环境不可达 / 无入口 /
+      未实测），不许用"机制上应该没问题"顶替实测。
+- [ ] e2e 分档约定：live 与降级/CI-mock 验的**不是同一组命题**（降级画布走 SVG viewBox，压根没有
+      `canvas`）。加判据前先回答"这条在哪些可得环境里会跑到"；要 skip 就写明原因，
+      **恒 skip 比红更坏** —— 它让套件看起来被处理过了。
+
+> 实测代价（2026-10-07）：推 11 笔前只验了 typecheck + vitest + 后端全量，没跑 Playwright job
+> ⇒ 推上去 6 条 e2e 红 + 1 条 tailwind 悬空类棘轮红。事后逐条归属：都是**基线缺陷**
+> （那份 e2e 缺"按渲染模式分支"的判据；点名账上记着一个尚未跟踪的探针页），不是那批笔次引入的。
+
 ## 关于 AI 协作
 
 本项目在开发中深度使用 [TRAE](https://www.trae.ai/) 等 AI 编程工具协作完成。欢迎在 PR 中说明你的 AI 协作过程（如设计决策、迭代方案），这有助于其他贡献者理解改动背景。完整的设计与演进方案见 [docs/系统升级实施方案.md](./docs/系统升级实施方案.md)。
