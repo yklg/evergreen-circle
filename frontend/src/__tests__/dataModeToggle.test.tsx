@@ -103,6 +103,11 @@ describe('数据模式开关 → 调研屏（用户入口全链路）', () => {
     await waitFor(() => expect(screen.getByText('每次调研概览')).toBeTruthy())
     expect(mocks.fetchIntel).toHaveBeenCalledTimes(1)
     // 切演示之前 C6 是取过证据流的；要钉的是"切过去之后不再发新请求"
+    // 「取过证据流」是**前提**不是判据 ⇒ 照本仓现成写法（`userSourceDisclosureViews:247`、
+    // `reportsPageDeleteWiring:186`）先把它等成事实：上面那句 waitFor 只保证「概览」出现了，
+    // 证据流那次取数在更晚的 effect 里 —— 机器被抢 CPU 时这里会读到 0
+    // （2026-10-07 真 CI 首次红在这行：`AssertionError: expected 0 to be greater than 0`）。
+    await waitFor(() => expect(mocks.fetchEvidences.mock.calls.length).toBeGreaterThan(0))
     const evidencesBefore = mocks.fetchEvidences.mock.calls.length
     expect(evidencesBefore).toBeGreaterThan(0)
 
