@@ -729,10 +729,13 @@ export interface LifeCircleScene {
 
 /**
  * 形状口径（第五把尺：**只诊断，不入分**）。后端唯一生产者 `geo_utils.shape_of`，
- * 前端唯一出口 `lib/livingCircle.shapeReadout`。
+ * 前端唯一读键出口 `lib/livingCircle.shapeOfZone`（措辞由 `shapeSentence` / `shapeWeakStrong` /
+ * `shapeSuspectNote` / `shapeCaveatNote` 四颗派生，渲染面不许自己拆 `bins_m`）。
  *
- * 四件"怎么量的"随键下发，不是实现细节 —— 实测换原点圆度动 0.056（城市之间总共只差
- * 0.082），换分相最弱读数从 438m 虚高到 547m（缺口被相邻方向最大值掩盖 108m）。
+ * 四件"怎么量的"随键下发，不是实现细节 —— 按球面生产函数对库内两城实算：换原点（`polygon_centroid`），
+ * 凯里圆度 0.713→0.684（动 0.029，两城之间总共只差 0.082 ⇒ 口径吃掉 36%）、最弱读数 438m→553m，
+ * 而劲松的最弱方位直接改口（正西→东北）；换分相（floor），凯里最弱读数 438m 虚高到 571m
+ * （缺口被相邻方向最大值掩盖 133m）、比值 0.44→0.58。
  * 因此渲染面**只准读这颗键**，不许自己从 `bins_m` 反推圆度或面积（守卫按特征扫 `src/`）。
  */
 export interface ShapeCaliber {
