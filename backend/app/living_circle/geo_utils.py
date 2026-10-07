@@ -211,30 +211,43 @@ def shape_of(ring: Sequence[LngLat], center: LngLat, area_km2: float) -> dict:
     分箱：`k = ((方位角 + 22.5) % 360) // 45`，与 `direction_word` 逐字同式。
     半径取**箱内最大**并 round 到 0.1m —— 与 `scope.reach_circumradius_m`（同为
     `max(haversine_m(center, p))`，落库 round 1 位）保持可精确对账的精度。
+
+    **`bins_m` 里 `None` ＝「这一向未测到」**（`sh-2` 起；代次与含义见 `AGENTS §7.4`）。
+    旧写法给空格发 `0.0`，屏上就成了「最弱方向：正北 0m」—— 那句把"这个 45° 扇区里一个顶点
+    都没落上"说成了"居民一步都出不去"，是**替一次没做过的测量举证**。现在：
+      - 该扇区没有任何**离开中心点**的顶点 ⇒ `None`；`0.0` 从此不再被发出（契约也禁），
+        所以读侧看到 `null` 与看到数字是两件不同的事，不必猜；
+      - `weak_ratio` 只在**至少两个方向测到**时才有定义，否则 `None`（发 `1.0` 不行 ——
+        那个值的既有含义是"八方一样远、形状很圆"，与"只测到一面"正好相反）；
+      - `circularity` 用测到的那些格的最大值，与外接半径恒等式同源（可达档那格必然测到，
+        因为 `reach_circumradius_m` 就是同一批顶点的 `max`）。
     """
     if not ring:
         raise ValueError("shape_of：空环无从量形状")
     if area_km2 is None or area_km2 <= 0 or not math.isfinite(area_km2):
         raise ValueError(f"shape_of：面积必须是正的有限值，拿到 {area_km2!r}")
     bins: List[float] = [0.0] * 8
+    seen: List[bool] = [False] * 8          # 这一向有没有"可用的距离读数"（见上面 docstring）
     for p in ring:
         k = int(((bearing(center, p) + 22.5) % 360.0) // SHAPE_BIN_DEG) % 8
         r = haversine_m(center, p)
-        if r > bins[k]:
-            bins[k] = r
-    bins = [round(r, 1) for r in bins]
-    r_max = max(bins)
-    r_min = min(bins)
-    if r_max <= 0:
-        raise ValueError("shape_of：环上所有顶点与中心点同址，形状无定义")
+        if r > 0.0:
+            seen[k] = True
+            if r > bins[k]:
+                bins[k] = r
+    bins_m: List[Optional[float]] = [round(bins[k], 1) if seen[k] else None for k in range(8)]
+    vals = [v for v in bins_m if v is not None]
+    if not vals:
+        raise ValueError("shape_of：环上没有一个是离开中心点的顶点，形状无定义")
+    r_max, r_min = max(vals), min(vals)
     eq_r = math.sqrt(area_km2 * 1_000_000.0 / math.pi)
     return {
-        "bins_m": bins,
+        "bins_m": bins_m,
         "bins_word": [_DIRECTIONS[k] for k in range(8)],   # 词表只有一份：随键下发，前端不另抄
         "bin_deg": SHAPE_BIN_DEG,
         "bin_phase": SHAPE_BIN_PHASE,
         "origin": SHAPE_ORIGIN,
         "azimuth_fn": SHAPE_AZIMUTH_FN,
         "circularity": round(eq_r / r_max, 3),
-        "weak_ratio": round(r_min / r_max, 3),
+        "weak_ratio": round(r_min / r_max, 3) if len(vals) >= 2 else None,
     }

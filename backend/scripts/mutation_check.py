@@ -557,9 +557,11 @@ MUTATIONS: list[Mutation] = [
     # 没有第二个城市可比的时候，尺度与旋转的代数关系也必须成立，而它不依赖任何外部真值。
     Mutation(
         label="给 bins 混进一个加性项（齐次性当场破 —— 城市间比较悄悄换成另一把尺）",
+        # S34 把 `bins = [round(r, 1) for r in bins]` 那行换成了带 `seen` 的表达式 ⇒ 锚点跟着改，
+        # 否则这把刀会"命中 0 次"被跳过（台架报 ❓ 而不是红，等于这把刀不存在）。
         rel="app/living_circle/geo_utils.py",
-        old="    bins = [round(r, 1) for r in bins]",
-        new="    bins = [round(r, 1) + 1.0 for r in bins]  # mutation",
+        old="    bins_m: List[Optional[float]] = [round(bins[k], 1) if seen[k] else None for k in range(8)]",
+        new="    bins_m: List[Optional[float]] = [round(bins[k] + 1.0, 1) if seen[k] else None for k in range(8)]  # mutation",
         test="tests/test_shape_caliber.py::test_shape_readout_is_homogeneous_under_scaling",
     ),
     Mutation(
@@ -569,12 +571,27 @@ MUTATIONS: list[Mutation] = [
         new='"bins_word": [_DIRECTIONS[(k + 1) % 8] for k in range(8)],  # mutation',
         test="tests/test_shape_caliber.py::test_each_value_is_labelled_with_the_direction_it_was_measured_in",
     ),
+    # S34 之后这条的锚点与目标都变了（源行重写、用例改名）—— 一并修正，不留空挂的刀。
     Mutation(
-        label="B17 放行 0 值箱（退化环的「最弱方向：正北 0m」穿过契约上屏）",
+        label="B17 放行 0 值箱（「这一向没测到」又能被读成「一步都出不去」）",
         rel="app/living_circle/report_contract.py",
-        old="        if any((not isfinite(float(v))) or float(v) <= 0 for v in bins):",
-        new="        if any(not isfinite(float(v)) for v in bins):  # mutation",
-        test="tests/test_shape_caliber.py::test_degenerate_rings_never_reach_the_screen",
+        old="        if any(v is not None and (not isfinite(float(v)) or float(v) <= 0) for v in bins):",
+        new="        if any(v is not None and not isfinite(float(v)) for v in bins):  # mutation",
+        test="tests/test_shape_caliber.py::test_b17_accepts_unmeasured_nulls_and_still_rejects_zero",
+    ),
+    Mutation(
+        label="生产者把未测到的格子写回 0.0（sh-1 那句谎又回来了）",
+        rel="app/living_circle/geo_utils.py",
+        old="    bins_m: List[Optional[float]] = [round(bins[k], 1) if seen[k] else None for k in range(8)]",
+        new="    bins_m: List[Optional[float]] = [round(bins[k], 1) if seen[k] else 0.0 for k in range(8)]  # mutation",
+        test="tests/test_shape_caliber.py::test_degenerate_rings_are_marked_unmeasured_not_zero",
+    ),
+    Mutation(
+        label="只测到一个方向时不再绑 null（发 1.0 会被读成「八方一样远、形状很圆」）",
+        rel="app/living_circle/report_contract.py",
+        old="        elif weak is not None:",
+        new="        elif False:  # mutation",
+        test="tests/test_shape_caliber.py::test_b17_accepts_unmeasured_nulls_and_still_rejects_zero",
     ),
     Mutation(
         label="S22 签发侧容差放宽到 1e-2（读侧比签发侧松，绕过 B17 的载荷能上屏）",

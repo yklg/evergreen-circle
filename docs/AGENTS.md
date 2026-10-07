@@ -331,7 +331,8 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 | 唯一生产者 | `geo_utils.shape_of(ring, center, area_km2)`（纯几何、零外呼） |
 | 发键条件 | `isochrone.shape_emit_for(travel_mode, minutes)`：`live` × `walking` × `minutes∈{15,20}`，停发阀 `SHAPE_EMIT` |
 | 落库位置 | `isochrones[].shape`（键名唯一出处 `isochrone.shape_zone_keys()`，判据与离线摘键都引它） |
-| 口径版本键 | `caliber.shape_caliber_version = "sh-1"`（常量 `isochrone.SHAPE_CALIBER_VERSION`，唯一发射点 `scope.payload()`）—— **已启用**：声明了这一代却整批不发形状键 ⇒ B17 判违规；豁免只有两档（无戳 = 存量件/离线件、停发阀关 = 本代不产这把尺）。它是**第四根代次轴**，与 `ev-2`/`cov-1`/`rc-1` 并列：**进**对比页措辞表（`_GAP_CLAUSES` 的 `sh` 子句 + 前端 `CALIBER_AXES`），但**行级归属是空集**（`_SHAPE_GAP_ROWS == ()`，一行的读数都不改）、**不进复用门**（`_UNGATED_CALIBER_VERSIONS` 里那条 442 字理由） |
+| 空格怎么表达 | `bins_m[i] = null` ＝ **这一向未测到**（该 45° 扇区没有离开中心点的顶点）；`0.0` 一律违规。旧写法把空格发成 `0.0`，屏上就成了「最弱方向：正北 0m」——那是把「没量到」说成「一步都出不去」，替一次没做过的测量举证。屏上对应：条形那一格画虚线空槽 + 「未测到」，楔形与命中层**整块不画**（画了就变成可点的无数据区）；措辞句尾带「另有 N 个方向未测到顶点（…）」；只测到 ≤1 个方向时 `weak_ratio` 为 `null`，且**不许发 `1.0` 顶替**（1.0 的既有含义是「八方一样远」） |
+| 口径版本键 | `caliber.shape_caliber_version = "sh-2"`（常量 `isochrone.SHAPE_CALIBER_VERSION`；`sh-1 → sh-2` 是 S34 改**载荷语义**：空格从 `0.0` 换成 `null`，只测到一个方向时 `weak_ratio` 发 `null`），唯一发射点 `scope.payload()`）—— **已启用**：声明了这一代却整批不发形状键 ⇒ B17 判违规；豁免只有两档（无戳 = 存量件/离线件、停发阀关 = 本代不产这把尺）。它是**第四根代次轴**，与 `ev-2`/`cov-1`/`rc-1` 并列：**进**对比页措辞表（`_GAP_CLAUSES` 的 `sh` 子句 + 前端 `CALIBER_AXES`），但**行级归属是空集**（`_SHAPE_GAP_ROWS == ()`，一行的读数都不改）、**不进复用门**（`_UNGATED_CALIBER_VERSIONS` 里那条 442 字理由） |
 | 唯一上屏出口 | 前端 `lib/livingCircle.shapeOfZone()`（校验读键，缺键给 `null`）+ `shapeSentence` / `shapeWeakStrong` / `shapeSuspectNote` / `shapeCaveatNote` 四颗派生措辞；缺键 ⇒ 第三屏/方位图层/图注整块不出现 |
 | 契约判据 | B17 `_shape_caliber_violations`：半份发布 / 口径漂移 / 值非法 / 标量不可复算 / 外接半径双真源 ＋ 缺席分支 `_shape_absence_violations`（该发必发） |
 | 上线观测 | `report_contract.observe_shape_gate()`（S32）：写路径唯一收口 `pipeline._finalize_living_report()` 每份**新产物**喂一次，排在 `assess_geometry` **之前**（被拦的那份接下来就早退不落库，事后无处可查）。命中 ⇒ WARNING 带首条违规原文 + 窗口命中率（窗口 20 份）。读数**只在写侧**、**不进载荷**（读路径喂会把窗口刷成噪音；进载荷等于让被检件自我申报） |
@@ -367,7 +368,7 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 外部导入镜像会绕过 B17"那道防线反向松开。真数据全样最大偏差 0.000384，收紧有余量。
 
 还有一条：**「该发必发」的适用边界与豁免边界必须成对写**（S20 · 缺席分支
-`_shape_absence_violations`）。三条件与，缺一即假红：① 戳 == `sh-1`、② `shape_emit_for(模式, 档)`
+`_shape_absence_violations`）。三条件与，缺一即假红：① 戳 == 当前代（现 `sh-2`）、② `shape_emit_for(模式, 档)`
 （**停发阀优先于戳** —— 本代不产这把尺时不发键不算违规）、③ 该分钟数既在 `caliber.iso_minutes`
 里（档位组合按出行模式可配）又**真在这份载荷里**（整档因环退化缺席是另一条缺陷，报成"缺形状键"
 会把人引向错处）。豁免只有两档：**无戳**（存量件与离线估算件，它们与形状键集**同批
@@ -395,7 +396,7 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 | `ev` | `ev-2` | `scope.SCOPE_POLICY_VERSION` | 证据域与判盲怎么算（盲区数、判定覆盖率、逐格台账） | **会** | **进** | 服务盲区 + 综合评分 | 证据相那组：`_evidence_phase_violations`（B5/B10–B13，含 B13 逐格台账） | 横幅子句 ＋ 陈旧提示 `staleCaliberNotice`（「建议重新体检」，重跑真会更准） |
 | `cov` | `cov-1` | `category_rule.COVERAGE_CALIBER_VERSION` | 覆盖度的**分子**定义（圈内点数 → 门槛项数），与证据域互相独立 | **会**（同一批点位算出不同的分） | **进** | 只有 综合评分（**#83**：分子换代影响不到盲区行） | 无独立键集块 ⇒ 由 `scoring` 侧自证 | 横幅子句 ＋ 陈旧提示 `staleCoverageCaliberNotice` |
 | `rc` | `rc-1` | `caliber.REACH_CALIBER_VERSION` | 同一份实测耗时场**怎么被解释**（标定常态绕行系数 + 残差分钟） | **不会**（盲区数/分数/面积/点数逐位相同） | **不进**（`_UNGATED_CALIBER_VERSIONS["rc"]`） | **空集**（`_REACH_GAP_ROWS == ()`） | `_reach_calibration_violations`（**B14**） | 横幅子句；**没有**陈旧提示；残差句按 presence 出不出（缺 `sampling.detour` 就不印） |
-| `sh` | `sh-1` | `isochrone.SHAPE_CALIBER_VERSION` | 这一代**发不发八方位诊断尺**（只诊断，不入 `scoring.WEIGHTS`） | **不会** | **不进**（`_UNGATED_CALIBER_VERSIONS["sh"]`） | **空集**（`_SHAPE_GAP_ROWS == ()`） | `_shape_caliber_violations` ＋ 缺席分支 `_shape_absence_violations`（**B17**） | 横幅子句；**没有**陈旧提示；第三屏按 presence 出不出（`shapeOfZone(...) == null`） |
+| `sh` | `sh-2` | `isochrone.SHAPE_CALIBER_VERSION` | 这一代**发不发八方位诊断尺**（只诊断，不入 `scoring.WEIGHTS`）；`sh-1→sh-2` 改了空格语义（`0.0`→`null`）—— **载荷语义变才升代次**，纯实现变不升 | **不会** | **不进**（`_UNGATED_CALIBER_VERSIONS["sh"]`） | **空集**（`_SHAPE_GAP_ROWS == ()`） | `_shape_caliber_violations` ＋ 缺席分支 `_shape_absence_violations`（**B17**） | 横幅子句；**没有**陈旧提示；第三屏按 presence 出不出（`shapeOfZone(...) == null`） |
 
 **归边只有一句话**：「换它之后，重跑一次的答案会不会不同？」**会** ⇒ 进复用门；**不会** ⇒ 只做披露
 （对比页横幅 + 那一段读数的 presence 判据）。把"不改答案"的代次硬塞进门里，代价是实测过的：

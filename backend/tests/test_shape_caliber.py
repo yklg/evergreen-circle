@@ -770,50 +770,84 @@ def test_shape_readout_rotates_with_the_ring():
     assert worst_back < 1e-3, f"球面重造回程差 {worst_back:.6f} m ⇒ 上面所有等变性结论都不成立"
 
 
-def test_degenerate_rings_never_reach_the_screen():
-    """TC-16 退化环：1 点 / 2 点 / 全同点 / 共线 —— 今天 `shape_of` **不拦**，但下游两道闸必须都拒。
+def test_degenerate_rings_are_marked_unmeasured_not_zero():
+    """S34（拍板：标记「未测到」）：没顶点的方向发 `null`，`0.0` 从此不再被发出。
 
-    实测现状（本条就是按它写的，别改成"应该抛"）：除「所有顶点与中心同址」会 ValueError 外，
-    退化输入会照常产出一份**带 0 值箱、`weak_ratio == 0.0`** 的读数 —— 屏上那就是"最弱方向：正北 0m"，
-    而那实际是**这一向一个顶点都没落上**（没量到），不是"一步都出不去"。
-    所以这条钉的是"缺保证但不上屏"：`shape_of` 该不该自己拒，见下一条红钉（等你拍 S34）。
+    这一条替换的是上一版同位置的判据 —— 那时钉的是「生产者不拦、B17 必须拦住 0 值箱」。
+    口径改了就得换判据，别留着让它悄悄变成"验证旧写法"。现在两半都要成立：
+      ① 产出里没有 `0.0`，且缺的方向被标成 `null`（屏上读得到「未测到」，不是「0m」）；
+      ② 这样一份**诚实**的载荷必须过 B17 —— 把 `null` 也判违规会让整块面板消失，
+         那等于把"缺一向"升级成"全没了"，比原来的谎更难发现。
     """
     center = (107.9758, 26.5734)
-    east = (107.9858, 26.5734)
-    west = (107.9658, 26.5734)
+    east, west = (107.9858, 26.5734), (107.9658, 26.5734)
     cases = {
         "1 点环": [east],
         "2 点环": [east, west],
         "全同点": [east] * 5,
         "共线四点": [west, (107.9708, 26.5734), (107.9808, 26.5734), east],
-        "与圆心同址": [center] * 4,
     }
     for name, ring in cases.items():
+        sh = shape_of(ring, center, 0.05)
+        assert 0.0 not in sh["bins_m"], (
+            f"{name}：又发出 0.0 ⇒ 屏上会重新出现「最弱方向：正北 0m」那句替没做过的测量举证的话")
+        assert None in sh["bins_m"], f"{name}：退化成这样却没标出任何未测到：{sh['bins_m']}"
+        measured = [v for v in sh["bins_m"] if v is not None]
+        if len(measured) >= 2:
+            assert sh["weak_ratio"] == pytest.approx(
+                min(measured) / max(measured), abs=SHAPE_SCALAR_TOL)
+        else:
+            assert sh["weak_ratio"] is None, (
+                f"{name}：只测到 {len(measured)} 个方向却发了一个数 ⇒ 1.0 会被读成「八方一样远」")
+        # 诚实的载荷必须过契约（area 一并换成 0.05，让圆度的面积出处与这份合成件一致）
         rep = _with_shape()
         zone = [x for x in rep["isochrones"] if int(x["minutes"]) == 15][0]
-        try:
-            sh = shape_of(ring, center, zone["area_km2"])
-        except ValueError:
-            continue                       # 生产者当场拒收 —— 这是最理想的形态
+        zone["area_km2"] = 0.05
         zone["shape"] = sh
-        assert 0.0 in sh["bins_m"] and sh["weak_ratio"] == 0.0, (
-            f"{name}：退化却产出了不带 0 值箱的读数，本条的前提变了")
-        hits = _shape_caliber_violations(rep)
-        assert any("bins_m" in h for h in hits), (
-            f"{name}：0 值箱穿过 B17 上了屏 ⇒ 屏上会出现「最弱方向：正北 0m」这种替没做过的测量举证的话")
+        assert _shape_caliber_violations(rep) == [], f"{name}：未测到的标记被 B17 拒了"
+    # 「所有顶点都与圆心同址」仍然直接拒收 —— 那是彻底没有可读对象，不是缺几格
+    with pytest.raises(ValueError):
+        shape_of([center] * 4, center, 0.05)
 
 
-@pytest.mark.xfail(reason="**待你拍（§九 TC-06/TC-16 同一条根）**：退化输入是否该由 `shape_of` "
-                          "自己拒收。今天它只拦「所有顶点与圆心同址」，1 点/2 点/共线都照常产出带 "
-                          "0 值箱的读数（下游 B17 与读侧各拦一道，见上一条）。若拍成生产口径（升 S34），"
-                          "本条转正、请删钉；strict 会在它意外转绿时先报 XPASS。", strict=True)
-def test_shape_of_should_refuse_inputs_that_cannot_define_a_shape():
-    """红钉：一条"环"至少要能围出方向分布，才谈得上八方位最远可达 —— 1 点/2 点/共线都做不到。"""
-    center = (107.9758, 26.5734)
-    east, west = (107.9858, 26.5734), (107.9658, 26.5734)
-    for ring in ([east], [east, west], [east, east, east], [west, east]):
-        with pytest.raises(ValueError):
-            shape_of(ring, center, 0.05)
+def test_b17_accepts_unmeasured_nulls_and_still_rejects_zero():
+    """契约侧的两半：`null` 合法、`0.0` 违规 —— 只动那一格的表达，其余一概不变。
+
+    可达档那一格（20min，`max(bins)` 要与 `reach_circumradius_m` 同源）**故意留着不动**，
+    这样测到的就是"随便标几格未测到，恒等式仍然成立"这件事本身。
+    """
+    import math as _m
+
+    rep = _with_shape()
+    z = [x for x in rep["isochrones"] if int(x["minutes"]) == 20][0]
+    bins = list(z["shape"]["bins_m"])
+    top, low = max(bins), min(bins)
+    for i in [k for k, v in enumerate(bins) if v != top and v != low][:3]:
+        bins[i] = None
+    vals = [v for v in bins if v is not None]
+    z["shape"]["bins_m"] = bins
+    z["shape"]["weak_ratio"] = round(min(vals) / max(vals), 3)
+    z["shape"]["circularity"] = round(_m.sqrt(z["area_km2"] * 1e6 / _m.pi) / max(vals), 3)
+    assert _shape_caliber_violations(rep) == [], f"未测到被当成违规：{_shape_caliber_violations(rep)}"
+
+    z["shape"]["bins_m"] = [0.0 if v is None else v for v in bins]     # 退回 sh-1 的写法
+    hits = _shape_caliber_violations(rep)
+    assert any("sh-2" in h for h in hits), f"0.0 又被放行了 ⇒ 屏上会重新出现「最弱方向：0m」：{hits}"
+
+    z["shape"]["bins_m"] = [None] * 8                                  # 八格全未测到
+    hits = _shape_caliber_violations(rep)
+    assert any("全未测到" in h for h in hits), f"全 null 的键集被放行了（该整套不发键）：{hits}"
+
+    # 只测到一格时"最弱/最强"没有可比对象：旧写法发的是自比值 1.0，那会被读成「八方一样远」
+    only = [top if v == top else None for v in bins]
+    first = only.index(top)
+    only = [v if i == first else None for i, v in enumerate(only)]
+    z["shape"]["bins_m"] = only
+    z["shape"]["weak_ratio"] = 1.0
+    hits = _shape_caliber_violations(rep)
+    assert any("无定义" in h for h in hits), f"只测到 1 个方向却发 1.0 ⇒ 必须拒：{hits}"
+    z["shape"]["weak_ratio"] = None
+    assert _shape_caliber_violations(rep) == [], "同样这份改发 null 就该合法，否则「未测到」无路可表达"
 
 
 def test_shape_of_cost_has_a_recorded_baseline():

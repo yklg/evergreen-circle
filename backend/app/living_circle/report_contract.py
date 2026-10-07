@@ -857,8 +857,10 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
          而两城之间总共只差 0.082）、最弱读数 438→553m，劲松 15min 的最弱方位直接改口
          （正西→东北）；只把分相换成 floor，最弱读数从 438m 虚高到 571m
          —— 缺口被相邻方向的最大值掩盖 133m。判据在 `tests/test_shape_caliber.py`。
-      ③ 值不合法 —— `bins_m` 必须是 8 个正的有限值；比值/圆度必须是 (0,1] 内的有限值。
-         NaN 或 0 会让"最弱方位"变成一个指不到任何方向的数。
+      ③ 值不合法 —— `bins_m` 必须是 8 格，每格**正有限数或 `null`**（`sh-2` 起：`null` ＝
+         「这一向未测到」，`0.0` 违规 —— 它把没做过的测量说成「一步都出不去」）；至少测到一格，
+         八格全 null 就不该发这块键。圆度必须 (0,1] 内的有限数；`weak_ratio` 允许 `null`
+         （只测到一个方向时无定义），非 `null` 时必须 (0,1]。
       ④ 派生自洽 —— 两颗标量必须由这一档自己的数推出：
          `circularity == sqrt(area_km2·1e6/π)/max(bins_m)`、`weak_ratio == min/max`。
          面积的出处是 `area_km2`（**不许由 bins_m 反推面积**，那是第二个面积真源）。
@@ -902,11 +904,19 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
         if not isinstance(bins, (list, tuple)) or len(bins) != 8:
             out.append(f"{tag}.bins_m 必须是 8 个方位的最远可达半径，拿到 {bins!r}")
             continue
-        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in bins):
-            out.append(f"{tag}.bins_m 含非数值 ⇒ 无法比对分箱")
+        # `null` ＝「这一向未测到」（`sh-2` 的载荷语义）；`0.0` 从此是违规 —— 那正是被换掉的谎。
+        if any(isinstance(v, bool) or (v is not None and not isinstance(v, (int, float)))
+               for v in bins):
+            out.append(f"{tag}.bins_m 含非法类型（每格只准是正数或 null＝未测到），拿到 {bins!r}")
             continue
-        if any((not isfinite(float(v))) or float(v) <= 0 for v in bins):
-            out.append(f"{tag}.bins_m 含 0/负数/非有限值 ⇒ 有方位被当成「一步都出不去」，那不是测量")
+        if any(v is not None and (not isfinite(float(v)) or float(v) <= 0) for v in bins):
+            out.append(f"{tag}.bins_m 含 0/负数/非有限值 ⇒ 「这一向没测到」自 sh-2 起发 null；"
+                       "发 0 等于把没做过的测量说成「一步都出不去」")
+            continue
+        measured = [float(v) for v in bins if v is not None]
+        if not measured:
+            out.append(f"{tag}.bins_m 八个方位全未测到 ⇒ 这块没有可读对象，"
+                       "整套不发键才是诚实（全 null 的键集只会让屏上挂一片「未测到」）")
             continue
         words = sh.get("bins_word")
         if not isinstance(words, (list, tuple)) or len(words) != 8 or any(not str(w) for w in words):
@@ -938,25 +948,37 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
                 break
         if caliber_drift:
             continue
+        # 圆度必须是数；`weak_ratio` 允许 `null`（只测到一个方向时"最弱/最强"没有可比对象）。
+        # 但**不许发 1.0 来代替 null** —— 1.0 的既有含义是"八方一样远、形状很圆"。
         try:
-            circ, weak = float(sh["circularity"]), float(sh["weak_ratio"])
+            circ = float(sh["circularity"])
         except (TypeError, ValueError):
-            out.append(f"{tag} 的两颗标量不是数 ⇒ 无法复算")
+            out.append(f"{tag}.circularity 不是数 ⇒ 圆度无法复算")
             continue
-        if not all(isfinite(v) and 0.0 < v <= 1.0 for v in (circ, weak)):
-            out.append(f"{tag} 圆度/最弱方位比必须落在 (0,1]，拿到 {circ}/{weak}")
+        if not isfinite(circ) or not 0.0 < circ <= 1.0:
+            out.append(f"{tag}.circularity 必须落在 (0,1]，拿到 {sh['circularity']!r}")
+            continue
+        weak_raw = sh["weak_ratio"]
+        weak = None if weak_raw is None else float(weak_raw)
+        if weak is not None and (not isfinite(weak) or not 0.0 < weak <= 1.0):
+            out.append(f"{tag}.weak_ratio 必须是 (0,1] 内的数或 null（未测到），拿到 {weak_raw!r}")
             continue
         area = z.get("area_km2")
         if area is None or not isfinite(float(area)) or float(area) <= 0:
             out.append(f"{tag} 所在档没有可举证的 area_km2 ⇒ 圆度的面积出处断了")
             continue
-        want_c = math.sqrt(float(area) * 1_000_000.0 / math.pi) / max(float(v) for v in bins)
+        want_c = math.sqrt(float(area) * 1_000_000.0 / math.pi) / max(measured)
         if abs(want_c - circ) > SHAPE_SCALAR_TOL:
-            out.append(f"{tag}.circularity={circ} 与 sqrt(area_km2·1e6/π)/max(bins_m)={want_c:.3f} 对不上"
-                       " —— 面积只准取本档 area_km2，不许由 bins_m 反推")
-        want_w = min(float(v) for v in bins) / max(float(v) for v in bins)
-        if abs(want_w - weak) > SHAPE_SCALAR_TOL:
-            out.append(f"{tag}.weak_ratio={weak} 与 min(bins_m)/max(bins_m)={want_w:.3f} 对不上")
+            out.append(f"{tag}.circularity={circ} 与 sqrt(area_km2·1e6/π)/max(测到的 bins_m)"
+                       f"={want_c:.3f} 对不上 —— 面积只准取本档 area_km2，不许由 bins_m 反推")
+        if len(measured) >= 2:
+            want_w = min(measured) / max(measured)
+            if weak is None or abs(want_w - weak) > SHAPE_SCALAR_TOL:
+                out.append(f"{tag}.weak_ratio={weak_raw!r} 与 min/max(测到的 bins_m)={want_w:.3f} 对不上"
+                           "（只测到一个方向时该发 null，而不是发那个方向的自比值）")
+        elif weak is not None:
+            out.append(f"{tag}.weak_ratio={weak_raw!r} 但八个方位里只测到 {len(measured)} 个方向 ⇒ "
+                       "最弱方位比无定义，该发 null —— 发 1.0 会被读成「八方一样远、形状很圆」")
         try:
             iso_minutes = [float(x) for x in (cal.get("iso_minutes") or [])]
             reach_min = float(cal.get("reach_full_min") or -1)
@@ -964,8 +986,8 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
             continue
         if m is not None and abs(float(m) - reach_min) < 1e-6 and reach_min in iso_minutes:
             cr = cal.get("reach_circumradius_m")
-            if cr is not None and isfinite(float(cr)) and abs(max(float(v) for v in bins) - float(cr)) > SHAPE_CIRCUMRADIUS_TOL_M:
-                out.append(f"{tag}: 可达档的 max(bins_m)={max(float(v) for v in bins)} 与 "
+            if cr is not None and isfinite(float(cr)) and abs(max(measured) - float(cr)) > SHAPE_CIRCUMRADIUS_TOL_M:
+                out.append(f"{tag}: 可达档的 max(测到的 bins_m)={max(measured)} 与 "
                            f"caliber.reach_circumradius_m={cr} 不是同一个数（同式同点应相等）"
                            " ⇒ 外接半径出现了两个真源")
     return out
@@ -1350,7 +1372,8 @@ _UNGATED_CALIBER_VERSIONS: Dict[str, Tuple[str, str]] = {
     ),
     "sh": (
         "shape_caliber_version",
-        "sh-1 只新增一把**诊断尺**（八方位最远可达、圆度、最弱方位比），`scoring.WEIGHTS` 一行没动："
+        "形状代次（`sh-*`，现 `sh-2`）只新增一把**诊断尺**（八方位最远可达、圆度、最弱方位比），"
+        "`scoring.WEIGHTS` 一行没动："
         "两侧同 ev/cov 时盲区数、综合评分、等时圈面积、可达点数逐位相同 ⇒ 重跑一次的答案不会不同，"
         "不满足这条门自己的问题。拦它的代价与 rc 同型且可实测：全部存量件与每次 500m 邻近复用"
         "全部 miss、重打 1049 点距离矩阵与逐类检索（真配额），换来的正确性是零。它的换代由三条路径"
