@@ -19,6 +19,13 @@ import { asBdLngLat, asBdLngLatOrNull, bmapEventLngLat, describeBMapEvent, rejec
 import type { CoordSys } from '../../lib/geo'
 import { shapeSectors } from './ShapeSectorOverlay'
 import { cellLayerPlan } from './CellLayer'
+import {
+  layerAttr,
+  layerRoster,
+  type LcLayer,
+  parseLayerAttr,
+  rosterFactsOf,
+} from './lcLayers'
 import { shapeOfZone, shapeWeakStrong } from '../../lib/livingCircle'
 import { HeatFieldOverlay, minuteHeatColor } from './HeatFieldOverlay'
 import type { HeatSamplePoint } from './HeatFieldOverlay'
@@ -441,6 +448,27 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   const shapeOn = showShapeSectors ?? shapeOnState
   /** 形状读数只从 `shapeOfZone` 这一颗出口取；null ⇒ 图层与开关都不出现（不发屏）。 */
   const shapeCal = shapeOfZone(report, 15)
+  /* R1 · 图层名册：**这一档该画哪些层，只在这一个地方判**，两档的绘制点都消费它的返回值。
+     为什么必须在生产侧 —— 一份手写的「图层 × 两档」测试矩阵仍是第二份清单，加一层时照样得记得补一行。
+     live 侧的申报走 **DOM 属性**不走 state：eslint 的 react-hooks 规则明令禁止在 effect 体内同步
+     setState（会级联重渲染），而"这条 effect 真的建出了哪些层"本来就是一笔外部系统记账，与它记
+     overlay 句柄、摘覆盖物同源。也因此**不在 JSX 里写 `data-lc-layers`** —— 写了 React 就会在重渲染
+     时把它管回初值，那条名册从此有两个作者。降级侧不需要这一步：那棵树整个按名册渲染。 */
+  const roster = layerRoster({
+    secondary: Boolean(compareReport),
+    desensitize,
+    showJudgeScale,
+    showIsoCompare,
+    shapeOn,
+    ...rosterFactsOf(report, shapeCal, selectedCell),
+  })
+  const rosterStr = layerAttr(roster)
+  const declareLayer = (n: LcLayer, on: boolean) => {
+    const el = containerRef.current
+    if (!el) return
+    const cur = parseLayerAttr(el.getAttribute('data-lc-layers'))
+    el.setAttribute('data-lc-layers', on ? layerAttr([...cur, n]) : layerAttr(cur.filter((x) => x !== n)))
+  }
   /** 扇区覆盖物单独记账（照证据盘那条纪律）：不进 `overlaysRef`，免得被主重绘误摘。 */
   const sectorRefs = useRef<BMapMapOverlay[]>([])
   const clearSectors = () => {
@@ -456,7 +484,13 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     const bmap = bmapRef.current
     if (!map || !bmap || typeof bmap.Polygon !== 'function') return
     clearSectors()
-    if (!shapeOn || !shapeCal || compareReport) return
+    // R1：画不画由名册说了算（`rosterStr` 已折进 shapeOn／有没有形状键／对照态三条判据），
+    // 这里不再各抄一遍 —— 抄的每一遍都是将来会跟另一档对不上的第二份口径。
+    if (!parseLayerAttr(rosterStr).includes('shape-sectors')) {
+      declareLayer('shape-sectors', false)
+      return
+    }
+    if (shapeCal === null) return        // 只给 TS 收窄：名册里的 hasShape 就是 shapeCal !== null
     // 原点恒取 report.scene.center —— 键就是按它量的；用 customCenter 会让楔形
     // 与绝对坐标画的等时圈环各说各话（见 ShapeSectorOverlay 模块头）。
     const sectors = shapeSectors(report.scene.center, shapeCal)
@@ -478,8 +512,12 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       map.addOverlay(poly)
       sectorRefs.current.push(poly)
     }
-    return clearSectors
-  }, [mode, shapeOn, shapeCal, selectedSector, report, compareReport, onSectorPick])
+    declareLayer('shape-sectors', true)                  // R1：建出来了才申报（不是"打算建"）
+    return () => {
+      clearSectors()
+      declareLayer('shape-sectors', false)
+    }
+  }, [mode, shapeOn, shapeCal, selectedSector, report, compareReport, onSectorPick, rosterStr])
 
   /** C6：当前 1km 服务范围圈。走 add() 双登记（重绘随 overlaysRef 摘除）+ 独立 ref 供替换/清除。 */
   const fixCircleRef = useRef<BMapMapOverlay | null>(null)
@@ -1210,7 +1248,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     if (mode !== 'live' || !map || !bmap) return
     for (const o of scaleOverlaysRef.current) map.removeOverlay(o)
     scaleOverlaysRef.current = []
-    if (!showJudgeScale || compareReport || typeof bmap.Circle !== 'function') return
+    if (!parseLayerAttr(rosterStr).includes('judge-ruler') || typeof bmap.Circle !== 'function') {
+      declareLayer('judge-ruler', false)
+      return
+    }
     const rulerM = judgeRulerM(report)
     if (rulerM === null) return
     for (const b of report.blindspots ?? []) {
@@ -1226,7 +1267,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       map.addOverlay(circle)
       scaleOverlaysRef.current.push(circle)
     }
-  }, [mode, report, compareReport, showJudgeScale])
+    declareLayer('judge-ruler', true)                    // R1：建出来了才申报
+  }, [mode, report, compareReport, showJudgeScale, rosterStr])
 
   /* 笔 B · 口径对照环（live）。单独一个 effect、单独一组 overlay 句柄，理由与判定尺同例：
    * 解释层不该混进主色阶的绘制循环（那里按 `i % colors.length` 取色，多一条线就会串色）。
@@ -1238,7 +1280,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     if (mode !== 'live' || !map || !bmap) return
     for (const o of compareOverlaysRef.current) map.removeOverlay(o)
     compareOverlaysRef.current = []
-    if (!showIsoCompare || compareReport || typeof bmap.Polygon !== 'function') return
+    if (!parseLayerAttr(rosterStr).includes('iso-compare') || typeof bmap.Polygon !== 'function') {
+      declareLayer('iso-compare', false)
+      return
+    }
     const cmp = isoCompareOf(report)
     if (!cmp) return
     const ring = cmp.geojson.coordinates[0] ?? []
@@ -1254,7 +1299,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     })
     map.addOverlay(poly)
     compareOverlaysRef.current.push(poly)
-  }, [mode, report, compareReport, showIsoCompare])
+    declareLayer('iso-compare', true)                    // R1：建出来了才申报
+  }, [mode, report, compareReport, showIsoCompare, rosterStr])
 
   /* C5 · 选中格：方框 + **这一格自己的**判定圆，让卡片上的文字与图上的圈一一对应。
    *
@@ -1271,7 +1317,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // P0-5：公开分享链接不得画**逐格地理边界**。这枚方框是真实米制下的格界（`fillOpacity: 0.08`），
     // 与右侧台账那张**示意**网格（无地理比例）不是一回事，别拿"台账本来就露了"当放行理由。
     // 做法是整层不画（缺席即不渲染，不是画个灰框打码），但**选格通道照旧通着**：点一格，台账仍高亮。
-    if (compareReport || desensitize || typeof bmap.Polygon !== 'function') return
+    if (!parseLayerAttr(rosterStr).includes('selected-cell') || typeof bmap.Polygon !== 'function') {
+      declareLayer('selected-cell', false)
+      return
+    }
     // 几何唯一出自 `CellLayer.cellLayerPlan` —— 降级那侧读同一份。没台账／索引越界 ⇒ `null`
     // ⇒ 整层不画（缺席即不渲染），这四条守卫从此只有一处，不再两棵树各抄一遍。
     const plan = cellLayerPlan(report, selectedCell)
@@ -1300,7 +1349,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       map.addOverlay(ring)
       cellOverlaysRef.current.push(ring)
     }
-  }, [mode, report, compareReport, selectedCell, desensitize])
+    declareLayer('selected-cell', true)                  // R1：建出来了才申报
+  }, [mode, report, compareReport, selectedCell, desensitize, rosterStr])
 
   useEffect(() => {
     onMapMode?.(mode)
@@ -1375,10 +1425,15 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     const scaleRulerM = judgeRulerM(report)
     // 口径对照环（降级画布）：同一份 `isoCompareOf`，与 BMap 分支同一个取值口 ——
     // 两条路径各读各的键，早晚会一条画得出、一条画不出（本域为这类分叉写过勘误）。
-    const cmpZone = showIsoCompare && !secondary ? isoCompareOf(report) : null
+    // R1：这三层（以及下面的形状扇面、选中格）画不画，全部问同一份 `rosterStr` —— 也就是 live 侧
+    // effect 问的那一份。两档各抄一遍条件，就是本域四次"只画得出一档"的根因。
+    const wantsLayer = (n: LcLayer) => parseLayerAttr(rosterStr).includes(n)
+    const cmpZone = wantsLayer('iso-compare') ? isoCompareOf(report) : null
     const cmpPts = cmpZone ? lcPolyPts(center, cmpZone.geojson.coordinates[0] ?? []) : ''
     const scaleRings =
-      showJudgeScale && !secondary && scaleRulerM !== null
+      // `scaleRulerM !== null` 只给 TS 收窄：名册里的 hasRuler 就是 `judgeRulerM(report) !== null`，
+      // 同一次渲染里两者不会不同意（不许把它当成第二个判据来改）。
+      wantsLayer('judge-ruler') && scaleRulerM !== null
         ? (report.blindspots ?? []).map((b) => ({
             id: b.id,
             pts: lcPolyPts(center, lcRing(b.center, scaleRulerM)),
@@ -1388,7 +1443,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // **同一份数**，不是第二套算法。守卫照 live 同值：`!secondary`（对照态不画，对应 live 的
     // `compareReport` 半边）、`!desensitize`（P0-5：分享链接不得画逐格地理边界）、拿不到台账 ⇒
     // `plan` 为 `null` ⇒ 整层不画。
-    const cellPlan = !desensitize && !secondary ? cellLayerPlan(report, selectedCell) : null
+    const cellPlan = wantsLayer('selected-cell') ? cellLayerPlan(report, selectedCell) : null
     const onCanvasClick = (e: ReactMouseEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect()
       // ⚠️ rect 为 0×0 时（尚未布局 / 被 display:none 隐藏 / 无布局引擎的环境），
@@ -1432,7 +1487,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       // （`lcStageStructure:90` 拿它当反证、`judgeScaleCanvas:170` 拿它当"已落到 live"的门…）。
       // 10-06 我把它加宽到两档通用，实测打红一条常驻判据、又把另一条判据的门变成恒真 —— 语义加宽
       // 就是 docs/AGENTS.md §7.2 那条"一词多义，按名字搜会全错"。"两档都数得到实例"改由本属性承担。
-      <div className="relative h-full w-full" data-lc-mode="fallback">
+      <div className="relative h-full w-full" data-lc-mode="fallback" data-lc-layers={rosterStr}>
         <svg viewBox={`0 0 ${LC_CANVAS.W} ${LC_CANVAS.H}`} className="block w-full cursor-crosshair select-none" role="img" aria-label="生活圈等时圈画布（降级）" onClick={onCanvasClick}>
           <rect x={0} y={0} width={LC_CANVAS.W} height={LC_CANVAS.H} fill="#f9faf8" />
           {[-2, -1, 0, 1, 2].map((i) => (
@@ -1442,7 +1497,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
             <line key={`h${i}`} x1={0} y1={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} x2={LC_CANVAS.W} y2={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} stroke="#e7ebe7" strokeWidth={1} />
           ))}
 
-          {shapeOn && !secondary && shapeCal
+          {wantsLayer('shape-sectors') && shapeCal
             /* 几何原点恒取 report.scene.center（形状键就是按它量的），**不是**上面那个
                `center` —— 后者是画布投影原点，在体检台会被 customCenter 拖拽改写。
                混用会让楔形跟着选点跑、而环留在原地（图面自相矛盾）。 */
@@ -1451,6 +1506,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
                 return (
                   <polygon
                     key={`sh-${sec.index}`}
+                    data-lc-layer="shape-sectors"
                     data-sector={sec.index}
                     points={lcPolyPts(center, sec.ring)}
                     fill={active ? '#B9665E' : '#7C9885'}
@@ -1482,7 +1538,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
           })}
 
           {cmpPts && (
-            <g data-lc-iso-compare>
+            <g data-lc-iso-compare data-lc-layer="iso-compare">
               <polygon points={cmpPts} fill="none" stroke={LC_ISO_COMPARE_COLOR}
                       strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
               <text x={LC_CANVAS.W / 2} y={22} fontSize={11} fill={LC_ISO_COMPARE_COLOR}
@@ -1530,6 +1586,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
           {scaleRings.map((s) => (
             <polygon
               key={`scale-${s.id}`}
+              data-lc-layer="judge-ruler"
               points={s.pts}
               fill="none"
               stroke={LC_JUDGE_SCALE_COLOR}
@@ -1667,7 +1724,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               </g>
             )
           })()}
-          {shapeOn && !secondary && shapeCal
+          {wantsLayer('shape-sectors') && shapeCal
             /* 命中层：楔形本身画在设施点**之下**（视觉上半透明底纹不该盖住数据点），
                但那样点上有设施点的方位就永远点不动 —— e2e 实测被 `circle r=5` 拦截。
                这里在顶层铺一层同形状的透明面专职接点击，手法照 live 分支那条
