@@ -429,6 +429,27 @@ MUTATIONS: list[Mutation] = [
         test="tests/test_shape_caliber.py::test_b17_catches_word_table_rotated_out_of_order",
     ),
     Mutation(
+        label="外接半径恒等检查整支被摘（该报时不报，守卫是摆设）",
+        rel="app/living_circle/report_contract.py",
+        old="        if m is not None and abs(float(m) - reach_min) < 1e-6 and reach_min in iso_minutes:",
+        new="        if False:  # mutation",
+        test="tests/test_shape_caliber.py::test_b17_flags_two_sources_of_circumradius",
+    ),
+    Mutation(
+        label="外接半径容差放宽到 1e9（恒等式名义上还在、实际永不触发）",
+        rel="app/living_circle/report_contract.py",
+        old="SHAPE_CIRCUMRADIUS_TOL_M = 0.6",
+        new="SHAPE_CIRCUMRADIUS_TOL_M = 1e9",
+        test="tests/test_shape_caliber.py::test_b17_flags_two_sources_of_circumradius",
+    ),
+    Mutation(
+        label="镜像守卫把 caliber 从「必须一致集」里摘掉（守卫静默失守）",
+        rel="tests/test_fixture_mirror.py",
+        old='    "caliber",\n',
+        new='',
+        test="tests/test_fixture_mirror.py::test_every_render_core_key_blocks_drift[caliber]",
+    ),
+    Mutation(
         label="S22 签发侧容差放宽到 1e-2（读侧比签发侧松，绕过 B17 的载荷能上屏）",
         rel="app/living_circle/geo_utils.py",
         old="SHAPE_SCALAR_TOL = 1e-3",

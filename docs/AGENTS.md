@@ -353,7 +353,7 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 4. **面积出处** = 本档 `area_km2`。**不许由 `bins_m` 反推面积** —— 那会长出第二个面积真源。
 
 两条纪律性推论：**可达档的 `max(bins_m)` 必须等于 `caliber.reach_circumradius_m`**（同式同点，
-`scope.py:530` / `report_contract._circumradius:188`），否则外接半径出现两个真源；
+`scope.py:530` / `report_contract._circumradius:188`），容差 = `report_contract.SHAPE_CIRCUMRADIUS_TOL_M = 0.6`（已进口径名册；判据与它的用例读同一个数，2026-10-07 前是两处字面量）；否则外接半径出现两个真源；
 **离线件必须摘形状键**（`circular_approx` 那份在数学上就是正圆，圆度恒等 1.000 ——
 留着它，屏上会出现"猜的比真测的更像好圈"，与 `test_caliber_invariants` 的
 「正圆 = 算法退化」红线正面冲突）。

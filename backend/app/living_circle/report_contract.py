@@ -77,6 +77,12 @@ from app.living_circle.geo_utils import (
     SHAPE_SCALAR_TOL,
     _DIRECTIONS,
 )
+
+# 可达档外接半径恒等式的复算容差（米）。**它是判据的容差，不是量出来的数**，所以留在契约层：
+# 今天这条判据只在 `max(bins_m)` 与 `caliber.reach_circumradius_m` 差超 0.6m 时判「两个真源」，
+# 而 0.6 这个数原先在判据与判据自己的用例里各写一份（收紧/放宽一次要改两处）。
+# 已进口径名册（`report_contract::SHAPE_CIRCUMRADIUS_TOL_M`），用例改读它。
+SHAPE_CIRCUMRADIUS_TOL_M = 0.6
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
 # 台账的三个字符 `1/0/.` 一旦有两份定义，读侧守卫就会在写侧改字母表的那天开始说谎。
 # 依赖方向是 读侧守卫 → 判定模块，与既有 `scope.BLIND_RADIUS_M` 同一条，不构成环
@@ -905,7 +911,7 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
             continue
         if m is not None and abs(float(m) - reach_min) < 1e-6 and reach_min in iso_minutes:
             cr = cal.get("reach_circumradius_m")
-            if cr is not None and isfinite(float(cr)) and abs(max(float(v) for v in bins) - float(cr)) > 0.6:
+            if cr is not None and isfinite(float(cr)) and abs(max(float(v) for v in bins) - float(cr)) > SHAPE_CIRCUMRADIUS_TOL_M:
                 out.append(f"{tag}: 可达档的 max(bins_m)={max(float(v) for v in bins)} 与 "
                            f"caliber.reach_circumradius_m={cr} 不是同一个数（同式同点应相等）"
                            " ⇒ 外接半径出现了两个真源")

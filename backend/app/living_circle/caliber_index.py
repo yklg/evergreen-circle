@@ -206,6 +206,12 @@ def _populate_index() -> None:
     #     它们不是实现细节
     #     ——用生产 `shape_of` 实算：换原点圆度动 0.029（0.713→0.684，两城之间才差 0.082），
     #       换分相最弱读数 438→571（虚高 133m）。判据见 tests/test_shape_caliber.py 两条正对照。
+    _INDEX["report_contract::SHAPE_CIRCUMRADIUS_TOL_M"] = CaliberView(
+        ref="report_contract::SHAPE_CIRCUMRADIUS_TOL_M", kind="param", module="report_contract",
+        label="形状·外接半径恒等容差(m)",
+        value=str(_require_attr(report_contract, "SHAPE_CIRCUMRADIUS_TOL_M",
+                                 "report_contract::SHAPE_CIRCUMRADIUS_TOL_M")),
+    )
     for name in ("SHAPE_EMIT", "SHAPE_MINUTES"):
         _INDEX[f"isochrone::{name}"] = CaliberView(
             ref=f"isochrone::{name}", kind="param", module="isochrone",

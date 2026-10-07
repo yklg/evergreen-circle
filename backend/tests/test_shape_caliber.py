@@ -34,7 +34,10 @@ from app.living_circle.isochrone import (
     shape_emit_for,
     shape_zone_keys,
 )
-from app.living_circle.report_contract import _shape_caliber_violations
+from app.living_circle.report_contract import (
+    SHAPE_CIRCUMRADIUS_TOL_M,
+    _shape_caliber_violations,
+)
 
 FIXTURES = Path(gu.__file__).parent / "fixtures"
 CENTER = (107.9758, 26.5734)
@@ -260,6 +263,32 @@ def test_b17_catches_illegal_bin_values_and_missing_halves():
     assert any("缺" in s for s in _shape_caliber_violations(rep3))
 
 
+def test_b17_flags_two_sources_of_circumradius():
+    """**S33 补的那格**：该报时必须报 —— 把可达档的外接半径改歪，判据必须说「两个真源」。
+
+    2026-10-07 实测：把整支外接半径恒等检查摘掉（`if False:`）后，`test_shape_caliber.py`
+    **22 条仍全绿** —— 因为已有的三格全在测"什么时候不该报"，没有一格测"该报时真报"。
+    一条从不验证自身会响的守卫，和没有这条守卫等价（与 §九 S28 那条同族）。
+    """
+    rep = _with_shape()
+    z20 = [x for x in rep["isochrones"] if int(x["minutes"]) == 20][0]
+    assert _shape_caliber_violations(rep) == []                 # 正对照：同式同点时干净
+    cr = max(z20["shape"]["bins_m"])
+    # **断言用绝对量，不用常量去乘自己**：否则有人把 `SHAPE_CIRCUMRADIUS_TOL_M` 放宽到 1e9
+    # （名义上判据还在、实际永不触发），跟着常量走的两端会一起搬家、变异照样绿。
+    # 第一版就犯了这条 —— 台架实测"容差改 1e9"那一刀仍全绿，改成下面这样才被抓住。
+    rep["caliber"]["reach_circumradius_m"] = round(cr + 5.0, 1)
+    hits = _shape_caliber_violations(rep)
+    assert any("两个真源" in x for x in hits), f"外接半径被改歪 5m 却零违规 ⇒ 这条恒等检查是摆设：{hits}"
+    # 边界另一侧：0.2m 不许报。依据（2026-10-07 全样实测，非抽样）：6 份真夹具（后端 3 + 前端镜像 3）
+    # 可达档的 max(bins_m) 与 reach_circumradius_m **偏差全为 0.000**（两者同出 0.1m 步长取整）
+    # ⇒ 0.6 不是迁就既有漂移的容差；这里用字面量而不是 k·常量，理由见上面那段。
+    rep2 = _with_shape()
+    rep2["caliber"]["reach_circumradius_m"] = round(cr + 0.2, 3)
+    assert _shape_caliber_violations(rep2) == [], "0.2m 的取整噪声被误判成两个真源"
+    assert SHAPE_CIRCUMRADIUS_TOL_M < 5.0, "容差不许放宽到吞掉 5m 级别的真漂移（上面那格会假绿）"
+
+
 def test_b17_circumradius_identity_is_conditional():
     """恒等式只在"这一档就是可达档"时成立；满分线挪出四档 ⇒ 判据必须自动失效，不假红。
 
@@ -271,7 +300,8 @@ def test_b17_circumradius_identity_is_conditional():
     """
     rep = _with_shape()
     z20 = [x for x in rep["isochrones"] if int(x["minutes"]) == 20][0]
-    assert max(z20["shape"]["bins_m"]) == pytest.approx(rep["caliber"]["reach_circumradius_m"], abs=0.6)
+    assert max(z20["shape"]["bins_m"]) == pytest.approx(
+        rep["caliber"]["reach_circumradius_m"], abs=SHAPE_CIRCUMRADIUS_TOL_M)
     rep["caliber"]["reach_full_min"] = 25.0               # 满分线挪到四档之外
     assert _shape_caliber_violations(rep) == []
 
@@ -294,6 +324,8 @@ def test_shape_caliber_is_registered_in_the_index():
                 "geo_utils::SHAPE_ORIGIN", "geo_utils::SHAPE_AZIMUTH_FN"):
         assert ref in refs, f"{ref} 没进名册 —— 登记与落地必须同笔，否则它就是幻影条目"
     assert caliber_index.resolve("isochrone::SHAPE_MINUTES").value == str(SHAPE_MINUTES)
+    assert (caliber_index.resolve("report_contract::SHAPE_CIRCUMRADIUS_TOL_M").value
+            == str(SHAPE_CIRCUMRADIUS_TOL_M)), "名册里的外接半径容差与判据用的不是同一个数"
 
 
 def test_shape_key_name_has_a_single_source():
