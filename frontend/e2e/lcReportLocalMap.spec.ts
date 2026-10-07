@@ -303,35 +303,39 @@ test('反向通道：点局部图 → 台账卡选中那一格', async ({ page }
   // `lifeCircleStage.spec.ts` 记过"合成分派打不动 SDK"，但那是给 overlay 派发合成事件；
   // 这里用 CDP 的真实鼠标事件点画布空白处，2026-10-04 实测能选中格子。
   // 只断"选中了某一格"不断是哪一格：落点由视口尺寸与缩放决定，钉死坐标会漂。
-  //
-  // ⚠️ "点哪儿"不能拍脑袋写成比例，也不能拿正中当安全落点。两档各红的历史各记一次：
-  //   第一版点 `宽 42% × 高 55%`：本机（有 AK）绿、CI（无 AK）红 —— 但**红因不是落点**，见下面那段
-  //          （降级档压根没这条通道）。我当时把这条误读成"同一个比例在两档落到不同的格"，
-  //          10-07 实测否证：降级档换任何落点都是 0。
-  //   第二版改点槽正中（我以为 live 把视野聚到盲区、正中必中）：live **实测 0 中** —— 正中是中心
-  //          Marker 的命中区。⇒ 现在回到 `42% × 55%`，这是实测命中的三个偏中心点之一。
   const c = await openReport(page)
   await c.scrollIntoViewIfNeeded()
   await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
-  // ⚠️ 这条通道**只有 live 实现了**，两档实测过（同一台机器、同一份报告，只拦不拦 `api.map.baidu.com`）：
-  //   live   档点 4 个落点 ⇒ 3 个各选中一格、**槽正中 0 格**（正中压在中心 Marker 的命中区上，
-  //          与本仓早先"环吃掉鼠标事件"那颗误判同源 —— 别拿中心当"肯定点得到"的位置）；
-  //   fallback 档点同样 4 个落点 ⇒ **全 0**。读码对上：`onCellPick` 只在 live 的地图 click 里被调用
-  //          （`LcMap.tsx:1105`/`:1129`），而降级画布的 `onCanvasClick` 只算新中心并交给
-  //          `onCenterChange`（`:1387-1408`）—— 报告页这张配对图**根本没传** `onCenterChange`
-  //          （全仓只有 `LifeCirclePage.tsx:796` 传）⇒ 这里那个点击是纯 no-op。
-  // 所以这不是"判据写松"也不是产品坏了，是这条通道在降级档还不存在；补它属于计划 R2（新图层按
-  // `ShapeSectorOverlay.ts` 那套"一份几何 + 两档各薄渲染 + 两档各接同一颗回调"迁进来），
-  // 迁完这条就两档都跑、这个 skip 自动消失。
-  // ⚠️ 诚实标一句代价：CI 那个 job 无 AK ⇒ 本条在 CI 里恒 skip，实际保护目前只覆盖"本机有 AK"这一档。
-  if (await lcMode(slot(c)) !== 'live') {
-    test.skip(true, '点图→选格只在 live 实现（降级档实测 4 个落点全 0；那张配对图没传 onCenterChange）')
-    return
-  }
+  // 10-07 R2 之后**两档都跑**（降级画布的点图分诊与 live 共用同一颗 `cellAt`，见 `LcMap` 的
+  // `onCanvasClick`）⇒ 这条不再有 skip，也补上了当时那句老实话的反面：以前它只在"本机有 AK"那档
+  // 生效，CI 恒不执行。历史两条教训留着，别改回去：
+  //   ① 上一版这里点 `42%×55%` 在 CI 红过，我当场误读成"同一个比例在两档落到不同的格"——
+  //      实测否证：那时降级档**换任何落点都是 0**，因为通道压根没实现（不是落点的锅）。
+  //   ② 中途改点槽正中，live **实测 0 中** —— 正中是中心 Marker 的命中区（与本仓早先"环吃掉鼠标
+  //      事件"那颗误判同源：别让几何中心替你担保）。
+  // 现在落点分档各挑"确定在格阵里"的那一处：
+  //   fallback ⇒ 指盲区图形自己的中心（`[data-lc-blindspot]`：判盲的前提就是它在判定域内）
+  //   live     ⇒ `42% × 55%`（实测命中的三个偏中心点之一）
   const selected = page.locator('rect[data-cell]:not([stroke="#E3E8E3"])')
+  // ⚠️ 图上那一枚（`data-lc-layer="selected-cell"`）故意**不叫** `data-cell` —— 那是台账示意网格的名字；
+  //    撞名就会让下面这条"选中数 0"的前置断言把图上的也算进去，判据自己把自己验红（§7.2 同族事故）。
   await expect(selected).toHaveCount(0)
   await slot(c).scrollIntoViewIfNeeded()
-  const bb = (await slot(c).boundingBox())!
-  await slot(c).click({ position: { x: bb.width * 0.42, y: bb.height * 0.55 } })
+  if (await lcMode(slot(c)) === 'fallback') {
+    await slot(c).locator('[data-lc-blindspot]').first().click()
+  } else {
+    const bb = (await slot(c).boundingBox())!
+    await slot(c).click({ position: { x: bb.width * 0.42, y: bb.height * 0.55 } })
+  }
   await expect(selected).not.toHaveCount(0)
+  // 图上必须出现这一格本身 —— 但**只有降级档能在 DOM 里问**：live 那侧那对方框是 BMapGL 的
+  // canvas 覆盖物，压根不进 DOM。10-07 我先把这条写成整页断言，结果 fallback 全绿、live 两档
+  // **各红一次**（`Received: 0`）—— 判据的前提只在其中一个环境成立，正是这条 spec 一直在避的坑。
+  // live 那半的"画出来了"由 jsdom 验：`lcCellLayer.test.tsx` 的 live describe 读替身记账
+  // （`instances.polys` 里那枚方框），顶点还逐位对着同一份 plan。
+  // ⚠️ 顺带给 R1 留一条硬约束：「两档图层集合相等」的 live 半边**不能**问 DOM，必须让组件把
+  //    overlay 名册申报出来（同 `data-lc-mode` 那条思路：由生产者发话）。
+  if (await lcMode(slot(c)) === 'fallback') {
+    await expect(page.locator('[data-lc-layer="selected-cell"]')).toHaveCount(1)
+  }
 })

@@ -18,6 +18,7 @@ import { useMapNotesStore } from '../../store/mapNotesStore'
 import { asBdLngLat, asBdLngLatOrNull, bmapEventLngLat, describeBMapEvent, rejectBdLngLatSource, toDiagPair } from '../../lib/geo'
 import type { CoordSys } from '../../lib/geo'
 import { shapeSectors } from './ShapeSectorOverlay'
+import { cellLayerPlan } from './CellLayer'
 import { shapeOfZone, shapeWeakStrong } from '../../lib/livingCircle'
 import { HeatFieldOverlay, minuteHeatColor } from './HeatFieldOverlay'
 import type { HeatSamplePoint } from './HeatFieldOverlay'
@@ -31,7 +32,7 @@ import {
   LC_ISO_COLORS_B,
   LC_ISO_COMPARE_COLOR,
   LC_JUDGE_SCALE_COLOR,
-  cellCenter,
+  cellAt,
   cellIndex,
   cellsLedgerOf,
   lcMeters,
@@ -1270,17 +1271,13 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // P0-5：公开分享链接不得画**逐格地理边界**。这枚方框是真实米制下的格界（`fillOpacity: 0.08`），
     // 与右侧台账那张**示意**网格（无地理比例）不是一回事，别拿"台账本来就露了"当放行理由。
     // 做法是整层不画（缺席即不渲染，不是画个灰框打码），但**选格通道照旧通着**：点一格，台账仍高亮。
-    if (!selectedCell || compareReport || desensitize || typeof bmap.Polygon !== 'function') return
-    const led = cellsLedgerOf(report)
-    if (!led) return
-    const [i, j] = selectedCell
-    if (i < 0 || j < 0 || i >= led.n || j >= led.n) return
-    const half = led.step_m / 2
-    const [cx, cy] = cellCenter(led, i, j)
-    const corners = [
-      [-half, -half], [half, -half], [half, half], [-half, half],
-    ].map(([dx, dy]) => lcFromMeters([cx, cy], dx, dy))
-    const box = new bmap.Polygon(corners.map(([a, b]) => new bmap.Point(a, b)), {
+    if (compareReport || desensitize || typeof bmap.Polygon !== 'function') return
+    // 几何唯一出自 `CellLayer.cellLayerPlan` —— 降级那侧读同一份。没台账／索引越界 ⇒ `null`
+    // ⇒ 整层不画（缺席即不渲染），这四条守卫从此只有一处，不再两棵树各抄一遍。
+    const plan = cellLayerPlan(report, selectedCell)
+    if (!plan) return
+    const [cx, cy] = plan.center
+    const box = new bmap.Polygon(plan.corners.map(([a, b]) => new bmap.Point(a, b)), {
       strokeColor: LC_JUDGE_SCALE_COLOR,
       strokeWeight: 2,
       strokeOpacity: 1,
@@ -1291,7 +1288,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     map.addOverlay(box)
     cellOverlaysRef.current.push(box)
     if (typeof bmap.Circle === 'function') {
-      const ring = new bmap.Circle(new bmap.Point(cx, cy), led.radius_m, {
+      const ring = new bmap.Circle(new bmap.Point(cx, cy), plan.radiusM, {
         strokeColor: LC_JUDGE_SCALE_COLOR,
         strokeWeight: 1.6,
         strokeOpacity: 0.9,
@@ -1387,6 +1384,11 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
             pts: lcPolyPts(center, lcRing(b.center, scaleRulerM)),
           }))
         : []
+    // 选中格（降级半边）：几何出自 `CellLayer.cellLayerPlan` —— 与 live `:1280` 那对方框＋判定圆
+    // **同一份数**，不是第二套算法。守卫照 live 同值：`!secondary`（对照态不画，对应 live 的
+    // `compareReport` 半边）、`!desensitize`（P0-5：分享链接不得画逐格地理边界）、拿不到台账 ⇒
+    // `plan` 为 `null` ⇒ 整层不画。
+    const cellPlan = !desensitize && !secondary ? cellLayerPlan(report, selectedCell) : null
     const onCanvasClick = (e: ReactMouseEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect()
       // ⚠️ rect 为 0×0 时（尚未布局 / 被 display:none 隐藏 / 无布局引擎的环境），
@@ -1408,7 +1410,21 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       // R 派生自 study_radius_m 后若失控，算出的点会越界，此处是最后一道网。
       // 反投影本身走 `lcFromMeters` —— 与证据盘环（`lcRing`）同一个逆运算，不再自带一份系数。
       const next = asBdLngLatOrNull(lcFromMeters(center, mx, my), 'LcMap.fallbackCanvas.click')
-      if (next) onCenterChange?.(next)
+      if (!next) return
+      // 选格通道（R2）：判定尺开着、且这一点落在格阵里 ⇒ 先解释成"选这一格"，**不再顺手挪中心**
+      // （否则"点一格看台账"会把中心挪走、整份重算 —— live 那侧 `:1108` 早就为同一个打架排过序）。
+      // 落在格阵外 ⇒ 清掉选中，再照旧改中心（live 那侧这里是"关卡＋清选中"，降级画布没有浮层可关，
+      // 不为了对称去造一个不存在的东西）。换算唯一出自 `cellAt`：与台账卡、live 分诊同一颗，
+      // 本分支不许再自带第二套"哪一格"。`next` 已过 `asBdLngLatOrNull` 的值域闸，NaN 那类进不到这里。
+      if (judgeScaleRef.current) {
+        const cell = cellAt(report, next)
+        if (cell) {
+          onCellPickRef.current?.(cell)
+          return
+        }
+        onCellPickRef.current?.(null)
+      }
+      onCenterChange?.(next)
     }
     return (
       // `data-lc-mode="fallback"`：模式由**组件申报**，不再让测试数 canvas 反推（那是两份实现）。
@@ -1524,6 +1540,34 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               <title>{judgeRulerLabel(report)}</title>
             </polygon>
           ))}
+
+          {/* 选中格（R2 · 降级半边）：与 live `:1280` 那对方框＋判定圆读同一份 `cellLayerPlan`，
+              线宽/透明度/虚线与 live 参数同值 —— 判定尺当年只补了 live 一半、口径对照环两档各写一遍，
+              这是本域第四例"只画得出一档"，从这层起收掉。
+              `data-lc-layer="selected-cell"` 是给 R1「两档图层集合相等」留的抓手；
+              ⚠️ 故意不叫 `data-cell` —— 那是台账**示意网格**的名字，e2e 按它数选中格，撞名会让
+              "选中数 0"那条前置断言把图上这一枚也数进去（§7.2 同族事故）。
+              不吃点击：整张画布的 click 在根 svg 上，这里只描边/薄填充，不挂自己的 handler。 */}
+          {cellPlan && (
+            <g data-lc-layer="selected-cell">
+              <polygon
+                points={lcPolyPts(center, cellPlan.corners)}
+                fill={LC_JUDGE_SCALE_COLOR}
+                fillOpacity={0.08}
+                stroke={LC_JUDGE_SCALE_COLOR}
+                strokeWidth={2}
+                strokeOpacity={1}
+              />
+              <polygon
+                points={lcPolyPts(center, lcRing(cellPlan.center, cellPlan.radiusM))}
+                fill="none"
+                stroke={LC_JUDGE_SCALE_COLOR}
+                strokeWidth={1.6}
+                strokeOpacity={0.9}
+                strokeDasharray="6 4"
+              />
+            </g>
+          )}
 
           {!secondary &&
             report.blindspots.map((b, bi) => {
