@@ -1,13 +1,14 @@
 {
-  "_note": "lint 棘轮基线：只记已入库（git ls-files 认得的）文件的 eslint error 数，逐文件。改小=还债，需同笔删/降这里的数字；任何一项变大都必须先消掉。生成方式见 lintRatchet.test.ts 头部。 首次下调发生在 2.9 结案同批：证明这条棘轮\"还了债必须改小账本\"是真会执行的，不是摆设。",
-  "measuredAt": "2026-10-04（第 2 次记账：还掉 wordcloudLayout 的 2 条 prefer-const；另清掉 LcMap 一条失效 disable —— 那是 warning，不计 errorCount）",
-  "commit": "2590d44",
+  "_note": "lint 棘轮基线：只记已入库（git ls-files 认得的）文件的 eslint error 数，逐文件。改小=还债，需同笔删/降这里的数字；任何一项变大都必须先消掉。生成方式见 lintRatchet.test.ts 头部。 首次下调发生在 2.9 结案同批：证明这条棘轮\"还了债必须改小账本\"是真会执行的，不是摆设。 ⚠️ 「任何一项变大必须先消掉」管的是**已在账上的文件**；把一个原先未跟踪的文件入库时，它的存量 error 必须**同笔登记**进 perFile（不是消掉、也不是不去跟踪它）—— 藏回未跟踪额度等于让这道理由变成免检区。",
+  "measuredAt": "2026-10-07（第 3 次记账：探针页 `src/dev/lcHitSurfaceProbe.tsx` 入库 —— 它那 7 条 react-refresh error 原本藏在「未跟踪额度」里，入库后 `git ls-files` 认得它，必须转为逐文件记账。总数 104→111 是**登记旧债**，不是新增债；上一笔 2026-10-04 是还债（wordcloudLayout 的 2 条 prefer-const））",
+  "commit": "3f13337",
   "eslintVersion": "10.9.1",
-  "totalErrorsInTrackedFiles": 104,
+  "totalErrorsInTrackedFiles": 111,
   "perFile": {
     "src/dev/lcCovCaliberProbe.tsx": 15,
     "src/dev/lcP5Probe.tsx": 12,
     "src/dev/lcTabProbe.tsx": 8,
+    "src/dev/lcHitSurfaceProbe.tsx": 7,
     "src/__tests__/lifeCircleBannerRegistry.test.tsx": 6,
     "src/__tests__/lifeCircleFlow.test.ts": 6,
     "src/dev/lcStarvedProbe.tsx": 6,
