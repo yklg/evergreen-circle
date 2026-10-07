@@ -1,0 +1,69 @@
+{
+  "$schema_note": "生活圈报告装配器（core/pipeline/diagnosis_templates.py::assemble_report）输出的黄金基线。期望值由当时装配器实测取基线固化，不得为了让实现通过而回填：改了装配器、专家名册或口径而产物变化 ⇒ 逐面金标红 ⇒ 要么同笔把 NARRATIVE_VERSION 升一代（读路径据此对存量行重装），要么承认这是回归并回退代码。只升戳而产物没变同样红（配对闸），因为无实质变化的升戳会让所有存量行白付一次重装、把「同代次直通」的证据打掉。",
+  "schema": "evergreen.narrative-assembly-golden/v1",
+  "captured_at": "2026-10-08",
+  "narrative_version": "nar-1",
+  "assembler_args": {
+    "report_id": "lc-golden",
+    "scene_key": "golden-key",
+    "title": ""
+  },
+  "digest_note": "sha256(canonical)[:16]；canonical = json.dumps(ensure_ascii=False, sort_keys=True, separators=(',',':'))",
+  "faces_note": "逐面刻意不含 narrative_version；另有一项 report = 整份（同样剔掉 narrative_version），兜未钉住的面。",
+  "fixtures": {
+    "beijing-jinsong.json": {
+      "counts": {
+        "sections": 8,
+        "highlights": 3,
+        "charts": 4
+      },
+      "faces": {
+        "sections": "68b4e0b97f9210d9",
+        "toc": "d1f90d57b6433847",
+        "charts": "9f1c6d059395a282",
+        "claims": "d36e6ed1ea169cc8",
+        "evidence": "07a677afe1b7e5cc",
+        "subtitle": "7f7a1eb533d282db",
+        "dispatch": "565a676e490d1184",
+        "glossary": "e13d91946b1384fb",
+        "report": "d2a930ae5aa0379a"
+      }
+    },
+    "kaili-ev2.json": {
+      "counts": {
+        "sections": 8,
+        "highlights": 5,
+        "charts": 5
+      },
+      "faces": {
+        "sections": "b1c274226be47a63",
+        "toc": "d1f90d57b6433847",
+        "charts": "d0c2778d2b31d8cd",
+        "claims": "6eac963df078b035",
+        "evidence": "bd420affd7c53ac2",
+        "subtitle": "01a893df4a4cc4a4",
+        "dispatch": "6cfdb641b06aa93d",
+        "glossary": "e13d91946b1384fb",
+        "report": "f467af6b2c7be0be"
+      }
+    },
+    "kaili.json": {
+      "counts": {
+        "sections": 8,
+        "highlights": 3,
+        "charts": 4
+      },
+      "faces": {
+        "sections": "d55515f58959ec71",
+        "toc": "d1f90d57b6433847",
+        "charts": "ceedfd1dd4ea8801",
+        "claims": "0e514b24c1f7c8d7",
+        "evidence": "7e40c2312c765071",
+        "subtitle": "ba8c588c2e91091d",
+        "dispatch": "7be4114e74050989",
+        "glossary": "e13d91946b1384fb",
+        "report": "d71cd6642da52f0c"
+      }
+    }
+  }
+}

@@ -15,7 +15,13 @@
  ⑤ 重装抛错 —— 回落快照、状态码 200、日志有 warning（禁空页、禁 500、禁静默）；
  ⑥ 派生链与存在性检查**不受影响** —— `db.get_report` 仍返回冻结快照（V3 回归锚）；
  ⑦ 戳不进复用门 —— `reuse_policy` 只看载荷，结构上读不到顶层这一位（与 `test_pages_returned.py:235`、
-    `test_shape_stamp_does_not_move_the_reuse_gate` 同族）。
+    `test_shape_stamp_does_not_move_the_reuse_gate` 同族）；
+ ⑧ 快照＝**它自带载荷的产物**（第二步 2′：把"该信哪份"从注释升级成会红的判据）；
+ ⑨ ⑧ 的正对照 —— 绕过装配器改库里的产物，比较必须翻脸（否则 ⑧ 是恒真断言）。
+
+⚠️ ⑧⑨ 只封住 2′ 声明的两条漂道之一（「绕开装配器改库」）。另一条「装配器改了而戳没动」
+   本文件**结构上看不见** —— ⑧ 的两侧都在同一进程里由同一个装配器算出，代码怎么改右边
+   跟着变，等式恒成立。那一条由 `test_narrative_assembly_golden.py` 的逐面金标 + 配对闸封。
 
 ⚠️ "老快照"怎么造：不能只把戳删掉 —— 用**当前**装配器装出来的内容本来就是厚的，
 那样 ③ 的"变厚"无从谈起（第一版就犯过这个错，前置断言当场红）。必须连**加厚前的形状**
@@ -176,6 +182,59 @@ def test_6_db_readers_and_existence_checks_still_get_the_frozen_snapshot():
     stored = db.get_report(RID)
     assert stored["narrative_version"] == "nar-0"
     assert _highlights(stored) == 0, "db 读路径被污染 ⇒ 派生链的输入不再可复现"
+
+
+def test_8_stored_snapshot_is_the_product_of_its_own_payload():
+    """⑧ 快照＝可验证缓存，不是第二处权威（第二步 2′ 的落点）。
+
+    前七条都在验"读出去的东西对不对"，没有一条验**库里那一行自己**。而 2′ 要防的失效
+    恰好在这儿：有人绕过装配器改库、`save` 时丢了字段、或载荷被就地改过而戳没动 ——
+    屏幕上全都看不出来（读路径同代次直通，直接把漂掉的快照发出去）。
+
+    判据：把库里那行读回来，用**它自带的那份载荷**重新装配一次，两者必须逐字相等。
+    对**本条管的这条通道**而言 "payload_sha256" 是冗余（直接判定比哈希更强，哈希只是它的
+    代理），所以 2′ 实现里刻意**不加哈希** —— 加了反而给"这是哪一代"造出第二处权威，
+    与本仓「一词多义/单一来源」那条纪律相反。
+    ⚠️ 但这不等于 2′ 不需要金标准：本条对「装配器改了而戳没动」是恒等的（两侧同源），
+       那一半落在 `test_narrative_assembly_golden.py`。
+
+    ⚠️ 刻意不读生产库（`app/data/verda.db` 被 gitignore，CI 里不存在）：判据必须自己
+    造行，否则它在 CI 里恒 skip —— 恒 skip 的守卫比没有守卫更坏。
+    """
+    _seed()
+    stored = db.get_report(RID)
+    assert stored is not None, "落库后读不回来 ⇒ 后面的比较没有对象"
+    rebuilt = assemble_report(
+        stored["living_circle"], RID, SCENE_KEY, stored.get("title") or ""
+    )
+    assert stored == rebuilt, (
+        "库里那行不是它自带载荷在当前代次下的装配产物 ⇒ 快照已经漂，"
+        "而同代次读路径会直通把它发出去"
+    )
+    # 逐字相等之外再钉三个最容易各自漂的面（防"两边同时错成一份"时的可读性）
+    assert stored["sections"] == rebuilt["sections"]
+    assert stored["toc"] == rebuilt["toc"]
+    assert stored["subtitle"] == rebuilt["subtitle"]
+
+
+def test_9_guard_detects_a_snapshot_edited_behind_the_assembler(calls):
+    """⑨ 正对照：⑧ 真的会红。手工把库里那行的正文改一个字，⑧ 式的比较必须翻脸。
+
+    没有这条，⑧ 可能是"两边都读同一份内存对象"式的恒真断言（本仓栽过好几次的形状）。
+    """
+    _seed()
+    stored = db.get_report(RID)
+    tampered = assemble_report(stored["living_circle"], RID, SCENE_KEY, stored.get("title") or "")
+    tampered["sections"][0]["highlights"] = []          # 绕过装配器，直接改产物
+    db.save_living_circle_report(tampered, scene_key=SCENE_KEY)
+
+    again = db.get_report(RID)
+    rebuilt = assemble_report(again["living_circle"], RID, SCENE_KEY, again.get("title") or "")
+    assert again != rebuilt, (
+        "改了库里的产物而载荷没动，比较却仍然相等 ⇒ ⑧ 是恒真断言，守不住任何东西")
+    assert again["sections"][0].get("highlights") == [] and rebuilt["sections"][0].get("highlights"), (
+        "篡改没落到正确的位置上，这条正对照无效")
+    assert len(calls) == 0, "本条只做库内比较，不该触发读路径重装"
 
 
 def test_7_narrative_stamp_cannot_move_the_reuse_gate():
