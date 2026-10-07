@@ -10,6 +10,7 @@
 // 在测试边界注入符合 Web Storage 语义的内存实现，使所有 jsdom 测试获得确定的
 // localStorage（setItem/getItem/removeItem/clear/key/length），不修改任何生产代码。
 
+import { configure } from '@testing-library/react'
 import { ResizeObserverStub } from './src/__tests__/helpers/resizeObserverStub'
 
 function createMemoryStorage(): Storage {
@@ -78,3 +79,13 @@ if (typeof window !== 'undefined' && typeof window.HTMLElement !== 'undefined') 
     window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {}
   }
 }
+
+// RTL 的 `waitFor` 默认只等 **1 秒**，而它等的是"异步 effect 把事实做出来"：一次 BMapGL 替身的
+// boot 链（取 AK 的 promise + 若干次 setState 重渲染）在多 worker 并发、核数少的机器上真的可能超过 1s。
+// 10-07 实测：同一份**干净树**并发跑两个全量，HEAD 与远端基线**各自红在同一条**
+// （`lcIsoInteract` 的 live 族用例）—— 那条红量的是"谁恰好抢到 CPU"，不是被测代码。
+//
+// 这里放宽的是**等待上限**（多久之内必须出现），不是**断言强度**（出现的东西对不对）：
+// 一条断言都没松。写在 setup 里是为了单点生效——live 族有十几个文件用 waitFor，逐文件加超时
+// 就是给同一个环境问题造十几处副本。
+configure({ asyncUtilTimeout: 5000 })

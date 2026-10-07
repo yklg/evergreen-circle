@@ -269,6 +269,16 @@ async function mountMap(props: Record<string, unknown> = {}) {
     left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
   })
   await waitFor(() => expect(fb.h.maps.length).toBeGreaterThan(0))
+  /* 只等"地图建出来"不够：本文件的取物函数按**创建序**下标（`hit(1)` 取第 2 条线、`ring(4)` 取
+     第 5 个面、`noTitle().at(-1)` 取补点 Marker），而那些是等时圈绘制 effect 稍后才建的覆盖物。
+     10-07 加压复跑（两个全量并发）时 `› C` 报 `Cannot read properties of undefined (reading 'fire')`
+     —— 机器慢一步，下标就落在还没建出来的数组位置上，红的是抢 CPU 的顺序而不是代码。
+     把这些**隐藏前提**摊成一条有界等待：等到用例真要下标的那些对象都在场，数字与用例的下标同源。 */
+  await waitFor(() => {
+    expect(fb.h.polylines.length, '用例要下标第 2 条命中线，它还没被建出来').toBeGreaterThanOrEqual(2)
+    expect(fb.h.polys.length, '用例要下标第 5 个面（4 圈之后），它还没被建出来').toBeGreaterThanOrEqual(5)
+    expect(fb.h.markers.length, '用例要取盲区中心与补点两枚 Marker，它们还没被建出来').toBeGreaterThanOrEqual(2)
+  })
   return { mapEl, view }
 }
 
@@ -375,17 +385,25 @@ describe('LcMap 交互系列（C1–C8 契约）', () => {
   it('E：点击圈 → 固定卡；map click 空白关卡（100ms 同源守卫，S2）', async () => {
     const { view } = await mountMap()
     const stopSpy = vi.fn()
+    /* 时间改由本用例自己拨。生产那颗守卫读 `performance.now()`（`LcMap.tsx:1102`），而"开卡"与
+       "同一次点击连带派发的 map click"之间只隔着几条同步断言 —— 平时差 ≈ 0ms，但机器被抢占时
+       两句语句之间真的能过去 100ms，于是产品按文档把关卡掉、断言红。10-07 实测：同一份**干净树**
+       并发跑两个全量，HEAD 与远端基线红在**同一条**用例、单跑 ×3 全绿 ⇒ 这条判据量的是"谁抢到 CPU"。
+       把时间做成显式输入后，红不红只取决于代码。（`afterEach` 有 `vi.restoreAllMocks()`，桩不漏。） */
+    let clock = 1_000_000
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
     fireOverlay(hit(1), 'click', { domEvent: { stopPropagation: stopSpy } })
     const card = cardOf(view)
     expect(card).not.toBeNull()
     expect(card!.textContent).toContain('15min 等时圈')
     expect(card!.textContent).toContain('全域可达采样（≤20min）')
     expect(stopSpy).toHaveBeenCalled() // S2 防御①：构造出 domEvent 时确实调用掐断（真机 Polyline 的 domEvent 实测 undefined ⇒ 此分支不生效；主防线是下面的 100ms 守卫）
-    // 立即 map click（同一次点击的连带派发，<100ms）→ 不关卡
+    // 同一击的连带派发：把时钟拨在守卫窗口**之内**（窗口大小由生产说了算，这里只保证在里面）→ 不关卡
+    clock += 20
     fireMap('click')
     expect(cardOf(view)).not.toBeNull()
-    // 超过守卫窗口的真空白点击 → 关卡
-    await new Promise((r) => setTimeout(r, 130))
+    // 越过守卫窗口的真空白点击 → 关卡。两条半边互为正对照：没有这条，上面那个"不关"可能只是关卡功能压根没接上
+    clock += 150
     fireMap('click')
     expect(cardOf(view)).toBeNull()
   })
