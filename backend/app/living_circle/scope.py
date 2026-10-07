@@ -950,9 +950,10 @@ class SpatialScope:
             # ⇒ 刻意不进复用门（拦它会让全部存量件与每次 500m 邻近复用重打 1049 点距离矩阵，
             #    换来的正确性是零）。不变式判据：`test_shape_caliber.py::
             #    test_shape_stamp_does_not_move_the_reuse_gate`。
-            # ⚠️ 它也**没进对比页那套措辞/归边表**（`_GAP_CLAUSES` / `_GAP_FIELDS`）：那会把一句
-            #    「不可比」扩到第四根轴、并撕开前后端两份轴镜像与 `、` 计数断言 —— 是否把 `sh`
-            #    立成第四根对比轴属计划 §六 待拍项（连同 S31 的代次轴矩阵），本笔只保证不拦复用。
+            # ⚠️ 它是**第四根对比轴**：进对比页措辞表（`main._GAP_CLAUSES` 的 sh 子句、前端
+            #    `CALIBER_AXES`），但**行级归属刻意是空集**（`_SHAPE_GAP_ROWS == ()`）—— 与 `rc`
+            #    同一条决定：一行的读数都不改，拦一行就是替这把尺撒谎（#83 的反面）。
+            #    归边登记在 `report_contract._UNGATED_CALIBER_VERSIONS["sh"]`，理由写成数据。
             # ⚠️ 离线估算件**不发这一位**（`data_source.py` 那份 caliber 是自己拼的）：它把形状键
             #    摘掉了（恒等式切出来的环在数学上就是正圆），没有键集却声明版本号＝B17 打死离线件。
             "shape_caliber_version": SHAPE_CALIBER_VERSION,

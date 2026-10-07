@@ -331,9 +331,10 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 | 唯一生产者 | `geo_utils.shape_of(ring, center, area_km2)`（纯几何、零外呼） |
 | 发键条件 | `isochrone.shape_emit_for(travel_mode, minutes)`：`live` × `walking` × `minutes∈{15,20}`，停发阀 `SHAPE_EMIT` |
 | 落库位置 | `isochrones[].shape`（键名唯一出处 `isochrone.shape_zone_keys()`，判据与离线摘键都引它） |
-| 口径版本键 | `caliber.shape_caliber_version = "sh-1"`（常量 `isochrone.SHAPE_CALIBER_VERSION`，唯一发射点 `scope.payload()`）—— **已启用**：声明了这一代却整批不发形状键 ⇒ B17 判违规；豁免只有两档（无戳 = 存量件/离线件、停发阀关 = 本代不产这把尺）。它是**第四根代次轴**，与 `ev-2`/`cov-1`/`rc-1` 并列但**不进复用门**、也**没进**对比页措辞表（`_GAP_CLAUSES`） |
+| 口径版本键 | `caliber.shape_caliber_version = "sh-1"`（常量 `isochrone.SHAPE_CALIBER_VERSION`，唯一发射点 `scope.payload()`）—— **已启用**：声明了这一代却整批不发形状键 ⇒ B17 判违规；豁免只有两档（无戳 = 存量件/离线件、停发阀关 = 本代不产这把尺）。它是**第四根代次轴**，与 `ev-2`/`cov-1`/`rc-1` 并列：**进**对比页措辞表（`_GAP_CLAUSES` 的 `sh` 子句 + 前端 `CALIBER_AXES`），但**行级归属是空集**（`_SHAPE_GAP_ROWS == ()`，一行的读数都不改）、**不进复用门**（`_UNGATED_CALIBER_VERSIONS` 里那条 442 字理由） |
 | 唯一上屏出口 | 前端 `lib/livingCircle.shapeOfZone()`（校验读键，缺键给 `null`）+ `shapeSentence` / `shapeWeakStrong` / `shapeSuspectNote` / `shapeCaveatNote` 四颗派生措辞；缺键 ⇒ 第三屏/方位图层/图注整块不出现 |
 | 契约判据 | B17 `_shape_caliber_violations`：半份发布 / 口径漂移 / 值非法 / 标量不可复算 / 外接半径双真源 ＋ 缺席分支 `_shape_absence_violations`（该发必发） |
+| 上线观测 | `report_contract.observe_shape_gate()`（S32）：写路径唯一收口 `pipeline._finalize_living_report()` 每份**新产物**喂一次，排在 `assess_geometry` **之前**（被拦的那份接下来就早退不落库，事后无处可查）。命中 ⇒ WARNING 带首条违规原文 + 窗口命中率（窗口 20 份）。读数**只在写侧**、**不进载荷**（读路径喂会把窗口刷成噪音；进载荷等于让被检件自我申报） |
 
 四件"怎么量的"是**口径不是实现细节**，实测各自都能改写结论：
 

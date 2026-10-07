@@ -372,9 +372,9 @@ def test_rc_clause_is_composed_but_blocks_no_row():
     # 三轴都不同那一档：评分行仍只拿 `ev+cov` 那句 —— rc 不许渗进来
     assert _row_gap_desc("综合评分", ("ev", "cov", "rc")) == _DIFF_DESC_BOTH_GAP
     assert _row_gap_desc("服务盲区", ("ev", "cov", "rc")) == _DIFF_DESC_CALIBER_GAP
-    # 而**横幅**那一句必须三段子句都在（组合式不许退化成"只报前两根"）
-    assert _gap_desc(("ev", "cov", "rc")) == _DIFF_DESC_ALL_GAP
-    assert _DIFF_DESC_ALL_GAP.count("已升级") == 3
+    # 而**横幅**那一句必须四段子句都在（组合式不许退化成"只报前几根"；`sh` 是第四根，见 S20）
+    assert _gap_desc(("ev", "cov", "rc", "sh")) == _DIFF_DESC_ALL_GAP
+    assert _DIFF_DESC_ALL_GAP.count("已升级") == 4
 
 
 def test_fixture_pipeline_publishes_the_rc_pair():

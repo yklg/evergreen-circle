@@ -1244,6 +1244,11 @@ export interface LivingCircleReport {
      *  它管的是「同一份实测耗时场被怎么解释」，既不改证据域也不改分子 ⇒ 三把键各自独立，
      *  谁也不许替谁说话。缺 ⇒ 这份快照从来没做过标定（屏幕上不该出现残差那句）。 */
     reach_caliber_version?: string
+    /** **第四根轴**：形状口径版本号（当前 `sh-1` = `isochrones[].shape` 那块八方位诊断尺）。
+     *  它是**解释层**代次：不入 `scoring.WEIGHTS`、不改任何一行的读数 ⇒ 既不进复用门，
+     *  也不拦差异表任何一行（只进对比页横幅那句「不可比 · 形状口径已升级」）。
+     *  缺 ⇒ 这份快照没做过形状量，那块面板整块不出现（`shapeOfZone(...) == null`）。 */
+    shape_caliber_version?: string
     /** 采集证据余量 = 判定半径（由「判盲需要 1km 完整证据」导出，不是可填的名义值） */
     evidence_margin_m?: number
     /** **实测**证据边界（登记类逐类边界的最小值）；null ⇒ 本次没绑定实测证据 */

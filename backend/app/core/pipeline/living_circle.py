@@ -43,7 +43,7 @@ from app.living_circle.data_source import (
 from app.living_circle.degrade_policy import detail_label
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.isochrone import REACH_FULL_MIN, IsochroneEngine, detour_residual, reach_flags
-from app.living_circle.report_contract import assess_geometry
+from app.living_circle.report_contract import assess_geometry, observe_shape_gate
 
 from .diagnosis_templates import assemble_report
 
@@ -617,6 +617,10 @@ def _finalize_living_report(report_data, scene_key, replace_scene: bool = False,
     if data_mode != "fixture":
         report_data["reuse_window"] = _reuse_window()
     report = assemble_report(report_data, report_id, scene_key, "")
+    # S32 · 形状闸上线观测：必须排在 `assess_geometry` **之前**。违规的那份接下来会被那道门
+    # 判成不可展示、在这里早退，不落库 —— 若把读数挂在落库之后，"新闸第一批就拦住了东西"
+    # 这件事恰恰只在被拦下的那批里成立，事后无处可看（新闸最坏的失效形态是静默，不是红）。
+    observe_shape_gate(report_id, report_data)
     issues = assess_geometry(report_data)
     if not issues.ok:
         return report_id, issues.reason, report

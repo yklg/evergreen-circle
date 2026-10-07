@@ -713,3 +713,31 @@ def test_pipeline_resolves_center_without_coordinates():
     events2 = _run_pipeline(tid2)
     intake2 = next(e for e in events2 if e["type"] == "message" and e["data"]["stage"] == "intake")
     assert "107.9758, 26.5734" in intake2["data"]["text"]
+
+def test_shape_gate_observation_is_fed_by_the_real_write_path(monkeypatch):
+    """S32 的**接线**判据：真管线产出一份 live 报告 ⇒ 写路径收口必须喂一次形状闸读数。
+
+    为什么不能只测 `observe_shape_gate` 本身（那两条在 `test_shape_caliber.py`）：函数存在
+    ≠ 调用点在。挂在收口里才算"每份新产物恰好一次"；哪天有人把它挪到 `db.save` 之后，
+    被闸拦下的那份就永远不会进读数 —— 而那恰恰是唯一需要看见它的时刻（本条会当场红在
+    flagged 上，变异刀「摘掉收口里的调用」也当场红在 assessed 上）。
+
+    顺带钉一件更值钱的事：**引擎自己发的件必须是干净的**（flagged == 0）。真上线第一天
+    就自拦自产的报告 = 假红，这条把"第一批零命中"变成判据而不是运气。
+    """
+    from app.living_circle.report_contract import (
+        reset_shape_gate_observation,
+        shape_gate_observation,
+    )
+
+    stub = PipelineStubBaidu(KAILI_CENTER)
+    _live_source(stub, monkeypatch)
+    reset_shape_gate_observation()
+    tid = create_living_circle_task(
+        _live_params(scene_name="凯里老街-S32", sample_profile="standard"))
+    _run_pipeline(tid)
+
+    obs = shape_gate_observation()
+    assert obs["assessed"] == 1, f"新产物经过唯一收口的次数不是 1：{obs}"
+    assert obs["flagged"] == 0, f"引擎自己发的件被自家形状闸拦下了（假红当场现形）：{obs}"
+    reset_shape_gate_observation()

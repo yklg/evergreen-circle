@@ -59,11 +59,13 @@ Tier B 的「盲区 ⊆ 可达区」；7 份旧算法 live 报告必然缺 ``cal
 """
 from __future__ import annotations
 
+import logging
 import math
 
+from collections import deque
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 from app.living_circle.caliber import REACH_CALIBER_VERSION, get_caliber
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
@@ -968,6 +970,66 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
     return out
 
 
+# ── S32 · 形状闸的上线观测（新闸不许静默）───────────────────────────
+# 新闸最坏的失效形态不是"红"，是**静默**：违规被当成"这城市的数据本来就这样"吞掉，
+# 等发现时已经发了一批出去。所以这里记一份进程级读数 —— 刻意**不进载荷**：让被检的载荷
+# 自己申报"我被 B17 检过、结果如何"，正是 S20/S22 反复拒绝的那种自我裁判。
+# 唯一喂数点是写路径收口 `_finalize_living_report()`（粗报与后台精报共用），每份**新产物**
+# 一次；读路径（历史列表那份逐件 `assess_geometry`）**不喂** —— 否则"前 20 份新报告"这个
+# 窗口会被每次打开页面刷成噪音，正好把刚上线那批的读数顶掉。
+SHAPE_OBSERVATION_WINDOW = 20
+_shape_gate_recent: Deque[Tuple[str, int]] = deque(maxlen=SHAPE_OBSERVATION_WINDOW)
+_shape_gate_assessed = 0
+_shape_gate_flagged = 0
+_shape_gate_last: Tuple[str, ...] = ()
+_logger = logging.getLogger(__name__)
+
+
+def observe_shape_gate(report_id: str, lc: Dict[str, Any]) -> List[str]:
+    """记一次「这份新产物过了形状闸」，返回违规清单。
+
+    ⚠️ 它**不改变判定** —— 拦件的是 `assess_geometry`（那里面本来就叫 B17）。这里只是把
+    "叫什么、为什么"留在日志里：命中违规的这份接下来会被那道门判成不可展示而早退，
+    事后没有第二个地方还能说出"它被拦过、拦它的是哪一句"。所以调用点必须在
+    `assess_geometry` **之前**。
+    """
+    global _shape_gate_assessed, _shape_gate_flagged, _shape_gate_last
+    hits = _shape_caliber_violations(lc)
+    _shape_gate_assessed += 1
+    _shape_gate_recent.append((report_id, len(hits)))
+    if hits:
+        _shape_gate_flagged += 1
+        _shape_gate_last = tuple(hits)
+        in_window = sum(1 for _r, n in _shape_gate_recent if n)
+        _logger.warning(
+            "形状闸（B17）拦下新产物 %s：首条违规「%s」｜窗口内 %d/%d 份命中"
+            " ⇒ 假红要在第一批就撞见：先核 §7.4 那两档豁免（无戳 / 停发阀关）与三条件，"
+            "不要动阈值",
+            report_id, hits[0], in_window, len(_shape_gate_recent),
+        )
+    return hits
+
+
+def shape_gate_observation() -> Dict[str, Any]:
+    """读数快照（给日志、排障与判据看；不进任何屏上面板）。"""
+    return {
+        "assessed": _shape_gate_assessed,
+        "flagged": _shape_gate_flagged,
+        "window": list(_shape_gate_recent),
+        "window_size": SHAPE_OBSERVATION_WINDOW,
+        "last_violations": list(_shape_gate_last),
+    }
+
+
+def reset_shape_gate_observation() -> None:
+    """清零读数 —— 只给判据用：进程级全局必须能被隔离，否则用例之间互相污染。"""
+    global _shape_gate_assessed, _shape_gate_flagged, _shape_gate_last
+    _shape_gate_assessed = 0
+    _shape_gate_flagged = 0
+    _shape_gate_last = ()
+    _shape_gate_recent.clear()
+
+
 def _iso_compare_violations(lc: Dict[str, Any]) -> List[str]:
     """B16 · 口径对比环（笔 B）：发出来了就得是"另一把尺的对照"，不能是第五条等值线。
 
@@ -1285,6 +1347,17 @@ _UNGATED_CALIBER_VERSIONS: Dict[str, Tuple[str, str]] = {
         "`_GATED_CALIBER_VERSIONS` —— 那时答案真的会不同，而前端 `staleCaliberNotices` 也要"
         "同批接上那句「建议重新体检」（现在不接，是因为重跑并不会让分数变好）。",
     ),
+    "sh": (
+        "shape_caliber_version",
+        "sh-1 只新增一把**诊断尺**（八方位最远可达、圆度、最弱方位比），`scoring.WEIGHTS` 一行没动："
+        "两侧同 ev/cov 时盲区数、综合评分、等时圈面积、可达点数逐位相同 ⇒ 重跑一次的答案不会不同，"
+        "不满足这条门自己的问题。拦它的代价与 rc 同型且可实测：全部存量件与每次 500m 邻近复用"
+        "全部 miss、重打 1049 点距离矩阵与逐类检索（真配额），换来的正确性是零。它的换代由三条路径"
+        "披露：对比页横幅（`_GAP_CLAUSES` 的 sh 子句，⚠️ 行级归属今天**刻意是空集** —— "
+        "`_SHAPE_GAP_ROWS == ()`，它影响不到任何一行的读数）、契约 B17 的缺席分支（声明却缺键即违规）、"
+        "前端 `shapeOfZone(...) == null` 的缺键判据（那块面板整块不出现）。判据："
+        "`test_shape_caliber.py::test_shape_stamp_does_not_move_the_reuse_gate`。",
+    ),
 }
 
 
@@ -1425,6 +1498,11 @@ __all__ = [
     "assess_geometry",
     "is_incomplete_live",
     "live_geometry_deficiency",
+    # S32 的三个名字是**公开 API**：写路径收口（`core/pipeline/living_circle.py`）喂数，
+    # 判据与排障读快照。不导出的话只能靠跨模块 import 私有名 —— 那是本仓最典型的旁路形状。
+    "observe_shape_gate",
+    "reset_shape_gate_observation",
+    "shape_gate_observation",
     "report_is_presentable",
     "reuse_policy",
     "staleness_reason",

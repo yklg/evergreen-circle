@@ -344,6 +344,106 @@ def test_b17_circumradius_identity_is_conditional():
 
 # ── ④ 名册与边界 ───────────────────────────────────────────
 
+def test_shape_axis_shows_in_the_banner_but_blocks_no_diff_row():
+    """`sh` 作为第四根对比轴的全部消费面：**横幅照报、行级一行都不拦、两份都没戳时不许撒谎**。
+
+    与 `rc` 同一条决定（`_SHAPE_GAP_ROWS == ()` 这个空集本身就是判据）：形状量不入
+    `scoring.WEIGHTS`，两侧同 `ev`/`cov` 时每一行读数逐位相同 ⇒ 把「不可比」挂到任何一行上
+    都是替这把尺撒谎（#83 反过来重演）。而横幅必须报，因为读者会看见"一边有方位形状那块、
+    另一边整块没有"——不说原因就会被读成"那个社区没有缺口"。
+    """
+    from app.main import _SHAPE_GAP_ROWS, _differing_axes, _gap_desc, _row_gap_desc
+
+    assert _SHAPE_GAP_ROWS == (), "sh-1 一行的读数都不改 ⇒ 行级归属必须是空集"
+    for metric in ("服务盲区", "综合评分", "POI 采集", "圈内 POI",
+                   "15min 等时圈面积 (km²)", "可达采样点数"):
+        assert _row_gap_desc(metric, ("sh",)) is None, f"{metric} 被形状轴拦下了"
+
+    a = {"caliber": {"shape_caliber_version": SHAPE_CALIBER_VERSION}}
+    b = {"caliber": {}}                                  # 戳上线前冻结的那份
+    assert _differing_axes(a, b) == ("sh",)
+    assert _gap_desc(_differing_axes(a, b)) == "不可比 · 形状口径已升级（等时圈新增八方位诊断尺）"
+    # 两份**都**没这把尺 ⇒ 它们之间就是同一把尺，不许凭空报"不可比"（后端 `_differing_axes`
+    # 那条警告的形态：拿代码常量当对照值会把两份旧报告判成不可比）。
+    assert _differing_axes({"caliber": {}}, {"caliber": {}}) == ()
+
+
+def test_shape_caliber_is_registered_as_an_ungated_compare_axis():
+    """进了对比页措辞表的轴，就必须在两张归边表里**恰好出现一次**并把理由写成数据。
+
+    这条不是重复元判据（`test_caliber_axes_are_registered_everywhere_they_must_be` 已经钉了
+    "不重不漏"），它钉的是**这一把尺**的归边方向别被人改反：哪天有人把 `sh` 挪进
+    `_GATED_CALIBER_VERSIONS`，元判据照样绿，而全部存量件会被复用门集体拦下、每次体检重打
+    距离矩阵 —— 那是一次"看着合理"的静默配额事故，正是 S31 那张矩阵要防的形态。
+    """
+    from app.living_circle import report_contract as rc_mod
+
+    gated = vars(rc_mod)["_GATED_CALIBER_VERSIONS"]
+    ungated = vars(rc_mod)["_UNGATED_CALIBER_VERSIONS"]
+    assert "sh" not in gated, "把形状代次放进复用门 = 让全部存量件与邻近复用集体 miss"
+    assert "sh" in ungated, "`sh` 没归边 ⇒ 新轴进措辞表却没人决定它拦不拦复用"
+    field, reason = ungated["sh"]
+    assert field == "shape_caliber_version"
+    assert len(reason) > 80, f"理由没写成数据（{len(reason)} 字）⇒ 下一个人只能读注释猜"
+    assert "scoring.WEIGHTS" in reason and "复用" in reason
+
+
+def test_shape_gate_observation_counts_and_logs_a_flagged_report(caplog):
+    """S32 · 新闸不许静默：命中违规必须**当场**留下可读的数与一行 WARNING。
+
+    这条钉三件事，缺一件就退回"违规被当成数据本来就这样吞掉"：
+      ① 计数确实动了（assessed/flagged）；② 窗口里带着这份的 id 与命中条数；
+      ③ 日志里那句带着首条违规原文与窗口命中率 —— 排障的人不用先读懂代码就能核对。
+    """
+    import logging
+
+    from app.living_circle.report_contract import (
+        observe_shape_gate,
+        reset_shape_gate_observation,
+        shape_gate_observation,
+    )
+
+    reset_shape_gate_observation()
+    clean = _stamped(_with_shape())
+    with caplog.at_level(logging.WARNING, logger="app.living_circle.report_contract"):
+        assert observe_shape_gate("lc-clean", clean) == []
+        bad = _stamped(_strip_all(_with_shape()))
+        hits = observe_shape_gate("lc-bad", bad)
+    obs = shape_gate_observation()
+    assert (obs["assessed"], obs["flagged"]) == (2, 1), obs
+    assert obs["window"] == [("lc-clean", 0), ("lc-bad", 2)], obs["window"]
+    assert len(hits) == 2 and obs["last_violations"] == list(hits)
+    warn = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warn) == 1, f"干净件不该吭声、命中件必须吭声：{[r.getMessage() for r in warn]}"
+    msg = warn[0].getMessage()
+    assert "lc-bad" in msg and "1/2" in msg, msg
+    assert "shape_caliber_version" in msg, f"日志里没留首条违规原文：{msg}"
+    reset_shape_gate_observation()
+
+
+def test_shape_gate_observation_is_write_side_only():
+    """读路径（历史列表逐件 `assess_geometry`）**不许**喂这个窗口。
+
+    否则每次有人打开历史页都把"刚上线那 20 份"的读数顶掉 —— 而这正是这条读数唯一的目的。
+    """
+    from app.living_circle.report_contract import (
+        assess_geometry,
+        observe_shape_gate,
+        reset_shape_gate_observation,
+        shape_gate_observation,
+    )
+
+    reset_shape_gate_observation()
+    rep = _stamped(_with_shape())
+    observe_shape_gate("lc-one", rep)
+    before = shape_gate_observation()["assessed"]
+    for _ in range(3):
+        assess_geometry(rep)                       # 读侧同一条 B17，跑三遍
+    assert shape_gate_observation()["assessed"] == before, (
+        "读路径也在喂 ⇒ 窗口会被开页面刷掉，上线观测失去意义")
+    reset_shape_gate_observation()
+
+
 def test_shape_caliber_is_registered_in_the_index():
     refs = caliber_index.all_refs()
     for ref in ("isochrone::SHAPE_EMIT", "isochrone::SHAPE_MINUTES",

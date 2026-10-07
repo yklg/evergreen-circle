@@ -953,6 +953,12 @@ _GAP_CLAUSES: Tuple[Tuple[str, str], ...] = (
     # ⚠️ 它今天**不拦任何一行**（见 `_GAP_AXES` 里那条注释）：rc-1 只新增解释、不改任何
     # 一行的读数，写进行级归属就是替这把尺撒谎 —— #83 教训的反面。
     ("rc", "可达口径已升级（耗时场新增常态绕行与残差解释）"),
+    # 第四根轴（笔九 S20 · `sh-1`）：等时圈形状量（八方位最远可达 + 圆度 + 最弱方位比）。
+    # 与 `rc` 同一族：**横幅照报、行级不拦** —— 两侧同 ev/cov 时每一行的读数逐位相同，
+    # 换它只是"这一份多了一块诊断面板"。写进行级归属就是替这把尺撒谎（#83 的反面）。
+    # 它真正会改变屏幕形态的地方是**报告页第三屏在场与否**，那一侧由前端的
+    # `shapeOfZone(...) == null` 缺键判据负责整块不出现，不靠这句提示。
+    ("sh", "形状口径已升级（等时圈新增八方位诊断尺）"),
 )
 
 
@@ -969,14 +975,16 @@ def _gap_desc(axes: Tuple[str, ...]) -> Optional[str]:
 _DIFF_DESC_CALIBER_GAP = _gap_desc(("ev",))
 _DIFF_DESC_COVERAGE_GAP = _gap_desc(("cov",))
 _DIFF_DESC_REACH_GAP = _gap_desc(("rc",))
+_DIFF_DESC_SHAPE_GAP = _gap_desc(("sh",))
 _DIFF_DESC_BOTH_GAP = _gap_desc(("ev", "cov"))
-_DIFF_DESC_ALL_GAP = _gap_desc(("ev", "cov", "rc"))
+_DIFF_DESC_ALL_GAP = _gap_desc(("ev", "cov", "rc", "sh"))
 # 每根轴读载荷里**哪个版本字段**（契约夹具 `gap.axis_fields` 钉同一张表）。
 # 有了这张表，`_lc_diff` 不再为每根轴多一个布尔形参 —— 加轴只改两张表，不改函数签名。
 _GAP_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("ev", "scope_policy_version"),
     ("cov", "coverage_caliber_version"),
     ("rc", "reach_caliber_version"),
+    ("sh", "shape_caliber_version"),
 )
 
 
@@ -1012,6 +1020,9 @@ _CALIBER_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if a
 _COVERAGE_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "cov" in ax)
 # 可达轴拦得住的行（契约夹具 `gap.reach_applies_to`）⇒ 今天**是空的**，这条空集本身就是判据。
 _REACH_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "rc" in ax)
+# 形状轴拦得住的行（契约夹具 `gap.shape_applies_to`）⇒ 与 `rc` 同一条决定：**必须是空集**。
+# 空集本身就是判据，记的是"sh-1 一行的读数都不改，只多一块诊断面板"这件事。
+_SHAPE_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "sh" in ax)
 
 
 def _as_num(x: Any) -> float:

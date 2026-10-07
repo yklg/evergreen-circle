@@ -27,6 +27,9 @@ import {
   COVERAGE_GAP_DESC,
   COVERAGE_GAP_ROW_KEYS,
   REACH_GAP_ROW_KEYS,
+  SHAPE_GAP_DESC,
+  SHAPE_GAP_ROW_KEYS,
+  ALL_GAP_DESC,
   caliberGapDesc,
   caliberPolicyGap,
   compareCaliberNotice,
@@ -40,6 +43,8 @@ import {
   gapDescFor,
   poiConservation,
   policyVersionOf,
+  rowGapDesc,
+  shapeCaliberGap,
   samplingReach,
   staleCaliberNotice,
   staleCaliberNotices,
@@ -85,6 +90,12 @@ interface Contract {
     all_desc: string
     /** rc 的行级作用面 —— 今天必须是**空数组**，这条空集本身就是判据 */
     reach_applies_to: string[]
+    // 第四根轴（笔九 S20 · `sh-1`，形状口径）：与 rc 同形 —— 横幅有句、行级空集，
+    // 且刻意**没有** `shape_stale_notice`（单份报告看，"多一把诊断尺"不是"那份偏乐观"）。
+    shape_version_current: string
+    shape_desc: string
+    /** sh 的行级作用面 —— 也必须**是空数组**（不入 `scoring.WEIGHTS`，一行的读数都不改） */
+    shape_applies_to: string[]
     // 措辞改为按轴子句组合后新增的两格：**有序**轴清单 + 轴→版本字段映射。
     // 后端 `test_caliber_axes_are_registered_everywhere_they_must_be` 与这里各比对一次，
     // 钉的是"加一根轴必须同时登记四处"（措辞表 / 版本字段 / 归边决定 / 前端表）。
@@ -419,15 +430,42 @@ describe('第二根轴 · 评分口径版本守卫', () => {
       expect(gapDescFor([axis])).toBe(`不可比 · ${clause}`)
       expect(GAP.all_desc).toContain(clause)
     }
-    // 两轴那一档仍然只在两根里拼，不许把第三根渗进来
+    // 两轴那一档仍然只在两根里拼，不许把后两根渗进来
     expect(GAP.both_desc).toContain(GAP.desc.replace('不可比 · ', ''))
     expect(GAP.both_desc).not.toContain('可达口径')
+    expect(GAP.both_desc).not.toContain('形状口径')
+    expect(GAP.reach_desc).not.toContain('形状口径')
     // ③ 零根轴不同 ⇒ null，不许拼出一句「不可比 · 」的空话
     expect(gapDescFor([])).toBeNull()
     // ④ 词序由表归一：调用方传反序也必须得同一句（否则两个页面会拼出两种词）
     expect(gapDescFor(['cov', 'ev'])).toBe(gapDescFor(['ev', 'cov']))
     expect(gapDescFor(['cov', 'ev'])).toBe(BOTH_GAP_DESC)
-    expect(gapDescFor(['rc', 'cov', 'ev'])).toBe(GAP.all_desc)
+    expect(gapDescFor(['sh', 'rc', 'cov', 'ev'])).toBe(GAP.all_desc)
+  })
+
+  it('第四根轴 sh（S20 形状代次）：横幅有句、行级**一行都不拦**、两份都没戳时不许谎报', () => {
+    expect(SHAPE_GAP_DESC).toBe(GAP.shape_desc)
+    expect(ALL_GAP_DESC).toBe(GAP.all_desc)
+    // 空集本身就是判据：sh-1 不入 `scoring.WEIGHTS`，一行的读数都不改。
+    expect(SHAPE_GAP_ROW_KEYS).toEqual([])
+    expect(SHAPE_GAP_ROW_KEYS).toEqual(GAP.shape_applies_to)
+
+    const rep = (cal: Record<string, string>) =>
+      ({ caliber: cal }) as unknown as LivingCircleReport
+    const stamped = rep({ shape_caliber_version: 'sh-1' })
+    const legacy = rep({})
+    expect(shapeCaliberGap(stamped, legacy)).toBe(true)
+    expect(shapeCaliberGap(stamped, rep({ shape_caliber_version: 'sh-1' }))).toBe(false)
+    // 两份**都**没有这把尺 ⇒ 它们之间就是同一把尺。这条挡的是"拿代码常量当对照值"那个
+    // 老错（后端 `_differing_axes` 的警告）：那样会把两份旧报告判成不可比。
+    expect(shapeCaliberGap(legacy, legacy)).toBe(false)
+
+    // 横幅报（读者会看见一边有方位形状那块、另一边整块没有，不说原因就是撒谎）……
+    expect(caliberGapDesc(stamped, legacy)).toBe(GAP.shape_desc)
+    // ……但差异表里**任何一行**都不许被它拦住。
+    for (const key of CALIBER_GAP_ROW_KEYS) {
+      expect(rowGapDesc(key, stamped, legacy)).toBeNull()
+    }
   })
 
   it('只有评分轴不同（判盲轴两边相同）⇒ 只拦评分轴管得着的行，盲区行照常', () => {

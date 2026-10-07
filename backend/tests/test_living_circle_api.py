@@ -499,9 +499,12 @@ def test_rc_axis_is_aligned_on_shipped_pair_and_blocks_no_row():
         _CALIBER_GAP_ROWS,
         _COVERAGE_GAP_ROWS,
         _REACH_GAP_ROWS,
+        _SHAPE_GAP_ROWS,
+        _DIFF_DESC_SHAPE_GAP,
     )
     from app.living_circle.caliber import REACH_CALIBER_VERSION
     from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
+    from app.living_circle.isochrone import SHAPE_CALIBER_VERSION
     from app.living_circle.scope import SCOPE_POLICY_VERSION
 
     gap = CONTRACT["caliber_incomparable"]
@@ -537,13 +540,23 @@ def test_rc_axis_is_aligned_on_shipped_pair_and_blocks_no_row():
     assert gap["reach_applies_to"] == [], (
         "rc-1 一行的读数都没改 ⇒ 这里必须是空集。残差真进评分那一档（rc-2）才允许非空，"
         "届时这张表与 `GATED_CALIBER_VERSIONS` 要同批改")
+    # 第四根轴（笔九 S20 · `sh-1`）：与 rc **同形** —— 横幅有句、行级空集、版本与夹具对齐。
+    assert _DIFF_DESC_SHAPE_GAP == gap["shape_desc"]
+    assert SHAPE_CALIBER_VERSION == gap["shape_version_current"], (
+        "形状代次换了却没改契约夹具 ⇒ 对比页那句「形状口径已升级」会替一把不存在的尺说话")
+    assert list(_SHAPE_GAP_ROWS) == gap["shape_applies_to"], "形状轴的行级作用面与契约分叉"
+    assert gap["shape_applies_to"] == [], (
+        "sh-1 不入 `scoring.WEIGHTS`、一行的读数都不改 ⇒ 必须是空集；哪天它开始影响读数，"
+        "这张表与 `_UNGATED_CALIBER_VERSIONS` 的归边要同批改")
+    assert "形状口径" not in gap["desc"] and "形状口径" not in gap["reach_desc"], (
+        "单轴句互相替对方说话")
     # 五句互不相同（三句单轴 + 一句 ev/cov + 一句三轴全不同）＝ 三根轴各自都在守
     singles = {gap["desc"], gap["coverage_desc"], gap["reach_desc"]}
     assert len(singles) == 3, "单轴句两两相同＝有一把键在替另一把说话"
     assert len({*singles, gap["both_desc"], gap["all_desc"]}) == 5
     assert "判盲" not in gap["reach_desc"] and "评分口径" not in gap["reach_desc"]
     assert "可达口径" not in gap["desc"] and "可达口径" not in gap["coverage_desc"]
-    assert gap["all_desc"].count("、") == 2, "三轴句必须由三个子句拼成，少一个就是漏报一根"
+    assert gap["all_desc"].count("、") == 3, "四轴句必须由四个子句拼成，少一个就是漏报一根"
 
 
 def test_caliber_axes_are_registered_everywhere_they_must_be():
