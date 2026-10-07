@@ -546,6 +546,13 @@ MUTATIONS: list[Mutation] = [
         test="tests/test_shape_caliber.py::test_shape_gate_observation_counts_and_logs_a_flagged_report",
     ),
     Mutation(
+        label="把契约夹具点名的那条判据改个名（文档引用一条查无此人的闸 ＝ 空话）",
+        rel="tests/test_living_circle_api.py",
+        old="def test_caliber_gap_literals_match_contract_fixture():",
+        new="def test_caliber_gap_literals_match_contract_fixture_renamed():",
+        test="tests/test_living_circle_api.py::test_every_guard_named_by_the_contract_fixture_actually_exists",
+    ),
+    Mutation(
         label="S22 签发侧容差放宽到 1e-2（读侧比签发侧松，绕过 B17 的载荷能上屏）",
         rel="app/living_circle/geo_utils.py",
         old="SHAPE_SCALAR_TOL = 1e-3",

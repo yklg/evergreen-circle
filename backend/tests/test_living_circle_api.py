@@ -485,6 +485,9 @@ def test_rc_axis_is_aligned_on_shipped_pair_and_blocks_no_row():
             f"{metric} 被 rc 拦下 ⇒ 空集作用面失效，rc-1 在替一把没改读数的尺撒谎")
     # 而**横幅**那一句必须说得出 rc（后端没有横幅出口，直接验组合式本身）
     assert _gap_desc(_differing_axes(a, b2)) == gap["reach_desc"]
+
+
+def test_caliber_gap_literals_match_contract_fixture():
     """P0-3 的字面量单一真源是契约夹具：后端常量 + 判盲口径版本必须与它逐字相同。
 
     `policy_version_current` 与前端 `SCOPE_POLICY_VERSION` 各自钉向同一份夹具 ⇒ 换版本
@@ -548,14 +551,18 @@ def test_rc_axis_is_aligned_on_shipped_pair_and_blocks_no_row():
     assert gap["shape_applies_to"] == [], (
         "sh-1 不入 `scoring.WEIGHTS`、一行的读数都不改 ⇒ 必须是空集；哪天它开始影响读数，"
         "这张表与 `_UNGATED_CALIBER_VERSIONS` 的归边要同批改")
-    assert "形状口径" not in gap["desc"] and "形状口径" not in gap["reach_desc"], (
-        "单轴句互相替对方说话")
-    # 五句互不相同（三句单轴 + 一句 ev/cov + 一句三轴全不同）＝ 三根轴各自都在守
-    singles = {gap["desc"], gap["coverage_desc"], gap["reach_desc"]}
-    assert len(singles) == 3, "单轴句两两相同＝有一把键在替另一把说话"
-    assert len({*singles, gap["both_desc"], gap["all_desc"]}) == 5
-    assert "判盲" not in gap["reach_desc"] and "评分口径" not in gap["reach_desc"]
-    assert "可达口径" not in gap["desc"] and "可达口径" not in gap["coverage_desc"]
+    # 六句互不相同（四句单轴 + 一句 ev/cov + 一句四轴全不同）＝ 四把轴各自都在守。
+    # 原来这里只枚举前三把 —— 第四把进来后若不同步扩，"每把轴都有自己那句"就悄悄不成立了。
+    singles = {gap["desc"], gap["coverage_desc"], gap["reach_desc"], gap["shape_desc"]}
+    assert len(singles) == 4, "单轴句两两相同＝有一把键在替另一把说话"
+    assert len({*singles, gap["both_desc"], gap["all_desc"]}) == 6
+    # 每条单轴句只准说自己那把尺：任一关键词不许出现在**别的**单轴句里（#83 的形状）。
+    own_word = {gap["desc"]: "判盲", gap["coverage_desc"]: "评分口径",
+                gap["reach_desc"]: "可达口径", gap["shape_desc"]: "形状口径"}
+    for own, word in own_word.items():
+        for other in singles:
+            if other is not own:
+                assert word not in other, f"「{word}」渗进了别的单轴句 ⇒ 两把键互相顶替"
     assert gap["all_desc"].count("、") == 3, "四轴句必须由四个子句拼成，少一个就是漏报一根"
 
 
@@ -938,3 +945,38 @@ def test_t7_delete_does_not_touch_research_domain():
     assert client.delete("/api/life-circle/t7-shared-id").status_code == 200
     c = db._connect()
     assert c.execute("SELECT COUNT(*) n FROM reports WHERE report_id='t7-shared-id'").fetchone()["n"] == 1
+
+
+def test_every_guard_named_by_the_contract_fixture_actually_exists():
+    """契约夹具的 `_note` 会点名"这句话由哪条判据守着"—— 被点名的判据必须**查有此人**。
+
+    现形经过（不是假想的坑）：`2dd2847` 那次改动把 `test_caliber_gap_literals_match_contract_fixture`
+    的 `def` 行删掉了，整段断言被并进上一个函数 ⇒ 夹具与前端 `livingCircle.ts` 同时引用一个
+    **已经不存在的判据名**，而全量照绿 —— 断言本身还在跑，但两件事挂在一个名字上：前半段一旦失败，
+    后半段根本不执行，而文档里那句"两侧都钉着它"成了空话。这正是 §7.5 代次轴矩阵要防的形状
+    （"声称有闸、代码没闸"的文档版），也是本会话第十五笔那条教训的另一半：转述来的引用
+    落进"唯一实现依据"前，得有个东西替它验一次存在性。
+    """
+    import ast
+    import re
+
+    cited = set()
+    for node in (CONTRACT["caliber_incomparable"], CONTRACT.get("offline_backend_only", {})):
+        for text in json.dumps(node, ensure_ascii=False).split('"'):
+            # 先摘掉**文件名**（`test_shape_caliber.py::` 这种前缀与裸文件名提及），
+            # 否则上一行的正则会把模块文件名本身当成判据名 —— 那是守卫自己的假红。
+            text = re.sub(r"[A-Za-z0-9_./-]*\.py(?:::)?", " ", text)
+            cited.update(re.findall(r"(?:^|[\s`.:／/])(test_[a-z][a-z0-9_]*)", text))
+    # 一张点名清单都不许是空的：空清单会让上面那条循环恒真，守卫退化成"遍历了一遍不存在的东西"
+    assert cited, "契约夹具里一个判据名都没点名 ⇒ 这条守卫没在守任何东西"
+
+    defined = set()
+    for path in sorted((PROJECT / "backend" / "tests").glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        defined.update(n.name for n in tree.body
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                       and n.name.startswith("test_"))
+    missing = sorted(cited - defined)
+    assert not missing, (
+        f"契约夹具点名的判据在 tests/ 里查无此人：{missing} —— "
+        "要么把判据补回来，要么改掉夹具里那句引用；留着就是替一条不存在的闸背书")
