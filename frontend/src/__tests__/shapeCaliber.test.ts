@@ -17,6 +17,7 @@ import {
   shapeOfZone,
   shapeSentence,
   shapeSuspectNote,
+  shapeUnmeasuredWords,
   shapeWeakStrong,
 } from '../lib/livingCircle'
 import { lcMeters } from '../lib/livingCircle'
@@ -79,8 +80,13 @@ describe('形状口径 · 跨端分箱镜像', () => {
         argmax[k] = [lng, lat, vi]
       }
     })
+    // 本条按「八向全测到」写；真夹具今天确实全测到（sh-2 起 null 才有含义）——
+    // 前提变了要当场红，不要让它悄悄退化成「只比了非空的那几格」。
+    expect(sh!.bins_m.every((v) => v !== null),
+      `${minutes}min 档出现了未测到的格子，本条的比法要跟着改`).toBe(true)
+    const bins = sh!.bins_m as number[]
     manual.forEach((v, k) => {
-      expect(Math.abs(v - sh!.bins_m[k])).toBeLessThanOrEqual(2)
+      expect(Math.abs(v - bins[k])).toBeLessThanOrEqual(2)
       const [lng, lat] = sh!.bins_m.length === 8 ? (argmax[k] as [number, number, number]) : [0, 0, 0]
       // 该顶点确实落在前端算出的那个箱里（方向自证）
       expect(shapeBinOf(center, lng, lat)).toBe(k)
@@ -91,11 +97,11 @@ describe('形状口径 · 跨端分箱镜像', () => {
     // 声明），而这里独立重算用未取整浮点 ⇒ 并列会被末位噪声打破。S25 实测撞到：
     // 劲松 20min 键里 正北 与 正东 同为 1273m —— 旧断言会红在算术噪声上，不是口径分叉。
     const tie = (arr: number[], v: number) => arr.filter((x) => Math.abs(x - v) < 0.05).length > 1
-    expect(Math.abs(manual[mine.weak] - sh!.bins_m[theirs.weak])).toBeLessThanOrEqual(2)
-    expect(Math.abs(manual[mine.strong] - sh!.bins_m[theirs.strong])).toBeLessThanOrEqual(2)
-    if (!tie(sh!.bins_m, sh!.bins_m[theirs.weak])) expect(mine.weak, `${minutes}min 档`).toBe(theirs.weak)
-    if (!tie(sh!.bins_m, sh!.bins_m[theirs.strong])) expect(mine.strong, `${minutes}min 档`).toBe(theirs.strong)
-    expect(Math.abs(manual[mine.weak] / manual[mine.strong] - sh!.weak_ratio)).toBeLessThan(0.005)
+    expect(Math.abs(manual[mine.weak] - bins[theirs.weak])).toBeLessThanOrEqual(2)
+    expect(Math.abs(manual[mine.strong] - bins[theirs.strong])).toBeLessThanOrEqual(2)
+    if (!tie(bins, bins[theirs.weak])) expect(mine.weak, `${minutes}min 档`).toBe(theirs.weak)
+    if (!tie(bins, bins[theirs.strong])) expect(mine.strong, `${minutes}min 档`).toBe(theirs.strong)
+    expect(Math.abs(manual[mine.weak] / manual[mine.strong] - (sh!.weak_ratio as number))).toBeLessThan(0.005)
     }
   })
 
@@ -104,8 +110,9 @@ describe('形状口径 · 跨端分箱镜像', () => {
     // ⇒ 提醒把 tie 分支收掉，而不是留一条永不再触发的豁免（幽灵豁免的同型纪律）。
     const j = jinsong as unknown as LivingCircleReport
     const sh = shapeOfZone(j, 20)!
-    const max = Math.max(...sh.bins_m)
-    const at = sh.bins_m.map((v, i) => (v === max ? i : -1)).filter((i) => i >= 0)
+    const bs = sh.bins_m as number[]
+    const max = Math.max(...bs)
+    const at = bs.map((v, i) => (v === max ? i : -1)).filter((i) => i >= 0)
     expect(at.length).toBeGreaterThan(1)
     expect(shapeWeakStrong(sh).strong).toBe(Math.min(...at))
     expect([sh.bins_word[at[0]], sh.bins_word[at[1]]]).toEqual(['正北', '正东'])
@@ -249,10 +256,12 @@ describe('形状口径 · 退化告警两侧对照', () => {
     // 载荷圆度没变，于是"高于阈值必现"这条正对照其实在测 null）。
     const eqR = Math.sqrt((zone.area_km2 * 1e6) / Math.PI)
     const target = eqR / v
-    const f = target / Math.max(...sh.bins_m)
-    sh.bins_m = sh.bins_m.map((b) => Math.round(b * f * 10) / 10)
-    sh.circularity = Math.round((eqR / Math.max(...sh.bins_m)) * 1000) / 1000
-    sh.weak_ratio = Math.round((Math.min(...sh.bins_m) / Math.max(...sh.bins_m)) * 1000) / 1000
+    const bs = sh.bins_m as number[]   // 这份辅助件只拿全测到的真夹具造正对照
+    const f = target / Math.max(...bs)
+    const scaled = bs.map((b) => Math.round(b * f * 10) / 10)
+    sh.bins_m = scaled
+    sh.circularity = Math.round((eqR / Math.max(...scaled)) * 1000) / 1000
+    sh.weak_ratio = Math.round((Math.min(...scaled) / Math.max(...scaled)) * 1000) / 1000
     return lc
   }
 
@@ -275,5 +284,76 @@ describe('形状口径 · 退化告警两侧对照', () => {
       expect(shapeSuspectNote(lc, 15)).toBeNull()
       expect(shapeSuspectNote(lc, 20)).toBeNull()
     }
+  })
+})
+
+describe('形状口径 · 未测到（sh-2：null 不是 0 米）', () => {
+  /**
+   * 造一份「某些方向未测到」的载荷，并按剩下的格子把两颗标量改对。
+   *
+   * ⚠️ 要留 `drop = ALL_BUT_MAX` 而不是随便留一格：圆度是 `等面积半径 ÷ 最远可达`，
+   * 只留最小的那格会算出 > 1（实测 1.025）⇒ 被 (0,1] 那道闸正当拒掉，测不到本意。
+   * 这里用哨兵值表达「只留最大那一格」。
+   */
+  const ALL_BUT_MAX = -1
+  const markUnmeasured = (
+    dropIdx: number[] | typeof ALL_BUT_MAX, minutes = 15, weakRatio: number | null | 'auto' = 'auto',
+  ) => {
+    const lc = JSON.parse(JSON.stringify(kailiEv2)) as LivingCircleReport
+    const zone = lc.isochrones.find((z) => z.minutes === minutes)!
+    const sh = zone.shape as ShapeCaliber
+    const bs = sh.bins_m as number[]
+    const keep = bs.indexOf(Math.max(...bs))     // 并列时取第一个，保证只剩一格
+    const drop = dropIdx === ALL_BUT_MAX
+      ? bs.map((_, i) => i).filter((i) => i !== keep) : dropIdx
+    sh.bins_m = bs.map((v, i) => (drop.includes(i) ? null : v))
+    const vals = sh.bins_m.filter((v): v is number => v !== null)
+    const eqR = Math.sqrt((zone.area_km2 * 1e6) / Math.PI)
+    sh.circularity = Math.round((eqR / Math.max(...vals)) * 1000) / 1000
+    sh.weak_ratio = weakRatio === 'auto'
+      ? (vals.length >= 2 ? Math.round((Math.min(...vals) / Math.max(...vals)) * 1000) / 1000 : null)
+      : weakRatio
+    return lc
+  }
+
+  it('有方向未测到 ⇒ 照常画：诚实的缺口不许让整块面板消失', () => {
+    const lc = markUnmeasured([0, 1])
+    const sh = shapeOfZone(lc, 15)
+    expect(sh, 'null 被读侧当成了非法值 ⇒ 缺一向等于全没有').not.toBeNull()
+    expect(sh!.bins_m[0]).toBeNull()
+    expect(shapeUnmeasuredWords(sh!)).toEqual(['正北', '东北'])
+  })
+
+  it('把未测到写回 0.0（sh-1 的谎）⇒ 不画', () => {
+    const lc = markUnmeasured([0, 1])
+    const zone = lc.isochrones.find((z) => z.minutes === 15)!
+    ;(zone.shape as ShapeCaliber).bins_m = (zone.shape as ShapeCaliber).bins_m
+      .map((v) => (v === null ? 0 : v))
+    expect(shapeOfZone(lc, 15)).toBeNull()
+  })
+
+  it('只测到 1 个方向：发 null 合法，发 1.0 不画', () => {
+    // 1.0 的既有含义是「八方一样远、形状很圆」，用它顶替「没可比对象」正好说反。
+    expect(shapeOfZone(markUnmeasured(ALL_BUT_MAX), 15)).not.toBeNull()
+    const lc = markUnmeasured(ALL_BUT_MAX, 15, 1.0)
+    expect(shapeOfZone(lc, 15)).toBeNull()
+  })
+
+  it('八格全未测到 ⇒ 不画（这种载荷该整套不发键）', () => {
+    const lc = JSON.parse(JSON.stringify(kailiEv2)) as LivingCircleReport
+    const zone = lc.isochrones.find((z) => z.minutes === 15)!
+    ;(zone.shape as ShapeCaliber).bins_m = Array(8).fill(null)
+    expect(shapeOfZone(lc, 15)).toBeNull()
+  })
+
+  it('措辞出口把「未测到」说出来：数量与方向都给，且任何地方都不出现 0 m', () => {
+    const lc = markUnmeasured([0, 7])
+    const s = shapeSentence(lc, 15)!
+    expect(s).toContain('另有 2 个方向未测到顶点（正北、西北）')
+    expect(s).not.toMatch(/\b0 m/)
+    // 只测到一面时不再拼「最弱/最强」那半句 —— 没有可比对象
+    const one = shapeSentence(markUnmeasured(ALL_BUT_MAX), 15)!
+    expect(one).toContain('只测到 1 个方向的顶点')
+    expect(one).not.toContain('比值')
   })
 })

@@ -35,7 +35,10 @@ export default function DirectionBars({ lc, minutes, selected, onPick, className
   const shape = shapeOfZone(lc, minutes)
   if (!shape) return null                       // 不发屏：缺键 / 口径不符 / 值非法
   const { weak, strong } = shapeWeakStrong(shape)
-  const rMax = Math.max(...shape.bins_m)
+  // 尺度基准只取**测到的**那些格：把 null 混进 Math.max 会被当成 0，
+  // 虽不影响 max，但会让"这格有没有数"这件事在代码里糊掉 —— 显式过滤读得出来。
+  const measured = shape.bins_m.filter((v): v is number => v !== null)
+  const rMax = Math.max(...measured)
   const sentence = shapeSentence(lc, minutes)
   const suspect = shapeSuspectNote(lc, minutes)
   const caveat = shapeCaveatNote(lc, minutes)
@@ -50,34 +53,46 @@ export default function DirectionBars({ lc, minutes, selected, onPick, className
       <div className="mt-2 flex flex-col gap-0.5">
         {shape.bins_m.map((m, i) => {
           const on = selected === i
+          const unmeasured = m === null
           return (
             <button
               key={`${shape.bins_word[i]}-${i}`}
               type="button"
               aria-pressed={on}
-              aria-label={`${shape.bins_word[i]}方向最远可达 ${Math.round(m)} 米`}
+              disabled={unmeasured}
+              aria-label={unmeasured
+                ? `${shape.bins_word[i]}方向未测到顶点（这一向没有可读的距离）`
+                : `${shape.bins_word[i]}方向最远可达 ${Math.round(m as number)} 米`}
               onClick={() => onPick(on ? null : i)}
               className={
                 'grid w-full grid-cols-[3.2rem_1fr_3rem] items-center gap-2 rounded-[10px] border px-1.5 py-1.5 text-left transition-colors '
                 + (on ? 'border-risk/40 bg-risk/5' : 'border-transparent hover:bg-ink/5')
+                + (unmeasured ? ' cursor-default hover:bg-transparent' : '')
               }
             >
               <span className={'text-right text-tag ' + (on ? 'font-semibold text-[#A5625B]' : 'text-ink-2')}>
                 {shape.bins_word[i]}
               </span>
+              {/* 未测到的那一格**不给长度**：画一根 0 宽的条会让人读成"量到了 0 米"，
+                  画一格虚线底槽才是"这里没数"。版式仍是同一套三列，行高不变。 */}
               <span className="h-3.5 overflow-hidden rounded bg-ink/5">
-                <span
-                  className={'block h-3.5 rounded ' + (on ? 'bg-[#B9665E]' : 'bg-primary/70')}
-                  style={{ width: `${(m / rMax) * 100}%` }}
-                />
+                {unmeasured ? (
+                  <span className="block h-3.5 rounded border border-dashed border-line" />
+                ) : (
+                  <span
+                    className={'block h-3.5 rounded ' + (on ? 'bg-[#B9665E]' : 'bg-primary/70')}
+                    style={{ width: `${((m as number) / rMax) * 100}%` }}
+                  />
+                )}
               </span>
               <span
                 className={
-                  'text-right text-tag tabular-nums '
-                  + (i === weak ? 'font-semibold text-[#A5625B]' : 'text-ink')
+                  'text-right text-tag '
+                  + (unmeasured ? 'text-ink-3' : 'tabular-nums ')
+                  + (!unmeasured && i === weak ? 'font-semibold text-[#A5625B]' : '')
                 }
               >
-                {Math.round(m)}
+                {unmeasured ? '未测到' : Math.round(m as number)}
               </span>
             </button>
           )
@@ -88,7 +103,9 @@ export default function DirectionBars({ lc, minutes, selected, onPick, className
       {suspect && <p className="mt-1 text-tag font-medium leading-relaxed text-warn">{suspect}</p>}
       {caveat && <p className="mt-1 text-tag leading-relaxed text-ink-3">{caveat}</p>}
       <p className="mt-1 text-tag leading-relaxed text-ink-3">
-        同图仅标出最弱（{shape.bins_word[weak]}）与最强（{shape.bins_word[strong]}）两格；
+        {weak === strong
+          ? `只测到 ${shape.bins_word[weak]} 一个方向的顶点，无最弱/最强可比；`
+          : `同图仅标出最弱（${shape.bins_word[weak]}）与最强（${shape.bins_word[strong]}）两格；`}
         方位分布与设施布点是两回事，这里只说"这个方向走不远"，不指认原因。
       </p>
     </div>

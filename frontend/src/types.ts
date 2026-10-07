@@ -739,8 +739,14 @@ export interface LifeCircleScene {
  * 因此渲染面**只准读这颗键**，不许自己从 `bins_m` 反推圆度或面积（守卫按特征扫 `src/`）。
  */
 export interface ShapeCaliber {
-  /** 8 个方位的最远可达半径(m)，下标 0=正北、顺时针每 45° 一档（与 `direction_word` 同分桶） */
-  bins_m: number[]
+  /**
+   * 8 个方位的最远可达半径(m)，下标 0=正北、顺时针每 45° 一档（与 `direction_word` 同分桶）。
+   *
+   * ⚠️ `null` ＝ **这一向未测到**（该 45° 扇区里没有任何离开中心点的顶点），不是"0 米"、
+   * 也不是"一步都出不去"。`sh-1` 时代空格发的是 `0.0`，屏上就成了「最弱方向：正北 0m」——
+   * 替一次没做过的测量举证。`sh-2` 起 `0.0` 被签发闸与读侧同时判违规（`AGENTS §7.4`）。
+   */
+  bins_m: (number | null)[]
   /**
    * 与 `bins_m` 同序的 8 个方位词，**随键下发**（后端 `geo_utils._DIRECTIONS` 是唯一词表）。
    * 前端另抄一份就会在「正北 / 北」这种地方分叉 —— 上一版就漏过这一件，靠真检查才发现。
@@ -754,10 +760,14 @@ export interface ShapeCaliber {
   origin: 'scene.center' | string
   /** 方位角实现：生产恒为球面 `bearing()` */
   azimuth_fn: 'bearing' | string
-  /** 等面积半径 ÷ 最远可达半径，∈(0,1]；面积唯一出处是本档 `area_km2` */
+  /** 等面积半径 ÷ 最远可达半径，∈(0,1]；面积唯一出处是本档 `area_km2`（分母取**测到的**那些格的最大值） */
   circularity: number
-  /** 最弱方位 ÷ 最强方位，∈(0,1]；由 `bins_m` 的 min/max 派生 */
-  weak_ratio: number
+  /**
+   * 最弱方位 ÷ 最强方位，∈(0,1]；由 `bins_m` 里**测到的**那些格的 min/max 派生。
+   * `null` ＝ 八个方位里只测到不到两个，"最弱/最强"没有可比对象。
+   * ⚠️ 不许拿 `1.0` 顶替这个 `null` —— 1.0 的既有含义是"八方一样远、形状很圆"，正好相反。
+   */
+  weak_ratio: number | null
 }
 
 /** 分级等时圈（5/10/15/20 分钟） */

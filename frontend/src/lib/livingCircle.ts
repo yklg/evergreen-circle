@@ -2215,17 +2215,28 @@ export function shapeOfZone(
   if (sh.azimuth_fn !== SHAPE_EXPECT.azimuth_fn) return null
   const bins = sh.bins_m
   if (!Array.isArray(bins) || bins.length !== 8) return null
-  if (bins.some((v) => !Number.isFinite(v) || v <= 0)) return null
+  // 每格只准是「正有限数」或「null＝该向未测到」（sh-2 语义）。`0.0` 一律不画 —— 它正是
+  // 被换掉的那句谎（「一步都出不去」）。八格全未测到也不画：那块面板没有可读对象。
+  if (bins.some((v) => v !== null && (!Number.isFinite(v) || v <= 0))) return null
+  const measured = bins.filter((v): v is number => v !== null)
+  if (measured.length === 0) return null
   if (!Array.isArray(sh.bins_word) || sh.bins_word.length !== 8) return null
   if (sh.bins_word.some((w) => !w)) return null
   // 词表**内容**不许在前端另抄一份（I-07：词表只有一份，随键下发；抄了就分叉）。
   // 读侧只能判结构：八个词里有重复 ⇒ 一定是被换过序/填错过，直接不画。
   // 「整体转一格」那种（无重复但错序）只有签发闸能判 —— 见后端 B17 的 bins_word 序核对。
   if (new Set(sh.bins_word).size !== sh.bins_word.length) return null
-  const rMax = Math.max(...bins)
-  const rMin = Math.min(...bins)
-  // 两颗标量必须能由这一档自己的数复算出来（面积出处是本档 area_km2，不许反推）
-  if (!Number.isFinite(sh.weak_ratio) || Math.abs(sh.weak_ratio - rMin / rMax) > SHAPE_EXPECT.scalar_tol) return null
+  const rMax = Math.max(...measured)
+  const rMin = Math.min(...measured)
+  // 两颗标量必须能由这一档自己的数复算出来（面积出处是本档 area_km2，不许反推）。
+  // `weak_ratio` 与"测到几个方向"是绑死的：≥2 个才许是数、且必须等于 min/max；
+  // 只测到 1 个方向时必须是 `null` —— 发 1.0 会被读成"八方一样远"，与事实正好相反。
+  if (measured.length >= 2) {
+    if (!Number.isFinite(sh.weak_ratio ?? NaN)
+        || Math.abs((sh.weak_ratio as number) - rMin / rMax) > SHAPE_EXPECT.scalar_tol) return null
+  } else if (sh.weak_ratio !== null) {
+    return null
+  }
   const area = Number(zone?.area_km2)
   if (!Number.isFinite(area) || area <= 0) return null
   if (!Number.isFinite(sh.circularity) || sh.circularity <= 0 || sh.circularity > 1) return null
@@ -2234,13 +2245,27 @@ export function shapeOfZone(
   return sh
 }
 
-/** 最弱 / 最强方位的下标（同值时取靠前者，保证跨端稳定）。 */
+/** 未测到的那些方位词（`bins_m` 里为 `null` 的格）—— 屏上"另有 N 个方向未测到"那份账的唯一出处。 */
+export function shapeUnmeasuredWords(sh: ShapeCaliber): string[] {
+  return sh.bins_m.map((v, i) => (v === null ? sh.bins_word[i] : '')).filter(Boolean)
+}
+
+/**
+ * 最弱 / 最强方位的下标（同值时取靠前者，保证跨端稳定）。
+ *
+ * ⚠️ 只在**测到的**那些格里挑：把 `null` 当 0 参与比较，等于让"没量到"去竞争"最弱方向"，
+ * 屏上就会指着一个空格说"这里最堵"。只测到一个方向时 weak ＝ strong ＝ 那一格
+ * （此时 `weak_ratio` 是 `null`，措辞出口 `shapeSentence` 改说"只测到一面"）。
+ */
 export function shapeWeakStrong(sh: ShapeCaliber): { weak: number; strong: number } {
-  let weak = 0
-  let strong = 0
-  sh.bins_m.forEach((v, i) => {
-    if (v < sh.bins_m[weak]) weak = i
-    if (v > sh.bins_m[strong]) strong = i
+  const idx = sh.bins_m
+    .map((v, i) => ({ v, i }))
+    .filter((x): x is { v: number; i: number } => x.v !== null)
+  let weak = idx[0].i
+  let strong = idx[0].i
+  idx.forEach(({ v, i }) => {
+    if (v < (sh.bins_m[weak] as number)) weak = i
+    if (v > (sh.bins_m[strong] as number)) strong = i
   })
   return { weak, strong }
 }
@@ -2258,10 +2283,24 @@ export function shapeSentence(
 ): string | null {
   const sh = shapeOfZone(lc, minutes)
   if (!sh) return null
+  const unmeasured = shapeUnmeasuredWords(sh)
+  const measuredCount = sh.bins_m.length - unmeasured.length
+  // 只测到一个方向：没有"最弱/最强"可比，硬拼那半句就是编造 —— 改说这一档的实情。
+  if (measuredCount < 2) {
+    const only = sh.bins_word[shapeWeakStrong(sh).weak]
+    return `八个方位只测到 1 个方向的顶点（${only} ${Math.round(
+      sh.bins_m[shapeWeakStrong(sh).weak] as number,
+    )} m），无最弱可比`
+      + (unmeasured.length ? `；其余 ${unmeasured.length} 个方向未测到顶点` : '')
+  }
   const { weak, strong } = shapeWeakStrong(sh)
   return (
-    `最弱方向：${sh.bins_word[weak]} ${Math.round(sh.bins_m[weak])} m`
-    + `（最强 ${sh.bins_word[strong]} ${Math.round(sh.bins_m[strong])} m，比值 ${sh.weak_ratio}）`
+    `最弱方向：${sh.bins_word[weak]} ${Math.round(sh.bins_m[weak] as number)} m`
+    + `（最强 ${sh.bins_word[strong]} ${Math.round(sh.bins_m[strong] as number)} m，比值 ${sh.weak_ratio}）`
+    // 「未测到」必须显式说数量与方向：不说，读者会把少画的那几格读成"那里没有缺口"。
+    + (unmeasured.length
+        ? `；另有 ${unmeasured.length} 个方向未测到顶点（${unmeasured.join('、')}）`
+        : '')
   )
 }
 

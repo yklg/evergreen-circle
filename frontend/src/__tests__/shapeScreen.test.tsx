@@ -71,7 +71,9 @@ describe('shapeSectors · 几何', () => {
   })
 
   it('射线端点落在该箱中心角上（图上那条"最弱方向"线与楔形同源）', () => {
-    const [, tip] = shapeSectorRay(report.scene.center, shape, 0)
+    const ray = shapeSectorRay(report.scene.center, shape, 0)
+    expect(ray, '正北那格测得到 ⇒ 射线不该是 null').not.toBeNull()
+    const [, tip] = ray!
     const [clng, clat] = report.scene.center
     expect(tip[1]).toBeGreaterThan(clat)          // 正北 ⇒ 纬度更高
     expect(Math.abs(tip[0] - clng)).toBeLessThan(1e-9)
@@ -182,7 +184,7 @@ describe('DirectionBars · 方位条形卡', () => {
     expect(rows).toHaveLength(8)
     shape.bins_word.forEach((w, i) => {
       expect(rows[i].textContent).toContain(w)
-      expect(rows[i].textContent).toContain(String(Math.round(shape.bins_m[i])))
+      expect(rows[i].textContent).toContain(String(Math.round(shape.bins_m[i] as number)))
     })
   })
 
@@ -213,5 +215,41 @@ describe('DirectionBars · 方位条形卡', () => {
       <DirectionBars lc={bare} minutes={15} selected={null} onPick={() => {}} />,
     )
     expect(container.textContent).toBe('')
+  })
+})
+
+describe('未测到的那一格在屏上怎么表达（S34）', () => {
+  const withHoles = () => {
+    const r = JSON.parse(JSON.stringify(report)) as LivingCircleReport
+    const z = r.isochrones.find((x) => x.minutes === 15)!
+    const bs = z.shape!.bins_m as number[]
+    z.shape!.bins_m = bs.map((v, i) => (i === 0 || i === 7 ? null : v))
+    const vals = z.shape!.bins_m.filter((v): v is number => v !== null)
+    const eqR = Math.sqrt((z.area_km2 * 1e6) / Math.PI)
+    z.shape!.circularity = Math.round((eqR / Math.max(...vals)) * 1000) / 1000
+    z.shape!.weak_ratio = Math.round((Math.min(...vals) / Math.max(...vals)) * 1000) / 1000
+    return r
+  }
+
+  it('条形：那一行写「未测到」而不是 0；其余行照旧报米数', () => {
+    const lc = withHoles()
+    render(<DirectionBars lc={lc} minutes={15} selected={null} onPick={() => {}} />)
+    const rows = screen.getAllByRole('button')
+    const north = rows.find((b) => b.textContent!.includes('正北'))!
+    expect(north.textContent).toContain('未测到')
+    expect(north.hasAttribute('disabled')).toBe(true)
+    expect(north.getAttribute('aria-label')).toContain('未测到顶点')
+    const others = rows.filter((b) => !b.textContent!.includes('正北') && !b.textContent!.includes('西北'))
+    others.forEach((b) => expect(b.textContent).toMatch(/\d/))
+  })
+
+  it('楔形与命中层：未测到的扇区**整块不画**（画了就是一块可点的无数据区）', () => {
+    const lc = withHoles()
+    const shape = shapeOfZone(lc, 15)!
+    const secs = shapeSectors(lc.scene.center, shape)
+    expect(secs.map((s) => s.index)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(secs.every((s) => s.radiusM > 0)).toBe(true)
+    expect(shapeSectorRay(lc.scene.center, shape, 0)).toBeNull()      // 正北未测到 ⇒ 没有长度可画
+    expect(shapeSectorRay(lc.scene.center, shape, 1)).not.toBeNull()
   })
 })

@@ -40,24 +40,37 @@ function offsetOf(azDeg: number, radiusM: number): [number, number] {
 export function shapeSectors(center: LngLat, shape: ShapeCaliber): ShapeSector[] {
   const step = shape.bin_deg
   const half = step / 2
-  return shape.bins_m.map((radiusM, k) => {
+  const out: ShapeSector[] = []
+  shape.bins_m.forEach((radiusM, k) => {
+    // `null` ＝ 这一向未测到 ⇒ **整块不画**。画成 0 半径的楔形等于把"没量到"画成一个看得见
+    // 的形状，而且它还会在命中层里占一块可点区域（点上去选中一个不存在的读数）。
+    // `index` 保留原扇区号 ⇒ 条形图与选中态仍然各对各的格。
+    if (radiusM === null) return
     const az0 = k * step - half
     const arc: LngLat[] = []
     for (let i = 0; i <= ARC_STEPS; i++) {
       const [mx, my] = offsetOf(az0 + step * (i / ARC_STEPS), radiusM)
       arc.push(lcFromMeters(center, mx, my))
     }
-    return {
+    out.push({
       index: k,
       word: shape.bins_word[k],
       radiusM,
       ring: [lcFromMeters(center, 0, 0), ...arc, lcFromMeters(center, 0, 0)],
-    }
+    })
   })
+  return out
 }
 
-/** 第 k 箱的**中心射线**（图上那条"最弱方向"标注线用，避免各处各算各的）。 */
-export function shapeSectorRay(center: LngLat, shape: ShapeCaliber, index: number): [LngLat, LngLat] {
-  const [mx, my] = offsetOf(index * shape.bin_deg, shape.bins_m[index])
+/**
+ * 第 k 箱的**中心射线**（图上那条"最弱方向"标注线用，避免各处各算各的）。
+ * 该向未测到 ⇒ `null`：没有长度可画，画一条零长线会让人以为"这里量到了 0"。
+ */
+export function shapeSectorRay(
+  center: LngLat, shape: ShapeCaliber, index: number,
+): [LngLat, LngLat] | null {
+  const radiusM = shape.bins_m[index]
+  if (radiusM === null || radiusM === undefined) return null
+  const [mx, my] = offsetOf(index * shape.bin_deg, radiusM)
   return [lcFromMeters(center, 0, 0), lcFromMeters(center, mx, my)]
 }
