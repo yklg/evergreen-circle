@@ -57,6 +57,34 @@ npm run dev                     # http://localhost:3400
 > 若系统 PATH 中找不到 `node`，可在项目根创建 `.node-path` 文件，写入本机 Node 的 `bin`
 > 目录绝对路径，`restart.sh` 会自动回退使用（含本机路径，已被 `.gitignore` 忽略）。
 
+⚠️ **10-07 现场**：`start.sh` 已从工作区移除（作者决定；脚本连同一键启停的写法留到项目结束统一重写），
+所以上面 `./start.sh # 首次起` **现在跑不通**，它的四个模式 `--check` / `--no-install` / `--force` / `--no-open`
+暂无后继入口（四个开关名回 `git show HEAD:start.sh` 的参数解析逐个字对过）。日常起停用还活着的
+`./restart.sh` / `./stop.sh`。
+
+**新机器的"从零建环境"目前没有已验证路径** —— 那正是 `start.sh` 干的活（环境自检 → 按需建 venv →
+装依赖 → 拉起 → 开浏览器）。本节上面「后端」那段 `python3 -m venv .venv` **不要照抄就以为能起**，
+原因见下面那条解释器约束：PATH 上的 `python3` 与本机跑得住的那套基座不是同一个东西。
+
+### 本机 Python 解释器约束（重写启停脚本时不许丢这段）
+
+这条理由原先**只写在 `start.sh` 第 40–43 行的注释里**，脚本要重写 ⇒ 先挪进本文，免得随脚本一起消失。
+下面每条都标了它现在的验证方式，不再以那段注释为证据：
+
+- 部分嵌入式 Python（本机是 TRAE 工具链那一类）会往环境里注入 `PYTHONPATH`（混入其它版本的
+  site-packages）与 `PYTHONHOME`，导致解释器／venv 行为异常 ⇒ 拉起后端前必须
+  `unset PYTHONPATH PYTHONHOME PYTHONSTARTUP` 并对同名变量 `export -n`，别泄漏进后端进程。
+- **`.venv` 在这台机器上做不到隔离，是当场可验的事实而不是推断**：`backend/.venv/bin/python --version`
+  = 3.10.20，`sys.prefix` 指向 `.venv` 而 `sys.base_prefix` 指向
+  `~/Library/Application Support/TRAE SOLO CN/…/python@3.10/…`，并且 `import fastapi` 解析到的是
+  **基座解释器**的 `…/python@3.10/…/site-packages/fastapi/`。所以看到 `.venv/bin/python -m uvicorn`
+  能起来，**不等于**依赖装在 venv 里 —— 排查后端 import 问题时按这条读，别拿"venv 里找不到包"当证据。
+- ⚠️ 原注释那句「本机仅剩 python3.10 可用」**今天已不成立**（PATH 上 `python3` = 3.14.6，另有
+  `~/.local/bin/python3.12`），别在重写脚本时把它抄回去；本节「环境要求」写的 `Python ≥ 3.9（CI 钉 3.12）`
+  与本机的 3.10 基座是**三个不同的数**，别混成一个。
+- 依赖是否就绪靠指纹缓存 `backend/.venv/.requirements-ok` 判断（幂等、第二次起秒开），
+  要绕过它重装得显式 `--force`（该开关随脚本重写一起补回来）。
+
 ---
 
 ## 2. 云端后端（三选一）
