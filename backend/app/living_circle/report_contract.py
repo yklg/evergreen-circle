@@ -68,8 +68,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from app.living_circle.caliber import REACH_CALIBER_VERSION, get_caliber
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
-from app.living_circle.isochrone import interpolation_form_keys, shape_zone_keys
-from app.living_circle.geo_utils import SHAPE_AZIMUTH_FN, SHAPE_BIN_DEG, SHAPE_BIN_PHASE, SHAPE_ORIGIN
+from app.living_circle.isochrone import interpolation_form_keys, shape_zone_keys, SHAPE_MINUTES
+from app.living_circle.geo_utils import (
+    SHAPE_AZIMUTH_FN,
+    SHAPE_BIN_DEG,
+    SHAPE_BIN_PHASE,
+    SHAPE_ORIGIN,
+    _DIRECTIONS,
+)
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
 # 台账的三个字符 `1/0/.` 一旦有两份定义，读侧守卫就会在写侧改字母表的那天开始说谎。
 # 依赖方向是 读侧守卫 → 判定模块，与既有 `scope.BLIND_RADIUS_M` 同一条，不构成环
@@ -790,9 +796,11 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
          azimuth_fn / circularity / weak_ratio）缺任一件。半份比不发更误导：读者拿到
          一串米数却不知道怎么分的箱、相对谁量的，而自己复算必然复不出同一个数。
       ② 口径漂移 —— 分箱必须是 45°、分相必须是 `center`、原点必须是 `scene.center`、
-         方位角实现必须是球面 `bearing()`。这四件不是实现细节而是**口径**：实测把原点
-         换成质心，凯里 15min 圆度动 0.056（城市之间总共只差 0.082）；把分相换成 floor，
-         最弱读数从 438m 虚高到 547m —— 缺口被相邻方向的最大值掩盖 108m。
+         方位角实现必须是球面 `bearing()`。这四件不是实现细节而是**口径**：用生产
+         `shape_of` 实算，只把原点换成质心，凯里 15min 圆度 0.713→0.684（动 0.029，
+         而两城之间总共只差 0.082）、最弱读数 438→553m，劲松 15min 的最弱方位直接改口
+         （正西→东北）；只把分相换成 floor，最弱读数从 438m 虚高到 571m
+         —— 缺口被相邻方向的最大值掩盖 133m。判据在 `tests/test_shape_caliber.py`。
       ③ 值不合法 —— `bins_m` 必须是 8 个正的有限值；比值/圆度必须是 (0,1] 内的有限值。
          NaN 或 0 会让"最弱方位"变成一个指不到任何方向的数。
       ④ 派生自洽 —— 两颗标量必须由这一档自己的数推出：
@@ -814,7 +822,9 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
             "circularity", "weak_ratio"}
     out: List[str] = []
     minutes_present = {float(z.get("minutes") or -1) for z in zones if isinstance(z, dict)}
-    for m in (15.0, 20.0):
+    # 档位集合**只准引发射口**：今天这里是 `SHAPE_MINUTES=(15,20)`，判据若抄字面 (15.0, 20.0)，
+    # 口径收窄成只发 15min 就会假红、放宽时新档又完全不校验（键名那一条已经按同源做过，见上面）。
+    for m in (float(x) for x in SHAPE_MINUTES):
         if m in minutes_present and m not in {float(z.get("minutes") or -1) for z in with_shape}:
             out.append(f"{m:g}min 档缺 {shape_key} 键，但同载荷另有档带它 ⇒ 形状口径半代发（漏发的那档屏上会整块缺席）")
     for z in with_shape:
@@ -843,13 +853,30 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
             out.append(f"{tag}.bins_word 必须是 8 个方位词（与 bins_m 同序）—— 词表只有一份，"
                        "随键下发；渲染面各自抄一份就会在「正北/北」这种地方分叉")
             continue
-        if float(sh["bin_deg"]) != SHAPE_BIN_DEG or sh["bin_phase"] != SHAPE_BIN_PHASE:
-            out.append(f"{tag} 分箱/分相声明与生产口径不符（拿到 {sh['bin_deg']}/{sh['bin_phase']!r}，"
-                       f"口径 {SHAPE_BIN_DEG}/{SHAPE_BIN_PHASE!r}）⇒ 换分相会把缺口并进相邻方向取最大值")
+        if [str(w) for w in words] != list(_DIRECTIONS):
+            out.append(f"{tag}.bins_word 与生产 8 词表不同序（拿到 {list(words)}，口径 {list(_DIRECTIONS)}）"
+                       " —— 整体转一格（或任何换序）会让每一箱都配上错的方位词，"
+                       "屏上把「最弱方向：正北」念成别的方向，而这在载荷上看不出任何异常")
             continue
-        if sh["origin"] != SHAPE_ORIGIN or sh["azimuth_fn"] != SHAPE_AZIMUTH_FN:
-            out.append(f"{tag} 原点/方位角实现与口径不符（{sh['origin']!r}/{sh['azimuth_fn']!r}）"
-                       " —— 换原点圆度会动 0.056，球面与平面方位角也确有差")
+        # 四件口径声明逐字段各判各的，**文案里必须点出字段名**：合并成一条"分箱/分相"
+        # 会让运维只看到"口径不符"却不知道该改哪一位（S28 元判据就是按"能不能点名"逼出来的）。
+        caliber_checks = (
+            ("bin_deg", float(sh["bin_deg"]) != SHAPE_BIN_DEG, "分箱宽度",
+             f"口径 {SHAPE_BIN_DEG} —— 换分箱宽度等于换分箱个数，词表与楔形都会错位"),
+            ("bin_phase", sh["bin_phase"] != SHAPE_BIN_PHASE, "分相",
+             f"口径 {SHAPE_BIN_PHASE!r} —— 换 floor 分相会把缺口并进相邻方向取最大值（实测掩盖 133m）"),
+            ("origin", sh["origin"] != SHAPE_ORIGIN, "原点",
+             f"口径 {SHAPE_ORIGIN!r} —— 换原点圆度会动 0.029（球面实算），最弱方位还可能改口"),
+            ("azimuth_fn", sh["azimuth_fn"] != SHAPE_AZIMUTH_FN, "方位角实现",
+             f"口径 {SHAPE_AZIMUTH_FN!r} —— 平面 atan2 与球面 bearing 确有差，不声明就靠运气"),
+        )
+        caliber_drift = False
+        for field, bad, cname, why in caliber_checks:
+            if bad:
+                out.append(f"{tag}.{field}（{cname}）与生产口径不符（拿到 {sh[field]!r}）—— {why}")
+                caliber_drift = True
+                break
+        if caliber_drift:
             continue
         try:
             circ, weak = float(sh["circularity"]), float(sh["weak_ratio"])

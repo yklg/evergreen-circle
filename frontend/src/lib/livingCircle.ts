@@ -2153,8 +2153,9 @@ const SHAPE_EXPECT = {
  *
  * 为什么读侧还要再判一次（后端契约 B17 已经拦过）：B17 是**签发时**的闸，
  * 而历史列表里的旧件、手写 mock、外部导入的镜像都可能绕过它。屏上把
- * "floor 分相的读数"当成"中心分相的读数"讲，收不回来 —— 实测换分相最弱方位
- * 会从 438m 变成 547m，缺口被相邻方向的最大值掩盖掉。宁可不画。
+ * "floor 分相的读数"当成"中心分相的读数"讲，收不回来 —— 后端球面实算换分相最弱方位
+ * 会从 438m 变成 571m（缺口被相邻方向的最大值掩盖 133m），判据见 `test_shape_caliber.py`。
+ * 宁可不画。
  */
 export function shapeOfZone(
   lc: Pick<LivingCircleReport, 'isochrones'> | null | undefined,
@@ -2172,6 +2173,10 @@ export function shapeOfZone(
   if (bins.some((v) => !Number.isFinite(v) || v <= 0)) return null
   if (!Array.isArray(sh.bins_word) || sh.bins_word.length !== 8) return null
   if (sh.bins_word.some((w) => !w)) return null
+  // 词表**内容**不许在前端另抄一份（I-07：词表只有一份，随键下发；抄了就分叉）。
+  // 读侧只能判结构：八个词里有重复 ⇒ 一定是被换过序/填错过，直接不画。
+  // 「整体转一格」那种（无重复但错序）只有签发闸能判 —— 见后端 B17 的 bins_word 序核对。
+  if (new Set(sh.bins_word).size !== sh.bins_word.length) return null
   const rMax = Math.max(...bins)
   const rMin = Math.min(...bins)
   // 两颗标量必须能由这一档自己的数复算出来（面积出处是本档 area_km2，不许反推）

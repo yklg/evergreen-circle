@@ -112,7 +112,7 @@ describe('形状口径 · 篡改即失效', () => {
   it('分相被改成 floor（会把缺口并进相邻方向）⇒ 不画', () => {
     expect(shapeOfZone(tamper((sh) => { sh.bin_phase = 'floor' }), 15)).toBeNull()
   })
-  it('原点被换成质心（实测圆度会动 0.056）⇒ 不画', () => {
+  it('原点被换成质心（球面实算圆度会动 0.029、劲松最弱方位直接改口）⇒ 不画', () => {
     expect(shapeOfZone(tamper((sh) => { sh.origin = 'centroid' }), 15)).toBeNull()
   })
   it('方位角实现漂移成平面 atan2 ⇒ 不画', () => {
@@ -127,6 +127,25 @@ describe('形状口径 · 篡改即失效', () => {
   })
   it('箱值非法（含 0 ⇒ 等于宣称某个方位一步都出不去）⇒ 不画', () => {
     expect(shapeOfZone(tamper((sh) => { sh.bins_m = [0, ...sh.bins_m.slice(1)] }), 15)).toBeNull()
+  })
+  it('词表里有重复（换序/填错的典型形态）⇒ 不画', () => {
+    // 读侧**不许自备一份正确词表**（I-07 词表只有一份，随键下发），所以这里只能判结构：
+    // 八个位置出现重复 ⇒ 一定不是同一张表。"整体转一格"那种无重复的错序只有签发闸能判，
+    // 由后端 B17 的 bins_word 序核对守着（tests/test_shape_caliber.py::test_b17_catches_word_table_rotated_out_of_order）。
+    expect(shapeOfZone(tamper((sh) => { sh.bins_word = [sh.bins_word[0], sh.bins_word[0], ...sh.bins_word.slice(2)] }), 15)).toBeNull()
+    // 正对照：真词表八个词互不相同，剥掉这条判据就会把正常载荷也打死
+    expect(new Set((kailiEv2 as unknown as LivingCircleReport).isochrones.find((z) => z.minutes === 15)!.shape!.bins_word).size).toBe(8)
+  })
+  it('声明字段集合与读侧校验清单逐位对齐（谁加字段忘了配对，这里先红）', () => {
+    // S28 的前端这条腿：生产端发出的键集合 == 后端判据消费的集合 == 前端真在核对的清单。
+    // 少一边就是"发了没人消费"的幽灵字段——本轮三条审查打穿的四条缺口全是这个形状。
+    const CONSUMED_BY_READER = [
+      'bins_m', 'bins_word', 'bin_deg', 'bin_phase', 'origin', 'azimuth_fn', 'circularity', 'weak_ratio',
+    ]
+    for (const [name, lc] of REPORTS) {
+      const sh = (lc.isochrones.find((z) => z.minutes === 15)?.shape ?? {}) as Record<string, unknown>
+      expect(Object.keys(sh).sort(), name).toEqual([...CONSUMED_BY_READER].sort())
+    }
   })
 })
 
