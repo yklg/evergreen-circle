@@ -88,4 +88,9 @@ if (typeof window !== 'undefined' && typeof window.HTMLElement !== 'undefined') 
 // 这里放宽的是**等待上限**（多久之内必须出现），不是**断言强度**（出现的东西对不对）：
 // 一条断言都没松。写在 setup 里是为了单点生效——live 族有十几个文件用 waitFor，逐文件加超时
 // 就是给同一个环境问题造十几处副本。
-configure({ asyncUtilTimeout: 5000 })
+//
+// ⚠️ 8s 是刻意**小于** `vitest.config.ts` 的 `testTimeout`（30s）的：两个数相等时先被杀的是整个 test，
+// 报出来只剩一句 `Test timed out in 5000ms`，RTL 那句「找不到 / 命中多个 + 当前 DOM」永远印不出来 ——
+// 10-07 我第一版把两边都写成 5000 就踩了这个坑（8 路并发逼出的那次红完全看不出病因）。
+// ⇒ 不变式：**asyncUtilTimeout < testTimeout**，让"等待超时"始终由 RTL 先报、带着 DOM 报。
+configure({ asyncUtilTimeout: 8000 })

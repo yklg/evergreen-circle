@@ -17,5 +17,12 @@ export default {
     // jsdom 环境 localStorage 补水（Node 26 实验性全局 Web Storage 与
     // vitest 2.x / jsdom 30 组合的兼容适配，见 vitest.setup.ts）
     setupFiles: ['./vitest.setup.ts'],
+    /* 单测超时给到 30s：重页面（幻灯片整篇渲染）在 CI 的 2 核 runner 上与本机并发跑时，
+       慢的是 React + jsdom 的算力，不是断言写错了 —— 10-07 用 8 路并发复现过：8 次里红 1 次，
+       报的还是一句没信息的 `Test timed out in 5000ms`。
+       ⚠️ 这条必须**大于** `vitest.setup.ts` 里的 `asyncUtilTimeout`（那边 8s）：两者撞在同一个数上时，
+       被杀的是整个 test，RTL 那句「找不到 / 找到多个 + 当前 DOM」的诊断永远印不出来 ——
+       超时是预算，不该顺手把病因也一起藏掉。 */
+    testTimeout: 30000,
   },
 }
