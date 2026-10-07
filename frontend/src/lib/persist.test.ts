@@ -61,7 +61,17 @@ function makeSpec(persistMod: typeof import('./persist')) {
   })
 }
 
+/** 装假钟**之前**抓住的真计时器引用 —— 下面「用例隔离」那条要用它让**真实时间**流逝而假钟原地不动。 */
+const realSetTimeout = globalThis.setTimeout
+
 beforeEach(() => {
+  // ⚠️ 整文件的每条用例都开假钟（`afterEach` 那句 `useRealTimers` 把假钟连同上面没拨完的定时器一起丢掉）。
+  // 这条是**用例隔离**，不是为了"方便推进时间"：上推是 400ms 的 `setTimeout`（`persist.ts:241`），
+  // 一条没装假钟的用例调完 `p.persist()` 就结束了 ⇒ 那枚**真** debounce 会活到后面的用例里去开火，
+  // 而 `io.savePrefs` 是 `vi.hoisted` 跨用例共享的那颗 spy ⇒ 后面的用例凭空多一次上推。
+  // 同文件用例之间只隔几毫秒、远小于 400ms ⇒ 它只在 CPU 争抢时才现形：10-07 三路并发全量实测红过一次
+  // （`pending 竞态的精确性` 报 `expected "spy" to be called 1 times, but got 2`），单跑 ×3 全绿。
+  vi.useFakeTimers()
   localStorage.clear()
   io.fetchPrefs.mockReset()
   io.savePrefs.mockReset()
@@ -171,6 +181,31 @@ describe('persist（写入）', () => {
     expect(JSON.parse(localStorage.getItem(PENDING_KEY)!)).toMatchObject({ 'profile.name': 'A' })
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+})
+
+/* ── 用例隔离：没等完的 debounce 不许跨用例开火 ─────────────
+   这条盯的是**测试台自己**，不是产品逻辑：摘掉上面 beforeEach 那句假钟，
+   `persist（写入）` 里那条真计时器用例就会把一枚 400ms 的**真** debounce 遗留给后面的用例。 */
+describe('用例隔离 · 遗留的 debounce 不许跨用例开火', () => {
+  it('故意遗留一枚 debounce ⇒ 真实时间走完 420ms 它仍未开火；把假钟拨过去它才开火', async () => {
+    // 本用例自己不装假钟、也不推进时间 —— 它用的就是 beforeEach 那只假钟，
+    // 于是这里排上的 debounce 挂在**假**钟上：真实时间流逝不该让它开火。
+    const p = makeSpec(await freshPersist())
+    p.persist({ name: '遗留', collapsed: false })
+
+    // 半边一（判泄漏）：让**真实**时间走 420ms（> DEBOUNCE_MS=400），假钟原地不动。
+    // 若 beforeEach 没装假钟 ⇒ 这枚 debounce 挂的是真钟 ⇒ 这 420ms 内必然开火 ⇒ 本条恒红。
+    await new Promise<void>((resolve) => {
+      realSetTimeout(resolve, 420)
+    })
+    expect(io.savePrefs).not.toHaveBeenCalled()
+
+    // 半边二（正对照）：把假钟拨过 400ms ⇒ 同一枚 debounce 必须开火一次。
+    // 缺了这半边，上面那句"没开火"也可能只是因为 debounce 压根没排上 —— 静默空转比红更坏。
+    await vi.advanceTimersByTimeAsync(450)
+    expect(io.savePrefs).toHaveBeenCalledTimes(1)
+    expect(io.savePrefs).toHaveBeenCalledWith({ 'profile.name': '遗留', 'ui.sidebarCollapsed': false })
   })
 })
 
