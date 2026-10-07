@@ -552,6 +552,30 @@ MUTATIONS: list[Mutation] = [
         new="def test_caliber_gap_literals_match_contract_fixture_renamed():",
         test="tests/test_living_circle_api.py::test_every_guard_named_by_the_contract_fixture_actually_exists",
     ),
+    # ── 第十九笔：数学性质与退化输入（TC-07 / TC-08 / TC-16）──
+    # 这三把刀打的是「等变性」与「兜底闸」—— 等变性是形状这类**无参照系**指标唯一可靠的自检手段：
+    # 没有第二个城市可比的时候，尺度与旋转的代数关系也必须成立，而它不依赖任何外部真值。
+    Mutation(
+        label="给 bins 混进一个加性项（齐次性当场破 —— 城市间比较悄悄换成另一把尺）",
+        rel="app/living_circle/geo_utils.py",
+        old="    bins = [round(r, 1) for r in bins]",
+        new="    bins = [round(r, 1) + 1.0 for r in bins]  # mutation",
+        test="tests/test_shape_caliber.py::test_shape_readout_is_homogeneous_under_scaling",
+    ),
+    Mutation(
+        label="bins_word 与 bins_m 的配对错开一格（屏上把每个方位都念成隔壁那个）",
+        rel="app/living_circle/geo_utils.py",
+        old='"bins_word": [_DIRECTIONS[k] for k in range(8)],',
+        new='"bins_word": [_DIRECTIONS[(k + 1) % 8] for k in range(8)],  # mutation',
+        test="tests/test_shape_caliber.py::test_each_value_is_labelled_with_the_direction_it_was_measured_in",
+    ),
+    Mutation(
+        label="B17 放行 0 值箱（退化环的「最弱方向：正北 0m」穿过契约上屏）",
+        rel="app/living_circle/report_contract.py",
+        old="        if any((not isfinite(float(v))) or float(v) <= 0 for v in bins):",
+        new="        if any(not isfinite(float(v)) for v in bins):  # mutation",
+        test="tests/test_shape_caliber.py::test_degenerate_rings_never_reach_the_screen",
+    ),
     Mutation(
         label="S22 签发侧容差放宽到 1e-2（读侧比签发侧松，绕过 B17 的载荷能上屏）",
         rel="app/living_circle/geo_utils.py",

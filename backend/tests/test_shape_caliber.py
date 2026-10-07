@@ -21,6 +21,8 @@ from app.living_circle.geo_utils import (
     SHAPE_BIN_DEG,
     SHAPE_BIN_PHASE,
     SHAPE_ORIGIN,
+    SHAPE_SCALAR_TOL,
+    bearing,
     haversine_m,
     polygon_centroid,
     ring_area_km2,
@@ -89,8 +91,8 @@ def test_shape_scalars_are_derived_from_this_zone_only():
     c = tuple(d["scene"]["center"])
     sh = shape_of(ring, c, z["area_km2"])
     eq_r = math.sqrt(z["area_km2"] * 1e6 / math.pi)
-    assert sh["circularity"] == pytest.approx(eq_r / max(sh["bins_m"]), abs=1e-3)
-    assert sh["weak_ratio"] == pytest.approx(min(sh["bins_m"]) / max(sh["bins_m"]), abs=1e-3)
+    assert sh["circularity"] == pytest.approx(eq_r / max(sh["bins_m"]), abs=SHAPE_SCALAR_TOL)
+    assert sh["weak_ratio"] == pytest.approx(min(sh["bins_m"]) / max(sh["bins_m"]), abs=SHAPE_SCALAR_TOL)
 
 
 def test_shape_of_rejects_unusable_area():
@@ -680,3 +682,194 @@ def test_shape_stamp_does_not_move_the_reuse_gate():
     without_key = {**base, "caliber": {k: v for k, v in base["caliber"].items()
                                       if k != "shape_caliber_version"}}
     assert reuse_policy(with_key, wanted) == reuse_policy(without_key, wanted) == (True, "")
+
+
+# ── ⑥ 数学性质 · 退化输入 · 耗时基线（§九 TC-07 / TC-08 / TC-16 / TC-18）──
+# 造反事实用的球面公式必须与 `geo_utils` **同一颗地球**（R=6371000）、与 `bearing`/`haversine_m`
+# 互逆 —— 否则"等比缩放"会带上两套几何之间的漂移，测到的就不再是齐次性。
+_R_SPHERE_M = 6_371_000.0
+
+
+def _move_along(center, bearing_deg, distance_m):
+    """沿 `bearing_deg` 走 `distance_m` 的大圆目的地（与 `geo_utils.bearing` 互逆）。"""
+    lng1, lat1 = math.radians(center[0]), math.radians(center[1])
+    delta = distance_m / _R_SPHERE_M
+    theta = math.radians(bearing_deg)
+    lat2 = math.asin(math.sin(lat1) * math.cos(delta)
+                     + math.cos(lat1) * math.sin(delta) * math.cos(theta))
+    lng2 = lng1 + math.atan2(math.sin(theta) * math.sin(delta) * math.cos(lat1),
+                             math.cos(delta) - math.sin(lat1) * math.sin(lat2))
+    return (math.degrees(lng2), math.degrees(lat2))
+
+
+def _re_built(ring, center, dist_scale=1.0, bearing_shift=0.0):
+    """把整圈按「距离 ×dist_scale、方位 +bearing_shift」重造 —— 每个顶点单独走自己的大圆。"""
+    return [_move_along(center, bearing(center, p) + bearing_shift,
+                        haversine_m(center, p) * dist_scale) for p in ring]
+
+
+def _fixture_zone(minutes=15):
+    d, ring, z = _live_ring(minutes=minutes)
+    return tuple(d["scene"]["center"]), ring, z, d
+
+
+def test_shape_readout_is_homogeneous_under_scaling():
+    """TC-07 齐次性（metamorphic）：整圈等比放大 k 倍、面积按 k² 陪标 ⇒ 米数等比、两个比值不动。
+
+    这条守的是"读数不许带任何绝对尺度偏好"：`shape_of` 里一旦冒出**加性项**（最小半径地板、
+    按米数裁剪、给某个箱补一个常数），等比性当场就破 —— 而那种缺陷在单份报告上看不出来，
+    只会让"城市之间差 0.082"这类比较悄悄换成另一把尺。
+    """
+    for minutes in (15, 20):
+        center, ring, z, _ = _fixture_zone(minutes)
+        base = shape_of(ring, center, z["area_km2"])
+        for k in (0.5, 2.0, 7.0):
+            got = shape_of(_re_built(ring, center, dist_scale=k), center, z["area_km2"] * k * k)
+            # 两侧都 round 到 0.1 m ⇒ 半格误差各一份，容差按 k 推导而不是拍一个数
+            tol = 0.05 * k + 0.05
+            worst = max(abs(g - b * k) for g, b in zip(got["bins_m"], base["bins_m"]))
+            assert worst <= tol, f"{minutes}min k={k}：bins 不等比（最大偏差 {worst:.4f} m > {tol:.4f}）"
+            assert got["circularity"] == pytest.approx(base["circularity"], abs=SHAPE_SCALAR_TOL), \
+                f"{minutes}min k={k}：圆度随尺度漂了"
+            assert got["weak_ratio"] == pytest.approx(base["weak_ratio"], abs=SHAPE_SCALAR_TOL), \
+                f"{minutes}min k={k}：最弱方位比随尺度漂了"
+            # 正对照自证：这一格真的把被测值搬动了（k≠1 时最大米数必须变），否则上面三个等式是恒真
+            assert max(got["bins_m"]) == pytest.approx(max(base["bins_m"]) * k, abs=tol), \
+                f"{minutes}min k={k}：缩放没作用到读数上，上面的绿不算数"
+
+
+def test_shape_readout_rotates_with_the_ring():
+    """TC-08 旋转等变：整圈转 45° ⇒ `bins_m` 循环移一位，转的是「哪个扇区拿到哪个值」。
+
+    这条测的是**扇区的角度对齐**：箱宽一旦不是 45°、或分相偏移不是 45° 的整数倍，转 45° 后值就
+    不会整齐地挪到下一格（再加一次 360° 回程，证明重造公式本身不漂）。
+    ⚠️ 它**测不到**"整张词表统一错开一格"—— `base` 与 `rotated` 共用同一张下发词表，偏移会抵消；
+    那一格由 `test_each_value_is_labelled_with_the_direction_it_was_measured_in` 用几何绝对锚来守
+    （这个分工不是设计出来的，是台架把"词表错位"那把刀打进本条却存活、逼出来的）。
+    """
+    from app.living_circle.geo_utils import _DIRECTIONS
+
+    center, ring, z, _ = _fixture_zone(15)
+    base = shape_of(ring, center, z["area_km2"])
+    rotated = shape_of(_re_built(ring, center, bearing_shift=45.0), center, z["area_km2"])
+    expected = [base["bins_m"][-1]] + base["bins_m"][:-1]      # 每格值挪到下一个方位
+    worst = max(abs(g - e) for g, e in zip(rotated["bins_m"], expected))
+    assert worst <= 0.1, f"转 45° 后 bins 没有整齐循环移一位（最大差 {worst:.4f} m）：{rotated['bins_m']}"
+    # 两个比值是尺度无关的几何量：转一圈不该动它们
+    assert rotated["circularity"] == pytest.approx(base["circularity"], abs=SHAPE_SCALAR_TOL)
+    assert rotated["weak_ratio"] == pytest.approx(base["weak_ratio"], abs=SHAPE_SCALAR_TOL)
+    # 正对照：原圈本身不是旋转对称的，否则"移一位"这个断言恒真
+    assert base["bins_m"] != expected, "这份真件竟与自身循环一格相同 ⇒ 换件再测，本条测不到东西"
+    weak_word_base = _DIRECTIONS[base["bins_m"].index(min(base["bins_m"]))]
+    weak_word_rot = _DIRECTIONS[rotated["bins_m"].index(min(rotated["bins_m"]))]
+    step = (_DIRECTIONS.index(weak_word_rot) - _DIRECTIONS.index(weak_word_base)) % 8
+    assert step == 1, f"最弱方位该正好转一格，实际转了 {step} 格（{weak_word_base} → {weak_word_rot}）"
+    # 8 × 45° 回程：绕一圈必须回到自己（证明重造公式没有累积漂移）
+    back = _re_built(ring, center, bearing_shift=360.0)
+    worst_back = max(haversine_m(a, b) for a, b in zip(back, ring))
+    assert worst_back < 1e-3, f"球面重造回程差 {worst_back:.6f} m ⇒ 上面所有等变性结论都不成立"
+
+
+def test_degenerate_rings_never_reach_the_screen():
+    """TC-16 退化环：1 点 / 2 点 / 全同点 / 共线 —— 今天 `shape_of` **不拦**，但下游两道闸必须都拒。
+
+    实测现状（本条就是按它写的，别改成"应该抛"）：除「所有顶点与中心同址」会 ValueError 外，
+    退化输入会照常产出一份**带 0 值箱、`weak_ratio == 0.0`** 的读数 —— 屏上那就是"最弱方向：正北 0m"，
+    而那实际是**这一向一个顶点都没落上**（没量到），不是"一步都出不去"。
+    所以这条钉的是"缺保证但不上屏"：`shape_of` 该不该自己拒，见下一条红钉（等你拍 S34）。
+    """
+    center = (107.9758, 26.5734)
+    east = (107.9858, 26.5734)
+    west = (107.9658, 26.5734)
+    cases = {
+        "1 点环": [east],
+        "2 点环": [east, west],
+        "全同点": [east] * 5,
+        "共线四点": [west, (107.9708, 26.5734), (107.9808, 26.5734), east],
+        "与圆心同址": [center] * 4,
+    }
+    for name, ring in cases.items():
+        rep = _with_shape()
+        zone = [x for x in rep["isochrones"] if int(x["minutes"]) == 15][0]
+        try:
+            sh = shape_of(ring, center, zone["area_km2"])
+        except ValueError:
+            continue                       # 生产者当场拒收 —— 这是最理想的形态
+        zone["shape"] = sh
+        assert 0.0 in sh["bins_m"] and sh["weak_ratio"] == 0.0, (
+            f"{name}：退化却产出了不带 0 值箱的读数，本条的前提变了")
+        hits = _shape_caliber_violations(rep)
+        assert any("bins_m" in h for h in hits), (
+            f"{name}：0 值箱穿过 B17 上了屏 ⇒ 屏上会出现「最弱方向：正北 0m」这种替没做过的测量举证的话")
+
+
+@pytest.mark.xfail(reason="**待你拍（§九 TC-06/TC-16 同一条根）**：退化输入是否该由 `shape_of` "
+                          "自己拒收。今天它只拦「所有顶点与圆心同址」，1 点/2 点/共线都照常产出带 "
+                          "0 值箱的读数（下游 B17 与读侧各拦一道，见上一条）。若拍成生产口径（升 S34），"
+                          "本条转正、请删钉；strict 会在它意外转绿时先报 XPASS。", strict=True)
+def test_shape_of_should_refuse_inputs_that_cannot_define_a_shape():
+    """红钉：一条"环"至少要能围出方向分布，才谈得上八方位最远可达 —— 1 点/2 点/共线都做不到。"""
+    center = (107.9758, 26.5734)
+    east, west = (107.9858, 26.5734), (107.9658, 26.5734)
+    for ring in ([east], [east, west], [east, east, east], [west, east]):
+        with pytest.raises(ValueError):
+            shape_of(ring, center, 0.05)
+
+
+def test_shape_of_cost_has_a_recorded_baseline():
+    """TC-18 耗时基线：禁"很快"没有基线。91 / 135 顶点各跑 200 次取均值，界留 ~40 倍余量。
+
+    本机（2026-10-07 arm64）实测：91 顶点约 0.09 ms、135 顶点约 0.13 ms ⇒ 界取 4 / 6 ms，
+    CI 冷启动与 GC 抖不到它；界的存在意义不是性能，是**让"这把尺要不要进分"这类讨论有个数可依**。
+    两条非恒真自证：① 逐格求和必须等于生产值（循环没空转）；② 计时必须 > 0（真跑过）。
+    """
+    import time
+
+    for minutes, bound_ms in ((15, 4.0), (20, 6.0)):
+        center, ring, z, _ = _fixture_zone(minutes)
+        expected = sum(shape_of(ring, center, z["area_km2"])["bins_m"])
+        total = 0.0
+        got_sum = 0.0
+        for _ in range(200):
+            t0 = time.perf_counter()
+            sh = shape_of(ring, center, z["area_km2"])
+            total += time.perf_counter() - t0
+            got_sum += sum(sh["bins_m"])
+        per_call_ms = total / 200 * 1000.0
+        assert got_sum == pytest.approx(expected * 200, abs=1e-6), \
+            f"{minutes}min：200 次跑出来的读数总和不对 ⇒ 计时测的不是这件事"
+        assert per_call_ms > 0.0, f"{minutes}min：耗时为 0，说明根本没计时"
+        assert per_call_ms < bound_ms, (
+            f"{minutes}min 顶点 {len(ring)} 单次 {per_call_ms:.3f} ms，超过基线界 {bound_ms} ms"
+            " —— 要么真退化，要么基线该重新量（别调界不调因）")
+
+
+def test_each_value_is_labelled_with_the_direction_it_was_measured_in():
+    """绝对配对锚（TC-08 的补格）：八个已知方位各放一个已知距离的点，值必须挂在**那个方位词**名下。
+
+    为什么必须有这条：旋转等变只比"移动了几格"，`base` 与 `rotated` 用的是同一张下发词表 ⇒
+    **整张词表统一错开一格**时那个差值抵消、等变测照样绿。这个盲区不是想象的——我给 TC-08 配的
+    "词表错位"刀真的活了下来，才被逼出这一格。真正的锚得拿几何去比：正北摆 111.1 m、正东摆 333.3 m……
+    读出来的 111.1 必须写在「正北」那一格里。中心式分相下每个扇区的中心正好是 45° 的整数倍，
+    所以八个点都摆在扇区中心，不踩箱界、结论与顶点顺序无关。
+    """
+    from app.living_circle.geo_utils import _DIRECTIONS
+
+    center = (107.9758, 26.5734)
+    # 方位词 → 该方向的扇区中心角（独立声明，不从 bins_word 反推 —— 反推就又是自我裁判）
+    word_bearing = {"正北": 0.0, "东北": 45.0, "正东": 90.0, "东南": 135.0,
+                    "正南": 180.0, "西南": 225.0, "正西": 270.0, "西北": 315.0}
+    dists = [111.1, 222.2, 333.3, 444.4, 555.5, 666.6, 777.7, 888.8]
+    ring = [_move_along(center, word_bearing[w], d)
+            for w, d in zip(_DIRECTIONS, dists)]
+    ring = ring + [ring[0]]                       # 闭合（与生产入参同形）
+    sh = shape_of(ring, center, 0.05)
+
+    assert sh["bins_word"] == list(_DIRECTIONS), "下发的词表本身就不是那八张扇区的名字"
+    for word, dist in zip(_DIRECTIONS, dists):
+        idx = sh["bins_word"].index(word)
+        assert sh["bins_m"][idx] == pytest.approx(dist, abs=0.2), (
+            f"{dist} m 摆在 {word}（扇区中心 {word_bearing[word]:.0f}°），"
+            f"却读成 {sh['bins_m'][idx]} m ⇒ 值与方位词配错，屏上会把每个方向都念成隔壁那个")
+    # 八格互不相同：排掉"所有值挤在同一格"这种让上面那圈循环恒真的形状
+    assert len(set(sh["bins_m"])) == 8, f"八格应当各得一个不同距离：{sh['bins_m']}"
