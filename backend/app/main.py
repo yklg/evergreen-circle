@@ -1107,7 +1107,7 @@ def _lc_diff(a: dict, b: dict) -> List[dict]:
     a_off, b_off = a.get("data_origin") == "offline", b.get("data_origin") == "offline"
     off = a_off or b_off
     # 口径轴对照：两侧**任一根**版本声明不同（含一侧根本没声明）⇒ 那几个数不是同一把尺量出来的。
-    # 三根轴（判盲 `ev` / 评分 `cov` / 可达 `rc`）由 `_GAP_FIELDS` 一张表读，不再逐轴开布尔 ——
+    # 四根轴（判盲 `ev` / 评分 `cov` / 可达 `rc` / 形状 `sh`）由 `_GAP_FIELDS` 一张表读，不再逐轴开布尔 ——
     # 逐轴布尔的形状是"每加一根轴就改四处"，漏一根就是静默失效（`_differing_axes` 的注释）。
     # ⚠️ 只比载荷自带的声明，不 import 代码常量当对照值：那会把"两份都缺键"判成不可比。
     differing = _differing_axes(a, b)

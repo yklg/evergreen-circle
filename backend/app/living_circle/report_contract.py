@@ -703,7 +703,7 @@ def _cells_ledger_violations(cal: Dict[str, Any], ledger: Dict[str, Any]) -> Lis
 def _reach_calibration_violations(lc: Dict[str, Any]) -> List[str]:
     """可达口径（`rc-*`）的版本号与 ``sampling.detour`` 键集必须同批发布（笔 3-B）。
 
-    门禁**只看自己那把键**，不看 ``ev-*``：三根轴各自独立声明、独立拦。拿别人的版本号给
+    门禁**只看自己那把键**，不看 ``ev-*``：几把轴各自独立声明、独立拦。拿别人的版本号给
     自己作前提＝把一根轴塌进另一根（评分口径曾借 `ev-*` 表达，结果两份分母不同的报告被
     当成可比，那才是 `cov-1` 独立成键的原因）。
     存量件没有这把键 ⇒ 整套跳过 ⇒ 本次发布对既有报告的**可见性零影响**（可见性由
@@ -808,7 +808,8 @@ def _shape_absence_violations(lc: Dict[str, Any]) -> List[str]:
     `shapeOfZone ⇒ null` 静默吃掉：屏上第三块不出现，读者分不清那是"这座城市八面都不缺"
     还是"这台机器压根没量"（§三.7 第三条与 §七.2 声称的守卫从未落地；B15 当年踩过同型坑）。
 
-    形态照仓内既有先例，不新造机制：B14（`:299`）与 B16（`:705`）都是「**版本号与键集是同一次
+    形态照仓内既有先例，不新造机制：证据相那一组（B5/B10–B13，:func:`_evidence_phase_violations`）
+    与可达轴（B14，:func:`_reach_calibration_violations`）都是「**版本号与键集是同一次
     发布的两半**」，门禁只看自己那把键 ⇒ 存量件与离线件因为没这一位而天然豁免，不需要第三态。
 
     三条件与，缺一即假红：
@@ -1145,7 +1146,7 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
 
     # B5/B10/B11/B12 · 证据相四条（只读 payload 数值，不吃几何参照系 ⇒ 必须在 center 早退之前）
     violations.extend(_evidence_phase_violations(lc))
-    # B14 · 可达口径那把轴（同样只读 payload，与上面三根轴互不顶替）
+    # B14 · 可达口径那把轴（同样只读 payload，与其它几把轴互不顶替）
     violations.extend(_reach_calibration_violations(lc))
     # B15 · 实测场的形态参数（幂次与近邻数）—— 也是只读 payload，必须在 center 早退之前
     violations.extend(_interpolation_form_violations(lc))
@@ -1307,7 +1308,7 @@ def report_is_presentable(lc: Dict[str, Any]) -> bool:
 
 
 # ── 复用门：口径版本 ────────────────────────────────────────────
-# 口径版本轴的**归属登记表**（三根轴，每根必须在这里二选一）
+# 口径版本轴的**归属登记表**（现四把：ev / cov / rc / sh，每根必须在这里二选一）
 #
 # 这张表回答的是一个以前只能靠读代码才知道的问题：**一根口径轴换代，到底该不该让旧报告
 # 停止复用？** 判据不是"它是不是版本号"，而是这条门自己的那句 ——「换我重跑一次，答案会不会
@@ -1315,7 +1316,7 @@ def report_is_presentable(lc: Dict[str, Any]) -> bool:
 # 解释"的进 `_UNGATED_CALIBER_VERSIONS`（照常复用，换代由**对比页横幅 + 契约 B14 + 残差句按
 # presence 上不出现**这三条披露路径负责）。
 #
-# 为什么做成表而不是散在注释里：加第四根轴时，"忘了决定"和"决定错边"都必须是**红**的，
+# 为什么做成表而不是散在注释里：第五根轴进来时，"忘了决定"和"决定错边"都必须是**红**的，
 # 而不是靠下一个人读到哪条注释。判据：
 # `tests/test_living_circle_api.py::test_caliber_axes_are_registered_everywhere_they_must_be`
 # 钉「`_GAP_CLAUSES` 的轴集 == 这两张表的键集（不重不漏）＋每张表的字段名与门内实际读的字段

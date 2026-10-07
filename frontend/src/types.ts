@@ -1241,7 +1241,7 @@ export interface LivingCircleReport {
      *  不得挂"门槛项"那句新文案（后端 `reuse_policy` 的「评分口径」那一拦用的就是这把键）。 */
     coverage_caliber_version?: string
     /** **第三根轴**：可达口径版本号（当前 `rc-1` = `sampling.detour` 那段实测标定与残差解释）。
-     *  它管的是「同一份实测耗时场被怎么解释」，既不改证据域也不改分子 ⇒ 三把键各自独立，
+     *  它管的是「同一份实测耗时场被怎么解释」，既不改证据域也不改分子 ⇒ 几把键各自独立，
      *  谁也不许替谁说话。缺 ⇒ 这份快照从来没做过标定（屏幕上不该出现残差那句）。 */
     reach_caliber_version?: string
     /** **第四根轴**：形状口径版本号（当前 `sh-1` = `isochrones[].shape` 那块八方位诊断尺）。
