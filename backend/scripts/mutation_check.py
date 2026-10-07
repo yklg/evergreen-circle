@@ -372,8 +372,10 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         label="离线链把对照环接回去 ⇒ 用估算场做的对照冒充实测读数",
         rel="app/living_circle/data_source.py",
-        old='            "isochrones": iso["isochrones"],',
-        new='            "isochrones": iso["isochrones"],\n            "iso_compare": iso.get("iso_compare"),',
+        # 锚点跟的是发射处 `"isochrones": iso_zones,` —— 笔二给离线链摘形状键时把这里从
+        # `iso["isochrones"]` 改成了 `iso_zones`，旧锚点因此命中 0 次（2026-10-07 台架实测）。
+        old='            "isochrones": iso_zones,',
+        new='            "isochrones": iso_zones,\n            "iso_compare": iso.get("iso_compare"),',
         test="tests/test_iso_compare_ring.py::test_offline_report_carries_no_compare_ring",
     ),
     Mutation(
@@ -418,6 +420,41 @@ MUTATIONS: list[Mutation] = [
         old="    if not with_shape:\n        return []                                   # 这套载荷没声明形状口径 ⇒ 整套跳过",
         new="    if True:\n        return []",
         test="tests/test_shape_caliber.py::test_b17_catches_half_emission",
+    ),
+    Mutation(
+        label="B17 形状口径：词表顺序闸被摘（整体转一格没人报）",
+        rel="app/living_circle/report_contract.py",
+        old="        if [str(w) for w in words] != list(_DIRECTIONS):",
+        new="        if False and [str(w) for w in words] != list(_DIRECTIONS):",
+        test="tests/test_shape_caliber.py::test_b17_catches_word_table_rotated_out_of_order",
+    ),
+    Mutation(
+        label="**S28 元判据自证**：摘掉词表序闸 ⇒ 字段级元判据必须抓到（不是空判）",
+        rel="app/living_circle/report_contract.py",
+        old="        if [str(w) for w in words] != list(_DIRECTIONS):",
+        new="        if False and [str(w) for w in words] != list(_DIRECTIONS):",
+        test="tests/test_shape_caliber.py::test_every_declared_shape_field_moves_a_gate",
+    ),
+    Mutation(
+        label="B17 档位集合回退成字面 (15.0, 20.0)（第二真源，收窄口径必假红）",
+        rel="app/living_circle/report_contract.py",
+        old="    for m in (float(x) for x in SHAPE_MINUTES):",
+        new="    for m in (15.0, 20.0):",
+        test="tests/test_shape_caliber.py::test_b17_tier_set_is_read_from_the_emission_valve",
+    ),
+    Mutation(
+        label="B17 外接半径恒等式的前提守卫被摘（满分线挪出四档就假红）",
+        rel="app/living_circle/report_contract.py",
+        old="        if m is not None and abs(float(m) - reach_min) < 1e-6 and reach_min in iso_minutes:",
+        new="        if m is not None and abs(float(m) - reach_min) < 1e-6:",
+        test="tests/test_shape_caliber.py::test_b17_circumradius_identity_is_conditional",
+    ),
+    Mutation(
+        label="发键口径收窄成只发 15min（引擎侧条件被改，20min 那圈上不了屏）",
+        rel="app/living_circle/isochrone.py",
+        old="SHAPE_MINUTES = (15, 20)",
+        new="SHAPE_MINUTES = (15,)",
+        test="tests/test_shape_caliber.py::test_engine_emits_shape_only_for_walking_15_and_20",
     ),
     Mutation(
         label="离线链不再摘形状键（数学正圆带着圆度 1.000 上屏）",
