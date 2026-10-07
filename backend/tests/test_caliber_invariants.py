@@ -193,6 +193,11 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         # （发在 sampling 段，核对走真生产者 ⇒ 见 `tests/test_reach_calibration.py`）。
         # 删掉 `scope.py` 那行发射 ⇒ 本条当场红，而不是"全绿但每份新报告没人能引用这个口径"。
         "report::reach_caliber_version",
+        # 第四根轴（笔九 S20 · `sh-1`）：与上面几把同为**发射在 caliber 里**的版本声明 ⇒ 进这份
+        # 按 caliber 产出核对的白名单。只登名册不进这里，就是第二十一轮 P0-1 点名的"登记了没人验"
+        # —— 删掉 `scope.py` 那行发射时 0 条报警，而每份新报告都会被自家 B17 之外的大门静默放过。
+        # 它的另一半键集 `isochrones[*].shape` **不在这里**（发在等时圈段，核对走真生产者）。
+        "report::shape_caliber_version",
         "report::confidence", "report::evidence",
         # 片 4：取证回合账目。放进这份名单才有意义 —— 名册登记与产出核对是两条腿，
         # 少前者是"引用不到"，少后者是"登记了个不存在的键"。

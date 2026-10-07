@@ -68,7 +68,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from app.living_circle.caliber import REACH_CALIBER_VERSION, get_caliber
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
-from app.living_circle.isochrone import interpolation_form_keys, shape_zone_keys, SHAPE_MINUTES
+from app.living_circle.isochrone import (
+    SHAPE_CALIBER_VERSION,
+    SHAPE_MINUTES,
+    interpolation_form_keys,
+    shape_emit_for,
+    shape_zone_keys,
+)
 from app.living_circle.geo_utils import (
     SHAPE_AZIMUTH_FN,
     SHAPE_BIN_DEG,
@@ -793,11 +799,51 @@ def _interpolation_form_violations(lc: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _shape_absence_violations(lc: Dict[str, Any]) -> List[str]:
+    """B17 的**缺席分支**：整套没发形状键时，到底是"合法缺席"还是"忘了发"（S20 · 第六格）。
+
+    这里原先是 `return []` —— 整套缺席**无条件合法放行**，于是"生产端漏发键"被前端
+    `shapeOfZone ⇒ null` 静默吃掉：屏上第三块不出现，读者分不清那是"这座城市八面都不缺"
+    还是"这台机器压根没量"（§三.7 第三条与 §七.2 声称的守卫从未落地；B15 当年踩过同型坑）。
+
+    形态照仓内既有先例，不新造机制：B14（`:299`）与 B16（`:705`）都是「**版本号与键集是同一次
+    发布的两半**」，门禁只看自己那把键 ⇒ 存量件与离线件因为没这一位而天然豁免，不需要第三态。
+
+    三条件与，缺一即假红：
+      ① `caliber.shape_caliber_version == SHAPE_CALIBER_VERSION`（无戳 = 存量件 / 离线件）；
+      ② `shape_emit_for(travel_mode, m)` —— **停发阀优先于戳**：`SHAPE_EMIT=False` 是本代不产
+         这把尺，不发键不算违规；骑行/驾车档同理（那句屏上诊断在车速下是撒谎）；
+      ③ 这一档既在 `caliber.iso_minutes` 里（档位组合可按出行模式配，`caliber.py:59,139,158,174`），
+         又**真在载荷里**。后半条是为了不让这条判据撒谎：环退化导致整档缺席时，那是另一条缺陷，
+         在这儿报"15min 档缺形状键"会把人引向错的地方。
+    """
+    cal = lc.get("caliber") or {}
+    if cal.get("shape_caliber_version") != SHAPE_CALIBER_VERSION:
+        return []                                            # 豁免档一：不是这一代的产物
+    mode = str(cal.get("travel_mode") or "walking")
+    declared = {float(x) for x in (cal.get("iso_minutes") or [])}
+    present = {float(z.get("minutes") or -1)
+               for z in (lc.get("isochrones") or []) if isinstance(z, dict)}
+    shape_key = next(iter(shape_zone_keys()))                 # 键名取自发射口，不抄第二份
+    out: List[str] = []
+    for m in (float(x) for x in SHAPE_MINUTES):
+        if not shape_emit_for(mode, m) or m not in declared or m not in present:
+            continue
+        out.append(
+            f"{m:g}min 档缺 {shape_key} 键，但载荷声明了 shape_caliber_version="
+            f"{SHAPE_CALIBER_VERSION!r} ⇒ 版本号与键集是同一次发布的两半，漏发等于替这一代替了一次没做的测量"
+            "（前端缺键整块不出现，读者分不清「八面都不缺」与「这台机器没量」）"
+        )
+    return out
+
+
 def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
     """B17 · 形状口径（第五把尺：只诊断，不入分）—— 发出来了就得自洽、可复算。
 
-    与 B14/B15/B16 同一分档：**缺席＝合法**（存量件、离线件、骑行/驾车档、5/10min
-    都不发这个键，一套都不该被这条打死），只罚"说了但说不圆"。罚五格：
+    与 B14/B15/B16 同一分档：**没声明这一代的缺席＝合法**（存量件、离线件、骑行/驾车档、
+    5/10min 都不发这个键，一套都不该被这条打死），只罚"说了但说不圆"；但**声明了 `sh-1`
+    却整批不发键**不再合法 —— 那是第六格（正向"该发必发"，在缺席分支里，见
+    :func:`_shape_absence_violations`）。罚六格：
 
       ① 半份发布 —— `shape` 里七件（bins_m / bin_deg / bin_phase / origin /
          azimuth_fn / circularity / weak_ratio）缺任一件。半份比不发更误导：读者拿到
@@ -818,12 +864,16 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
          恒有 `max(bins_m) == caliber.reach_circumradius_m`（同式同点，`scope.py:530`）。
          前提守卫必须写在判据里：满分线一旦挪到不在四档内的值，这条要自动失效，
          否则就是拿配置漂移制造假红。
+      ⑥ 该发必发（**缺席分支**，S20）—— 声明了 `caliber.shape_caliber_version == "sh-1"`、
+         这一档又该发（停发阀开 + 步行档 + 该分钟数在 `iso_minutes` 且在载荷里）却整批没有
+         `shape` ⇒ 违规。豁免只有两档：无戳（存量件 / 离线件）与停发阀关（本代不产这把尺）。
+         缺这一格时，"忘了发键"会被前端的 `null` 静默吃掉 —— 整套缺席这一支今天完全无闸。
     """
     shape_key = next(iter(shape_zone_keys()))   # 键名取自发射口，不在判据里抄第二份
     zones = lc.get("isochrones") or []
     with_shape = [z for z in zones if isinstance(z, dict) and shape_key in z]
     if not with_shape:
-        return []                                   # 这套载荷没声明形状口径 ⇒ 整套跳过
+        return _shape_absence_violations(lc)            # 整套缺席 ⇒ 走 S20 那张豁免表（第六格）
     cal = lc.get("caliber") or {}
     need = {"bins_m", "bins_word", "bin_deg", "bin_phase", "origin", "azimuth_fn",
             "circularity", "weak_ratio"}

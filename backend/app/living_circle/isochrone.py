@@ -38,6 +38,15 @@ from app.living_circle.geo_utils import (
 SHAPE_EMIT = True
 SHAPE_MINUTES = (15, 20)
 
+# 代次戳：形状口径（第五把尺）的**第四根代次轴**，与 `ev-2`（scope）/ `cov-1`（category_rule）/
+# `rc-1`（caliber）同一族 —— 各自声明在自己那把尺的模块里，由 caliber 组装处一次性发进载荷。
+# 它声明的是「这份载荷出自会发形状键的这一代」，不是「形状量进了分」（`scoring.WEIGHTS` 一行没动）。
+# 唯一发射点是 `scope.payload()`；契约侧 B17 的缺席分支 `_shape_absence_violations` 吃它 ——
+# 存量件与离线件没有这一位 ⇒ 整套缺席对它们仍然合法（2026-10-07 实测：库存 14 份逐份跑 B17，
+# 带戳 0 份、缺席分支命中 0 份 ⇒ 这道新闸今天对历史报告的可见性影响为零）。
+# `reuse_policy` **逐字不看它**：解释层换代，重跑一次的答案逐位相同，拦复用只会白烧配额。
+SHAPE_CALIBER_VERSION = "sh-1"
+
 
 def shape_zone_keys() -> Dict[str, str]:
     """等时圈档里形状块的**唯一发射口**（照 `interpolation_form_keys` 的同一条纪律）。

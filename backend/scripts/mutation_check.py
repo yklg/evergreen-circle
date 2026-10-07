@@ -417,7 +417,7 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         label="B17 契约整体早退（半代发、口径漂移全部静默）",
         rel="app/living_circle/report_contract.py",
-        old="    if not with_shape:\n        return []                                   # 这套载荷没声明形状口径 ⇒ 整套跳过",
+        old="    if not with_shape:\n        return _shape_absence_violations(lc)",
         new="    if True:\n        return []",
         test="tests/test_shape_caliber.py::test_b17_catches_half_emission",
     ),
@@ -449,6 +449,59 @@ MUTATIONS: list[Mutation] = [
         new='',
         test="tests/test_fixture_mirror.py::test_every_render_core_key_blocks_drift[caliber]",
     ),
+    # ── S20 代次戳 `sh-1`（笔九最后一笔：正向"该发必发"）──
+    # 这一组里有**两类**刀：打"该报不报"的（K1/K2），和打"不该报却报"的（K3~K6）。
+    # 后者更要紧 —— 一条会把全部存量件与离线件一起打死的闸，如果它的豁免分支没人测，
+    # 落地那一刻就是全仓不可展示事故，而"全量绿"只证明今天没有件走到那一支。
+    Mutation(
+        label="S20 形状戳的发射行被摘（新闸名义上还在、对每份新报告都永不触发）",
+        rel="app/living_circle/scope.py",
+        old='            "shape_caliber_version": SHAPE_CALIBER_VERSION,',
+        new='            # "shape_caliber_version": SHAPE_CALIBER_VERSION,  # mutation',
+        test="tests/test_shape_caliber.py::test_scope_payload_is_the_only_emission_point_for_the_shape_stamp",
+    ),
+    Mutation(
+        label="S20「该发必发」整支摘回放行（漏发键重新被前端的 null 静默吃掉）",
+        rel="app/living_circle/report_contract.py",
+        old="return _shape_absence_violations(lc)",
+        new="return []  # mutation",
+        test="tests/test_shape_caliber.py::test_s20_requires_the_keys_a_stamped_live_walking_report_should_emit",
+    ),
+    Mutation(
+        label="S20 豁免表撤掉「停发阀/模式」这一条（骑行档与本代不产这把尺时被打死）",
+        rel="app/living_circle/report_contract.py",
+        old="        if not shape_emit_for(mode, m) or m not in declared or m not in present:",
+        new="        if m not in declared or m not in present:  # mutation",
+        test="tests/test_shape_caliber.py::test_s20_exemptions_are_each_load_bearing",
+    ),
+    Mutation(
+        label="S20 载荷缺 travel_mode 时的缺省翻成 riding（漏写模式＝免检通道，该发的档不再被要求）",
+        rel="app/living_circle/report_contract.py",
+        old='    mode = str(cal.get("travel_mode") or "walking")',
+        new='    mode = str(cal.get("travel_mode") or "riding")  # mutation',
+        test="tests/test_shape_caliber.py::test_s20_exemptions_are_each_load_bearing[mode_missing]",
+    ),
+    Mutation(
+        label="S20 豁免表撤掉「该档在 iso_minutes 里」这一条（按模式配档位组合就假红）",
+        rel="app/living_circle/report_contract.py",
+        old="        if not shape_emit_for(mode, m) or m not in declared or m not in present:",
+        new="        if not shape_emit_for(mode, m) or m not in present:  # mutation",
+        test="tests/test_shape_caliber.py::test_s20_requires_the_keys_a_stamped_live_walking_report_should_emit",
+    ),
+    Mutation(
+        label="S20 豁免表撤掉「整档真在载荷里」这一条（环退化时判据撒谎、把人引向错处）",
+        rel="app/living_circle/report_contract.py",
+        old="        if not shape_emit_for(mode, m) or m not in declared or m not in present:",
+        new="        if not shape_emit_for(mode, m) or m not in declared:  # mutation",
+        test="tests/test_shape_caliber.py::test_s20_exemptions_are_each_load_bearing[tier_absent_from_payload]",
+    ),
+    Mutation(
+        label="S20 无戳豁免被摘（全部存量件与离线估算件一起被这把新闸打死）",
+        rel="app/living_circle/report_contract.py",
+        old='    if cal.get("shape_caliber_version") != SHAPE_CALIBER_VERSION:',
+        new="    if False:  # mutation",
+        test="tests/test_shape_caliber.py::test_offline_report_carries_no_shape_keys",
+    ),
     Mutation(
         label="S22 签发侧容差放宽到 1e-2（读侧比签发侧松，绕过 B17 的载荷能上屏）",
         rel="app/living_circle/geo_utils.py",
@@ -466,8 +519,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         label="B17 档位集合回退成字面 (15.0, 20.0)（第二真源，收窄口径必假红）",
         rel="app/living_circle/report_contract.py",
-        old="    for m in (float(x) for x in SHAPE_MINUTES):",
-        new="    for m in (15.0, 20.0):",
+        old="    for m in (float(x) for x in SHAPE_MINUTES):\n        if m in minutes_present",
+        new="    for m in (15.0, 20.0):\n        if m in minutes_present",
         test="tests/test_shape_caliber.py::test_b17_tier_set_is_read_from_the_emission_valve",
     ),
     Mutation(

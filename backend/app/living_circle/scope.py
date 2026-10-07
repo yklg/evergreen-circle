@@ -61,6 +61,10 @@ from app.living_circle.geo_utils import (
     to_local_xy,
     xy_to_lnglat,
 )
+# 形状口径的代次戳**长在引擎那一侧**（与 `SHAPE_EMIT`/`SHAPE_MINUTES` 同处：那里是"这一档这次
+# 发不发"的决策地），但发射点只在这份 caliber 字典里 —— 上面三把戳（ev-/cov-/rc-）也都在此发。
+# 无环：`isochrone` 的 import 闭包（caliber / contour / geo_utils）不回指本模块。
+from app.living_circle.isochrone import SHAPE_CALIBER_VERSION
 
 # ── 判盲口径的唯一事实源 ────────────────────────────────────────────
 # 盲区判定半径（赛题标准）：判「某点 1km 圆内有没有某类必达设施」。
@@ -939,6 +943,19 @@ class SpatialScope:
             # `ev-*`/`cells_ledger` 完全同构：本函数只管声明"这套解释是哪一档"，
             # 读数长在产物自己的段落里，读侧契约（`report_contract`）负责把两半对上。
             "reach_caliber_version": REACH_CALIBER_VERSION,
+            # **第四把键**（笔九 S20 · `sh-1`）：形状口径（第五把尺，只诊断不入分）的代次声明。
+            # 它的另一半是 `isochrones[*].shape` —— 版本号与键集同批发布：声明了这一代却整批不发
+            # 形状键，由契约 B17 的 `_shape_absence_violations` 判违规（豁免两档＝无戳、停发阀关）。
+            # 与 `rc-*` 同属**解释层**：换它只是多一把诊断尺，盲区数/综合评分/等时圈面积一个都不改
+            # ⇒ 刻意不进复用门（拦它会让全部存量件与每次 500m 邻近复用重打 1049 点距离矩阵，
+            #    换来的正确性是零）。不变式判据：`test_shape_caliber.py::
+            #    test_shape_stamp_does_not_move_the_reuse_gate`。
+            # ⚠️ 它也**没进对比页那套措辞/归边表**（`_GAP_CLAUSES` / `_GAP_FIELDS`）：那会把一句
+            #    「不可比」扩到第四根轴、并撕开前后端两份轴镜像与 `、` 计数断言 —— 是否把 `sh`
+            #    立成第四根对比轴属计划 §六 待拍项（连同 S31 的代次轴矩阵），本笔只保证不拦复用。
+            # ⚠️ 离线估算件**不发这一位**（`data_source.py` 那份 caliber 是自己拼的）：它把形状键
+            #    摘掉了（恒等式切出来的环在数学上就是正圆），没有键集却声明版本号＝B17 打死离线件。
+            "shape_caliber_version": SHAPE_CALIBER_VERSION,
         }
         # R23-I · 成本账（欠账出处：计划 §22⑧ —— 真跑那轮预登记了要发几次外呼，报告里却没有
         # 任何一位能核销它）。值是 `CollectionEvidence.pages_returned`：**成功返回的页数**，

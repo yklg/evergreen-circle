@@ -29,6 +29,7 @@ from app.living_circle.geo_utils import (
 )
 from app.living_circle.isochrone import (
     IsochroneEngine,
+    SHAPE_CALIBER_VERSION,
     SHAPE_EMIT,
     SHAPE_MINUTES,
     shape_emit_for,
@@ -185,13 +186,19 @@ def test_shape_can_be_stopped_at_one_place():
 
 
 def test_offline_report_carries_no_shape_keys():
-    """离线件是数学正圆：圆度≈1.000 必须不发，否则"猜的那份"会排在真测件前面。"""
+    """离线件是数学正圆：圆度≈1.000 必须不发，否则"猜的那份"会排在真测件前面。
+
+    S20 之后这一位也要**同批缺席**：只摘块、留戳 ⇒ B17 的缺席分支会把离线件判成"声明却缺键"，
+    整份报告变得不可展示；只留块、摘戳 ⇒ 缺席分支放行了正圆假件。两半必须一起没有。
+    """
     from app.living_circle.data_source import CheckParams, OfflineDataSource
 
     rep = asyncio.run(OfflineDataSource().compute(
         CheckParams(scene_name="凯里老街", center=CENTER)))
     assert rep["data_origin"] == "offline"
     assert all("shape" not in z for z in rep["isochrones"]), "离线正圆带着形状读数＝把兜底冒充成测量"
+    assert "shape_caliber_version" not in rep["caliber"], (
+        "没有键集却声明版本号 = B17 会把离线件打死（与 `rc-*`/`detour` 那条同一条纪律）")
     assert _shape_caliber_violations(rep) == []          # 整套缺席，契约不该响
     for z in rep["isochrones"]:
         assert z["area_km2"] > 0                          # 摘键不能把整档摘坏
@@ -210,6 +217,26 @@ def _with_shape(minutes=(15, 20)):
         if int(x["minutes"]) in minutes:
             r = [tuple(p) for p in x["geojson"]["coordinates"][0]]
             x["shape"] = shape_of(r, c, x["area_km2"])
+    return rep
+
+
+def _strip_all(rep):
+    """把所有档的形状键摘干净 —— 造「整套缺席」那份载荷（缺席分支的唯一入口）。"""
+    for x in rep["isochrones"]:
+        x.pop("shape", None)
+    return rep
+
+
+def _stamped(rep):
+    """盖上这一代的戳。生产端唯一写点是 `scope.payload()`，这里只造**载荷状态**。"""
+    rep["caliber"]["shape_caliber_version"] = SHAPE_CALIBER_VERSION
+    return rep
+
+
+def _drop_tiers_from_iso(rep, drop):
+    """把某些分钟数从口径声明的档位组合里挪走（`caliber.py` 里它是**按模式可配**的）。"""
+    rep["caliber"]["iso_minutes"] = [m for m in rep["caliber"]["iso_minutes"]
+                                     if int(m) not in drop]
     return rep
 
 
@@ -423,15 +450,133 @@ def test_every_declared_shape_field_moves_a_gate():
         assert any(field in s for s in hits), f"{field} 的违规文案没点名它：{hits}"
 
 
-@pytest.mark.xfail(reason="**S20 未落地**（计划 §三.10 / §九 TC-04）：live×walking 该发键却整套不发时，"
-                          "B17 现在 `if not with_shape: return []` 直接放行 ⇒ 这条按设计必红。"
-                          "S20 落地（代次戳 sh-1 三条件与）后请删掉本钉，strict 会在它转绿时先报 XPASS。",
-                   strict=True)
-def test_b17_requires_the_keys_a_live_walking_report_should_emit():
-    """红钉：钉住"该发必发"这条**尚未存在**的正向判据（第七笔审查打穿的第一条）。"""
-    rep = _with_shape()
-    for x in rep["isochrones"]:
-        x.pop("shape", None)
-    rep["data_origin"] = "live"
-    rep["caliber"]["travel_mode"] = "walking"
-    assert _shape_caliber_violations(rep), "整套没发键却全绿 ⇒ 停发阀坏了没人报警"
+# ── ⑤ 正向"该发必发"（S20 · B17 的缺席分支，计划 §三.10 那张六格验收表）──
+
+@pytest.mark.parametrize("build, expected", (
+    pytest.param(lambda r: _stamped(r), 0, id="① 有戳+该发+有键 绿"),
+    pytest.param(lambda r: _stamped(_strip_all(r)), 2, id="② 有戳+该发+缺键 红（本条要抓的那件事）"),
+    pytest.param(lambda r: _strip_all(r), 0, id="③ 无戳+缺键 绿（库存全部存量件靠它）"),
+    pytest.param(lambda r: r, 0, id="④ 无戳+有键 绿（回算过的夹具，不许反过来打死自己）"),
+    pytest.param(lambda r: _stamped(_drop_tiers_from_iso(_strip_all(r), (15, 20))), 0,
+                 id="⑥ 有戳+该发但 iso_minutes 不含 绿（档位组合可按模式配）"),
+))
+def test_s20_requires_the_keys_a_stamped_live_walking_report_should_emit(build, expected):
+    """整套缺席分两态：**没声明这一代 ⇒ 合法**，声明了这一代却整批不发 ⇒ 违规。
+
+    落地前这里只有前一半（`if not with_shape: return []`），于是"忘了发键"被前端的
+    `shapeOfZone ⇒ null` 静默吃掉 —— 屏上看不出是「这座城市八面都不缺」还是「这台机器没量」。
+    ⑤（停发阀）与另外两格（模式 / 整档不在载荷）在
+    `test_s20_exemptions_are_each_load_bearing` 里**成对**写 —— 那三格必须自证"撤掉它就红"，
+    塞进这张表会让它们看起来像恒真。③ 与上面 `test_b17_absent_is_legal_on_a_stripped_payload`
+    同形，这里刻意再列一次：这张表是这条判据的验收口径，一格都不许缺。
+    """
+    hits = _shape_caliber_violations(build(_with_shape()))
+    if not expected:
+        assert hits == [], f"不该报却报了：{hits}"
+        return
+    assert len(hits) == expected, f"应报 {expected} 条（两档各一条），拿到：{hits}"
+    for m in SHAPE_MINUTES:
+        assert any(f"{m}min" in h for h in hits), f"{m}min 档没被点名 ⇒ 违规句无法定位：{hits}"
+    assert all("shape_caliber_version" in h for h in hits), (
+        f"违规句里没写出是谁声明的这一代 ⇒ 读者无从核对豁免：{hits}")
+
+
+@pytest.mark.parametrize("case", ("valve_closed", "mode_riding", "mode_missing",
+                                  "tier_absent_from_payload"))
+def test_s20_exemptions_are_each_load_bearing(case, monkeypatch):
+    """豁免表与缺省归属每一档都要**自证它今天真的在挡什么**：撤掉那一档，同一份载荷必须转红。
+
+    只测"豁免时绿"是不够的 —— 那等于测了一条永不触发的前提（本仓 S27/S33 两次都栽在这上面）。
+    所以每格都成对写：该豁免 ⇒ 绿，把那个条件撤掉 ⇒ 立刻红。
+    """
+    if case == "valve_closed":
+        # ⑤ 停发阀优先于戳：本代不产这把尺 ⇒ 不发键不算违规
+        monkeypatch.setattr(iso_mod, "SHAPE_EMIT", False)
+        assert _shape_caliber_violations(_stamped(_strip_all(_with_shape()))) == []
+        monkeypatch.setattr(iso_mod, "SHAPE_EMIT", True)
+        assert len(_shape_caliber_violations(_stamped(_strip_all(_with_shape())))) == 2, (
+            "撤掉停发阀后那一格没让它变红 ⇒ 上面的绿是恒真，停发阀这条豁免根本没生效")
+        return
+
+    if case == "mode_riding":
+        # 骑行档：发键条件不成立（§三.6，那句屏上诊断在车速下会撒谎）⇒ 缺键合法
+        rep = _stamped(_strip_all(_with_shape()))
+        rep["caliber"]["travel_mode"] = "riding"
+        assert _shape_caliber_violations(rep) == []
+        rep["caliber"]["travel_mode"] = "walking"
+        assert len(_shape_caliber_violations(rep)) == 2, "模式这一维没在挡 ⇒ 上面的绿是恒真"
+        return
+
+    if case == "mode_missing":
+        # 载荷没写 travel_mode ⇒ 按 walking 判（与 `report_contract:966` 同一颗缺省，不是第二套规矩）。
+        # 这一格钉的是**缺省的方向**：缺省成"跳过"就等于给"漏写模式"开了一个免检通道。
+        no_mode = _stamped(_strip_all(_with_shape()))
+        no_mode["caliber"].pop("travel_mode", None)
+        walking = _stamped(_strip_all(_with_shape()))
+        assert len(_shape_caliber_violations(no_mode)) == len(_shape_caliber_violations(walking)) == 2, (
+            "缺 travel_mode 时这把尺应当照 walking 要求键集，而不是静默放行")
+        return
+
+    # 这一档**根本不在载荷里**（环退化时整档缺席）：那是另一条缺陷，不该由这把尺报成
+    # "缺形状键" —— 报出去会把人引向错的地方（判据自己撒谎）。
+    rep = _stamped(_with_shape())
+    rep["isochrones"] = [z for z in rep["isochrones"] if int(z["minutes"]) != 15]
+    _strip_all(rep)
+    hits = _shape_caliber_violations(rep)
+    assert len(hits) == 1 and "20min" in hits[0], (
+        f"15min 档整档不在载荷里，判据却该只说 20min：{hits}")
+
+
+def test_s20_valve_gate_reads_the_emission_valve_not_the_stamp_alone():
+    """把 `shape_emit_for` 换成"只看戳"（草案里那版）会立刻打死骑行档与本代 —— 这条钉住前置。"""
+    rep = _stamped(_strip_all(_with_shape()))
+    rep["caliber"]["travel_mode"] = "cycling"
+    assert _shape_caliber_violations(rep) == []
+    assert shape_emit_for("cycling", 15.0) is False
+
+
+def test_scope_payload_is_the_only_emission_point_for_the_shape_stamp():
+    """戳的唯一写点在 `scope.payload()` —— 删掉那一行，本条必须红（不是靠名册恒绿）。
+
+    与 `test_reach_calibration.py::test_scope_payload_declares_the_reach_caliber_version` 同形。
+    """
+    from app.living_circle import caliber as caliber_mod
+    from app.living_circle import scope
+
+    s = scope.SpatialScope(
+        travel_mode="walking", reach_min=20.0,
+        reach_ring=((107.97, 26.57), (107.98, 26.57), (107.98, 26.58), (107.97, 26.58)),
+        reach_circumradius_m=1367.2, collect_radius_m=1367.2 + 1000.0, study_radius_m=2500.0,
+    )
+    out = s.payload(caliber_mod.get_caliber("walking"), {"cells_inside": 72, "cells_judged": 66})
+    assert out["shape_caliber_version"] == SHAPE_CALIBER_VERSION, (
+        "生产产出没有这一位 ⇒ 发射行被删或改了名，B17 的缺席分支会退化成今天这种无闸状态")
+
+
+def test_shape_stamp_does_not_move_the_reuse_gate():
+    """`reuse_policy` 逐字不看这一位 ⇒ 带着它和不带它必须同判（照 `test_pages_returned` 那三行）。
+
+    这一位进了 `caliber` 载荷，而缓存与邻近复用吃的就是那份载荷。它是**解释层代次**：换它只是
+    多一把诊断尺（`scoring.WEIGHTS` 不动、盲区数/分数/面积都不动），重跑一次的答案逐位相同。
+    若哪天有人把它变成复用判据，本条先红 —— 那种降级应当由 `evidence_complete` 那条链负责，
+    而代价是实测的：存量件与每次 500m 邻近复用全部 miss、全部重打距离矩阵与逐类检索（真配额）。
+    """
+    from app.living_circle.report_contract import reuse_policy
+    from app.living_circle.scope import COVERAGE_CALIBER_VERSION, SCOPE_POLICY_VERSION
+
+    base = {
+        "data_origin": "live",
+        "scene": {"name": "凯里老街", "center": [107.9758, 26.5734], "study_radius_m": 2500},
+        "caliber": {"scope_policy_version": SCOPE_POLICY_VERSION,
+                    "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
+                    "travel_mode": "walking", "sample_profile": "standard"},
+    }
+    wanted = {"travel_mode": "walking", "sample_profile": "standard", "study_radius_m": 2500.0}
+    assert reuse_policy(base, wanted) == (True, ""), (
+        "前提不成立：这份基准载荷本来就不给复用，比不出「新增键没改变判定」")
+
+    with_key = {**base, "caliber": dict(base["caliber"],
+                                        shape_caliber_version=SHAPE_CALIBER_VERSION)}
+    without_key = {**base, "caliber": {k: v for k, v in base["caliber"].items()
+                                      if k != "shape_caliber_version"}}
+    assert reuse_policy(with_key, wanted) == reuse_policy(without_key, wanted) == (True, "")

@@ -331,9 +331,9 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 | 唯一生产者 | `geo_utils.shape_of(ring, center, area_km2)`（纯几何、零外呼） |
 | 发键条件 | `isochrone.shape_emit_for(travel_mode, minutes)`：`live` × `walking` × `minutes∈{15,20}`，停发阀 `SHAPE_EMIT` |
 | 落库位置 | `isochrones[].shape`（键名唯一出处 `isochrone.shape_zone_keys()`，判据与离线摘键都引它） |
-| 口径版本键 | `caliber.shape_caliber_version`（**尚未启用**：存量件靠"整套缺席即合法"跳过） |
+| 口径版本键 | `caliber.shape_caliber_version = "sh-1"`（常量 `isochrone.SHAPE_CALIBER_VERSION`，唯一发射点 `scope.payload()`）—— **已启用**：声明了这一代却整批不发形状键 ⇒ B17 判违规；豁免只有两档（无戳 = 存量件/离线件、停发阀关 = 本代不产这把尺）。它是**第四根代次轴**，与 `ev-2`/`cov-1`/`rc-1` 并列但**不进复用门**、也**没进**对比页措辞表（`_GAP_CLAUSES`） |
 | 唯一上屏出口 | 前端 `lib/livingCircle.shapeOfZone()`（校验读键，缺键给 `null`）+ `shapeSentence` / `shapeWeakStrong` / `shapeSuspectNote` / `shapeCaveatNote` 四颗派生措辞；缺键 ⇒ 第三屏/方位图层/图注整块不出现 |
-| 契约判据 | B17 `_shape_caliber_violations`：半份发布 / 口径漂移 / 值非法 / 标量不可复算 / 外接半径双真源 |
+| 契约判据 | B17 `_shape_caliber_violations`：半份发布 / 口径漂移 / 值非法 / 标量不可复算 / 外接半径双真源 ＋ 缺席分支 `_shape_absence_violations`（该发必发） |
 
 四件"怎么量的"是**口径不是实现细节**，实测各自都能改写结论：
 
@@ -364,6 +364,18 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
 消费者计数（常量在、判据没引用 = 假同源）。2026-10-06 实测过分叉：后端 1e-3、前端 1e-2 ⇒ 同一份
 `circularity=0.718`（真值 0.7131）**后端判违规、前端放行** —— 读侧比签发侧松，正把"手写 mock /
 外部导入镜像会绕过 B17"那道防线反向松开。真数据全样最大偏差 0.000384，收紧有余量。
+
+还有一条：**「该发必发」的适用边界与豁免边界必须成对写**（S20 · 缺席分支
+`_shape_absence_violations`）。三条件与，缺一即假红：① 戳 == `sh-1`、② `shape_emit_for(模式, 档)`
+（**停发阀优先于戳** —— 本代不产这把尺时不发键不算违规）、③ 该分钟数既在 `caliber.iso_minutes`
+里（档位组合按出行模式可配）又**真在这份载荷里**（整档因环退化缺席是另一条缺陷，报成"缺形状键"
+会把人引向错处）。豁免只有两档：**无戳**（存量件与离线估算件，它们与形状键集**同批
+没有**）与**停发阀关**；两档之外一律拒签。形态照 B14/B16（`:299` / `:705`）——版本号与键集是同一次
+发布的两半，门禁只看自己那把键，所以不需要第三态。存量件按实测说话：`living_circle_reports`
+现在 **14 份**（本文旧稿写 31，已按 2026-10-07 的逐份真跑更正），带戳 0、缺席分支命中 0 ⇒ 这道新闸
+对历史报告的可见性影响为零。判据 = `test_shape_caliber.py` 那张六格表 +
+`test_s20_exemptions_are_each_load_bearing`（每一格都成对写"撤掉它就红"，否则豁免看着像恒真）+
+`test_shape_stamp_does_not_move_the_reuse_gate`（解释层代次不许拦复用，与 `rc-*` 同一条归边理由）。
 
 屏上措辞只准说**方向**（「最弱方向：正北 438m」），**不准**说好坏、不准换算成分数或百分比：
 形状测的是各向均匀性（方差），"好不好"是水平（均值）—— 拿方差冒充均值是本域已证伪的推断

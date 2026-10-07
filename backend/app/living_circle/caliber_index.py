@@ -309,6 +309,12 @@ def _populate_index() -> None:
         # **第三根轴的登记**（笔 3-B）。它管的是「同一份实测耗时场被怎么解释」，与前两把
         # 各管一件事 ⇒ 独立命名。不登记 ⇒ 专家口径引用不到、prose 提到就撞词表闸。
         ("reach_caliber_version", "可达口径版本声明", "living_circle.caliber.reach_caliber_version"),
+        # **第四把轴的登记**（笔九 S20 · `sh-1`）：形状口径（第五把尺，只诊断不入分）的代次声明。
+        # 与前几把一样，登记进名册 ⇒ 专家口径引用得到、prose 提到不撞自家词表闸；发射点同样只有
+        # `scope.payload()` 那一行（另一半键集是 `isochrones[*].shape`，发在等时圈段，那一半的
+        # 产出核对走真生产者 ⇒ 见 `tests/test_shape_caliber.py`）。
+        # ⚠️ 与 `rc-*` 同属解释层代次：**不进复用门**（换代不改盲区数/分数/面积，拦它只烧配额）。
+        ("shape_caliber_version", "形状口径版本声明", "living_circle.caliber.shape_caliber_version"),
         # 常态绕行标定与残差耗时（`isochrone.detour_residual` 的唯一产物）。与上面
         # `timed_count` / `in_reach_count` 同一族：**发在 `sampling` 段而不是 `caliber` 段**，
         # 所以它不在 `test_caliber_invariants` 那份按 caliber 产出核对的白名单里 ——
