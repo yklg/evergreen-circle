@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# 构建产物的变体目录（如 `dist-sizecheck/`，跑包体积核对时临时产出）—— 可再生，且 `dist` 不匹配带后缀的名字
+dist-*
 *.local
 
 # Editor directories and files
