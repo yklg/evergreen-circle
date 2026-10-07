@@ -37,7 +37,11 @@ function walk(dir: string): string[] {
   for (const name of readdirSync(dir)) {
     const full = join(dir, name)
     if (statSync(full).isDirectory()) {
-      if (name === '__tests__' || name === 'node_modules') continue
+      // `.tmp-guard-*` 是**本文件自己**正对照用的临时脚手架（下面那条用例写进去的假违规）。
+      // 它不能进负扫描：并发跑全量时，A 进程刚写下的 `BadCard.tsx` 会被 B 进程的负扫描抓到 ——
+      // 10-07 实测三份并发全量里就这么红过一次（`expected [ Array(1) ] to deeply equal []`，
+      // 内容正是 `.tmp-guard-shape/BadCard.tsx:2`），红得像个真违规，其实是自家的脚手架互相看见。
+      if (name === '__tests__' || name === 'node_modules' || name.startsWith('.tmp-guard-')) continue
       out.push(...walk(full))
     } else if (/\.(ts|tsx)$/.test(name)) {
       out.push(full)
@@ -76,7 +80,8 @@ describe('形状口径 · 渲染面禁自算守卫', () => {
   it('故意写一次自算 ⇒ 守卫必须转红（正对照）', () => {
     // 必须落在扫描器看得见的地方：`__tests__/` 整目录被排除（测试里合法自算），
     // 上一版把假文件写进 __tests__ 下 ⇒ 正对照扫不到东西却"通过"了断言之外的部分。
-    const tmp = join(SRC, '.tmp-guard-shape')
+    // 目录名带 pid：两个进程共用一个固定名时，`finally` 里的 rmSync 会删掉对方正在用的那份。
+    const tmp = join(SRC, `.tmp-guard-shape-${process.pid}`)
     mkdirSync(tmp, { recursive: true })
     const fake = join(tmp, 'BadCard.tsx')
     try {
@@ -86,8 +91,10 @@ describe('形状口径 · 渲染面禁自算守卫', () => {
         + '  Math.min(...s.bins_m) / Math.max(...s.bins_m)\n',
         'utf-8',
       )
-      const hits = scanForSelfCompute(SRC).filter((h) => h.includes('BadCard.tsx'))
-      expect(hits).toHaveLength(1)
+      // 以脚手架目录自己为根来扫：负扫描现在跳过 `.tmp-guard-*`，若还从 SRC 扫就等于
+      // "正对照扫的东西根本不在扫描范围内" —— 那这条判据会静默变成空转（比红更坏）。
+      const hits = scanForSelfCompute(tmp)
+      expect(hits.map((h) => h.split(':')[0])).toEqual(['BadCard.tsx'])
       expect(hits.join('\n')).toContain('最弱方位比')
     } finally {
       rmSync(tmp, { recursive: true, force: true })
