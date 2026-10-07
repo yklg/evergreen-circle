@@ -22,6 +22,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pytest
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 PROJECT = BACKEND_DIR.parent  # skip/
 FRONTEND_FIXTURES = PROJECT / "frontend" / "src" / "mocks" / "fixtures" / "livingCircle"
@@ -383,3 +385,25 @@ def test_shape_caliber_constants_are_one_value_on_both_ends():
     body = ts_src.split("export function shapeOfZone", 1)[1].split("\nexport function", 1)[0]
     bare = re.findall(r">\s*1e-\d", body)
     assert not bare, f"shapeOfZone 里又出现裸容差 {bare} ⇒ 绕过了 SHAPE_EXPECT.scalar_tol"
+
+
+@pytest.mark.parametrize("key", REQUIRED_TOP)
+def test_every_render_core_key_blocks_drift(key: str) -> None:
+    """**S30（更正后的形态）**：「必须一致集」里每个键都要自己挡住单侧漂移。
+
+    原计划写的是"镜像守卫只比 `isochrones`、不比 `caliber`"—— 那句是**假的**（从检索型
+    子 Agent 的行号结论抄来、我没自己读循环）：`REQUIRED_TOP` 里就有 `caliber`，
+    `assert_mirror_consistent` 第 70 行对整张表逐个深比较，实测四向都判红。
+
+    真正的缺口在别处：本文件今天只给 `poi` / `scores` 写了"单侧漂移必红"的负向单测，
+    `caliber` / `isochrones` / `scene` … 都没有。于是有人把某个键从 `REQUIRED_TOP` 里摘掉时
+    —— 三对真夹具此刻是同步的 ⇒ 什么也不会红，守卫静默失守。
+    这条按参数化遍历这张表 ⇒ 将来往表里加键，它自动被要求"真挡一次漂移"；
+    而把任何一键摘出去，这一条立刻红（不是靠人记得补测试）。
+    """
+    back = _mk_report()
+    front = _mk_report(**{key: {"mutated": "只在单侧出现"}})
+    hits = assert_mirror_consistent(back, front)
+    assert any(key in x for x in hits), (
+        f"『{key}』在必须一致集里，却挡不住单侧漂移（违规清单：{hits}）"
+        " ⇒ 这条守卫对它是摆设；要么修判据，要么把它从 REQUIRED_TOP 明确移出并说明理由")
