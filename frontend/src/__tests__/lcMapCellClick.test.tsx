@@ -38,6 +38,7 @@ import contract from './fixtures/cellsLedgerContract.json'
 import type { CellsLedgerRaw, LivingCircleReport } from '../types'
 import { cellCenter, LC_JUDGE_SCALE_COLOR } from '../lib/livingCircle'
 import { instances, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 
 const h = vi.hoisted(() => ({ warnings: [] as string[] }))
 
@@ -206,7 +207,7 @@ describe('LcMap 点选格 · 脱敏态（分享链接）P0-5', () => {
 
     render(<LcMap report={WITH_LEDGER} selectedCell={[1, 1]} desensitize />)
     // 前提守卫：这棵树确实走到 live，且别的图层照常建（闸不许顺手关掉等时圈/盲区面）
-    await waitFor(() => expect(instances.polys.length).toBeGreaterThan(0))
+    await waitDrawn({ polys: 1 })
     expect(cellBoxPolys(), '分享态仍画逐格方框 ⇒ P0-5 破防').toHaveLength(0)
   })
 
@@ -222,7 +223,7 @@ describe('LcMap 点选格 · 脱敏态（分享链接）P0-5', () => {
     for (const extra of [{}, { desensitize: true }]) {
       resetInstances()
       const { unmount } = render(<LcMap report={BASE} selectedCell={[1, 1]} {...extra} />)
-      await waitFor(() => expect(instances.maps.length).toBeGreaterThan(0))
+      await waitDrawn({ maps: 1 })
       expect(cellBoxPolys(), JSON.stringify(extra)).toHaveLength(0)
       unmount()
     }

@@ -31,6 +31,7 @@ import {
   resetInstances,
   resetStyleCalls,
 } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 
 /** `instances` 是无类型注册表；本文件把视图收窄成自己关心的形状。 */
 const allMarkers = () => instances.markers as FakeMarker[]
@@ -82,7 +83,7 @@ function fakeLayout(el: HTMLElement) {
   Object.defineProperty(el, 'clientHeight', { value: 600, configurable: true })
 }
 
-async function mountMap(report: LivingCircleReport = REPORT) {
+async function mountMap(report: LivingCircleReport = REPORT, drawnMin = 1049) {
   const view = render(<LcMap report={report} />)
   const mapEl = view.container.querySelector('[data-lc-map="true"]') as HTMLElement
   fakeLayout(mapEl)
@@ -97,7 +98,12 @@ async function mountMap(report: LivingCircleReport = REPORT) {
     y: 0,
     toJSON: () => ({}),
   })
-  await waitFor(() => expect(instances.maps.length).toBeGreaterThan(0))
+  await waitDrawn({ maps: 1 })
+  /* 建出地图 ≠ 覆盖层已经逐点画过：命中测试吃的是 `draw()` 里算好的像素位置，没画过时
+     `fireEvent.mouseMove` 会**静默不命中**（浮层保持 `display:none`）。本文件前两条用例一直有这一等，
+     后两条悬停用例漏了 ⇒ 10-07 干净树三路并发全量里它红了 3 次，红相 `expected 'none' to be 'block'`。
+     收进 mountMap，四条用例共用同一个前提。份数由调用方给：kaili 是 1049 点，历史快照那例只有 4 个已测时点。 */
+  await waitFor(() => expect(calls.fill ?? 0).toBeGreaterThanOrEqual(drawnMin))
   return { mapEl, view }
 }
 
@@ -200,7 +206,7 @@ describe('LcMap 热力采样点 · 历史快照（旧名 reachable）读侧兼�
   }
 
   it('历史快照仍绘热力（fill ≥ 已测时点数 4，不为 0），且未测时点不参与', async () => {
-    await mountMap(legacyReport())
+    await mountMap(legacyReport(), 4)
     await waitFor(() => expect(calls.fill ?? 0).toBeGreaterThanOrEqual(4))
     // 未测时的那一个不画：draw 的次数必须正好是 4（不是 5，也不是 0）
     expect(calls.fill).toBe(4)

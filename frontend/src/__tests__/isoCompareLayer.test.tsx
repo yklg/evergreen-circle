@@ -35,6 +35,7 @@ import { useDataModeStore } from '../store/dataModeStore'
 import type { IsoCompare, LivingCircleReport } from '../types'
 import { LC_ISO_COMPARE_COLOR, isoCompareLabel, isoCompareOf } from '../lib/livingCircle'
 import { instances, mapConfig, resetInstances } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 
 vi.mock('../lib/bmap', async () => {
   const H = await import('./helpers/bmapGLFake')
@@ -262,7 +263,8 @@ describe('③ 落图：live 与降级两档都要画得出来', () => {
     // 对象会让它照常重跑并复位相机，那条就测不出"是不是勾选项触发的"（第一版红在此，2≠1）。
     const lc = withCmp()
     const { rerender } = render(<LcMap report={lc} />)
-    await waitFor(() => expect(instances.maps.length).toBe(1))
+    await waitDrawn({ maps: 1 })
+    expect(instances.maps.length, '这张屏只该建出一幅地图').toBe(1)
     const map = instances.maps[0] as { calls: [string, unknown[]][] }
     const camMoves = () => map.calls.filter(([m]) => CAM.has(m)).length
     await waitFor(() => expect(camMoves()).toBeGreaterThan(0)) // 前提守卫：一次都没动过 ⇒ 下面恒真
@@ -288,7 +290,8 @@ describe('③ 落图：live 与降级两档都要画得出来', () => {
   it('正对照：换了 report 对象（主 effect 照常重跑）⇒ 那条判据必须数到相机复位', async () => {
     const CAM = new Set(['centerAndZoom', 'setViewport', 'panTo', 'setZoom', 'flyTo'])
     const { rerender } = render(<LcMap report={withCmp()} />)
-    await waitFor(() => expect(instances.maps.length).toBe(1))
+    await waitDrawn({ maps: 1 })
+    expect(instances.maps.length, '这张屏只该建出一幅地图').toBe(1)
     const map = instances.maps[0] as { calls: [string, unknown[]][] }
     const camMoves = () => map.calls.filter(([m]) => CAM.has(m)).length
     await waitFor(() => expect(camMoves()).toBeGreaterThan(0))

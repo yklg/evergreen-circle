@@ -44,6 +44,7 @@ import {
   roundAnchorCell,
 } from '../lib/livingCircle'
 import { instances, mapConfig, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 
 vi.mock('../lib/bmap', async () => {
   const H = await import('./helpers/bmapGLFake')
@@ -289,9 +290,14 @@ describe('片 5-3 · 证据域图层：默认关，打开后一盘一环、虚�
       },
     }
     const { rerender } = render(<LcMap report={lc} />)
-    await waitFor(() => expect(instances.maps.length).toBe(1))
+    await waitDrawn({ maps: 1 })
+    expect(instances.maps.length, '这张屏只该建出一幅地图').toBe(1)
     const map = instances.maps[0] as { calls: [string, unknown[]][] }
     const camResets = () => map.calls.filter(([m]) => m === 'centerAndZoom').length
+    /* 相机复位发生在地图建出来**之后**的那个 effect 里：不等它，下面 `before` 就会偶发取到 0
+       （本条在 10-07 之前的加压全量里红过；本轮三路并发 ×5 没抽中 ⇒ 概率更低，但机理是确定的）。
+       先把它等成事实，再让那句「前提守卫」照原样判 —— 守卫本身一个字没松。 */
+    await waitFor(() => expect(camResets()).toBeGreaterThan(0))
     expect(instances.circles).toHaveLength(0) // 默认关：一个都不建
     const before = camResets()
     expect(before).toBeGreaterThan(0) // 前提守卫：挂载时确实复位过一次，否则下面那条恒真

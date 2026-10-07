@@ -41,10 +41,11 @@
  * 三胞胎——跨文件收敛成共享 helper 列入后续重构（测试评估 B-0），本文件先行内聚。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
 import type { LivingCircleReport } from '../types'
 import { assertBasemapStylesSound, resetStyleCalls } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 
 /* ── 测试盲区注入：kaili 无盲区（实测 blindspots:0），C5/C6 用手工构造的最小盲区 ── */
 const TEST_BLIND = {
@@ -268,17 +269,12 @@ async function mountMap(props: Record<string, unknown> = {}) {
   vi.spyOn(mapEl, 'getBoundingClientRect').mockReturnValue({
     left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
   })
-  await waitFor(() => expect(fb.h.maps.length).toBeGreaterThan(0))
   /* 只等"地图建出来"不够：本文件的取物函数按**创建序**下标（`hit(1)` 取第 2 条线、`ring(4)` 取
      第 5 个面、`noTitle().at(-1)` 取补点 Marker），而那些是等时圈绘制 effect 稍后才建的覆盖物。
      10-07 加压复跑（两个全量并发）时 `› C` 报 `Cannot read properties of undefined (reading 'fire')`
      —— 机器慢一步，下标就落在还没建出来的数组位置上，红的是抢 CPU 的顺序而不是代码。
-     把这些**隐藏前提**摊成一条有界等待：等到用例真要下标的那些对象都在场，数字与用例的下标同源。 */
-  await waitFor(() => {
-    expect(fb.h.polylines.length, '用例要下标第 2 条命中线，它还没被建出来').toBeGreaterThanOrEqual(2)
-    expect(fb.h.polys.length, '用例要下标第 5 个面（4 圈之后），它还没被建出来').toBeGreaterThanOrEqual(5)
-    expect(fb.h.markers.length, '用例要取盲区中心与补点两枚 Marker，它们还没被建出来').toBeGreaterThanOrEqual(2)
-  })
+     这些**隐藏前提**统一走 `waitDrawn`（task 23：全仓只有这一颗等待出口），数字与用例的下标同源。 */
+  await waitDrawn({ maps: 1, polylines: 2, polys: 5, markers: 2 }, fb.h)
   return { mapEl, view }
 }
 

@@ -35,6 +35,7 @@ import {
   lcToPx,
 } from '../lib/livingCircle'
 import { instances, mapConfig, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 
 vi.mock('../lib/bmap', async () => {
   const H = await import('./helpers/bmapGLFake')
@@ -263,7 +264,8 @@ describe('判定尺落图 · 两档同尺（本次回归的正面防点）', () 
     mapConfig.browserAk = 'test-ak'
     const live = render(<LcMap report={NO_RULER} showJudgeScale />)
     await waitFor(() => expect(live.container.querySelector('[data-lc-map="true"]')).toBeTruthy())
-    await waitFor(() => expect(instances.maps.length).toBe(1))
+    await waitDrawn({ maps: 1 })
+    expect(instances.maps.length, 'live 那侧只该建出一幅地图').toBe(1)
     expect(circles()).toHaveLength(0)
     live.unmount()
 

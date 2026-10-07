@@ -35,6 +35,7 @@ import { cleanup, render, waitFor } from '@testing-library/react'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
 import type { LivingCircleReport } from '../types'
 import { instances, mapConfig, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
+import { waitDrawn } from './helpers/waitDrawn'
 import { observedElements, resetResizeObservers, roStats } from './helpers/resizeObserverStub'
 
 vi.mock('../lib/bmap', async () => {
@@ -71,7 +72,7 @@ afterEach(() => {
 
 async function mountLive() {
   render(<LcMap report={BASE} selectedCell={null} onCellPick={vi.fn()} />)
-  await waitFor(() => expect(instances.maps.length).toBeGreaterThan(0))
+  await waitDrawn({ maps: 1 })
   await waitFor(() => {
     if (!document.querySelector('[data-lc-map="true"]')) throw new Error('地图容器还没出现')
   })
