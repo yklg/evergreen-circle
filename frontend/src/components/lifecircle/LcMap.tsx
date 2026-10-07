@@ -1408,7 +1408,12 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       if (next) onCenterChange?.(next)
     }
     return (
-      <div className="relative h-full w-full">
+      // `data-lc-mode="fallback"`：模式由**组件申报**，不再让测试数 canvas 反推（那是两份实现）。
+      // ⚠️ 这里**故意不贴 `data-lc-map`** —— 那个名字在本仓＝"BMapGL live 容器"，有 5 处判据按它认档
+      // （`lcStageStructure:90` 拿它当反证、`judgeScaleCanvas:170` 拿它当"已落到 live"的门…）。
+      // 10-06 我把它加宽到两档通用，实测打红一条常驻判据、又把另一条判据的门变成恒真 —— 语义加宽
+      // 就是 docs/AGENTS.md §7.2 那条"一词多义，按名字搜会全错"。"两档都数得到实例"改由本属性承担。
+      <div className="relative h-full w-full" data-lc-mode="fallback">
         <svg viewBox={`0 0 ${LC_CANVAS.W} ${LC_CANVAS.H}`} className="block w-full cursor-crosshair select-none" role="img" aria-label="生活圈等时圈画布（降级）" onClick={onCanvasClick}>
           <rect x={0} y={0} width={LC_CANVAS.W} height={LC_CANVAS.H} fill="#f9faf8" />
           {[-2, -1, 0, 1, 2].map((i) => (
@@ -1532,7 +1537,12 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               const rx = coarse ? Math.max(coarse.radiusM * (LC_CANVAS.W / 2) / LC_CANVAS.R, 6) : 0
               const ry = coarse ? Math.max(coarse.radiusM * (LC_CANVAS.H / 2) / LC_CANVAS.R, 6) : 0
               return (
-                <g key={b.id}>
+                // `data-lc-blindspot={b.id}`：让"这一处盲区画在哪儿"在降级态可被点名（live 态它是
+                // canvas 覆盖物、本来就不在 DOM 里）。当前消费者是一条 e2e 判据：图注那句
+                // 「盲区图层只留 盲区 N」在降级态可以在 DOM 上钉住条数，于是这个钩子有消费者、
+                // 不是装饰属性。⚠️ 它**还**不是"点图选格"的落点依据 —— 那条通道在降级档尚未实现
+                // （`onCellPick` 只在 live 的地图 click 里调用，`:1105`/`:1129`），补它属于计划 R2。
+                <g key={b.id} data-lc-blindspot={b.id}>
                   {coarse ? (
                     <ellipse
                       cx={cx}
@@ -1681,6 +1691,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
         role="img"
         aria-label="生活圈真实地图"
         data-lc-map="true"
+        data-lc-mode={mode}
         onMouseMove={onContainerMove}
         onMouseLeave={hideTooltip}
       />

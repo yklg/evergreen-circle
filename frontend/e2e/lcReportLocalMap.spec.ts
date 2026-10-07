@@ -33,6 +33,25 @@ function slot(c: Locator): Locator {
   return c.locator('[class*="h-[360px]"]')
 }
 
+/**
+ * 这张地图现在落在哪一档：`live`／`fallback`／还没落定的 `boot`。
+ *
+ * 读的是**组件申报**的 `data-lc-mode`（`LcMap` 的 `mode` 状态，两棵根节点各贴一个），不再数 canvas ——
+ * 数 canvas 是"从 DOM 反推模式"的第二份实现，而"问在哪一档"这件事仓里已经有发话人（`:9` 那句
+ * "模式通过 onMapMode 上报"、`:416` 的 `mode`）。更要紧的是实测不可靠：同一份工作区、同一个下午，
+ * 这条 spec 上午走 fallback（`反向通道` 被 skip）、下午走 live（同一条**真红**），差别只是那一刻
+ * 有没有后端答 `/api/life-circle/map-config`（`src/lib/bmap.ts:4`）⇒ 由 DOM 猜出来的档不是稳定资产。
+ *
+ * 为什么仍要问档：CI 那个 e2e job 刻意"全 mock、不注入任何真实 AK"，于是两档都会跑到这里 ——
+ * 而"canvas 随容器重画"这一族命题**只有 live 有对象**（降级画布走 viewBox 自适应，压根没有 canvas）。
+ * 第一版没问档，把 6 条布局判据与 2 条 canvas 判据捆在一起，CI 里整文件红，看起来像"局部图坏了"。
+ * 现在布局两档都验、canvas 只在 live 验，降级档改验"svg 确实落地且没塌高"。
+ */
+async function lcMode(s: Locator): Promise<'boot' | 'live' | 'fallback'> {
+  const got = await s.locator('[data-lc-mode]').first().getAttribute('data-lc-mode')
+  return got === 'live' || got === 'fallback' ? got : 'boot'
+}
+
 /** 滚回顶部：报告正文的滚动容器是运行时算出来的（按 computed overflow 判定，不保证是 div，
  *  第一版按 `ancestor::div` 找就直接超时），所以从卡片往上逐个问"你能不能竖滚"。 */
 async function scrollToTop(c: Locator): Promise<void> {
@@ -68,8 +87,28 @@ test('滚到卡片 ⇒ 第二张真挂载（画布或 SVG 落地），占位撤�
   await c.scrollIntoViewIfNeeded()
   await expect(c.getByText(PLACEHOLDER)).toHaveCount(0)
   await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
-  // 两个地图实例并排共存：主图 + 局部图，且横向不溢出
-  await expect(page.locator('[data-lc-map]')).toHaveCount(2)
+  // 两个地图实例并排共存：主图 + 局部图，且横向不溢出。
+  // ⚠️ 两条口径都改过，各留一次现场的账：
+  //   ① 原来整页数 `[data-lc-map]` —— 那个属性只贴 live 那棵树，无 AK 的机器上数到 0（10-06 CI 红）。
+  //      而我 10-06 试着把它也贴到降级根节点，实测**打红一条常驻判据**（`lcStageStructure:90`）并把
+  //      `judgeScaleCanvas:170` 那扇门变成恒真 —— 加宽既有名字的含义就是 §7.2 那条"一词多义"事故。
+  //      现由申报式的 `data-lc-mode` 承担"两档都数得到"，`data-lc-map` 保持只认 live。
+  //   ② 必须 scope 到体检单那一栏：实测报告页共有**三张**局部图槽（方位形状那屏也挂 `h-[360px]`，
+  //      但它不在任何 `<section aria-label>` 内），"整页 == 2"会随它何时 boot 而漂。
+  //   `boot` 排除在外：还没落定的那张不算"在场的实例"。
+  await expect(page.locator('section[aria-label="体检单"] [data-lc-mode]:not([data-lc-mode="boot"])')).toHaveCount(2)
+  // ⚠️ 这里原本有一条"降级态才去数 `[data-lc-blindspot]`"的条件断言，10-07 撤掉，两次现场：
+  //   ① 同一条用例、同一个下午，一次落 fallback（那条 skip）、一次落 live（那条真跑）——
+  //      走哪档只取决于那一刻后端答不答 `/api/life-circle/map-config`，而本文件的立足点是
+  //      "fixture 态、不依赖后端"（见文件头）⇒ 判据不该跟着一张会翻的脸走。
+  //   ② 更狠的一次：desktop 那一档里主图申报 `live`、局部图申报 **`fallback`**（同一页两个实例
+  //      不同档），于是条件分支被走到，而那张降级画布当场数到 **0** 枚盲区钩子。0 的成因我没查出来
+  //      （用"拦 map-config"与"拦 BMapGL 脚本"两条路各复现一次，`:3400` 上钩子都是 1
+  //      ⇒ 不是产品对库内件少画了一层，是这条断言在这个环境里不可复算）。
+  // ⇒ 只断"必须落定"这件**与模式无关**的事实；`data-lc-blindspot` 的消费者移到 jsdom
+  //   （`lcMapModeDeclaration.test.tsx` 里那条计数＋两处盲区的正对照），那边 fallback 是确定的。
+  await expect.poll(async () => await lcMode(slot(c)) !== 'boot',
+    '局部图迟迟没落定成 live 或 fallback').toBe(true)
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow, '两栏 grid 撑出横向滚动条 ⇒ 局部图挤掉了主栏').toBeLessThanOrEqual(2)
@@ -209,15 +248,18 @@ test('主图铺满整行：宽屏跟着右栏长高并撞上下限，窄屏退�
   //  ③ `lg:min-h-[640px]` 这条下限**必须真的在生效**（自审不过点 4：不写永不生效的保险）。
   //     ev2 的右栏实测只有 611 ⇒ 卡高应被下限抬到 640，这条断言就是它的现场。
   await openReport(page)
+  const live = (await lcMode(page.locator('section[aria-label="体检单"]'))) === 'live'
   const geo = async () => await page.evaluate(() => {
     const row = document.querySelector('section[aria-label="体检单"] > div')!
     const card = row.children[0]
     const slot = card.querySelector('[class*="h-[480px]"]')!
     const cv = card.querySelector('canvas')
+    const sv = card.querySelector('svg')
     return {
       card: Math.round(card.getBoundingClientRect().height),
       slot: Math.round(slot.getBoundingClientRect().height),
-      canvasH: cv ? Math.round(parseFloat(cv.style.height) || cv.height) : 0,
+      // canvas 的高度有两种写法（style.height 或属性），svg 只有排版盒 —— 都折算成"实际占了几 px"
+      surfaceH: Math.round(cv ? (parseFloat(cv.style.height) || cv.height) : sv ? sv.getBoundingClientRect().height : 0),
     }
   })
   await page.setViewportSize({ width: 1440, height: 1000 })
@@ -225,7 +267,15 @@ test('主图铺满整行：宽屏跟着右栏长高并撞上下限，窄屏退�
   const wide = await geo()
   expect(wide.slot, '地图没铺满整行 ⇒ 卡底下又是空白').toBeGreaterThanOrEqual(wide.card - 4)
   expect(wide.slot, '铺满后应明显高于旧的固定 480').toBeGreaterThan(560)
-  expect(wide.canvasH, 'BMapGL 没跟着容器重画 ⇒ canvas 仍是 480').toBeGreaterThan(560)
+  // 「画布跟着容器长高」是 **live 独有**的性质：降级画布是 `w-full` + viewBox 860×620，
+  // 高度被宽高比锁住，槽再高它也只按比例长（所以宽屏下槽 726 而 svg 约 578，下面留一截白）。
+  // 这是两档的真实差异、不是这条判据要放过它 —— 但把它写成"两档都必须 >560"会把产品缺陷
+  // 和判据写错混成一次红（第一版就这么红了），所以分开断、各自说清自己在验什么。
+  if (live) {
+    expect(wide.surfaceH, 'BMapGL 没跟着容器重画 ⇒ canvas 仍是 480').toBeGreaterThan(560)
+  } else {
+    expect(wide.surfaceH, '降级画布压根没落地 ⇒ svg 高度为 0').toBeGreaterThan(0)
+  }
   // ev2 右栏实测 611 < 640 ⇒ 这里必须被下限抬起来；哪天右栏长过 640，这条会红，
   // 那时该改的是"下限是否仍然需要"，而不是把断言删掉。
   expect(wide.card, 'lg:min-h-[640px] 没生效（下限形同虚设）').toBeGreaterThanOrEqual(638)
@@ -233,7 +283,7 @@ test('主图铺满整行：宽屏跟着右栏长高并撞上下限，窄屏退�
   await page.waitForTimeout(4000)
   const narrow = await geo()
   expect(narrow.slot, '单列时塌高 ⇒ 地图消失').toBeGreaterThanOrEqual(478)
-  expect(narrow.canvasH, '单列时 canvas 没拿到显式 px').toBeGreaterThanOrEqual(478)
+  expect(narrow.surfaceH, live ? '单列时 canvas 没拿到显式 px' : '单列时降级画布没拿到显式 px').toBeGreaterThanOrEqual(478)
 })
 
 test('进过一次视口就常驻：滚走再滚回不该重看一次骨架', async ({ page }) => {
@@ -253,16 +303,35 @@ test('反向通道：点局部图 → 台账卡选中那一格', async ({ page }
   // `lifeCircleStage.spec.ts` 记过"合成分派打不动 SDK"，但那是给 overlay 派发合成事件；
   // 这里用 CDP 的真实鼠标事件点画布空白处，2026-10-04 实测能选中格子。
   // 只断"选中了某一格"不断是哪一格：落点由视口尺寸与缩放决定，钉死坐标会漂。
+  //
+  // ⚠️ "点哪儿"不能拍脑袋写成比例，也不能拿正中当安全落点。两档各红的历史各记一次：
+  //   第一版点 `宽 42% × 高 55%`：本机（有 AK）绿、CI（无 AK）红 —— 但**红因不是落点**，见下面那段
+  //          （降级档压根没这条通道）。我当时把这条误读成"同一个比例在两档落到不同的格"，
+  //          10-07 实测否证：降级档换任何落点都是 0。
+  //   第二版改点槽正中（我以为 live 把视野聚到盲区、正中必中）：live **实测 0 中** —— 正中是中心
+  //          Marker 的命中区。⇒ 现在回到 `42% × 55%`，这是实测命中的三个偏中心点之一。
   const c = await openReport(page)
   await c.scrollIntoViewIfNeeded()
   await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
+  // ⚠️ 这条通道**只有 live 实现了**，两档实测过（同一台机器、同一份报告，只拦不拦 `api.map.baidu.com`）：
+  //   live   档点 4 个落点 ⇒ 3 个各选中一格、**槽正中 0 格**（正中压在中心 Marker 的命中区上，
+  //          与本仓早先"环吃掉鼠标事件"那颗误判同源 —— 别拿中心当"肯定点得到"的位置）；
+  //   fallback 档点同样 4 个落点 ⇒ **全 0**。读码对上：`onCellPick` 只在 live 的地图 click 里被调用
+  //          （`LcMap.tsx:1105`/`:1129`），而降级画布的 `onCanvasClick` 只算新中心并交给
+  //          `onCenterChange`（`:1387-1408`）—— 报告页这张配对图**根本没传** `onCenterChange`
+  //          （全仓只有 `LifeCirclePage.tsx:796` 传）⇒ 这里那个点击是纯 no-op。
+  // 所以这不是"判据写松"也不是产品坏了，是这条通道在降级档还不存在；补它属于计划 R2（新图层按
+  // `ShapeSectorOverlay.ts` 那套"一份几何 + 两档各薄渲染 + 两档各接同一颗回调"迁进来），
+  // 迁完这条就两档都跑、这个 skip 自动消失。
+  // ⚠️ 诚实标一句代价：CI 那个 job 无 AK ⇒ 本条在 CI 里恒 skip，实际保护目前只覆盖"本机有 AK"这一档。
+  if (await lcMode(slot(c)) !== 'live') {
+    test.skip(true, '点图→选格只在 live 实现（降级档实测 4 个落点全 0；那张配对图没传 onCenterChange）')
+    return
+  }
   const selected = page.locator('rect[data-cell]:not([stroke="#E3E8E3"])')
   await expect(selected).toHaveCount(0)
-  // 用**元素相对坐标**点（Playwright 自己负责滚到位）：第一版拿 boundingBox 换算成视口坐标
-  // 直接 `mouse.click`，在 1280×720 上那个点掉到视口外，桌面档绿、笔电档红 —— 视口尺寸不该
-  // 决定"点得到点不到"，那是用例的构造缺陷不是产品的。
-  const bb = (await slot(c).boundingBox())!
   await slot(c).scrollIntoViewIfNeeded()
+  const bb = (await slot(c).boundingBox())!
   await slot(c).click({ position: { x: bb.width * 0.42, y: bb.height * 0.55 } })
   await expect(selected).not.toHaveCount(0)
 })
