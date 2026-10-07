@@ -610,6 +610,14 @@ def get_report(report_id: str):
     rep = db.get_report(report_id)
     if not rep:
         return {"ok": False, "message": "report not ready"}
+    # 展示源 = 载荷 + 当前装配器；库里那份快照只是兜底与审计副本（角色声明见
+    # `db.save_living_circle_report`，三态与"为什么只在这一路"见
+    # `pipeline.living_circle.refresh_report_for_display`）。
+    # 函数内 import 与本文件既有写法一致（`:426`、`:1098`）：HTTP 层不在模块级拖进流水线。
+    if isinstance(rep, dict) and rep.get("report_type") == "living_circle":
+        from app.core.pipeline.living_circle import refresh_report_for_display
+
+        rep = refresh_report_for_display(rep)
     return rep
 
 

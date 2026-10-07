@@ -1531,6 +1531,15 @@ def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> No
 
     P0-2：离线估算报告（data_origin='offline'）不产出可比评分 → total_score 存 NULL，
     历史/对比对 offline 显示「离线估算」而非 0 分。
+
+    ⚠️ **这一行存的是快照，不是展示源**（2026-10-07 定角色，防"该信哪份"漂移）：
+    报告页看到的是 `pipeline.living_circle.refresh_report_for_display` 按装配代次
+    （`narrative_version`）决定的产物 —— 同代次直通本快照，异代次（含老快照缺戳）则用
+    `living_circle` 载荷重装。所以本行的职责是**兜底与审计副本**：
+      · 兜底 —— 重装抛错时原样返回，页面不空、不 500；
+      · 审计 —— 派生链（精炼 / 一页纸 / 复跑）与存在性检查**必须继续读这里**，
+        它们要的是可复现输入，不是最新文案。
+    想改"用户看到什么"，改装配器并升 `NARRATIVE_VERSION`；想改"当时存了什么"，没有这条路。
     """
     lc = report.get("living_circle") or {}
     scene = lc.get("scene") or {}
@@ -1554,6 +1563,22 @@ def save_living_circle_report(report: Dict[str, Any], scene_key: str = "") -> No
             ),
         )
         c.commit()
+
+
+def get_living_circle_scene_key(report_id: str) -> str:
+    """取一份体检报告的 `scene_key`（读侧重装要把它填回 `methodology.note`）。
+
+    与 `get_latest_report_id_for_scene` 反向：那把是"场景 → 最新报告 id"，这把是
+    "报告 id → 场景键"。只读一列，不碰 `data`（整份 JSON 反序列化在这儿没意义）。
+    查不到返回空串 —— 调用方是展示路径的兜底，不该因为少一个 note 片段而拿不到报告。
+    """
+    if not report_id:
+        return ""
+    c = _connect()
+    row = c.execute(
+        "SELECT scene_key FROM living_circle_reports WHERE report_id=?", (report_id,)
+    ).fetchone()
+    return (row["scene_key"] or "") if row else ""
 
 
 def get_living_circle_report(report_id: str) -> Optional[Dict[str, Any]]:

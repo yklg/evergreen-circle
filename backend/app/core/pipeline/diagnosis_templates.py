@@ -6,6 +6,13 @@
   - 每章结论 `claim`（author=规划专家，D4 专家出诊断）+ 证据引用（evidence 闭环）
   - charts（雷达/覆盖柱/等时圈面积）+ glossary + methodology
 LLM 有 Key 时仅替换解读文案，结构/数值不变（无 Key 也不阻塞，模板兜底）。
+
+⚠️ **装配必须是 `lc` 载荷的纯函数**（2026-10-07 起成为硬约束）：报告页读路径会按
+`NARRATIVE_VERSION` 决定"用快照还是重装"（`report_contract.narrative_refresh_needed`），
+同代次直通、异代次重装。⇒ 这里**不许**引入随机数、墙钟、外部调用或任何进程内可变状态：
+一旦有，同一份载荷两次读出的正文就会不同，"直通"档与"重装"档给出两个答案，
+而用户看到的报告不再可复现（分享链接、截图、审计对账同时失效）。
+新增任何非纯输入，必须同时把读路径的判定改成"每次重装"并撤掉直通档，不能只改一半。
 """
 from __future__ import annotations
 
@@ -1268,6 +1275,17 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
     ]
 
 
+# 装配代次：描述**这份 Report 是哪一代装配器产出的**，不是测量口径。
+# ⚠️ 刻意发在 Report 顶层、不进 `lc.caliber`：caliber 里那五把（`ev-*`/`cov-1`/`rc-*`/`sh-*`
+#    与 `facility`）量的是"数怎么测出来的"，由 `_GAP_CLAUSES` 那套对比轴机制管；
+#    把渲染代次混进去 = 范畴错误，还会被要求登记成一根用户看得见的"口径轴"。
+#    放在顶层还有个结构性好处：`reuse_policy(lc)` 只看载荷，**根本读不到这一位** ⇒
+#    它天然不可能移动复用门（不必再为它单立一条"不许进门"的判据）。
+# 换代规则：只有**载荷语义没变、而展示内容会变**时才升它（加正文/亮点/图件/改口径句）。
+# 载荷语义变了走的是那五把各自的代次，不是这一把。
+NARRATIVE_VERSION = "nar-1"
+
+
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:
     """把 LivingCircleReport(data) 组装成完整 Report（渲染适配器直接消费）。"""
     scene = lc.get("scene") or {}
@@ -1310,6 +1328,8 @@ def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dic
     report = {
         "id": report_id,
         "report_type": "living_circle",
+        # 装配代次随产物一起落库 ⇒ 读路径能回答"这份快照还能不能直接当展示源"。
+        "narrative_version": NARRATIVE_VERSION,
         "title": title or f"{scene.get('name', '')} · 生活圈体检报告",
         "subtitle": subtitle,
         "query": scene.get("name", ""),

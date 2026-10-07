@@ -43,9 +43,13 @@ from app.living_circle.data_source import (
 from app.living_circle.degrade_policy import detail_label
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.isochrone import REACH_FULL_MIN, IsochroneEngine, detour_residual, reach_flags
-from app.living_circle.report_contract import assess_geometry, observe_shape_gate
+from app.living_circle.report_contract import (
+    assess_geometry,
+    narrative_refresh_needed,
+    observe_shape_gate,
+)
 
-from .diagnosis_templates import assemble_report
+from .diagnosis_templates import NARRATIVE_VERSION, assemble_report
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +599,44 @@ def _reuse_window() -> Dict[str, float]:
         "aux_ttl_s": float(DEFAULT_AUX_TTL_S),
         "nearby_radius_m": float(NEARBY_CACHE_M),
     }
+
+
+def refresh_report_for_display(report: Dict[str, Any]) -> Dict[str, Any]:
+    """报告响应那一路的读侧装配：快照与当前装配器不同代 ⇒ 用载荷重装后再发出去。
+
+    治的是这个：**正文/亮点/图件是写时装配后冻结落库的**，装配器此后继续变，而缓存命中路径
+    直接回旧行不重装 ⇒ 改了 `diagnosis_templates` 对已缓存场景永远不可见（2026-10-07 实测：
+    同一份官渡区载荷，存量 0 亮点/3 图/1152 字，当前代码重装 5 亮点/5 图/2560 字）。
+
+    **只服务 `GET /api/reports/{id}` 这一个调用方。** 其余 `db.get_report` 的调用方
+    （存在性检查、精炼 / 一页纸 / 复跑等派生链）必须继续吃固定快照 —— 派生要的是可复现
+    输入，不是最新文案；把这层塞进 `db.get_report` 会顺手改掉它们的字节。
+
+    三态一律"放行"，读路径不判可见性（签发是写路径 `assess_geometry` 的事，这里不越权）：
+     · 同代次 → 直通，零额外 CPU；
+     · 缺戳 / 异代次 → 重装（实测 `assemble_report` 对真实载荷 0.2–4.1 ms）；
+     · 重装抛错 → 回落存量快照 + `logger.warning(exc_info)`。
+    第三态不是"吞异常"：它换了个**有职责的**产物（快照本来就是兜底与审计副本，见
+    `db.save_living_circle_report` 的角色声明），且把失败连栈打进日志，绝不空页、绝不 500。
+    每态都记一行 `[narrative]` 读数 —— 读路径不判违规，但违规不能只有用户看得见。
+    """
+    report_id = report.get("id") if isinstance(report, dict) else None
+    needed, why = narrative_refresh_needed(report, NARRATIVE_VERSION)
+    if not needed:
+        logger.info("[narrative] 直通 report_id=%s reason=%s", report_id, why or f"同代次 {NARRATIVE_VERSION}")
+        return report
+    try:
+        rebuilt = assemble_report(
+            report["living_circle"],
+            report_id or "",
+            db.get_living_circle_scene_key(report_id) if report_id else "",
+            report.get("title") or "",
+        )
+    except Exception:
+        logger.warning("[narrative] 重装失败，回落存量快照 report_id=%s", report_id, exc_info=True)
+        return report
+    logger.info("[narrative] 重装 report_id=%s reason=%s", report_id, why)
+    return rebuilt
 
 
 def _finalize_living_report(report_data, scene_key, replace_scene: bool = False, *,

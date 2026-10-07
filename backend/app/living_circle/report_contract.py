@@ -1398,6 +1398,40 @@ def _radius_key(value: Any) -> Any:
         return value
 
 
+def narrative_refresh_needed(report: Dict[str, Any], current: str) -> Tuple[bool, str]:
+    """这份存量快照还能不能**直接当展示源** → ``(要不要重装, 原因)``。
+
+    第三问，与旁边两问并列且互不替代：
+
+      - :func:`report_is_presentable` ——「这份报告还能不能给用户看」→ 历史列表用；
+      - :func:`reuse_policy` ——「换我重跑，答案会不会不同」→ 缓存与邻近复用用；
+      - 本函数 ——「库里这份快照，和当前装配器给同一载荷算出的展示内容是不是同一份」→
+        **报告响应那一路**用。它既不判可见性，也不判要不要重跑取证。
+
+    为什么需要第三问：正文/亮点/图件是**写时**装配后冻结落库的（
+    `core/pipeline/living_circle.py::_finalize_living_report`），装配器此后还会继续变，
+    而缓存命中路径直接回旧行不重装 ⇒ "改了装配代码，已缓存场景永远看不到"。
+    本函数把"展示内容跟代码走"这件事从复用门里**分出来**：门只管重跑取证（花真配额），
+    这里只管重装视图（纯函数、毫秒级）。
+
+    ⚠️ 戳刻意发在 Report 顶层、不进 `lc.caliber` ⇒ `reuse_policy(lc)` 只看载荷，
+    **结构上就读不到这一位**，不存在"把存量复用集体打 miss"的可能。
+
+    `current` 由调用方传入（装配层的 `NARRATIVE_VERSION`）。本模块**不 import 装配层**：
+    `report_contract` 属 `app.living_circle` 基座，反向依赖 `core.pipeline` 会造出包级环。
+    """
+    if not isinstance(report, dict) or report.get("report_type") != "living_circle":
+        return False, "非生活圈报告，本函数不管"
+    if not isinstance(report.get("living_circle"), dict):
+        return False, "快照里没有 living_circle 载荷 ⇒ 无从重装，只能原样给"
+    stamped = report.get("narrative_version")
+    if stamped is None:
+        return True, "老快照没有装配代次戳（nar 之前落库），按当前装配器重装"
+    if stamped != current:
+        return True, f"装配代次 {stamped} → {current}，正文/图件按当前装配器重装"
+    return False, ""
+
+
 def reuse_policy(
     lc: Dict[str, Any],
     wanted: Optional[Dict[str, Any]] = None,
