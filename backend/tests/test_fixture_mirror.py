@@ -330,3 +330,56 @@ def test_elderly_undetected_notes_are_one_text_on_both_ends():
                     "养老(养老院/日间照料)", "（养老院/日间照料中心）"):
         for src, label in ((py_src, "后端"), (ts_src, "前端")):
             assert retired not in src, f"{label}又漏回退役的存在性说法「{retired}」"
+
+def test_shape_caliber_constants_are_one_value_on_both_ends():
+    """**S22**：形状口径的四件声明 + 复算容差，后端与前端读侧必须是**同一把尺**。
+
+    跨语言导不了常量 ⇒ 两端各留一份是既成事实，那就要有东西钉住它们相等。
+    2026-10-06 审查实测过分叉：后端 B17 用 `1e-3`、前端 `shapeOfZone` 用 `1e-2`
+    ⇒ 同一份 `circularity=0.718`（真值 0.7131）后端判违规、前端放行，
+    读侧比签发侧松一个量级，正好把"手写 mock / 外部导入镜像会绕过 B17"那道防线反向松开。
+
+    两端各自枚举、比名字集合与值，再做**消费者计数** —— 常量在、判据里没引用 = 假同源。
+    照本文件 `_GAP_*` 那条同一手法，不新造机制。
+    """
+    import re
+
+    from app.living_circle import geo_utils as gu
+
+    ts_path = PROJECT / "frontend" / "src" / "lib" / "livingCircle.ts"
+    ts_src = ts_path.read_text(encoding="utf-8")
+    py_src = (BACKEND_DIR / "app" / "living_circle" / "geo_utils.py").read_text(encoding="utf-8")
+    rc_src = (BACKEND_DIR / "app" / "living_circle" / "report_contract.py").read_text(encoding="utf-8")
+
+    # 后端侧：不写死名单，扫声明 ⇒ 以后多加一件口径，这条自动要求前端也配
+    py_declared = re.findall(r"^(SHAPE_[A-Z_]+) = ", py_src, re.M)
+    py_side = {n.lower().removeprefix("shape_"): getattr(gu, n) for n in py_declared}
+    assert py_side, "后端一个 SHAPE_* 都没扫到 ⇒ 本条恒真"
+
+    m = re.search(r"const SHAPE_EXPECT = \{(.*?)\} as const", ts_src, re.S)
+    assert m, "前端 SHAPE_EXPECT 块扫不到（改了写法？本条会静默少比，必须红）"
+    ts_side = {}
+    for key, raw in re.findall(r"^\s+(\w+):\s*([^,\n]+),?$", m.group(1), re.M):
+        raw = raw.strip()
+        ts_side[key] = float(raw) if raw and (raw[0].isdigit() or raw[0] == "-") else raw.strip("'")
+    assert set(ts_side) == set(py_side), (
+        f"口径声明两端名字集合已分叉：只有后端有 {sorted(set(py_side) - set(ts_side))}、"
+        f"只有前端有 {sorted(set(ts_side) - set(py_side))}")
+    for key, py_val in py_side.items():
+        ts_val = ts_side[key]
+        same = abs(float(py_val) - float(ts_val)) == 0 if isinstance(py_val, (int, float)) else py_val == ts_val
+        assert same, f"{key} 两端已分叉：后端 {py_val!r} vs 前端 {ts_val!r}"
+
+    # 消费者计数：定义 1 处 + 判据里至少 1 处，且**前端容差必须被两处判据各用一次**
+    for const in py_declared:
+        used = len(re.findall(rf"\b{const}\b", rc_src))
+        assert used >= 2, (
+            f"{const} 在 report_contract 里只出现 {used} 次（应为 import + 至少一处判据）"
+            " ⇒ 常量挂着但签发闸没用它 = 假同源")
+    tol_used = len(re.findall(r"SHAPE_EXPECT\.scalar_tol", ts_src))
+    assert tol_used == 2, (
+        f"前端 scalar_tol 被 {tol_used} 处判据使用（应为 2：圆度 + 比值）"
+        " ⇒ 少一处就意味着那一侧还在用别的标尺")
+    body = ts_src.split("export function shapeOfZone", 1)[1].split("\nexport function", 1)[0]
+    bare = re.findall(r">\s*1e-\d", body)
+    assert not bare, f"shapeOfZone 里又出现裸容差 {bare} ⇒ 绕过了 SHAPE_EXPECT.scalar_tol"

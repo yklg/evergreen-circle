@@ -201,7 +201,9 @@ def _populate_index() -> None:
         )
 
     # 5b. isochrone / geo_utils :: 形状口径（第五把尺：只诊断，不入分）
-    #     四件"怎么量的"必须进名册：分箱宽度、分相、原点、方位角实现。它们不是实现细节
+    #     四件"怎么量的"必须进名册：分箱宽度、分相、原点、方位角实现；外加**复算容差**一把尺
+    #     （签发侧 B17 与读侧 shapeOfZone 必须同尺，跨端那份由 test_fixture_mirror 钉相等）。
+    #     它们不是实现细节
     #     ——用生产 `shape_of` 实算：换原点圆度动 0.029（0.713→0.684，两城之间才差 0.082），
     #       换分相最弱读数 438→571（虚高 133m）。判据见 tests/test_shape_caliber.py 两条正对照。
     for name in ("SHAPE_EMIT", "SHAPE_MINUTES"):
@@ -209,7 +211,8 @@ def _populate_index() -> None:
             ref=f"isochrone::{name}", kind="param", module="isochrone",
             label=f"形状·{name}", value=str(_require_attr(isochrone, name, f"isochrone::{name}")),
         )
-    for name in ("SHAPE_BIN_DEG", "SHAPE_BIN_PHASE", "SHAPE_ORIGIN", "SHAPE_AZIMUTH_FN"):
+    for name in ("SHAPE_BIN_DEG", "SHAPE_BIN_PHASE", "SHAPE_ORIGIN", "SHAPE_AZIMUTH_FN",
+                 "SHAPE_SCALAR_TOL"):
         _INDEX[f"geo_utils::{name}"] = CaliberView(
             ref=f"geo_utils::{name}", kind="param", module="geo_utils",
             label=f"形状·{name}", value=str(_require_attr(geo_utils, name, f"geo_utils::{name}")),

@@ -2146,6 +2146,12 @@ const SHAPE_EXPECT = {
   bin_phase: 'center',
   origin: 'scene.center',
   azimuth_fn: 'bearing',
+  /**
+   * 复算标量的允许误差 —— 与后端 `geo_utils.SHAPE_SCALAR_TOL` **同一把尺**。
+   * 跨语言导不了常量，所以两端各留一份、由 `test_fixture_mirror.py` 逐条钉相等；
+   * 圆度这一判原来写 1e-2（比签发侧松一个量级 ⇒ 绕过 B17 的载荷反而能上屏），已收进这里。
+   */
+  scalar_tol: 1e-3,
 } as const
 
 /**
@@ -2180,12 +2186,12 @@ export function shapeOfZone(
   const rMax = Math.max(...bins)
   const rMin = Math.min(...bins)
   // 两颗标量必须能由这一档自己的数复算出来（面积出处是本档 area_km2，不许反推）
-  if (!Number.isFinite(sh.weak_ratio) || Math.abs(sh.weak_ratio - rMin / rMax) > 1e-3) return null
+  if (!Number.isFinite(sh.weak_ratio) || Math.abs(sh.weak_ratio - rMin / rMax) > SHAPE_EXPECT.scalar_tol) return null
   const area = Number(zone?.area_km2)
   if (!Number.isFinite(area) || area <= 0) return null
   if (!Number.isFinite(sh.circularity) || sh.circularity <= 0 || sh.circularity > 1) return null
   const wantC = Math.sqrt((area * 1e6) / Math.PI) / rMax
-  if (Math.abs(sh.circularity - wantC) > 1e-2) return null
+  if (Math.abs(sh.circularity - wantC) > SHAPE_EXPECT.scalar_tol) return null
   return sh
 }
 

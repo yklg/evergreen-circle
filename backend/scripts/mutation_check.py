@@ -429,6 +429,13 @@ MUTATIONS: list[Mutation] = [
         test="tests/test_shape_caliber.py::test_b17_catches_word_table_rotated_out_of_order",
     ),
     Mutation(
+        label="S22 签发侧容差放宽到 1e-2（读侧比签发侧松，绕过 B17 的载荷能上屏）",
+        rel="app/living_circle/geo_utils.py",
+        old="SHAPE_SCALAR_TOL = 1e-3",
+        new="SHAPE_SCALAR_TOL = 1e-2",
+        test="tests/test_fixture_mirror.py::test_shape_caliber_constants_are_one_value_on_both_ends",
+    ),
+    Mutation(
         label="**S28 元判据自证**：摘掉词表序闸 ⇒ 字段级元判据必须抓到（不是空判）",
         rel="app/living_circle/report_contract.py",
         old="        if [str(w) for w in words] != list(_DIRECTIONS):",

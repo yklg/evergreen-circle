@@ -74,6 +74,7 @@ from app.living_circle.geo_utils import (
     SHAPE_BIN_DEG,
     SHAPE_BIN_PHASE,
     SHAPE_ORIGIN,
+    SHAPE_SCALAR_TOL,
     _DIRECTIONS,
 )
 # B13（逐格台账）要读写侧的字母表与格距常量 —— 从 `blindspot` 取，不在这里另定一套：
@@ -891,11 +892,11 @@ def _shape_caliber_violations(lc: Dict[str, Any]) -> List[str]:
             out.append(f"{tag} 所在档没有可举证的 area_km2 ⇒ 圆度的面积出处断了")
             continue
         want_c = math.sqrt(float(area) * 1_000_000.0 / math.pi) / max(float(v) for v in bins)
-        if abs(want_c - circ) > 1e-3:
+        if abs(want_c - circ) > SHAPE_SCALAR_TOL:
             out.append(f"{tag}.circularity={circ} 与 sqrt(area_km2·1e6/π)/max(bins_m)={want_c:.3f} 对不上"
                        " —— 面积只准取本档 area_km2，不许由 bins_m 反推")
         want_w = min(float(v) for v in bins) / max(float(v) for v in bins)
-        if abs(want_w - weak) > 1e-3:
+        if abs(want_w - weak) > SHAPE_SCALAR_TOL:
             out.append(f"{tag}.weak_ratio={weak} 与 min(bins_m)/max(bins_m)={want_w:.3f} 对不上")
         try:
             iso_minutes = [float(x) for x in (cal.get("iso_minutes") or [])]

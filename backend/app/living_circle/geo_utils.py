@@ -193,6 +193,12 @@ SHAPE_BIN_DEG = 45.0          # 分箱宽度：与 direction_word 的 8 词 45°
 SHAPE_BIN_PHASE = "center"    # 分相：以方位为中心。floor 分相会把缺口并进隔壁方向取最大值
 SHAPE_ORIGIN = "scene.center" # 原点：报告定格中心点，不是质心（polygon_centroid 零消费者）
 SHAPE_AZIMUTH_FN = "bearing"  # 方位角实现：球面 bearing()，与 direction_word 同源
+# 复算标量时允许的误差（**口径不是实现细节**：签发侧 B17 与读侧 shapeOfZone 用同一把尺）。
+# 2026-10-06 审查实测：后端 1e-3、前端 1e-2 ⇒ 同一份 `circularity=0.718`（真值 0.7131）
+# 后端判违规、前端放行 —— 读侧比签发侧松，正好把"手写 mock / 外部导入镜像绕过 B17"
+# 那道防线反向松开。跨语言导不了常量，所以这份数值由 `test_fixture_mirror` 逐条钉两端相等，
+# 前端那份叫 `scalar_tol`（同一个名字，便于比对）。
+SHAPE_SCALAR_TOL = 1e-3
 
 
 def shape_of(ring: Sequence[LngLat], center: LngLat, area_km2: float) -> dict:
