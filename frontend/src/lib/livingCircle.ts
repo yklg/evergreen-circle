@@ -357,6 +357,14 @@ export function lcFrameViewBox(f: LcFrame): string {
 }
 
 /**
+ * 画框 → CSS `aspect-ratio`。与 `lcFrameViewBox` 同用一位小数：槽的比例与 viewBox 的比例
+ * 一旦一个取整一个不取，`meet` 就会按那点差再留一道缝（判据把两处钉成同一份数）。
+ */
+export function lcFrameAspectRatio(f: LcFrame): string {
+  return `${f.w.toFixed(1)} / ${f.h.toFixed(1)}`
+}
+
+/**
  * 米偏移 → 经纬度：`lcMeters` 的**逆**，全仓唯一实现。
  *
  * 分母是 `111320`（米/度），**不是** `111320 × π/180` —— 后者把度当成弧度处理，

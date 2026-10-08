@@ -64,6 +64,7 @@ import {
   severityOf,
   lcPolyPts,
   lcContentFrame,
+  lcFrameAspectRatio,
   lcFrameViewBox,
   lcToPx,
   lcSnapshotPoiLayer,
@@ -96,6 +97,7 @@ import {
   shapeOfZone,
 } from '../../lib/livingCircle'
 import { LC_POI_DIM, LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
+import type { LcFrame } from '../../lib/livingCircle'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
 import CellsLedgerCard from './CellsLedgerCard'
@@ -247,19 +249,20 @@ function BlindCoarseCircle({ lc, b }: { lc: LivingCircleReport; b: BlindSpot }) 
  * 屏幕上再摆一张同数据的静态图就是两张同图；而 GL canvas 打印不出图（P0-6）⇒ 这张在 PDF 里
  * 顶上去，与页顶主图／打印快照那一对是同一手法。
  */
-function LcChapterMap({ lc, focus, secTitle, shared }: {
+function LcChapterMap({ lc, focus, secTitle, shared, frame }: {
   lc: LivingCircleReport
   focus: NonNullable<ReportSection['map_focus']>
   secTitle: string
   shared: boolean
+  frame: LcFrame
 }) {
   const center: LngLat = lc.scene.center
   const poiSet = poiRenderSet(lc.poi.points)
   // 画框收到内容包围盒 + `h-full` 填满槽：投影一字不动，只是不再让一小坨图漂在纸边中间，
   // 也不再让 SVG 按宽度自计算出 612px 高、溢出 340px 的槽去压住下面那句图注。
-  const frame = lcFrameViewBox(lcContentFrame(lc))
+  // 槽的宽高比由调用方按同一个 `frame` 设 ⇒ 图吃满卡子，两侧不再各空出 124px。
   return (
-    <svg viewBox={frame} preserveAspectRatio="xMidYMid meet" className="block h-full w-full select-none" role="img" aria-label={`${secTitle} · 本章设施分布`}>
+    <svg viewBox={lcFrameViewBox(frame)} preserveAspectRatio="xMidYMid meet" className="block h-full w-full select-none" role="img" aria-label={`${secTitle} · 本章设施分布`}>
       <LcCanvasBackdrop />
       <LcIsochroneBands center={center} zones={lc.isochrones} drawOuterFirst />
       <LcStaticBlindLayer
@@ -480,6 +483,8 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
      ⇒ 整屏不挂。这不是省事：挂一张空图等于多开一个 GL 实例，而"没数据也摆个框"
      会被读成"这个地区没有方向差异"——那是伪造负结论。 */
   const shapeCal = shapeOfZone(lc, 15)
+  /** 分章地图的画框：整份报告算一次（六张图同一个取景，高度也才会一致）。 */
+  const chapterFrame = lcContentFrame(lc)
   const ledger = cellsLedgerOf(lc)
   // 局部图与主图是两个 GL 实例 ⇒ 进视口才挂（P0-7）
   const [blindRef, blindSeen] = useLazyInView<HTMLDivElement>()
@@ -1097,8 +1102,8 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                     那张交互地图，屏幕上不该再来一张同数据的；GL canvas 打印不出图（P0-6）⇒ PDF 里顶上。 */}
                 {sec.map_focus && (
                   <div className={`${LC_REPORT_CHAPTER_MAP_CELL}${sec.map_focus.kind === 'all' ? ' hidden print:block' : ''}`}>
-                    <div className={LC_REPORT_CHAPTER_MAP_SLOT}>
-                      <LcChapterMap lc={lc} focus={sec.map_focus} secTitle={sec.title} shared={isShared} />
+                    <div className={LC_REPORT_CHAPTER_MAP_SLOT} style={{ aspectRatio: lcFrameAspectRatio(chapterFrame) }}>
+                      <LcChapterMap lc={lc} focus={sec.map_focus} secTitle={sec.title} shared={isShared} frame={chapterFrame} />
                     </div>
                     {/* 图注整句取自后端 `map_focus.title`：图上灰化了谁、点位删没删、有没有放大，
                         都是**画布的既成事实**，前端再写一遍就是第二份口径（两句话迟早分家）。 */}

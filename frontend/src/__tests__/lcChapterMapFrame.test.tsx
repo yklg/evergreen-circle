@@ -99,6 +99,11 @@ describe('分章地图的渲染侧：收了框、且不再溢出槽', () => {
       expect(svg.getAttribute('preserveAspectRatio'), '不 meet 就会裁掉一侧').toBe('xMidYMid meet')
       expect(svg.getAttribute('class'), '没有 h-full ⇒ SVG 按宽度自算高度、溢出槽压住图注')
         .toContain('h-full')
+      // 槽的宽高比跟着同一个画框走 —— 这正是"两侧各空 124px"那一半的修法。
+      const slot = svg.parentElement as HTMLElement
+      expect(slot.style.aspectRatio, '槽高不跟画框 ⇒ meet 只能取小的缩放比，图两侧留大片空档')
+        .toBe('502.6 / 284.1')
+      expect(slot.className).toContain('max-h-[460px]')
     }
   })
 })

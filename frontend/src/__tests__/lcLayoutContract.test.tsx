@@ -288,7 +288,7 @@ describe('TC-18R · 报告页两行的高度政策归 stageContract 单一来源
  * 单独立一组而不是把上面那"五组"改成七组：那五组讲的是"谁的高说了算"的行高政策，
  * 这两颗讲的是文档流里一张静态图怎么排版 —— 两条政策各自的数目各自演进，谁也不替谁背书。 */
 const R_CHAPTER_MAP_CELL = 'mt-4 overflow-hidden rounded-card border border-line bg-card shadow-card'
-const R_CHAPTER_MAP_SLOT = 'h-[280px] sm:h-[340px]'
+const R_CHAPTER_MAP_SLOT = 'mx-auto w-full max-h-[460px]'
 
 describe('TC-18R2 · 分章静态地图的格子归 stageContract 单一来源', () => {
   it('两颗 utility 只在契约文件里各出现恰一次', () => {

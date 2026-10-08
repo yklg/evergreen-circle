@@ -105,5 +105,13 @@ export const LC_REPORT_DOC_CELL =
 export const LC_REPORT_CHAPTER_MAP_CELL =
   'mt-4 overflow-hidden rounded-card border border-line bg-card shadow-card'
 
-/** 分章地图槽：显式像素高（文档流里没有"右栏说了算"那个上下文，就不假装有一个） */
-export const LC_REPORT_CHAPTER_MAP_SLOT = 'h-[280px] sm:h-[340px]'
+/**
+ * 分章地图槽。宽度吃满、高度**跟着画框比例走**（`aspectRatio` 由调用方按 `lcContentFrame` 的
+ * 宽高内联给出），只给一个上限 `max-h-[460px]`。
+ *
+ * 为什么不是从前那个固定 `h-[280px] sm:h-[340px]`：可达场大约是 1.77:1，而固定高的宽卡在
+ * 1440 屏上是 2.5:1 —— `preserveAspectRatio="meet"` 只能取小的那个缩放比，于是图居中但
+ * **两侧各留 124px 空档**（用户那句"歪"的另一半来源）。让槽高等于内容比例后，空档降到 ~17px，
+ * 而 `max-h` 保证长正文里这张图不会把版面撑爆。
+ */
+export const LC_REPORT_CHAPTER_MAP_SLOT = 'mx-auto w-full max-h-[460px]'
