@@ -54,9 +54,18 @@ KAILI: Dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
 RID = "lc-narr-test"
 SCENE_KEY = "narr-test-key"
 
-# 实测量出来的锚点。换夹具要一起重测，不许退化成 `>= 1` 这种恒真断言
-EXPECT_HIGHLIGHTS = 3
-EXPECT_CHARTS = 4
+# 实测量出来的锚点。换夹具要一起重测，不许退化成 `>= 1` 这种恒真断言。
+#
+# nar-2（2026-10-08 方案 C 档）后这两个数**由分支构成拼出来**，逐条列在这里，
+# 免得下次口径一动、数字变了却没人说得清是谁贡献的：
+#   亮点 10 = 概览 2（`spread` + `triad`；该夹具盲区 0 ⇒ 没有 `blindspot` 句）
+#             + 医疗 1 + 教育 2 + 菜市 1 + 养老 1（各章自有句）
+#             + 等时圈 2 + 结论 1
+#   图   8 = 概览 2 + 等时圈 2 + **四个专题章各 1 张覆盖度位置图**（nar-1 时是 4）
+# 养老的耗时位次句在该夹具下不产（`min_minutes` 为 None ⇒ 取不到最近点，见
+# `test_highlights_are_chapter_specific.py` 的缺席分支判据）。
+EXPECT_HIGHLIGHTS = 10
+EXPECT_CHARTS = 8
 EXPECT_SECTIONS = 8
 
 
@@ -139,6 +148,9 @@ def test_3_legacy_row_thickens_on_a_plain_refresh(calls):
     stored = _seed(None, legacy_body=True)
     assert _highlights(stored) == 0 and "narrative_version" not in stored, (
         "前提不成立：这份'老快照'本来就有亮点 ⇒ 比不出重装带来的增量")
+    assert len(stored["charts"]) < EXPECT_CHARTS, (
+        "前提不成立：退化出来的'老行'图数不比现在少 ⇒ 这条比的是自己跟自己，"
+        "加厚档位（含 nar-2 新增的四张位置图）没有可判的增量")
     del calls[:]
     got = client.get(f"/api/reports/{RID}").json()
     assert len(calls) == 1, "缺戳没触发重装"
@@ -270,3 +282,28 @@ def test_7_narrative_stamp_cannot_move_the_reuse_gate():
         {"report_type": "research"}, NARRATIVE_VERSION)[0] is False, "非生活圈报告不许被这层碰"
     assert report_contract.narrative_refresh_needed(
         {"report_type": "living_circle"}, NARRATIVE_VERSION)[0] is False, "没有载荷时无从重装，只能原样给"
+
+
+def test_10_two_generations_coexist_without_cross_contamination(calls):
+    """⑰ 混态：库里同时躺着 nar-1 的老行与 nar-2 的新行 —— 升代次后**真实存在的中间态**。
+
+    前九条各测单态（要么全是老行、要么刚播种就是当代），没有一条管两代行并排时会不会互相污染：
+    老行必须重装、新行必须直通，且各自的 `narrative_version` 不许串台
+    （串台的形态是"新行被当成老行反复白重装"或"老行被当成新行永远发旧正文"）。
+    """
+    stale = _seed("nar-1")                              # 老行：戳落后一代
+    fresh = _assemble()
+    fresh["id"] = RID + "-fresh"
+    db.save_living_circle_report(fresh, scene_key=SCENE_KEY)
+    assert fresh["narrative_version"] == NARRATIVE_VERSION, "前提不成立：新行本来就不带当代戳"
+    del calls[:]
+
+    got_stale = client.get(f"/api/reports/{RID}").json()
+    assert len(calls) == 1, "老行没触发重装"
+    assert got_stale["narrative_version"] == NARRATIVE_VERSION
+
+    got_fresh = client.get(f"/api/reports/{RID}-fresh").json()
+    assert len(calls) == 1, "当代戳的新行被误判成老行 ⇒ 每次读都白重装一次"
+    assert got_fresh == fresh, "新行读回来变了 ⇒ 两代行互相污染"
+    assert db.get_report(RID)["narrative_version"] == "nar-1", "读路径把老行的戳改写了 ⇒ 不许回写"
+    assert stale["narrative_version"] == "nar-1"

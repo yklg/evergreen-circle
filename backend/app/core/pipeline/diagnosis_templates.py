@@ -20,6 +20,10 @@ LLM 有 Key 时仅替换解读文案，结构/数值不变（无 Key 也不阻�
 必须**同笔**把 `NARRATIVE_VERSION` 升一代，否则读路径对存量行直通、用户看到的仍是旧正文。
 判据 = 同文件的逐面金标 + 配对闸（不升戳就红；只升戳而产物没变也红——无实质变化的升戳会让
 所有存量行白付一次重装，把"同代次零重装"那条证据打掉）。
+
+代次台账：`nar-1` 首枚戳；`nar-2`（2026-10-08 方案 C 档）四个专题章各获得 1 张
+「本类在 8 类中的覆盖度位置」图与本章自有亮点，等时圈章获得 2 条自有亮点 ——
+概览那张覆盖度图的 option 逐字节未变（`focus=None` 路径）。
 """
 from __future__ import annotations
 
@@ -529,14 +533,28 @@ def _chart_radar(lc: dict) -> dict:
     }
 
 
-def _chart_coverage(lc: dict) -> dict:
+def _chart_coverage(lc: dict, focus: Optional[List[str]] = None) -> dict:
     """各类别覆盖度横向条形 + 75% 达标线（计划笔 3 的「设施分级对比」）。
 
     为什么不另起一张图：概览已有 2 张图，再加一张就撞本仓新立的「每章 ≤2 图」约束，
     而它与既有覆盖度柱**是同一份 `scores.bars`** —— 该做的是把这张图升级：
     横向条让 8 个中文类名读得下，补一根达标线把"数"变成"判断"。
+
+    `focus` 是给专题章的「本类在 8 类中的覆盖度位置」用的：传类目 key 列表时，命中的那些条
+    实色、其余压到 0.35，并只给实色条挂数值标签。**不传时输出与升代前逐字节相同** ——
+    概览那张的面摘要因此不变，金标 diff 只包含"新增四张"。（判据见
+    `tests/test_chapter_coverage_position_charts.py`。）
     """
     bars = (lc.get("scores") or {}).get("bars", [])
+    if focus:
+        data = [{"value": b["value"],
+                 "itemStyle": {"color": "#5F7B69", "borderRadius": [0, 2, 2, 0],
+                               "opacity": 1.0 if b.get("category") in focus else 0.35},
+                 **({"label": {"show": True, "position": "right", "color": "#6B746C"}}
+                    if b.get("category") in focus else {})}
+                for b in reversed(bars)]
+    else:
+        data = [b["value"] for b in reversed(bars)]
     return {
         "tooltip": {},
         "grid": {"left": 76, "right": 34, "top": 18, "bottom": 28},
@@ -544,7 +562,7 @@ def _chart_coverage(lc: dict) -> dict:
         "yAxis": {"type": "category", "data": [b["label"] for b in bars][::-1]},
         "series": [{
             "type": "bar",
-            "data": [bars[i]["value"] for i in range(len(bars) - 1, -1, -1)],
+            "data": data,
             "itemStyle": {"color": "#5F7B69", "borderRadius": [0, 2, 2, 0]},
             "barWidth": "58%",
             "markLine": {
@@ -695,6 +713,8 @@ def _sec_medical(lc: dict) -> dict:
             # 所以**替换**而非再加一段 —— 否则"最近是谁"这句话在正文里出现两遍。
             _mechanism_sentence(lc, "medical") or f"最近设施「{(m or {}).get('nearest_name') or '—'}」步行约 {_fmt_min((m or {}).get('min_minutes'))}。",
         ],
+        "highlights": _section_highlights(lc, "medical"),
+        "charts": _catcov_charts(lc, "medical"),
         "claims": [{
             "claim_id": f"c-lc-medical-1",
             "text": (f"医疗配置{('达标' if cov >= 0.75 else '存在缺口')}"
@@ -723,6 +743,8 @@ def _sec_education(lc: dict) -> dict:
             *([edu_mech] if edu_mech else []),
             "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区" + _triad_school_para(triad) + "。",
         ],
+        "highlights": _section_highlights(lc, "education"),
+        "charts": _catcov_charts(lc, "education"),
         "claims": [{
             "claim_id": "c-lc-education-1",
             # 「达标」与「置信度」两半各挂各的判据 —— 凯里教育今天就是"达标 + medium"同屏
@@ -750,6 +772,8 @@ def _sec_market(lc: dict) -> dict:
             # 两类最近点此前从未在正文里点名 —— 机理段补的就是这一格信息。
             *([s for s in (_mechanism_sentence(lc, "market"), _mechanism_sentence(lc, "shopping")) if s]),
         ],
+        "highlights": _section_highlights(lc, "market"),
+        "charts": _catcov_charts(lc, "market"),
         "claims": [{
             "claim_id": "c-lc-market-1",
             "text": f"菜市场三要素{_triad_claim(triad)}；购物覆盖 {_pct(_cov_score(sp))}",
@@ -795,6 +819,8 @@ def _sec_elderly(lc: dict) -> dict:
             (_LC_ELDERLY_UNDETECTED_CAUSE if missing
              else f"最近「{(el or {}).get('nearest_name')}」{_fmt_min((el or {}).get('min_minutes'))}。"),
         ],
+        "highlights": _section_highlights(lc, "elderly"),
+        "charts": _catcov_charts(lc, "elderly"),
         "claims": [{
             "claim_id": "c-lc-elderly-1",
             "text": f"养老配置{_LC_ELDERLY_UNDETECTED_CLAIM}" if missing else "养老配置覆盖正常",
@@ -816,6 +842,8 @@ def _sec_isochrone(lc: dict, ev_id: str) -> dict:
             f"{'IDW 反距离加权插值，提取 5/10/15/20 分钟等值线族' if lc.get('sampling', {}).get('interpolation') == 'idw' else '圆形近似（演示数据；M5 覆写为真实路网等时圈）'}。",
             "「不取底层路网、仅基于分布点位测时推导连通区域」是赛题鼓励的 30% 评分项：本流程全程未获取路网数据。" + ("采用散点扇形/双阶段采样，" if lc.get("sampling", {}).get("is_scattered") else ""),
         ],
+        # 本章已有 2 张图（每章 ≤2 图的硬闸），所以这一章**只补亮点、不补第 3 张图**。
+        "highlights": _section_highlights(lc, "isochrone"),
         "claims": [{
             "claim_id": "c-lc-isochrone-1",
             "text": f"15 分钟步行可达圈约 {next((a for m_, a in areas if m_ == 15), 0):.2f} km²，{len(lc.get('blindspots', []))} 处盲区均位于圈内覆盖空洞",
@@ -1052,6 +1080,149 @@ def _build_highlights(lc: dict) -> List[str]:
     return [items[k] for k in ("spread", "blindspot", "triad") if k in items][:3]
 
 
+# ── 章级自有亮点（2026-10-08 方案 C 档）────────────────────────────────
+#
+# 为什么要有这一族：预览包那份「激进档」的 13 条亮点里，8 条是生成脚本把概览那两句
+# 全局句平播到各章（`hl[:1]` / `hl[:2]`）⇒ 同一句话在报告里出现五遍。落地形态改成
+# **每章从本章数据派生自己的句子**，与 `_highlight_items` 的设计意图同形：按主题返回、
+# 各章按键取，不靠字符串嗅探挑归属。
+#
+# ⚠️ 位置句一律**不点名极值对手**（只报本类分值与序列边界）。结论章已占用全局 `spread`
+#    句「最长板与短板差 N 分：「A」对「B」」，若养老章再写「垫底（最高的是 A）」，
+#    两句含同一对类目名 ⇒ 判据「不重述全局三句」当场红。这条约束是结构性的，不靠措辞自觉。
+#
+# ⚠️ 同理，医疗/教育章**不再产「分子口径」句** —— 那半件事今天已经写在两章正文第 0 段里
+#    （「其中计入覆盖度分子的是基层医疗门槛项 5 处…另有 20 处不计入分子」），
+#    再挂一条亮点就是同一件事说两遍，正是本档要治的病。
+_HIGHLIGHT_ANCHORS: Dict[str, Tuple[str, ...]] = {
+    "medical": ("医疗", "药店"),
+    "education": ("教育", "小学", "中学", "幼儿园"),
+    "market": ("菜市场", "购物", "菜市"),
+    "elderly": ("养老",),
+    "isochrone": ("分钟", "等时圈", "面积"),
+}
+
+
+def _coverage_position_sentence(lc: dict, category: str) -> Optional[str]:
+    """本类在 8 类覆盖度序列里的位置 —— 正文从没做过这个横向比较，是增量信息。
+
+    并列最小值时**不产该条**：「唯一垫底」在并列时是假话，宁可少一条。
+    """
+    bars = (lc.get("scores") or {}).get("bars") or []
+    values = [float(b.get("value", 0)) for b in bars]
+    mine = next((float(b["value"]) for b in bars if b.get("category") == category), None)
+    if mine is None or len(values) < 3:
+        return None
+    label = next((b.get("label", "") for b in bars if b.get("category") == category), "")
+    higher = sum(1 for v in values if v > mine)
+    lower = sum(1 for v in values if v < mine)
+    if not lower and not higher:
+        return None                                    # 全体并列 ⇒ 位置无信息
+    tied = sum(1 for v in values if v == mine)
+    if not lower:                                      # 没有比本类更低的 ⇒ 本类就是最低档
+        if tied > 1:
+            return None                                # 并列垫底 ⇒ 「唯一垫底」是假话
+        second = min(v for v in values if v > mine)
+        return (f"「{label}」是 {len(values)} 类覆盖度序列里唯一垫底的一档（{mine:g} 分），"
+                f"其余 {len(values) - 1} 类最低也有 {second:g} 分")
+    if not higher:                                     # 没有比本类更高的 ⇒ 本类就是最高档
+        if tied > 1:
+            return None                                # 并列满分 ⇒ 「你在最高档」没信息量
+        return (f"「{label}」是 {len(values)} 类覆盖度序列里唯一最高的一档（{mine:g} 分），"
+                f"最低一档 {min(values):g} 分")
+    return (f"「{label}」覆盖度 {mine:g} 分，在 {len(values)} 类序列里"
+            f"高于 {lower} 类、低于 {higher} 类")
+
+
+def _time_rank_sentence(lc: dict, category: str) -> Optional[str]:
+    """本类最近点的**耗时位次** —— 覆盖度并列时（8 类里 6 类都是 100 分）位置句没信息量，
+    改由这把尺给该章一条自有事实：正文逐章各报自己的分钟数，但从没把它们排过一次序。
+
+    并列名次时不产：「第 3 快」在两类同分时是假话。
+    """
+    timed = sorted((float(c["min_minutes"]), c.get("category"), c.get("label", ""))
+                   for c in ((lc.get("poi") or {}).get("categories") or [])
+                   if c.get("min_minutes") is not None)
+    mine = next(((v, i) for i, (v, cat, _) in enumerate(timed) if cat == category), None)
+    if mine is None or len(timed) < 3:
+        return None
+    value, index = mine
+    if sum(1 for v, _, _ in timed if v == value) > 1:
+        return None
+    label = next(l for v, c, l in timed if c == category)
+    return (f"「{label}」最近点步行 {_fmt_min(value)}，在取到最近点的 {len(timed)} 类里排第 {index + 1} 快"
+            f"（最快是{timed[0][2]} {_fmt_min(timed[0][0])}）")
+
+
+def _chapter_highlight_items(lc: dict) -> Dict[str, List[str]]:
+    """专题章与等时圈章的自有亮点，**按章 id 返回**；某章无据可讲就是空列表。
+
+    每章按「覆盖度位置 → 本章特有对比 → 耗时位次」的顺序取候选，**取到有信息量的前 2 条**：
+    位置句在并列满分/并列垫底时自己返回 None（那种说法没信息量甚至是假话），
+    于是该章落到耗时位次句上 —— 不是拿它凑数，是这把尺今天从没被排过序。
+    """
+    def pick(*sentences: Optional[str]) -> List[str]:
+        return [s for s in sentences if s][:2]
+
+    out: Dict[str, List[str]] = {}
+    for sid, category in (("medical", "medical"), ("education", "education"), ("elderly", "elderly")):
+        out[sid] = pick(_coverage_position_sentence(lc, category), _time_rank_sentence(lc, category))
+
+    mk, sp = _cat(lc, "market"), _cat(lc, "shopping")
+    mk_min, sp_min = (mk or {}).get("min_minutes"), (sp or {}).get("min_minutes")
+    gap = (f"日常买菜要多走 {round(float(mk_min) - float(sp_min), 1):g} 分钟："
+           f"菜市场最近 {_fmt_min(mk_min)}，购物最近 {_fmt_min(sp_min)}"
+           if mk_min is not None and sp_min is not None and mk_min > sp_min else None)
+    # 「买菜多走 X 分钟」与「菜市场排第 N 快」讲的是同一个 7.4min ⇒ 前者在位时不再取后者。
+    out["market"] = pick(gap, _coverage_position_sentence(lc, "market"),
+                         None if gap else _time_rank_sentence(lc, "market"))
+
+    iso = {i.get("minutes"): i.get("area_km2") for i in (lc.get("isochrones") or [])}
+    a5, a15 = iso.get(5), iso.get(15)
+    area = (f"15 分钟圈 {float(a15):.2f}km² 是 5 分钟圈（{float(a5):.2f}km²）的 "
+            f"{round(float(a15) / float(a5), 1):g} 倍 ⇒ 面积增益几乎全在外圈" if a5 and a15 else None)
+    timed = [c for c in ((lc.get("poi") or {}).get("categories") or []) if c.get("min_minutes") is not None]
+    far = max(timed, key=lambda c: float(c["min_minutes"])) if timed else None
+    out["isochrone"] = pick(
+        area,
+        f"8 类里最近点最远的是「{far.get('label', '')}」，步行 {float(far['min_minutes']):g} 分钟"
+        " ⇒ 名义上有，不是走到跟前的那种有" if far else None)
+    return out
+
+
+def _section_highlights(lc: dict, sid: str) -> List[str]:
+    """各章亮点的**唯一取用口**。概览走全局三句，盲区/结论各取一个全局键（与升代前等价），
+    其余专题章取本章自有句，最多 2 条。"""
+    if sid == "overview":
+        return _build_highlights(lc)
+    items = _highlight_items(lc)
+    if sid == "blindspot":
+        return [h for h in (items.get("blindspot"),) if h]
+    if sid == "conclusion":
+        return [h for h in (items.get("spread"),) if h]
+    return _chapter_highlight_items(lc).get(sid, [])[:2]
+
+
+def _catcov_charts(lc: dict, sid: str) -> List[dict]:
+    """专题章的「本类在 8 类中的覆盖度位置」图 —— **参数化复用**概览那张，不另起一份实现。
+
+    本章管哪些类目由 `CATEGORY_CHAPTER` 反查得到（不在这里再抄一份类目→章映射）；
+    序列不足 3 档或本类都不在序列里时返回空列表 ⇒ 宁可不画，不画一张没有主角的图。
+    """
+    categories = tuple(c for c, owner in CATEGORY_CHAPTER.items() if owner == sid)
+    bars = (lc.get("scores") or {}).get("bars") or []
+    if len(bars) < 3 or not any(b.get("category") in categories for b in bars):
+        return []
+    label = next((b.get("label", "") for b in bars if b.get("category") in categories), "")
+    return [{
+        "chart_id": f"chart-{sid}-coverage",
+        "type": "bar",
+        "title": f"{label}在 {len(bars)} 类设施中的覆盖度位置",
+        "option": _chart_coverage(lc, focus=list(categories)),
+        "evidence_ids": [f"ev-lc-poi-{c}" for c in categories if _cat(lc, c)],
+    }]
+
+
 def _sec_blindspot(lc: dict) -> dict:
     bs = lc.get("blindspots", [])
     sev_label = {"heavy": "重度", "medium": "中度", "light": "轻度"}
@@ -1123,7 +1294,7 @@ def _sec_blindspot(lc: dict) -> dict:
             if bs else "未发现 1km 服务盲区，三要素齐备"
         ),
         "paragraphs": paras,
-        "highlights": [h for h in (_highlight_items(lc).get("blindspot"),) if h],
+        "highlights": _section_highlights(lc, "blindspot"),
         "charts": bs_charts,
         "claims": claims,
         "data_grid": {
@@ -1183,7 +1354,7 @@ def _sec_conclusion(lc: dict) -> dict:
             "field": "conclusion", "evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
             "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
         }],
-        "highlights": [h for h in (_highlight_items(lc).get("spread"),) if h],
+        "highlights": _section_highlights(lc, "conclusion"),
         "source_evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
     }
 
@@ -1290,7 +1461,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
 #    它天然不可能移动复用门（不必再为它单立一条"不许进门"的判据）。
 # 换代规则：只有**载荷语义没变、而展示内容会变**时才升它（加正文/亮点/图件/改口径句）。
 # 载荷语义变了走的是那五把各自的代次，不是这一把。
-NARRATIVE_VERSION = "nar-1"
+NARRATIVE_VERSION = "nar-2"
 
 
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:
