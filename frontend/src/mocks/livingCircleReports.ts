@@ -214,6 +214,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
       `最近设施「${m?.nearest_name ?? '—'}」步行约 ${fmtMin(m?.min_minutes ?? null)}。药店作为赛题盲区三要素之一：${triadTakeawayText(triad)}。`,
     ],
     claims,
+    highlights: sectionHighlights(r, 'medical'),
     charts: [
       {
         chart_id: `chart-${r.scene.name}-medical`,
@@ -221,6 +222,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
         title: '医疗类设施圈内/圈外分布',
         option: medicalBarChart(m),
       },
+      ...catcovChart(r, 'medical', ['medical']),
     ],
     source_evidence_ids: [`ev-${r.scene.name}-poi-medical`],
   }
@@ -249,6 +251,8 @@ function secEducation(r: LivingCircleReport): ReportSection {
         author: EXP['L2-002'].name,
       },
     ],
+    highlights: sectionHighlights(r, 'education'),
+    charts: catcovChart(r, 'education', ['education']),
     source_evidence_ids: [`ev-${r.scene.name}-poi-education`],
   }
 }
@@ -282,6 +286,8 @@ function secMarket(r: LivingCircleReport): ReportSection {
         author: EXP['L2-004'].name,
       },
     ],
+    highlights: sectionHighlights(r, 'market'),
+    charts: catcovChart(r, 'market', ['market', 'shopping']),
     source_evidence_ids: [`ev-${r.scene.name}-poi-market`],
   }
 }
@@ -319,6 +325,8 @@ function secElderly(r: LivingCircleReport): ReportSection {
         author: EXP['L2-003'].name,
       },
     ],
+    highlights: sectionHighlights(r, 'elderly'),
+    charts: catcovChart(r, 'elderly', ['elderly']),
     source_evidence_ids: [`ev-${r.scene.name}-poi-elderly`],
   }
 }
@@ -346,6 +354,8 @@ function secIsochrone(r: LivingCircleReport): ReportSection {
         author: EXP['L2-005'].name,
       },
     ],
+    // 本章在生产侧已有 2 张图（每章 ≤2 图硬闸）⇒ 演示态同样只补亮点、不补第 3 张图。
+    highlights: sectionHighlights(r, 'isochrone'),
     charts: [isochroneChart(areas)],
     source_evidence_ids: [`ev-${r.scene.name}-measure`],
   }
@@ -438,7 +448,7 @@ function secBlindspot(r: LivingCircleReport): ReportSection {
       ...((() => { const s = ledgerSentence(r); return s ? [s] : [] })()),
     ],
     claims,
-    highlights: [highlightItems(r).blindspot].filter((x): x is string => !!x),
+    highlights: sectionHighlights(r, 'blindspot'),
     data_grid: {
       columns: ['盲区编号', '中心点', '缺失设施', '最近设施', '最近距离'],
       rows: rows.map((x) => ({ name: x['盲区编号'], value: x['最近设施'], metric: x['缺失设施'], source: `${x['中心点']} · ${x['最近距离']}`, source_url: 'fixture://blindspot' })),
@@ -471,7 +481,7 @@ function secConclusion(r: LivingCircleReport): ReportSection {
         author: EXP['L3-001'].name,
       },
     ],
-    highlights: [highlightItems(r).spread].filter((x): x is string => !!x),
+    highlights: sectionHighlights(r, 'conclusion'),
     source_evidence_ids: r.blindspots.map((b) => `ev-${r.scene.name}-bs-${b.id}`),
   }
 }
@@ -522,25 +532,79 @@ function radarChart(r: LivingCircleReport): ChartSpec {
   }
 }
 
-function coverageBarChart(r: LivingCircleReport): ChartSpec {
+/**
+ * 覆盖度横向条 + 75% 达标线 —— **逐字段镜像**后端 `_chart_coverage(lc, focus)`。
+ *
+ * 为什么这次要一起把"纵向改横向"做掉：演示态这张图此前是**纵向、无达标线**的老形态，
+ * 而生产早就升级成横向 + 达标线（`diagnosis_templates._chart_coverage`）—— 同名不同形
+ * 正是风险台账 R1/R3 说的"同一份文案两处实现"。既然本轮已经要加 focus 档，就顺手对齐，
+ * 否则新增的四张位置图与概览那张在演示态里是两种画法。
+ *
+ * `focus` 传类目 key 时：命中的条实色、其余压到 0.35，且只给实色条挂数值标签。
+ */
+function coverageBarChart(r: LivingCircleReport, focus?: string[]): ChartSpec {
+  const bars = r.scores.bars ?? []
+  const data = focus
+    ? bars.map((b) => ({
+        value: b.value,
+        itemStyle: {
+          color: '#5F7B69', borderRadius: [0, 2, 2, 0],
+          opacity: focus.includes(b.category) ? 1 : 0.35,
+        },
+        ...(focus.includes(b.category)
+          ? { label: { show: true, position: 'right', color: '#6B746C' } }
+          : {}),
+      }))
+    : bars.map((b) => b.value)
   return {
     chart_id: `chart-${r.scene.name}-coverage`,
     type: 'bar',
     title: '各设施类别覆盖度（%）',
     option: {
       tooltip: {},
-      xAxis: { type: 'category', data: r.scores.bars.map((b) => b.label) },
-      yAxis: { type: 'value', max: 100 },
+      grid: { left: 76, right: 34, top: 18, bottom: 28 },
+      xAxis: { type: 'value', max: 100, name: '%' },
+      yAxis: { type: 'category', data: bars.map((b) => b.label).reverse() },
       series: [
         {
           type: 'bar',
-          data: r.scores.bars.map((b) => b.value),
-          itemStyle: { color: '#5F7B69', borderRadius: [2, 2, 0, 0] },
-          barWidth: '52%',
+          data,
+          itemStyle: { color: '#5F7B69', borderRadius: [0, 2, 2, 0] },
+          barWidth: '58%',
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            data: [{
+              xAxis: 75,
+              label: { formatter: '达标线 75%', color: '#9AA39C' },
+              lineStyle: { color: '#9AA39C', type: 'dashed' },
+            }],
+          },
         },
       ],
     },
   }
+}
+
+/** 分钟数按**后端 `_fmt_min` 的 Python float 形态**打印：`f"{2.0}min"` 是 `2.0min`，
+ * 而 TS 模板串会把 2.0 塌成 "2" ⇒ 同一件事两种说法（R1/R3 那族病）。 */
+function pyMin(minutes: number | null | undefined): string {
+  if (minutes == null) return '—'
+  return `${Number.isInteger(minutes) ? minutes.toFixed(1) : String(minutes)}min`
+}
+
+/** 专题章的「本类在 N 类中的覆盖度位置」图 —— 镜像后端 `_catcov_charts`（参数化复用，不另起画法）。 */
+function catcovChart(r: LivingCircleReport, sid: string, categories: string[]): ChartSpec[] {
+  const bars = r.scores.bars ?? []
+  const mine = bars.filter((b) => categories.includes(b.category))
+  if (bars.length < 3 || mine.length === 0) return []
+  return [{
+    chart_id: `chart-${sid}-coverage`,
+    type: 'bar',
+    title: `${mine[0].label}在 ${bars.length} 类设施中的覆盖度位置`,
+    option: coverageBarChart(r, categories).option,
+    evidence_ids: categories.map((c) => `ev-${r.scene.name}-poi-${c}`),
+  }]
 }
 
 function medicalBarChart(m: FacilityCategoryStat | undefined): Record<string, unknown> {
@@ -660,6 +724,87 @@ const HL_ORDER = ['spread', 'blindspot', 'triad'] as const
 function hlList(r: LivingCircleReport): string[] {
   const it = highlightItems(r)
   return HL_ORDER.map((k) => it[k]).filter((x): x is string => !!x).slice(0, 3)
+}
+
+/**
+ * 章级自有亮点 —— 逐句镜像后端 `_chapter_highlight_items`（方案 C 档，nar-2）。
+ *
+ * 判据同形：并列满分/并列垫底**不产位置句**（「唯一最高」在那种数据上是假话），
+ * 取不到最近点不排名次，缺 5 分钟档不算倍率；每章最多 2 条。
+ *
+ * ⚠️ 这是"同一份文案两处实现"的**又一例**（风险台账 R1/R3）：本文件与
+ * `diagnosis_templates.py` 之间没有任何测试强制对齐，改一边忘另一边不会红。
+ * 本轮按用户决议把 highlights 与位置图两族都镜像过来 ⇒ 分叉面积从"1 个字段"
+ * 扩到"6 个字段 + 4 张图"。真正的收口仍是"报告装配单一真相源"那笔重构，
+ * 在它落地之前，**改后端这几句必须同批改这里**。
+ */
+function positionSentence(r: LivingCircleReport, category: string): string | null {
+  const bars = r.scores.bars ?? []
+  const values = bars.map((b) => b.value)
+  const self = bars.find((b) => b.category === category)
+  if (!self || values.length < 3) return null
+  const mine = self.value
+  const tied = values.filter((v) => v === mine).length
+  const higher = values.filter((v) => v > mine).length
+  const lower = values.filter((v) => v < mine).length
+  if (lower === 0 && higher === 0) return null
+  if (lower === 0) {
+    if (tied > 1) return null
+    return `「${self.label}」是 ${values.length} 类覆盖度序列里唯一垫底的一档（${mine} 分），其余 ${values.length - 1} 类最低也有 ${Math.min(...values.filter((v) => v > mine))} 分`
+  }
+  if (higher === 0) {
+    if (tied > 1) return null
+    return `「${self.label}」是 ${values.length} 类覆盖度序列里唯一最高的一档（${mine} 分），最低一档 ${Math.min(...values)} 分`
+  }
+  return `「${self.label}」覆盖度 ${mine} 分，在 ${values.length} 类序列里高于 ${lower} 类、低于 ${higher} 类`
+}
+
+function timeRankSentence(r: LivingCircleReport, category: string): string | null {
+  const timed = (r.poi.categories ?? [])
+    .filter((c) => c.min_minutes != null)
+    .map((c) => ({ label: c.label, minutes: c.min_minutes as number, category: c.category }))
+    .sort((a, b) => a.minutes - b.minutes)
+  const index = timed.findIndex((c) => c.category === category)
+  if (index < 0 || timed.length < 3) return null
+  const mine = timed[index]
+  if (timed.filter((c) => c.minutes === mine.minutes).length > 1) return null
+  return `「${mine.label}」最近点步行 ${pyMin(mine.minutes)}，在取到最近点的 ${timed.length} 类里排第 ${index + 1} 快（最快是${timed[0].label} ${pyMin(timed[0].minutes)}）`
+}
+
+export function chapterHighlightItems(r: LivingCircleReport): Record<string, string[]> {
+  const pick = (...sentences: (string | null)[]): string[] =>
+    sentences.filter((s): s is string => !!s).slice(0, 2)
+  const mk = cat(r, 'market')
+  const sp = cat(r, 'shopping')
+  const gap = mk?.min_minutes != null && sp?.min_minutes != null && mk.min_minutes > sp.min_minutes
+    ? `日常买菜要多走 ${(Math.round((mk.min_minutes - sp.min_minutes) * 10) / 10).toString()} 分钟：菜市场最近 ${pyMin(mk.min_minutes)}，购物最近 ${pyMin(sp.min_minutes)}`
+    : null
+  const a5 = r.isochrones.find((z) => z.minutes === 5)?.area_km2
+  const a15 = r.isochrones.find((z) => z.minutes === 15)?.area_km2
+  const timed = (r.poi.categories ?? []).filter((c) => c.min_minutes != null)
+  const far = timed.length
+    ? timed.reduce((a, b) => ((b.min_minutes as number) > (a.min_minutes as number) ? b : a))
+    : null
+  return {
+    medical: pick(positionSentence(r, 'medical'), timeRankSentence(r, 'medical')),
+    education: pick(positionSentence(r, 'education'), timeRankSentence(r, 'education')),
+    elderly: pick(positionSentence(r, 'elderly'), timeRankSentence(r, 'elderly')),
+    market: gap
+      ? pick(gap, positionSentence(r, 'market'))
+      : pick(gap, positionSentence(r, 'market'), timeRankSentence(r, 'market')),
+    isochrone: pick(
+      a5 && a15 ? `15 分钟圈 ${a15.toFixed(2)}km² 是 5 分钟圈（${a5.toFixed(2)}km²）的 ${Math.round((a15 / a5) * 10) / 10} 倍 ⇒ 面积增益几乎全在外圈` : null,
+      far ? `8 类里最近点最远的是「${far.label}」，步行 ${far.min_minutes} 分钟 ⇒ 名义上有，不是走到跟前的那种有` : null),
+  }
+}
+
+/** 各章亮点的唯一取用口 —— 与后端 `_section_highlights` 同形。 */
+function sectionHighlights(r: LivingCircleReport, sid: string): string[] {
+  if (sid === 'overview') return hlList(r)
+  const it = highlightItems(r)
+  if (sid === 'blindspot') return [it.blindspot].filter((x): x is string => !!x)
+  if (sid === 'conclusion') return [it.spread].filter((x): x is string => !!x)
+  return chapterHighlightItems(r)[sid]?.slice(0, 2) ?? []
 }
 
 function buildSections(r: LivingCircleReport): ReportSection[] {
