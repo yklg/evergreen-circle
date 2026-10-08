@@ -373,6 +373,11 @@ export interface LcSnapshotPoiDot {
   cx: number
   cy: number
   fill: string
+  /**
+   * 类目 id（与 `fill` 同源取色）。分章地图的灰化判据要问"这一点属不属于本章焦点类目" ——
+   * 拿 `fill` 反查类目是把颜色当身份：未知类目今天正好兜底成政务那枚色，反查会认错。
+   */
+  category: string
   title?: string
   /** 该点代表了多少个原始点（网格聚合结果；未聚合恒为 1）。供 hover 文案披露 */
   cluster: number
@@ -414,6 +419,7 @@ export function lcSnapshotPoiLayer(
         cx,
         cy,
         fill: LC_CAT_COLOR[p.category] ?? '#7c6670',
+        category: p.category ?? '',
         title: p.name,
         cluster: counts?.get(p.id) ?? 1,
       }

@@ -13,6 +13,8 @@ import { VStatLine } from '../ui'
 /* 报告页两行的高度政策与分栏模板：单一来源在 `stageContract.ts`（与体检台同一份契约的
    报告页分支）。**这两行共用 `LC_REPORT_SPLIT`** ⇒ 分栏缝由构造对齐，不再各写一份。 */
 import {
+  LC_REPORT_CHAPTER_MAP_CELL,
+  LC_REPORT_CHAPTER_MAP_SLOT,
   LC_REPORT_DOC_CELL,
   LC_REPORT_MAP_CELL,
   LC_REPORT_MAP_SLOT,
@@ -46,7 +48,7 @@ import {
  *  `report-body-collapse`：ReportPage 的 beforeprint 按**类名**选节点强制展开，
  *  换任何别的类名 = 生活圈正文在导出的 PDF 里整段消失（评审 P0-3）。 */
 const COLLAPSE_MIN_PARAS = 2
-import type { Report, LivingCircleReport, LngLat, BlindSpot, ForensicAccount } from '../../types'
+import type { Report, ReportSection, LivingCircleReport, LngLat, BlindSpot, ForensicAccount } from '../../types'
 import {
   LC_CANVAS,
   LC_CAT_COLOR,
@@ -91,7 +93,7 @@ import {
   residualCaliberNote,
   shapeOfZone,
 } from '../../lib/livingCircle'
-import { LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
+import { LC_POI_DIM, LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
 import CellsLedgerCard from './CellsLedgerCard'
@@ -147,17 +149,7 @@ function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; sha
     <svg viewBox={`0 0 ${W} ${H}`} className="block w-full select-none" role="img" aria-label="等时圈快照">
       <LcCanvasBackdrop />
       <LcIsochroneBands center={center} zones={lc.isochrones} drawOuterFirst />
-      {lc.blindspots.map((b) => (
-        <g key={b.id}>
-          {shared ? (
-            /* 分享脱敏（口径 ③-A）：不绘精确多边形，只画概略片区（面积等价圆，缺 meta 时用判定格距近似） */
-            <BlindCoarseCircle lc={lc} b={b} />
-          ) : (
-            <polygon points={lcPolyPts(center, b.polygon.coordinates[0])} fill="rgba(120,120,120,0.16)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="5 4" />
-          )}
-          <circle cx={lcToPx(center, b.center[0], b.center[1])[0]} cy={lcToPx(center, b.center[0], b.center[1])[1]} r={5} fill="#E8B54D" stroke="#fff" strokeWidth={1.5} />
-        </g>
-      ))}
+      <LcStaticBlindLayer lc={lc} center={center} shared={shared} />
       {/* POI 真实点位：共享投影层（与 LcMap 降级画布同口径，点位与详细报告数字一致）；
           离线（poi.points 恒为空）时自然降级为空数组，不绘制。
           阶段 2.1/2.2：**不再传 cap** —— 报告给几个点就画几个点（旧默认 120 是渲染侧
@@ -165,6 +157,41 @@ function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; sha
       <LcPoiDots dots={lcSnapshotPoiLayer(center, poiSet.reps, Number.POSITIVE_INFINITY, poiSet.counts)} r={6} strokeWidth={1.5} />
       <LcSceneCenterMark center={center} name={lc.scene.name} />
     </svg>
+  )
+}
+
+/**
+ * 报告页侧的静态盲区层：打印替身与 nar-3 的分章地图**共用这一份**。
+ * （`LcMap` 的交互降级层是另一份 —— 两份的差异是既成的事实而非分叉：一份带 `#N`·重度标注与补点
+ * Marker，这一份带概略面积文字与判定尺参考圈。W1 判过重合度不足七成，所以不强行合并。）
+ *
+ * `focusBlindId` 的语义是**压淡其余**，不是删掉它们 —— 与降级画布那条「局部性来自图层、
+ * 不来自缩放」同语义。不压淡时不写 `opacity` 属性，保证与抽件之前逐字节同形。
+ */
+function LcStaticBlindLayer({ lc, center, shared, focusBlindId }: {
+  lc: LivingCircleReport
+  center: LngLat
+  shared: boolean
+  focusBlindId?: string
+}) {
+  return (
+    <>
+      {lc.blindspots.map((b) => {
+        const dim = Boolean(focusBlindId) && b.id !== focusBlindId
+        const [cx, cy] = lcToPx(center, b.center[0], b.center[1])
+        return (
+          <g key={b.id} opacity={dim ? LC_POI_DIM : undefined}>
+            {shared ? (
+              /* 分享脱敏（口径 ③-A）：不绘精确多边形，只画概略片区（面积等价圆，缺 meta 时用判定格距近似） */
+              <BlindCoarseCircle lc={lc} b={b} />
+            ) : (
+              <polygon points={lcPolyPts(center, b.polygon.coordinates[0])} fill="rgba(120,120,120,0.16)" stroke="#8a8a8a" strokeWidth={1} strokeDasharray="5 4" />
+            )}
+            <circle cx={cx} cy={cy} r={5} fill="#E8B54D" stroke="#fff" strokeWidth={1.5} />
+          </g>
+        )
+      })}
+    </>
   )
 }
 
@@ -202,6 +229,49 @@ function BlindCoarseCircle({ lc, b }: { lc: LivingCircleReport; b: BlindSpot }) 
         </>
       )}
     </g>
+  )
+}
+
+/**
+ * nar-3 分章局部地图：一张静态 SVG。为什么不用 `LcMap`：报告页今天已经挂着三个 `LcMap` 实例，
+ * 而 `getMapConfig` 没有缓存（`lib/bmap.ts:329-346`）—— 每多一个实例就多一次 fetch 与一次
+ * SDK 初始化，那正是 P0-7「局部图与主图两个 GL 实例」当初要懒挂载去压的东西。
+ *
+ * 焦点只做一件事：**压淡**。非焦点类目/盲区的点位降到 `LC_POI_DIM`，一个都不删、也不缩放视野
+ * （与 `LcMap` 降级画布那条「局部性来自图层、不来自缩放」同语义）。图注文字由后端
+ * `map_focus.title` 发 —— 口径与数据同源，前端不再各写一份说法。
+ *
+ * `kind === 'all'`（等时圈章）只当打印替身：那一章正文里已经内嵌「方位形状第三屏」那张交互地图，
+ * 屏幕上再摆一张同数据的静态图就是两张同图；而 GL canvas 打印不出图（P0-6）⇒ 这张在 PDF 里
+ * 顶上去，与页顶主图／打印快照那一对是同一手法。
+ */
+function LcChapterMap({ lc, focus, secTitle, shared }: {
+  lc: LivingCircleReport
+  focus: NonNullable<ReportSection['map_focus']>
+  secTitle: string
+  shared: boolean
+}) {
+  const { W, H } = LC_CANVAS
+  const center: LngLat = lc.scene.center
+  const poiSet = poiRenderSet(lc.poi.points)
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full select-none" role="img" aria-label={`${secTitle} · 本章设施分布`}>
+      <LcCanvasBackdrop />
+      <LcIsochroneBands center={center} zones={lc.isochrones} drawOuterFirst />
+      <LcStaticBlindLayer
+        lc={lc}
+        center={center}
+        shared={shared}
+        focusBlindId={focus.kind === 'blindspot' ? focus.blind_id : undefined}
+      />
+      <LcPoiDots
+        dots={lcSnapshotPoiLayer(center, poiSet.reps, Number.POSITIVE_INFINITY, poiSet.counts)}
+        r={6}
+        strokeWidth={1.5}
+        focusCategories={focus.kind === 'categories' ? focus.categories : undefined}
+      />
+      <LcSceneCenterMark center={center} name={lc.scene.name} />
+    </svg>
   )
 }
 
@@ -1016,6 +1086,23 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   </div>
                 )}
 
+                {/* nar-3 分章局部地图。焦点由后端发（那张八章全表登记过哪些章有、哪些故意没有），
+                    静态 SVG **不进 charts**：每章 ≤2 图是生产侧硬闸，而地图的几何是经纬度，
+                    位置图 option 禁坐标那条红线（P0-5）会直接撞上来。
+                    `kind === 'all'`（等时圈章）只作打印替身 —— 本章正文里已经内嵌「方位形状第三屏」
+                    那张交互地图，屏幕上不该再来一张同数据的；GL canvas 打印不出图（P0-6）⇒ PDF 里顶上。 */}
+                {sec.map_focus && (
+                  <div className={`${LC_REPORT_CHAPTER_MAP_CELL}${sec.map_focus.kind === 'all' ? ' hidden print:block' : ''}`}>
+                    <div className={LC_REPORT_CHAPTER_MAP_SLOT}>
+                      <LcChapterMap lc={lc} focus={sec.map_focus} secTitle={sec.title} shared={isShared} />
+                    </div>
+                    {/* 图注整句取自后端 `map_focus.title`：图上灰化了谁、点位删没删、有没有放大，
+                        都是**画布的既成事实**，前端再写一遍就是第二份口径（两句话迟早分家）。 */}
+                    <div className="shrink-0 border-t border-line px-3 py-2 text-tag text-ink-3">
+                      {sec.map_focus.title}
+                    </div>
+                  </div>
+                )}
                 {/* 标题由章名派生，不写死「盲区明细」：该 title 还兼作 VDataGrid 的 CSV 文件名
                     （VDataGrid.tsx:23），而 data_grid 不再只属于盲区章（整改看板会进结论章）。
                     ⚠️ 分享态必须走 `maskGridForShare`：明细表的 source 列原本带着盲区中心

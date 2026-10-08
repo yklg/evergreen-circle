@@ -24,6 +24,11 @@ LLM 有 Key 时仅替换解读文案，结构/数值不变（无 Key 也不阻�
 代次台账：`nar-1` 首枚戳；`nar-2`（2026-10-08 方案 C 档）四个专题章各获得 1 张
 「本类在 8 类中的覆盖度位置」图与本章自有亮点，等时圈章获得 2 条自有亮点 ——
 概览那张覆盖度图的 option 逐字节未变（`focus=None` 路径）。
+`nar-3`（2026-10-08 晚 屏 3 那一层）两处产物变化：① 六个专题/结构章各带一个 `map_focus`
+字段（分章静态地图的焦点，不进 `charts`；概览与结论章登记为「故意不发」）；
+② 条形图按类目逐条上色（色表在本文件，与前端 `LC_CAT_COLOR` 同名同值，由镜像判据钉住）
+——因此 `focus=None` 那一支从"逐字节同形"改契约为"结构同形"：仍不产 opacity 分档与
+per-item label，但 `data` 项从纯数值变成 `{value, itemStyle:{color}}`。
 """
 from __future__ import annotations
 
@@ -181,6 +186,37 @@ CATEGORY_CHAPTER: Dict[str, str] = {
     "shopping": "market",
     "elderly": "elderly",
 }
+
+# 类目 → 颜色。**与前端 `lib/livingCircle.ts` 的 `LC_CAT_COLOR` 是同一个名字、同一组值**：
+# 屏 3 的条形图 8 类各一色，而图的 option 由本模块产出 ⇒ 色只能在这里定；前端那份继续管
+# 地图点位与图例（两侧同名便于镜像判据逐键比）。
+#
+# ⚠️ 三条纪律（都被 `tests/test_chapter_map_focus.py` 钉着，不是注释里的愿望）：
+#  ① 取色**只许**经 `_cat_color()`，不许出现默认色或 `or "#999"` 那类兜底 —— 未知类目静默
+#     染成某个已知色，就是「图 8 类、文 5 类」那族病换了个位置复发（见本文件 169 行那段记录）。
+#  ② 键集必须与 `CATEGORY_RULES` 的类目集、载荷里 `poi.categories[].category` 的集、
+#     以及前端那份表**三集合相等**：加一类设施时这里漏登记会当场红，而不是图上少一色没人看出。
+#  ③ 注释里不许再写这个键的名字紧跟左括号 —— 镜像判据按源码全文数使用处数（含注释），
+#     写了会被当成多一个消费者（本文件 162 行那条同族事故）。
+LC_CAT_COLOR: Dict[str, str] = {
+    "market": "#C2642E",
+    "medical": "#E0483F",
+    "education": "#2F7FBF",
+    "shopping": "#8A6BD1",
+    "elderly": "#C09A2E",
+    "finance": "#5F8A6A",
+    "recreation": "#2FA09A",
+    "service": "#7C6670",
+}
+
+
+def _cat_color(category: object) -> str:
+    """按类目取色。**未知类目直接抛**而不是给个默认色：图上的颜色就是"这是哪一类"的断言，
+    猜一个色等于编一个类目。装配是纯函数，抛错会在装配期就暴露，不会拖到屏幕上。"""
+    key = str(category or "")
+    if key not in LC_CAT_COLOR:
+        raise KeyError(f"类目 {key!r} 没有登记颜色 ⇒ 色表与类目集已分叉，先补登记再画图")
+    return LC_CAT_COLOR[key]
 
 # 补建策略 → 中文。原先是 `_sec_blindspot` 里的局部字典，图件也要用就得上移，
 # 否则同一个 `reroute` 在表和图里会是两种说法（前端 `LC_BLIND_FIX_STRATEGY` 是第三份，
@@ -541,20 +577,24 @@ def _chart_coverage(lc: dict, focus: Optional[List[str]] = None) -> dict:
     横向条让 8 个中文类名读得下，补一根达标线把"数"变成"判断"。
 
     `focus` 是给专题章的「本类在 8 类中的覆盖度位置」用的：传类目 key 列表时，命中的那些条
-    实色、其余压到 0.35，并只给实色条挂数值标签。**不传时输出与升代前逐字节相同** ——
-    概览那张的面摘要因此不变，金标 diff 只包含"新增四张"。（判据见
-    `tests/test_chapter_coverage_position_charts.py`。）
+    实色、其余压到 0.35，并只给实色条挂数值标签。**不传 `focus` 时不产 opacity 分档、也不产
+    per-item label** —— nar-3 起这一支开始逐条上色（色只来自那张色表），所以"结构同形"而不是
+    "逐字节同形"是这张图现在的契约。（判据见 `tests/test_chapter_coverage_position_charts.py` ⑧。）
     """
     bars = (lc.get("scores") or {}).get("bars", [])
     if focus:
         data = [{"value": b["value"],
-                 "itemStyle": {"color": "#5F7B69", "borderRadius": [0, 2, 2, 0],
+                 "itemStyle": {"color": _cat_color(b.get("category")), "borderRadius": [0, 2, 2, 0],
                                "opacity": 1.0 if b.get("category") in focus else 0.35},
                  **({"label": {"show": True, "position": "right", "color": "#6B746C"}}
                     if b.get("category") in focus else {})}
                 for b in reversed(bars)]
     else:
-        data = [b["value"] for b in reversed(bars)]
+        # 逐条上色只换色值，不换结构：这一支仍然**不产** opacity 分档，也不产 per-item label。
+        # 概览那张的重点是"八类同尺度并排读"，谁被压淡、谁带数值标签都是专题章的事。
+        data = [{"value": b["value"],
+                 "itemStyle": {"color": _cat_color(b.get("category")), "borderRadius": [0, 2, 2, 0]}}
+                for b in reversed(bars)]
     return {
         "tooltip": {},
         "grid": {"left": 76, "right": 34, "top": 18, "bottom": 28},
@@ -588,8 +628,13 @@ def _chart_minutes(lc: dict) -> dict:
         "yAxis": {"type": "category", "data": [c["label"] for c in cats][::-1]},
         "series": [{
             "type": "bar", "barWidth": "52%",
-            "data": [cats[i]["min_minutes"] for i in range(len(cats) - 1, -1, -1)],
-            "itemStyle": {"color": "#8a9c8f", "borderRadius": [0, 2, 2, 0]},
+            # 逐条取色与覆盖度那张同一个口径（同一个 `_cat_color`）—— 两章同类设施在两张图上
+            # 必须是同一个颜色，否则读者对不上"这根橙条是菜市"。series 级不再有默认色：留一份
+            # 用不上的色值就是给下一个分叉留门。
+            "data": [{"value": cats[i]["min_minutes"],
+                      "itemStyle": {"color": _cat_color(cats[i].get("category")),
+                                    "borderRadius": [0, 2, 2, 0]}}
+                     for i in range(len(cats) - 1, -1, -1)],
             "label": {"show": True, "position": "right", "color": "#6B746C"},
         }],
     }
@@ -692,6 +737,9 @@ def _sec_overview(lc: dict, ev_id: str) -> dict:
         "highlights": _build_highlights(lc),
         "charts": [{"chart_id": "chart-overview-radar", "type": "radar", "title": "生活圈维度评分雷达", "option": _chart_radar(lc)},
                    {"chart_id": "chart-overview-coverage", "type": "bar", "title": "各设施类别覆盖度（%）", "option": _chart_coverage(lc)}],
+        # 概览章故意不发分章地图：这一章的图就是页顶那张主图（与它的打印替身），
+        # 再挂一张是"同一屏两张同数据"。这个"不发"是登记过的决定，不是漏写。
+        "map_focus": _section_map_focus(lc, "overview"),
         "source_evidence_ids": [ev_id],
     }
 
@@ -715,6 +763,7 @@ def _sec_medical(lc: dict) -> dict:
         ],
         "highlights": _section_highlights(lc, "medical"),
         "charts": _catcov_charts(lc, "medical"),
+        "map_focus": _section_map_focus(lc, "medical"),
         "claims": [{
             "claim_id": f"c-lc-medical-1",
             "text": (f"医疗配置{('达标' if cov >= 0.75 else '存在缺口')}"
@@ -745,6 +794,7 @@ def _sec_education(lc: dict) -> dict:
         ],
         "highlights": _section_highlights(lc, "education"),
         "charts": _catcov_charts(lc, "education"),
+        "map_focus": _section_map_focus(lc, "education"),
         "claims": [{
             "claim_id": "c-lc-education-1",
             # 「达标」与「置信度」两半各挂各的判据 —— 凯里教育今天就是"达标 + medium"同屏
@@ -774,6 +824,7 @@ def _sec_market(lc: dict) -> dict:
         ],
         "highlights": _section_highlights(lc, "market"),
         "charts": _catcov_charts(lc, "market"),
+        "map_focus": _section_map_focus(lc, "market"),
         "claims": [{
             "claim_id": "c-lc-market-1",
             "text": f"菜市场三要素{_triad_claim(triad)}；购物覆盖 {_pct(_cov_score(sp))}",
@@ -821,6 +872,7 @@ def _sec_elderly(lc: dict) -> dict:
         ],
         "highlights": _section_highlights(lc, "elderly"),
         "charts": _catcov_charts(lc, "elderly"),
+        "map_focus": _section_map_focus(lc, "elderly"),
         "claims": [{
             "claim_id": "c-lc-elderly-1",
             "text": f"养老配置{_LC_ELDERLY_UNDETECTED_CLAIM}" if missing else "养老配置覆盖正常",
@@ -844,6 +896,7 @@ def _sec_isochrone(lc: dict, ev_id: str) -> dict:
         ],
         # 本章已有 2 张图（每章 ≤2 图的硬闸），所以这一章**只补亮点、不补第 3 张图**。
         "highlights": _section_highlights(lc, "isochrone"),
+        "map_focus": _section_map_focus(lc, "isochrone"),
         "claims": [{
             "claim_id": "c-lc-isochrone-1",
             "text": f"15 分钟步行可达圈约 {next((a for m_, a in areas if m_ == 15), 0):.2f} km²，{len(lc.get('blindspots', []))} 处盲区均位于圈内覆盖空洞",
@@ -1223,6 +1276,66 @@ def _catcov_charts(lc: dict, sid: str) -> List[dict]:
     }]
 
 
+# 章 → 分章地图的焦点类型。**这张表就是全表**：不在表里的章（概览、结论）故意不发 `map_focus`
+# —— 概览章的图就是页顶那张主图与打印替身，再挂一张是同数据两张；结论章没有焦点对象。
+# 「哪些章有图、哪些没有」因此是一张登记表而不是各章自己临场决定（同 §12 亮点注册表那条），
+# 判据比"实际发出的章集"与本表键集（`tests/test_chapter_map_focus.py`）。
+MAP_FOCUS_KINDS: Dict[str, str] = {
+    "medical": "categories",
+    "education": "categories",
+    "market": "categories",
+    "elderly": "categories",
+    "isochrone": "all",
+    "blindspot": "blindspot",
+}
+
+
+def _section_map_focus(lc: dict, sid: str) -> Optional[dict]:
+    """本章局部地图的焦点（**不进 `charts`**，前端据此画一张静态 SVG）。
+
+    为什么不塞进 `charts`：每章 ≤2 图是生产侧硬闸（概览与医疗今天各已 2 张），而地图的几何是
+    经纬度 —— 位置图的 option 禁坐标那条红线（P0-5 分享态）会直接撞上来。所以它是一个独立字段。
+
+    焦点的语义是**灰化**：非焦点类目/盲区只压到近透明，一个点都不删、也不放大视野
+    （`LcMap` 的降级画布同语义 —— 固定投影，局部性来自图层而不是缩放）。
+    缺席分支三条：本类在载荷里取不到 ⇒ 不发；盲区一处都没有 ⇒ 不发；章不在本表 ⇒ 不发。
+    """
+    kind = MAP_FOCUS_KINDS.get(sid)
+    if kind is None:
+        return None
+    total = len((lc.get("scores") or {}).get("bars") or [])
+
+    if kind == "all":
+        return {
+            "kind": "all", "categories": [],
+            "title": f"本章地图：等时圈族与全部 {total} 类设施点同主图，不聚焦单一类"
+                     "——局部性来自各档等时圈本身，不来自缩放",
+        }
+
+    if kind == "blindspot":
+        bs = lc.get("blindspots") or []
+        if not bs:
+            return None
+        first = bs[0].get("id") or ""
+        rest = f"，其余 {len(bs) - 1} 处压到近透明（一处都没删）" if len(bs) > 1 else ""
+        return {
+            "kind": "blindspot", "categories": [], "blind_id": first,
+            "title": f"本章地图：盲区图层只强调「{first.replace('bs-', '盲区 ')}」{rest}；"
+                     "等时圈与设施点同主图",
+        }
+
+    categories = [c for c, owner in CATEGORY_CHAPTER.items() if owner == sid and _cat(lc, c)]
+    if not categories:
+        return None
+    labels = "、".join(str((_cat(lc, c) or {}).get("label", c)) for c in categories)
+    dim = total - len(categories)
+    return {
+        "kind": "categories", "categories": categories,
+        "title": f"本章地图：只把「{labels}」的设施点保持原色，其余 {dim} 类压到近透明"
+                 "（各类点位一个都没删，也没有放大到本类）",
+    }
+
+
 def _sec_blindspot(lc: dict) -> dict:
     bs = lc.get("blindspots", [])
     sev_label = {"heavy": "重度", "medium": "中度", "light": "轻度"}
@@ -1295,6 +1408,7 @@ def _sec_blindspot(lc: dict) -> dict:
         ),
         "paragraphs": paras,
         "highlights": _section_highlights(lc, "blindspot"),
+        "map_focus": _section_map_focus(lc, "blindspot"),
         "charts": bs_charts,
         "claims": claims,
         "data_grid": {
@@ -1355,6 +1469,8 @@ def _sec_conclusion(lc: dict) -> dict:
             "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
         }],
         "highlights": _section_highlights(lc, "conclusion"),
+        # 结论章没有焦点对象：能画的焦点都在前面各章，这里再挂一张只是把别章的图重画一遍。
+        "map_focus": _section_map_focus(lc, "conclusion"),
         "source_evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
     }
 
@@ -1461,7 +1577,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
 #    它天然不可能移动复用门（不必再为它单立一条"不许进门"的判据）。
 # 换代规则：只有**载荷语义没变、而展示内容会变**时才升它（加正文/亮点/图件/改口径句）。
 # 载荷语义变了走的是那五把各自的代次，不是这一把。
-NARRATIVE_VERSION = "nar-2"
+NARRATIVE_VERSION = "nar-3"
 
 
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:

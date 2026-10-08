@@ -21,6 +21,7 @@ import type {
 } from '../types'
 import { SAMPLE_COMMUNITIES } from './livingCircleMock'
 import {
+  LC_CAT_COLOR,
   lcLocPrefix,
   poiDedupeRuleLabel,
   poiMetricLabel,
@@ -215,6 +216,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
     ],
     claims,
     highlights: sectionHighlights(r, 'medical'),
+    map_focus: mapFocus(r, 'medical'),
     charts: [
       {
         chart_id: `chart-${r.scene.name}-medical`,
@@ -222,7 +224,7 @@ function secMedical(r: LivingCircleReport): ReportSection {
         title: '医疗类设施圈内/圈外分布',
         option: medicalBarChart(m),
       },
-      ...catcovChart(r, 'medical', ['medical']),
+      ...catcovChart(r, 'medical', chapterCategories('medical')),
     ],
     source_evidence_ids: [`ev-${r.scene.name}-poi-medical`],
   }
@@ -252,7 +254,8 @@ function secEducation(r: LivingCircleReport): ReportSection {
       },
     ],
     highlights: sectionHighlights(r, 'education'),
-    charts: catcovChart(r, 'education', ['education']),
+    map_focus: mapFocus(r, 'education'),
+    charts: catcovChart(r, 'education', chapterCategories('education')),
     source_evidence_ids: [`ev-${r.scene.name}-poi-education`],
   }
 }
@@ -287,7 +290,8 @@ function secMarket(r: LivingCircleReport): ReportSection {
       },
     ],
     highlights: sectionHighlights(r, 'market'),
-    charts: catcovChart(r, 'market', ['market', 'shopping']),
+    map_focus: mapFocus(r, 'market'),
+    charts: catcovChart(r, 'market', chapterCategories('market')),
     source_evidence_ids: [`ev-${r.scene.name}-poi-market`],
   }
 }
@@ -326,7 +330,8 @@ function secElderly(r: LivingCircleReport): ReportSection {
       },
     ],
     highlights: sectionHighlights(r, 'elderly'),
-    charts: catcovChart(r, 'elderly', ['elderly']),
+    map_focus: mapFocus(r, 'elderly'),
+    charts: catcovChart(r, 'elderly', chapterCategories('elderly')),
     source_evidence_ids: [`ev-${r.scene.name}-poi-elderly`],
   }
 }
@@ -356,6 +361,7 @@ function secIsochrone(r: LivingCircleReport): ReportSection {
     ],
     // 本章在生产侧已有 2 张图（每章 ≤2 图硬闸）⇒ 演示态同样只补亮点、不补第 3 张图。
     highlights: sectionHighlights(r, 'isochrone'),
+    map_focus: mapFocus(r, 'isochrone'),
     charts: [isochroneChart(areas)],
     source_evidence_ids: [`ev-${r.scene.name}-measure`],
   }
@@ -449,6 +455,7 @@ function secBlindspot(r: LivingCircleReport): ReportSection {
     ],
     claims,
     highlights: sectionHighlights(r, 'blindspot'),
+    map_focus: mapFocus(r, 'blindspot'),
     data_grid: {
       columns: ['盲区编号', '中心点', '缺失设施', '最近设施', '最近距离'],
       rows: rows.map((x) => ({ name: x['盲区编号'], value: x['最近设施'], metric: x['缺失设施'], source: `${x['中心点']} · ${x['最近距离']}`, source_url: 'fixture://blindspot' })),
@@ -482,6 +489,7 @@ function secConclusion(r: LivingCircleReport): ReportSection {
       },
     ],
     highlights: sectionHighlights(r, 'conclusion'),
+    map_focus: mapFocus(r, 'conclusion'),
     source_evidence_ids: r.blindspots.map((b) => `ev-${r.scene.name}-bs-${b.id}`),
   }
 }
@@ -544,18 +552,28 @@ function radarChart(r: LivingCircleReport): ChartSpec {
  */
 function coverageBarChart(r: LivingCircleReport, focus?: string[]): ChartSpec {
   const bars = r.scores.bars ?? []
+  /* 与后端 `_chart_coverage` 同序：横向条形图从下往上排，**data 与 yAxis 都要逆序**。
+     上一版这里 data 走正序、axis 走逆序 ⇒ 演示态每根条都挂到了错的类目行上
+     （值与行标签错配，图上"医疗 100%"其实是政务那档的数）。判据：
+     `lcMockChartsAlignWithAxis.test.ts`。 */
+  const ordered = [...bars].reverse()
+  /* 逐条取色只从 `LC_CAT_COLOR` 那张表拿（前端唯一权威，与后端同名同值由
+     `test_chapter_map_focus_and_color_table.py` 钉住）；这里不许再写一份色值或默认色兜底。 */
   const data = focus
-    ? bars.map((b) => ({
+    ? ordered.map((b) => ({
         value: b.value,
         itemStyle: {
-          color: '#5F7B69', borderRadius: [0, 2, 2, 0],
+          color: LC_CAT_COLOR[b.category], borderRadius: [0, 2, 2, 0],
           opacity: focus.includes(b.category) ? 1 : 0.35,
         },
         ...(focus.includes(b.category)
           ? { label: { show: true, position: 'right', color: '#6B746C' } }
           : {}),
       }))
-    : bars.map((b) => b.value)
+    : ordered.map((b) => ({
+        value: b.value,
+        itemStyle: { color: LC_CAT_COLOR[b.category], borderRadius: [0, 2, 2, 0] },
+      }))
   return {
     chart_id: `chart-${r.scene.name}-coverage`,
     type: 'bar',
@@ -564,7 +582,7 @@ function coverageBarChart(r: LivingCircleReport, focus?: string[]): ChartSpec {
       tooltip: {},
       grid: { left: 76, right: 34, top: 18, bottom: 28 },
       xAxis: { type: 'value', max: 100, name: '%' },
-      yAxis: { type: 'category', data: bars.map((b) => b.label).reverse() },
+      yAxis: { type: 'category', data: ordered.map((b) => b.label) },
       series: [
         {
           type: 'bar',
@@ -807,6 +825,66 @@ function sectionHighlights(r: LivingCircleReport, sid: string): string[] {
   return chapterHighlightItems(r)[sid]?.slice(0, 2) ?? []
 }
 
+/**
+ * 类目 → 专项章（镜像后端 `CATEGORY_CHAPTER`）。位置图的焦点类目与分章地图的焦点**都从这一张表反查**：
+ * 上一版四个 `catcovChart(r, sid, [...])` 各写一份类目数组，那是同一条归属的第二份权威。
+ */
+const CATEGORY_CHAPTER: Record<string, string> = {
+  medical: 'medical',
+  education: 'education',
+  market: 'market',
+  shopping: 'market',
+  elderly: 'elderly',
+}
+const chapterCategories = (sid: string): string[] =>
+  Object.keys(CATEGORY_CHAPTER).filter((c) => CATEGORY_CHAPTER[c] === sid)
+
+/** 章 → 分章地图的焦点类型（镜像后端 `MAP_FOCUS_KINDS`；概览与结论章故意不发）。 */
+const MAP_FOCUS_KINDS: Record<string, 'categories' | 'all' | 'blindspot'> = {
+  medical: 'categories',
+  education: 'categories',
+  market: 'categories',
+  elderly: 'categories',
+  isochrone: 'all',
+  blindspot: 'blindspot',
+}
+
+/**
+ * 分章地图焦点 —— 与后端 `_section_map_focus` **同式同字**（含图注整句：演示态与真实态说的
+ * 必须是同一句话，否则真人验收会拿演示态的字去对真实态的图）。三条缺席分支逐条对齐：
+ * 本章类目在载荷里一个都取不到 ⇒ 不发；盲区清零 ⇒ 不发；章不在表里 ⇒ 不发。
+ */
+function mapFocus(r: LivingCircleReport, sid: string): ReportSection['map_focus'] {
+  const kind = MAP_FOCUS_KINDS[sid]
+  if (!kind) return null
+  const total = (r.scores.bars ?? []).length
+  const labelOf = (c: string) => r.poi.categories.find((x) => x.category === c)?.label ?? c
+  if (kind === 'all') {
+    return {
+      kind: 'all', categories: [],
+      title: `本章地图：等时圈族与全部 ${total} 类设施点同主图，不聚焦单一类`
+           + '——局部性来自各档等时圈本身，不来自缩放',
+    }
+  }
+  if (kind === 'blindspot') {
+    const bs = r.blindspots ?? []
+    if (!bs.length) return null
+    const first = bs[0].id ?? ''
+    const rest = bs.length > 1 ? `，其余 ${bs.length - 1} 处压到近透明（一处都没删）` : ''
+    return {
+      kind: 'blindspot', categories: [], blind_id: first,
+      title: `本章地图：盲区图层只强调「${first.replace(/^bs-/, '盲区 ')}」${rest}；等时圈与设施点同主图`,
+    }
+  }
+  const present = chapterCategories(sid).filter((c) => r.poi.categories.some((x) => x.category === c))
+  if (!present.length) return null
+  return {
+    kind: 'categories', categories: present,
+    title: `本章地图：只把「${present.map(labelOf).join('、')}」的设施点保持原色，`
+         + `其余 ${total - present.length} 类压到近透明（各类点位一个都没删，也没有放大到本类）`,
+  }
+}
+
 function buildSections(r: LivingCircleReport): ReportSection[] {
   return [
     {
@@ -820,6 +898,8 @@ function buildSections(r: LivingCircleReport): ReportSection[] {
       ],
       charts: [radarChart(r), coverageBarChart(r)],
       highlights: hlList(r),
+      // 概览章故意不发分章地图（八章全表登记的决定）：这一章的图就是页顶主图与它的打印替身。
+      map_focus: mapFocus(r, 'overview'),
       source_evidence_ids: [`ev-${r.scene.name}-measure`],
     },
     secMedical(r),

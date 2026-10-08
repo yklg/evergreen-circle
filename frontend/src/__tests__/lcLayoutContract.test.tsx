@@ -283,3 +283,31 @@ describe('TC-18R · 报告页两行的高度政策归 stageContract 单一来源
     expect(uses, `分栏模板被 ${uses} 处插值使用（三行共用 ⇒ 应恰为 3）`).toBe(3)
   })
 })
+
+/* ══ TC-18R2 · nar-3 分章**静态**地图的两颗格子 ══
+ * 单独立一组而不是把上面那"五组"改成七组：那五组讲的是"谁的高说了算"的行高政策，
+ * 这两颗讲的是文档流里一张静态图怎么排版 —— 两条政策各自的数目各自演进，谁也不替谁背书。 */
+const R_CHAPTER_MAP_CELL = 'mt-4 overflow-hidden rounded-card border border-line bg-card shadow-card'
+const R_CHAPTER_MAP_SLOT = 'h-[280px] sm:h-[340px]'
+
+describe('TC-18R2 · 分章静态地图的格子归 stageContract 单一来源', () => {
+  it('两颗 utility 只在契约文件里各出现恰一次', () => {
+    exactlyOnce(contract, R_CHAPTER_MAP_CELL, '分章地图卡（文档流里独占一行）')
+    exactlyOnce(contract, R_CHAPTER_MAP_SLOT, '分章地图槽（显式 px，且不带 print:hidden）')
+  })
+
+  it('报告页只消费常量、不留字面量副本', () => {
+    for (const literal of [R_CHAPTER_MAP_CELL, R_CHAPTER_MAP_SLOT]) {
+      expect(reportSrc, '报告页里出现了契约的字面量副本').not.toContain(literal)
+    }
+    for (const name of ['LC_REPORT_CHAPTER_MAP_CELL', 'LC_REPORT_CHAPTER_MAP_SLOT']) {
+      expect(reportSrc, `报告页没有消费 ${name}`).toContain(name)
+    }
+  })
+
+  it('分章图不套 GL 那张的槽 —— 那颗自带 print:hidden，会把静态图从 PDF 里抹掉（P0-6 的反面）', () => {
+    // `className={LC_REPORT_MAP_SLOT}` 只许出现在两张 GL 图上：局部图与方位形状第三屏。
+    const glSlots = reportSrc.split('className={LC_REPORT_MAP_SLOT}').length - 1
+    expect(glSlots, `GL 槽被 ${glSlots} 处使用（两张交互图 ⇒ 应恰为 2）`).toBe(2)
+  })
+})

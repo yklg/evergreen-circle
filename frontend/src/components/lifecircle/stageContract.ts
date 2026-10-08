@@ -92,3 +92,18 @@ export const LC_REPORT_MAP_SLOT =
 /** 台账格：内容会长（选中一格多出整张读数表）⇒ 大屏自己滚，打印放开 */
 export const LC_REPORT_DOC_CELL =
   'lg:h-full lg:min-h-0 lg:overflow-y-auto print:overflow-visible print:h-auto'
+
+/**
+ * nar-3 分章局部地图（静态 SVG）的两颗格子。为什么不复用上面那三件套：
+ *  - `LC_REPORT_MAP_SLOT` 自带 `print:hidden`（它装的是 GL canvas，打印本来就不出图，
+ *    PDF 里由 `IsochroneSnapshot` 那张静态快照顶替）。分章图**就是静态 SVG**，
+ *    套上那颗等于把它从 PDF 里抹掉 —— 正是 P0-6 那个缺口的反面。
+ *  - `LC_REPORT_PAIR_ROW`/`LC_REPORT_MAP_CELL` 带 `lg:h-[640px]`+`lg:h-full` 那套行高政策，
+ *    服务对象是"地图 ↔ 台账"两栏一行；分章图在文档流里独占一行，套上去会让它去问一个
+ *    不存在的高度。所以这里给显式 px，小屏短一点、大屏长一点。
+ */
+export const LC_REPORT_CHAPTER_MAP_CELL =
+  'mt-4 overflow-hidden rounded-card border border-line bg-card shadow-card'
+
+/** 分章地图槽：显式像素高（文档流里没有"右栏说了算"那个上下文，就不假装有一个） */
+export const LC_REPORT_CHAPTER_MAP_SLOT = 'h-[280px] sm:h-[340px]'

@@ -74,20 +74,31 @@ export function LcIsochroneBands({ center, zones, drawOuterFirst = false }: {
   )
 }
 
+/** 分章地图把非焦点类目压到这个不透明度（与预览包 `gen_preview.py` 同一档，肉眼读得出"在但次要"）。 */
+export const LC_POI_DIM = 0.16
+
 /**
  * POI 点位：点集**只从 `lcSnapshotPoiLayer` 取**（全仓唯一口径，`livingCircle.ts:397`），
  * 本装配只负责那圈 `<circle>`。`r`／`strokeWidth` 由调用方给是**既成分叉的如实登记**
  * （打印快照 6／1.5、降级画布 5／1.2）—— 统一它属于改形态，要单独判定，不在本笔顺手做。
+ *
+ * `focusCategories` 是 nar-3 分章地图的焦点：**只压淡、一个点都不删**（提纯成单类会显著提高
+ * 那一类精确坐标的可辨识度，是新增泄漏面）。不传时全体 0.92，与收一之前逐字节同形。
  */
-export function LcPoiDots({ dots, r, strokeWidth }: {
+export function LcPoiDots({ dots, r, strokeWidth, focusCategories }: {
   dots: LcSnapshotPoiDot[]
   r: number
   strokeWidth: number
+  focusCategories?: string[]
 }) {
+  const focus = focusCategories && focusCategories.length ? new Set(focusCategories) : null
   return (
     <>
       {dots.map((p) => (
-        <circle key={p.key} cx={p.cx} cy={p.cy} r={r} fill={p.fill} stroke="#fff" strokeWidth={strokeWidth} opacity={0.92}>
+        <circle
+          key={p.key} cx={p.cx} cy={p.cy} r={r} fill={p.fill} stroke="#fff" strokeWidth={strokeWidth}
+          opacity={focus ? (focus.has(p.category) ? 0.92 : LC_POI_DIM) : 0.92}
+        >
           {p.title && <title>{p.cluster > 1 ? `${p.title}（该网格聚合 ${p.cluster} 点）` : p.title}</title>}
         </circle>
       ))}

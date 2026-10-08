@@ -358,6 +358,17 @@ export interface ReportSection {
    * kind=insufficient_input 表示「有材料但缺可核验数值」→ 本章算分图整体缺位，如实标注。
    */
   score_gap?: { kind?: string; reason: string } | null
+  /**
+   * 本章局部地图的焦点（nar-3）。**不是图件**：它不进 `charts`，前端据此画一张静态 SVG。
+   * 语义是灰化 —— 非焦点类目/盲区只压淡，点位一个都不删、也不缩放视野。
+   * 哪些章有、哪些没有由后端那张八章全表登记（概览与结论章故意不发）。
+   */
+  map_focus?: {
+    kind: 'categories' | 'all' | 'blindspot'
+    categories: string[]
+    blind_id?: string
+    title: string
+  } | null
   refined?: boolean
 }
 

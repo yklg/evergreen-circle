@@ -3,7 +3,7 @@
 这族图是**参数化复用**概览那张 `_chart_coverage`，不是另起一份实现 —— 本文件钉的就是
 "复用没夹带"与"位置图画对了"两件事：
 
- ⑧ 不传 `focus` 时输出与 nar-1 逐字节相同（摘要基线见下）；
+ ⑧ 不传 `focus` 时与基线摘要逐字节相同，且**结构同形**（不产 opacity 分档、不产 per-item label）；
  ⑨ 传 `focus` 时实色条数 == 本章类目数、灰条数 == 序列长 − 实色数，且 `chart_id` 带章 id、
     `evidence_ids` 全部命中证据集；
  ⑩ 概览章不许出现两张同族覆盖度图（预览包里那张 `chart-overview-catcov` 是"改进前/改进后"
@@ -13,17 +13,18 @@
  ⑭ 新图的 option 里不许出现经纬度对或 `gap n.n`（分享态脱敏面，比真人量更硬）。
 
 ⑧ 的基线摘要怎么来的（可复算，禁凭记忆）：
-    cd skip && git show HEAD:backend/app/core/pipeline/diagnosis_templates.py > /tmp/dt_nar1.py
-    cd backend && python3 -c "
-    import json, hashlib, importlib.util, sys
-    sys.path.insert(0, '.')
-    spec = importlib.util.spec_from_file_location('old', '/tmp/dt_nar1.py')
-    old = importlib.util.module_from_spec(spec); spec.loader.exec_module(old)
-    from app.core.pipeline.diagnosis_templates import _chart_coverage as new
+
+    cd skip/backend && .venv/bin/python -c "
+    import json, hashlib
+    from app.core.pipeline.diagnosis_templates import _chart_coverage
     lc = json.load(open('app/living_circle/fixtures/kaili.json', encoding='utf-8'))
     canon = lambda o: json.dumps(o, ensure_ascii=False, sort_keys=True, separators=(',',':'))
-    print(hashlib.sha256(canon(old._chart_coverage(lc)).encode()).hexdigest()[:16],
-          canon(old._chart_coverage(lc)) == canon(new(lc)))"
+    print(hashlib.sha256(canon(_chart_coverage(lc)).encode()).hexdigest()[:16])"
+
+〔历史：nar-1→nar-2 那次这笔闸的取法是把 `git show HEAD:` 的旧模块导进来逐字节对比，
+因为当时的契约是"参数化复用不许动概览那张"。`nar-3`（2026-10-08 晚）类目上色**就是要动概览**，
+所以契约从"与 nar-1 同字节"改成"与基线同字节 ＋ 结构同形"，基线随之重取（旧数字 0028ea51b12d0917
+作废，留着是为了记下这次动了什么）。〕
 """
 from __future__ import annotations
 
@@ -37,12 +38,12 @@ from typing import Any, Dict
 import pytest
 
 from app.core.pipeline.diagnosis_templates import (
-    _chart_coverage, assemble_report, CATEGORY_CHAPTER,
+    _chart_coverage, assemble_report, CATEGORY_CHAPTER, LC_CAT_COLOR,
 )
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
 KAILI: Dict[str, Any] = json.loads((FIXTURE_DIR / "kaili.json").read_text(encoding="utf-8"))
-NAR1_COVERAGE_SHA = "0028ea51b12d0917"      # 上面那条命令实测，不是抄来的
+BASELINE_COVERAGE_SHA = "2434dc56fb19ee8e"  # 上面那条命令实测（nar-3 重取），不是抄来的
 
 
 def _canon(obj: Any) -> str:
@@ -66,15 +67,25 @@ def report():
     return _report(KAILI)
 
 
-# ── ⑧ 复用不夹带：概览那张一个字节都没变 ──────────────────────────────
-def test_8_no_focus_option_is_the_nar1_bytes_exactly():
+# ── ⑧ 复用不夹带：概览那张只多出色值，别的都不许多 ────────────────────
+def test_8_no_focus_option_keeps_the_pinned_bytes():
     option = _chart_coverage(KAILI)
-    assert _sha(option) == NAR1_COVERAGE_SHA, (
-        "不传 focus 的覆盖度图与 nar-1 基线不符 ⇒ 参数化复用顺手改了概览那张"
+    assert _sha(option) == BASELINE_COVERAGE_SHA, (
+        "不传 focus 的覆盖度图与基线摘要不符 ⇒ 参数化复用顺手改了概览那张"
         "（金标只会告诉你「产物变了」，说不出「本来不该变」，所以这里单独钉）")
     data = option["series"][0]["data"]
-    assert all(isinstance(x, (int, float)) for x in data), (
-        f"无 focus 时 data 必须是裸数值列表，现在混进了 {type(data[0]).__name__} ⇒ 逐条着色漏了条件")
+    bars = (KAILI.get("scores") or {}).get("bars") or []
+    assert len(data) == len(bars), "无 focus 支的条数必须与序列同长"
+    for bar, item in zip(reversed(bars), data):
+        assert isinstance(item, dict), f"概览这一支应当逐条上色，现在还是裸数值 {item!r}"
+        assert set(item) == {"value", "itemStyle"}, (
+            f"无 focus 支的 data 项多出键 {sorted(set(item) - {'value', 'itemStyle'})} ⇒ "
+            "focus 那一支的数值标签被夹带进概览了")
+        assert item["value"] == bar["value"], "数值不许在着色时被顺手改写"
+        assert set(item["itemStyle"]) == {"color", "borderRadius"}, (
+            "无 focus 支不许有 opacity：概览是「八类同尺度并排读」，压淡谁都算多余的第二层判断")
+        assert item["itemStyle"]["color"] == LC_CAT_COLOR[bar["category"]], (
+            f"{bar['category']} 的条色不是色表里那个值 ⇒ 色值绕过那张表另取了一份")
 
 
 # ── ⑨ 位置图画对了 ───────────────────────────────────────────────────
@@ -146,7 +157,7 @@ def test_11_every_fixture_gets_the_position_charts(name: str):
 
 
 # ── ⑬ 离线载荷不产任何新内容 ──────────────────────────────────────────
-def test_13_offline_payload_gains_no_charts_or_highlights():
+def test_13_offline_payload_gains_no_new_content():
     """离线估算报告不产出可比内容（P0-2 诚实性红线）—— 新增这族图/亮点也不许例外。
 
     刻意**不新增离线夹具文件**：`app/living_circle/fixtures/` 被 5 个测试 glob
@@ -168,6 +179,13 @@ def test_13_offline_payload_gains_no_charts_or_highlights():
         f"离线件长出了别的图：{charts} ⇒ 拿不可比数据画可比结论（P0-2）")
     assert not [h for s in rep["sections"] for h in (s.get("highlights") or [])], (
         "离线件长出了亮点 ⇒ 章级自有句没走离线分支的闸门")
+    # nar-3 的新字段一样不许在离线件上长出来。这里最容易被漏：离线骨架的章集合是
+    # overview/isochrone/conclusion，而 `isochrone` 正是八章全表里"恒发"那一章 ⇒ 只比图与亮点
+    # 的旧覆盖面接不住它，屏幕上还看起来完全正常。离线件 `poi.points` 恒空，
+    # 挂一张"八类点位压淡"的图等于用没有采集过的数据画可比的结论（P0-2）。
+    assert not [s["id"] for s in rep["sections"] if s.get("map_focus")], (
+        f"离线件长出了分章地图焦点：{[s['id'] for s in rep['sections'] if s.get('map_focus')]} "
+        "⇒ 离线是距离模型估算、没有真实点位，这张图无米下锅")
 
 
 # ── ⑭ 新图 option 禁坐标 ──────────────────────────────────────────────
