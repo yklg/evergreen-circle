@@ -34,6 +34,7 @@ import { useDataModeStore } from '../store/dataModeStore'
 import { useTaskRegistry } from '../store/taskRegistry'
 import LcMap from '../components/lifecircle/LcMap'
 import CellsLedgerCard from '../components/lifecircle/CellsLedgerCard'
+import DirectionBars from '../components/lifecircle/DirectionBars'
 import RegionSelector from '../components/lifecircle/RegionSelector'
 import { LC_LEGEND_JUDGE, LC_PAGE_ROOT } from '../components/lifecircle/stageContract'
 import LcStage from '../components/lifecircle/LcStage'
@@ -68,6 +69,7 @@ import {
   evidenceDiscs,
   cellsLedgerOf,
   cellVerdict,
+  shapeOfZone,
   isoCompareLabel,
   judgeRulerLabel,
   freshnessNote,
@@ -195,6 +197,10 @@ export default function LifeCirclePage() {
   /** 笔 B：口径对照环图层开关（默认关）。它回答的是"按文献那把尺重切还剩多大"，
    *  与判定尺（判一格用多大）、证据盘（查到哪儿）是三件事 ⇒ 不合并成同一个开关。 */
   const [isoCompareOn, setIsoCompareOn] = useState(false)
+  /** 方位形状图层开关（默认关，与上面三颗同一条纪律：它是解释层不是主叙事层）。
+   *  它回答的是"哪个方向走不出去"，与判定尺（判一格多大）、对照环（换那把尺还剩多大）、
+   *  证据盘（查到哪儿）是四件事 ⇒ 不合并成同一个开关。 */
+  const [shapeOn, setShapeOn] = useState(false)
   /** 笔 B 方案②：那一行**默认收起**，图例里只常驻一枚标题按钮。这不是审美选择，是量出来的：
    *  1280×720 档图例已被 `max-h` 夹住（可视 544px），常驻第三行会把内容推到 599 ⇒ 内滚 55px；
    *  只常驻标题时内容 551 ⇒ 内滚 7px。判读控件在吸底块（`LC_LEGEND_JUDGE`）里，
@@ -206,6 +212,9 @@ export default function LifeCirclePage() {
   const [blindShowAll, setBlindShowAll] = useState(false)
   /** C5：选中的判定格 `(行, 列)`。卡片格阵与地图点击共用这一个状态。 */
   const [selectedCell, setSelectedCell] = useState<[number, number] | null>(null)
+  /** 选中的方位下标 0–7。右栏那张条形卡与地图上的楔形**共用这一个状态**
+   *  （与上面 `selectedCell` 同一条通道范式：卡里点一行 ↔ 图上点一块，两侧同时反映）。 */
+  const [shapeSector, setShapeSector] = useState<number | null>(null)
   const [locating, setLocating] = useState(false)
   const [locateErr, setLocateErr] = useState('')
   /** v5 A：真实模式「定位到我」后的待确认定位（确认弹窗数据源，确认才发起体检） */
@@ -340,6 +349,11 @@ export default function LifeCirclePage() {
   const compareLabel = report ? isoCompareLabel(report) : null
   /** C4：逐格台账。取不到（`ev-2` 之前的报告、离线骨架、或台账半截不合形）⇒ 整张卡不出现。 */
   const ledger = report ? cellsLedgerOf(report) : null
+  /** 方位形状的在场判据：取不到（骑行/驾车档、离线件、早于本口径的存量件）⇒ 图例那颗勾选与
+   *  右栏那张卡**都不出现**。这次调用与 `LcMap` 内部那次是**同一出口的两次调用**
+   *  （`shapeOfZone` 是纯函数、同参同值），不是第二份口径 —— 别"顺手"把它改成从 `LcMap` 传出来，
+   *  那会让 props 变成口径的第二份真源。 */
+  const shapeCal = report ? shapeOfZone(report, 15) : null
 
   // 样区路由参数与报告 id：custom → 最近样例 kaili（仅演示分支使用）
   const effectiveScene = sceneId === 'custom' ? 'kaili' : sceneId
@@ -804,8 +818,11 @@ export default function LifeCirclePage() {
             showEvidenceDiscs={evidenceOn}
             showJudgeScale={judgeScaleOn}
             showIsoCompare={isoCompareOn}
+            showShapeSectors={shapeOn}
             selectedCell={selectedCell}
             onCellPick={setSelectedCell}
+            selectedSector={shapeSector}
+            onSectorPick={setShapeSector}
           />
 
           {/* 图例（悬浮）。⚠️ `z-10` 不是装饰：百度 GL 会在地图容器里注入 `.BMap_mask`
@@ -906,6 +923,22 @@ export default function LifeCirclePage() {
                       判盲问的是{rulerLabel}，不是眼前这一小块
                     </span>
                   </span>
+                </label>
+              )}
+              {/* 方位形状开关。**没有形状键就不出现**（同判定尺/证据盘那条纪律：摆一个勾不动的
+                  复选框等于摆一个假入口）。这一颗**故意不带副句**：八方位的读数与那句
+                  "只作方向诊断"的口径都归右栏那张条形卡声明，图例再抄一遍就是同一句话住在两处
+                  （报告页 `LifeCircleReportView.tsx:591` 早就立过这条规矩：不参与评分那句只声明一次）。
+                  也是高度预算的选择：1280 档图例已被 `max-h` 夹住，常驻多一行 ≈ 20px。 */}
+              {shapeCal && (
+                <label className="flex cursor-pointer items-start gap-1.5 text-tag font-medium text-ink-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5"
+                    checked={shapeOn}
+                    onChange={(e) => setShapeOn(e.target.checked)}
+                  />
+                  <span>方位形状（八方位最远可达）</span>
                 </label>
               )}
               {/* 笔 B · 口径对照环。方案②：常驻的只有这枚标题（+1 行标题 ≈ 21px，实测内滚 7px），
@@ -1185,6 +1218,13 @@ export default function LifeCirclePage() {
               </div>
             )}
           </div>
+          {/* 方位最远可达（八方位条形卡，ASIDE 第 5 张）。**形状键不在场就不出现** ——
+              判据在 `DirectionBars` 自己内部（`shapeOfZone` 取不到即 `return null`），
+              与上面台账卡"没有台账就不摆空卡"同一条纪律。
+              ⚠️ 它**不跟**图例那颗扇区开关走：卡读的是载荷里的 `isochrones[].shape`，
+              开关只决定图上叠不叠楔形。把卡也 gate 到 `shapeOn` 上，默认态就完全读不出方向性，
+              而图例那句"读数在右栏那张卡"会变成假话。 */}
+          <DirectionBars lc={report} minutes={15} selected={shapeSector} onPick={setShapeSector} />
         </LcStage.Panel>
       </LcStage>
 

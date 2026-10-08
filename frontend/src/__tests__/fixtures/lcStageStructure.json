@@ -203,6 +203,36 @@
                 "class": "flex flex-col gap-2"
               }
             ]
+          },
+          {
+            "tag": "DIV",
+            "class": "rounded-card border border-line bg-card p-4 shadow-card ",
+            "kids": [
+              {
+                "tag": "DIV",
+                "class": "text-aux font-semibold text-ink"
+              },
+              {
+                "tag": "DIV",
+                "class": "mt-0.5 text-tag text-ink-3"
+              },
+              {
+                "tag": "DIV",
+                "class": "mt-2 flex flex-col gap-0.5"
+              },
+              {
+                "tag": "P",
+                "class": "mt-2 text-tag leading-relaxed text-ink-3"
+              },
+              {
+                "tag": "P",
+                "class": "mt-1 text-tag leading-relaxed text-ink-3"
+              },
+              {
+                "tag": "P",
+                "class": "mt-1 text-tag leading-relaxed text-ink-3"
+              }
+            ]
           }
         ]
       }
