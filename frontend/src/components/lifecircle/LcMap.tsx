@@ -19,6 +19,7 @@ import { asBdLngLat, asBdLngLatOrNull, bmapEventLngLat, describeBMapEvent, rejec
 import type { CoordSys } from '../../lib/geo'
 import { shapeSectors } from './ShapeSectorOverlay'
 import { cellLayerPlan } from './CellLayer'
+import { LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
 import {
   layerAttr,
   layerRoster,
@@ -62,7 +63,6 @@ import {
   lcFromMeters,
   lcEvidenceDiscColor,
   lcPolyPts,
-  lcRightmost,
   lcRing,
   lcToPx,
   lcSnapshotPoiLayer,
@@ -1489,13 +1489,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       // 就是 docs/AGENTS.md §7.2 那条"一词多义，按名字搜会全错"。"两档都数得到实例"改由本属性承担。
       <div className="relative h-full w-full" data-lc-mode="fallback" data-lc-layers={rosterStr}>
         <svg viewBox={`0 0 ${LC_CANVAS.W} ${LC_CANVAS.H}`} className="block w-full cursor-crosshair select-none" role="img" aria-label="生活圈等时圈画布（降级）" onClick={onCanvasClick}>
-          <rect x={0} y={0} width={LC_CANVAS.W} height={LC_CANVAS.H} fill="#f9faf8" />
-          {[-2, -1, 0, 1, 2].map((i) => (
-            <line key={`v${i}`} x1={LC_CANVAS.W / 2 + (i * LC_CANVAS.W) / 5} y1={0} x2={LC_CANVAS.W / 2 + (i * LC_CANVAS.W) / 5} y2={LC_CANVAS.H} stroke="#e7ebe7" strokeWidth={1} />
-          ))}
-          {[-2, -1, 0, 1, 2].map((i) => (
-            <line key={`h${i}`} x1={0} y1={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} x2={LC_CANVAS.W} y2={LC_CANVAS.H / 2 + (i * LC_CANVAS.H) / 5} stroke="#e7ebe7" strokeWidth={1} />
-          ))}
+          <LcCanvasBackdrop />
 
           {wantsLayer('shape-sectors') && shapeCal
             /* 几何原点恒取 report.scene.center（形状键就是按它量的），**不是**上面那个
@@ -1524,18 +1518,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               })
             : null}
 
-          {isoZones.map((z, zi) => {
-            const ring = z.geojson.coordinates[0] ?? []
-            const [lx, ly] = lcRightmost(center, ring)
-            return (
-              <g key={z.minutes}>
-                <polygon points={lcPolyPts(center, ring)} fill={LC_ISO_COLORS[zi % LC_ISO_COLORS.length]?.fill} stroke={LC_ISO_COLORS[zi % LC_ISO_COLORS.length]?.stroke} strokeWidth={1.5} strokeLinejoin="round" />
-                <text x={lx - 4} y={ly - 6} fontSize={12} fill="#5F7B69" textAnchor="end" fontWeight={600}>
-                  {z.minutes} min
-                </text>
-              </g>
-            )
-          })}
+          <LcIsochroneBands center={center} zones={isoZones} />
 
           {cmpPts && (
             <g data-lc-iso-compare data-lc-layer="iso-compare">
@@ -1705,25 +1688,11 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
                 return <circle key={`heat-${sp.idx}`} cx={hx} cy={hy} r={2.6} fill={minuteHeatColor(sp.minutes)} opacity={0.55} />
               })}
 
-          {!secondary &&
-            lcSnapshotPoiLayer(center, poiSet.reps, Number.POSITIVE_INFINITY, poiSet.counts).map((p) => (
-              <circle key={p.key} cx={p.cx} cy={p.cy} r={5} fill={p.fill} stroke="#fff" strokeWidth={1.2} opacity={0.92}>
-                {p.title && <title>{p.cluster > 1 ? `${p.title}（该网格聚合 ${p.cluster} 点）` : p.title}</title>}
-              </circle>
-            ))}
+          {!secondary && (
+            <LcPoiDots dots={lcSnapshotPoiLayer(center, poiSet.reps, Number.POSITIVE_INFINITY, poiSet.counts)} r={5} strokeWidth={1.2} />
+          )}
 
-          {(() => {
-            const [x, y] = lcToPx(center, center[0], center[1])
-            return (
-              <g>
-                <circle cx={x} cy={y} r={14} fill="rgba(124,152,133,0.18)" stroke="#5F7B69" strokeWidth={1.5} strokeDasharray="3 3" />
-                <circle cx={x} cy={y} r={6} fill="#5F7B69" stroke="#fff" strokeWidth={2} />
-                <text x={x} y={y - 20} fontSize={12} fill="#3f5042" textAnchor="middle" fontWeight={600}>
-                  {report.scene.name}
-                </text>
-              </g>
-            )
-          })()}
+          <LcSceneCenterMark center={center} name={report.scene.name} />
           {wantsLayer('shape-sectors') && shapeCal
             /* 命中层：楔形本身画在设施点**之下**（视觉上半透明底纹不该盖住数据点），
                但那样点上有设施点的方位就永远点不动 —— e2e 实测被 `circle r=5` 拦截。

@@ -51,7 +51,6 @@ import {
   LC_CANVAS,
   LC_CAT_COLOR,
   LC_CAT_LABEL_OF,
-  LC_ISO_COLORS,
   LC_BLIND_SEV,
   LC_BLIND_FIX_STRATEGY,
   affectedOf,
@@ -62,7 +61,6 @@ import {
   LC_JUDGE_SCALE_COLOR,
   severityOf,
   lcPolyPts,
-  lcRightmost,
   lcToPx,
   lcSnapshotPoiLayer,
   scoreGrade,
@@ -93,6 +91,7 @@ import {
   residualCaliberNote,
   shapeOfZone,
 } from '../../lib/livingCircle'
+import { LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
 import { tocLinkCls } from '../../lib/reportLayout'
 import { MiniRadar } from './MiniRadar'
 import CellsLedgerCard from './CellsLedgerCard'
@@ -140,29 +139,14 @@ function useLazyInView<T extends HTMLElement>(): [RefObject<T | null>, boolean] 
 function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; shared?: boolean }) {
   const { W, H } = LC_CANVAS
   const center: LngLat = lc.scene.center
-  const isoZones = lc.isochrones
+  /* 底网格 / 等时圈族 / POI / 中心标记四族走共享装配（§13 W1）—— 与 `LcMap` 的降级分支同一份实现。
+     打印快照原本按「倒序绘制 ＋ 按 minutes 反查色序」取色，降级画布按原序；两者今天算得出
+     同一组色（载荷恒升序四档），差别由 `drawOuterFirst` 表达，**取色只剩一份口径**。 */
+  const poiSet = poiRenderSet(lc.poi.points)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="block w-full select-none" role="img" aria-label="等时圈快照">
-      <rect x={0} y={0} width={W} height={H} fill="#f9faf8" />
-      {[-2, -1, 0, 1, 2].map((i) => (
-        <line key={`v${i}`} x1={W / 2 + (i * W) / 5} y1={0} x2={W / 2 + (i * W) / 5} y2={H} stroke="#e7ebe7" strokeWidth={1} />
-      ))}
-      {[-2, -1, 0, 1, 2].map((i) => (
-        <line key={`h${i}`} x1={0} y1={H / 2 + (i * H) / 5} x2={W} y2={H / 2 + (i * H) / 5} stroke="#e7ebe7" strokeWidth={1} />
-      ))}
-      {[...isoZones].sort((a, b) => b.minutes - a.minutes).map((z) => {
-        const color = LC_ISO_COLORS[isoZones.findIndex((x) => x.minutes === z.minutes)] ?? LC_ISO_COLORS[0]
-        const ring = z.geojson.coordinates[0]
-        const [lx, ly] = lcRightmost(center, ring)
-        return (
-          <g key={z.minutes}>
-            <polygon points={lcPolyPts(center, ring)} fill={color.fill} stroke={color.stroke} strokeWidth={1.5} strokeLinejoin="round" />
-            <text x={lx - 4} y={ly - 6} fontSize={12} fill="#5F7B69" textAnchor="end" fontWeight={600}>
-              {z.minutes} min
-            </text>
-          </g>
-        )
-      })}
+      <LcCanvasBackdrop />
+      <LcIsochroneBands center={center} zones={lc.isochrones} drawOuterFirst />
       {lc.blindspots.map((b) => (
         <g key={b.id}>
           {shared ? (
@@ -178,26 +162,8 @@ function IsochroneSnapshot({ lc, shared = false }: { lc: LivingCircleReport; sha
           离线（poi.points 恒为空）时自然降级为空数组，不绘制。
           阶段 2.1/2.2：**不再传 cap** —— 报告给几个点就画几个点（旧默认 120 是渲染侧
           静默第二权威）。取数走 `poiRenderSet()` 与 LcMap live 路径同一份 `reps`。 */}
-      {(() => {
-        const set = poiRenderSet(lc.poi.points)
-        return lcSnapshotPoiLayer(center, set.reps, Number.POSITIVE_INFINITY, set.counts).map((p) => (
-          <circle key={p.key} cx={p.cx} cy={p.cy} r={6} fill={p.fill} stroke="#fff" strokeWidth={1.5} opacity={0.92}>
-            {p.title && <title>{p.cluster > 1 ? `${p.title}（该网格聚合 ${p.cluster} 点）` : p.title}</title>}
-          </circle>
-        ))
-      })()}
-      {(() => {
-        const [x, y] = lcToPx(center, center[0], center[1])
-        return (
-          <g>
-            <circle cx={x} cy={y} r={14} fill="rgba(124,152,133,0.18)" stroke="#5F7B69" strokeWidth={1.5} strokeDasharray="3 3" />
-            <circle cx={x} cy={y} r={6} fill="#5F7B69" stroke="#fff" strokeWidth={2} />
-            <text x={x} y={y - 20} fontSize={12} fill="#3f5042" textAnchor="middle" fontWeight={600}>
-              {lc.scene.name}
-            </text>
-          </g>
-        )
-      })()}
+      <LcPoiDots dots={lcSnapshotPoiLayer(center, poiSet.reps, Number.POSITIVE_INFINITY, poiSet.counts)} r={6} strokeWidth={1.5} />
+      <LcSceneCenterMark center={center} name={lc.scene.name} />
     </svg>
   )
 }

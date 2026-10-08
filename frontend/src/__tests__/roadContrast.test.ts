@@ -105,14 +105,22 @@ describe('A · 面层负向不变量（本次事故的直接防线）', () => {
   })
 
   it('三处 SVG 快照（live 降级 / 报告快照 / 归一化遮罩）的地色与面层同值', () => {
-    // 三处 rect 是独立硬编码的 `fill="#f9faf8"`；一旦只改一处，底图与快照就会出现色差台阶。
+    // §13 W1 之后，降级画布与报告快照的底 rect 只剩**一份实现**（`LcSvgCanvas` 的 `LcCanvasBackdrop`）。
+    // 原来那句"三处各自硬编码、只改一处就出色差台阶"的风险被结构性消灭了，闸因此**收紧**：
+    // 装配里必须有那颗地色字面量，两个消费方必须渲染它、且不许再自带副本。
+    expect(read('src/components/lifecircle/LcSvgCanvas.tsx'), `共享装配缺少 fill="${CANVAS_BG}" 的底 rect`)
+      .toContain(`fill="${CANVAS_BG}"`)
     for (const rel of [
       'src/components/lifecircle/LcMap.tsx',
       'src/components/lifecircle/LifeCircleReportView.tsx',
-      'src/components/lifecircle/NormalizedOverlay.tsx',
     ]) {
-      expect(read(rel), `${rel} 缺少 fill="${CANVAS_BG}" 的底 rect`).toContain(`fill="${CANVAS_BG}"`)
+      const src = read(rel)
+      expect(src, `${rel} 没渲染共享底网格装配`).toContain('<LcCanvasBackdrop />')
+      expect(src, `${rel} 又自带了一份地色副本 ⇒ 色差台阶回到原点`).not.toContain(`fill="${CANVAS_BG}"`)
     }
+    // 归一化遮罩是另一张画布（对比页圈形示意），没参与本次收装配 ⇒ 继续逐字比它的 rect。
+    expect(read('src/components/lifecircle/NormalizedOverlay.tsx'), `遮罩缺少 fill="${CANVAS_BG}" 的底 rect`)
+      .toContain(`fill="${CANVAS_BG}"`)
   })
 })
 
@@ -353,13 +361,22 @@ describe('E · 等时圈四级色阶', () => {
 
 const LC_MAP_SRC = read('src/components/lifecircle/LcMap.tsx')
 const REPORT_SRC = read('src/components/lifecircle/LifeCircleReportView.tsx')
+/** §13 W1 之后，降级画布与报告快照的等时圈族带／底 rect 只剩这一份实现。 */
+const ASSEMBLY_SRC = read('src/components/lifecircle/LcSvgCanvas.tsx')
 
 describe('F · TC-R09 跨呈现层同源（live Polygon / fallback SVG / 报告图例）', () => {
-  it('两处呈现层都从 `livingCircle` 引取色，不各自定义', () => {
-    // 报告快照恒为单图（只有 A 组），故只引 `LC_ISO_COLORS`；对比页 LcMap 双图，两张都要引。
+  it('呈现层都从 `livingCircle` 引取色，不各自定义', () => {
+    // W1 前：报告快照自己索引 `LC_ISO_COLORS`。W1 后：索引只剩装配里那一处，两个消费方经
+    // `<LcIsochroneBands>` 取带 —— 所以这条闸改成"装配引常量 ＋ 两档都渲染装配"，比原来严。
     expect(LC_MAP_SRC, 'LcMap 未引用单图色表').toContain('LC_ISO_COLORS')
     expect(LC_MAP_SRC, 'LcMap 未引用对比页色表').toContain('LC_ISO_COLORS_B')
-    expect(REPORT_SRC, 'LifeCircleReportView 未引用色表').toContain('LC_ISO_COLORS')
+    expect(ASSEMBLY_SRC, '共享装配未引用色表常量（内联色值＝第二套真源）').toContain('LC_ISO_COLORS')
+    for (const [name, src] of [
+      ['LcMap', LC_MAP_SRC],
+      ['LifeCircleReportView', REPORT_SRC],
+    ] as const) {
+      expect(src, `${name} 没渲染共享等时圈族带装配`).toContain('<LcIsochroneBands')
+    }
   })
 
   it('呈现层不得内联 rgba 色值副本（复制粘贴绕过 = 第二套真源）', () => {
@@ -367,6 +384,7 @@ describe('F · TC-R09 跨呈现层同源（live Polygon / fallback SVG / 报告�
     for (const [name, src] of [
       ['LcMap', LC_MAP_SRC],
       ['LifeCircleReportView', REPORT_SRC],
+      ['LcSvgCanvas', ASSEMBLY_SRC],
     ] as const) {
       const flat = src.replace(/\s+/g, '')
       for (const lit of literals) {
@@ -378,10 +396,13 @@ describe('F · TC-R09 跨呈现层同源（live Polygon / fallback SVG / 报告�
   it('三处取色点都经 `LC_ISO_COLORS*` 索引（含对比页双色表与降级 SVG）', () => {
     expect(LC_MAP_SRC, 'live Polygon 缺少双色表选择').toMatch(/colorSets/)
     expect(LC_MAP_SRC, 'live Polygon 未按 reportIndex 取色').toMatch(/colorSets\[ri\]\s*\?\?\s*LC_ISO_COLORS/)
-    expect(LC_MAP_SRC, 'fallback SVG 未按圈层取色').toMatch(
-      /LC_ISO_COLORS\[zi % LC_ISO_COLORS\.length\]/,
+    // 降级画布与报告快照自 W1 起共用同一颗带：取色恒按**载荷原序**取模。两档的真实差别只在绘制
+    // 顺序（`drawOuterFirst`），这条正则因此同时守住了"色只有一份口径"——谁再往里加第二处索引会红。
+    expect(ASSEMBLY_SRC, '共享装配未按圈层取色').toMatch(
+      /LC_ISO_COLORS\[zones\.indexOf\(z\) % LC_ISO_COLORS\.length\]/,
     )
-    expect(REPORT_SRC, '报告图例未按圈层取色').toMatch(/LC_ISO_COLORS\[/)
+    expect((ASSEMBLY_SRC.match(/LC_ISO_COLORS\[zones\.indexOf/g) ?? []).length, '装配里按圈层取色应当只有一处')
+      .toBe(1)
   })
 })
 
