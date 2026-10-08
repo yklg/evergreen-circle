@@ -74,6 +74,29 @@ function renderSlides() {
 
 const nextPage = () => fireEvent.keyDown(window, { key: 'ArrowRight' })
 
+/** 从页码条「N / M」里读出总页数 —— 不硬编码：跳过页的规则一改，M 就跟着变。 */
+async function slideTotal(): Promise<number> {
+  const el = await screen.findByText(/\d+\s*\/\s*\d+/)
+  const m = el.textContent?.match(/\/\s*(\d+)/)
+  expect(m, '页码条没读到总页数').toBeTruthy()
+  return Number(m![1])
+}
+
+/**
+ * 翻一页，并**等页码真的走到第 n 页**再往下走。
+ *
+ * 原来这里是一次性连按三次、然后才 `findByText` 等最终内容。页码条是每页必更新的同步点，
+ * 拿它当栅栏之后「等到页码」就等于「等到渲染」。改动前那种写法在真 CI 上抽中过：
+ * 2026-10-08 `e821d47` 首次 run 红在 `findByText(「行程与路线」)`（testing-library 默认 1000ms），
+ * 重跑同一条 commit 即全绿 ⇒ 计时抖动而非内容回归（本地默认／2 并发／全串行三档调度
+ * 各 1236 passed 也抽不中）。**断言一条没动**，只是把等待补到每一步。
+ * ⚠️ 正则前后各带一个数字边界：`2 / 5` 是 `12 / 5` 的子串，不加会串页。
+ */
+async function goToPage(n: number, total: number): Promise<void> {
+  nextPage()
+  await screen.findByText(new RegExp(`(?<!\\d)${n}\\s*/\\s*${total}(?!\\d)`))
+}
+
 describe('F3 幻灯片类型映射', () => {
   it('F3-1 guide 焦点页取 route（route 缺则回落 transport）；assessment 取 accessibility', async () => {
     // guide：route 与 transport 同时存在 → 取 route（焦点页 h1 = 「行程与路线」+ route 内容）
@@ -87,10 +110,11 @@ describe('F3 幻灯片类型映射', () => {
     )
     const g = renderSlides()
     await screen.findByText('测试报告')
-    nextPage() // 2 执行摘要
-    nextPage() // 3 关键数据速览
-    nextPage() // 4 焦点页
-    expect(await screen.findByText('行程与路线')).toBeTruthy()
+    const total = await slideTotal()
+    await goToPage(2, total) // 执行摘要
+    await goToPage(3, total) // 关键数据速览
+    await goToPage(4, total) // 焦点页
+    expect(screen.getByText('行程与路线')).toBeTruthy()
     expect(screen.getByText('逐日路线·核心判断')).toBeTruthy()
     expect(screen.queryByText('交通与抵达·核心判断')).toBeNull()
     g.unmount()
@@ -101,8 +125,11 @@ describe('F3 幻灯片类型映射', () => {
     )
     const g2 = renderSlides()
     await screen.findByText('测试报告')
-    nextPage(); nextPage(); nextPage()
-    expect(await screen.findByText('交通与抵达·核心判断')).toBeTruthy()
+    const total2 = await slideTotal()
+    await goToPage(2, total2)
+    await goToPage(3, total2)
+    await goToPage(4, total2)
+    expect(screen.getByText('交通与抵达·核心判断')).toBeTruthy()
     g2.unmount()
 
     // assessment：焦点页取 accessibility，且绝不出现 guide 的「行程与路线」
@@ -116,11 +143,14 @@ describe('F3 幻灯片类型映射', () => {
     )
     renderSlides()
     await screen.findByText('测试报告')
-    nextPage(); nextPage(); nextPage()
-    expect(await screen.findByText('可达性与配套')).toBeTruthy()
+    const total3 = await slideTotal()
+    await goToPage(2, total3)
+    await goToPage(3, total3)
+    await goToPage(4, total3)
+    expect(screen.getByText('可达性与配套')).toBeTruthy()
     expect(screen.getByText('可达性·核心判断')).toBeTruthy()
-    nextPage() // 5 洞察页
-    expect(await screen.findByText('研判与反共识')).toBeTruthy()
+    await goToPage(5, total3) // 洞察页
+    expect(screen.getByText('研判与反共识')).toBeTruthy()
     expect(screen.getByText('综合研判')).toBeTruthy()
     expect(screen.queryByText('行程与路线')).toBeNull()
   })
