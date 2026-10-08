@@ -300,6 +300,62 @@ export function lcToPx(center: LngLat, lng: number, lat: number): [number, numbe
   return [W / 2 + (mx / R) * (W / 2), H / 2 - (my / R) * (H / 2)]
 }
 
+export interface LcFrame { x: number; y: number; w: number; h: number }
+
+/**
+ * 内容包围盒 → 画框（分章静态地图拿它当 `viewBox`）。
+ *
+ * 为什么需要它：`lcToPx` 的画布恒以 `scene.center` 为原点、恒 860×620（研究半径 5km 的等距近似），
+ * 而真实样区的可达场通常只占其中一小块 —— 凯里 live 实测内容包围盒 327×267，只占画布的
+ * 38% × 43%。主图有底图瓦片填掉那片空白所以看不出问题，**静态分章图没有底图**，于是读者看到
+ * "一小坨图歪在纸边中间"。收框把它放大居中，投影与几何一字不动。
+ *
+ * 口径：参与包围盒的就是画布上真画出来的那些 —— 等时圈族环、`poiRenderSet` 的代表点
+ * （与 `lcSnapshotPoiLayer` 同一份点集，不是第二套取数）、盲区面与中心、场景中心自己。
+ * 空载荷/退化（不足两点、全非有限值）退回整幅画布，绝不产 NaN 或零宽高框。
+ */
+export function lcContentFrame(lc: LivingCircleReport): LcFrame {
+  const full: LcFrame = { x: 0, y: 0, w: LC_CANVAS.W, h: LC_CANVAS.H }
+  const center = lc.scene?.center as LngLat | undefined
+  if (!Array.isArray(center) || center.length < 2) return full
+
+  const xs: number[] = []
+  const ys: number[] = []
+  const push = (lng: number, lat: number): void => {
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return
+    const [x, y] = lcToPx(center, lng, lat)
+    if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y) }
+  }
+  const pushRing = (ring: LngLat[] | undefined): void => {
+    for (const p of ring ?? []) if (Array.isArray(p) && p.length >= 2) push(p[0], p[1])
+  }
+
+  for (const z of lc.isochrones ?? []) pushRing(z.geojson?.coordinates?.[0])
+  for (const b of lc.blindspots ?? []) {
+    pushRing(b.polygon?.coordinates?.[0])
+    if (Array.isArray(b.center) && b.center.length >= 2) push(b.center[0], b.center[1])
+  }
+  for (const p of poiRenderSet(lc.poi?.points ?? []).reps) {
+    if (Array.isArray(p?.lnglat) && p.lnglat.length >= 2) push(p.lnglat[0], p.lnglat[1])
+  }
+  push(center[0], center[1])
+  if (xs.length < 2) return full
+
+  const minX = Math.min(...xs); const maxX = Math.max(...xs)
+  const minY = Math.min(...ys); const maxY = Math.max(...ys)
+  const padX = Math.max((maxX - minX) * 0.08, 24)
+  const padY = Math.max((maxY - minY) * 0.08, 24)
+  const w = maxX - minX + padX * 2
+  const h = maxY - minY + padY * 2
+  if (!(w > 0) || !(h > 0)) return full
+  return { x: minX - padX, y: minY - padY, w, h }
+}
+
+/** 画框 → `viewBox` 字符串（一位小数足够：画布本身是 860×620 的整数域）。 */
+export function lcFrameViewBox(f: LcFrame): string {
+  return `${f.x.toFixed(1)} ${f.y.toFixed(1)} ${f.w.toFixed(1)} ${f.h.toFixed(1)}`
+}
+
 /**
  * 米偏移 → 经纬度：`lcMeters` 的**逆**，全仓唯一实现。
  *

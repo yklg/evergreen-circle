@@ -63,6 +63,8 @@ import {
   LC_JUDGE_SCALE_COLOR,
   severityOf,
   lcPolyPts,
+  lcContentFrame,
+  lcFrameViewBox,
   lcToPx,
   lcSnapshotPoiLayer,
   scoreGrade,
@@ -251,11 +253,13 @@ function LcChapterMap({ lc, focus, secTitle, shared }: {
   secTitle: string
   shared: boolean
 }) {
-  const { W, H } = LC_CANVAS
   const center: LngLat = lc.scene.center
   const poiSet = poiRenderSet(lc.poi.points)
+  // 画框收到内容包围盒 + `h-full` 填满槽：投影一字不动，只是不再让一小坨图漂在纸边中间，
+  // 也不再让 SVG 按宽度自计算出 612px 高、溢出 340px 的槽去压住下面那句图注。
+  const frame = lcFrameViewBox(lcContentFrame(lc))
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full select-none" role="img" aria-label={`${secTitle} · 本章设施分布`}>
+    <svg viewBox={frame} preserveAspectRatio="xMidYMid meet" className="block h-full w-full select-none" role="img" aria-label={`${secTitle} · 本章设施分布`}>
       <LcCanvasBackdrop />
       <LcIsochroneBands center={center} zones={lc.isochrones} drawOuterFirst />
       <LcStaticBlindLayer
