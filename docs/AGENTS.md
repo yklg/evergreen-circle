@@ -328,6 +328,13 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
    `caliber.reach_full_min`（今天 20min，是刻意的满分线），15min 只是四档等值线之一。
 4. 盲区章的「1km」是**真** 1km（由 `missing_facilities` / `nearest[].distance_m` 驱动），
    合法，不要顺手改掉。
+5. 两个报告页的正文折叠门槛**不同**是记录在案的决定，不许"顺手统一"：调研侧
+   `pages/ReportPage.tsx` 的 `COLLAPSE_MIN_PARAS = 0`（C1 结论先行 ⇒ 只要有一段就收进折叠），
+   生活圈侧 `lifecircle/LifeCircleReportView.tsx` 的 `= 2`（改动前落库的报告只有 2 段，
+   一律折叠会让老报告观感凭空变样）。两侧唯一的同源硬约束是**类名** `report-body-collapse`：
+   beforeprint 按类名选节点强制展开（`ReportPage.tsx` 的 `COLLAPSE` 常量），换名 = 导出 PDF 丢正文。
+   判据 = `__tests__/reportBodyCollapsePolicy.test.tsx`（调研侧那条是"统一阈值"的唯一闸 ——
+   `reportLayoutC1` 的 C-F2 用三段夹具，把 0 改成 2 它照样绿）。
 
 
 ### 7.4 形状口径（第五把尺：**只诊断，不入分**）
@@ -444,3 +451,15 @@ UI 侧它是**默认关**的图层，且**不进 `fitPts`** —— 勾一次不�
    一把"摘掉发射行必须红"的变异刀、若它进了行级归属再加一把"渗进不该拦的行"的刀。
 8. 跨端数值若也换了（新口径自带阈值/容差），照 §7.4 那条：两端各留一份 + 由
    `test_fixture_mirror.py` 逐条钉相等，**不许假装 TS 能 import Python 常量**。
+
+### 7.6 `highlights` 一词两义（**按名字搜会全错，必须按 import 来源认**）
+
+| 出现处 | 是什么 | 谁产出 | 谁消费 |
+|---|---|---|---|
+| `Report.sections[].highlights` | **章首亮点卡**（一句一条的读数要点） | 后端 `diagnosis_templates._highlight_items`（全局三键 spread/blindspot/triad）+ `_chapter_highlight_items`（章级自有句），统一出口 `_section_highlights` | 前端 `LifeCircleReportView.tsx` 的亮点卡列表；`ReportBriefView` `slice(0,4)`；`SlidesPage` `slice(0,6)`；`lib/chapterMap.ts` **全量**转导图叶子 |
+| `store/annotationStore.Highlight` | **用户划词批注**（选中正文文字加的标注，带颜色与评论） | 前端 `ReportPage.tsx` 的 `handleHighlight` | `VEditableBlock` 的文本高亮；`ReportPage.tsx` 的 `forceOpen = editMode \|\| highlights.length > 0` |
+
+⚠️ 最容易踩的一次：把 `ReportPage.tsx:86` 那句 `forceOpen` 读成"本章有亮点卡就自动展开正文"——
+它吃的其实是**划词批注**（`:563` 传的是 `reportHls.filter(h => h.sectionId === sec.id)`）。
+按这个误读去推生活圈，会得出"加了亮点正文就会展开"的假结论；生活圈没有划词批注这套功能，
+`forceOpen` 搬不过去，也不该搬。与 §7.2 的 `covered` 同族：**同名不同义，认来源不认名字。**

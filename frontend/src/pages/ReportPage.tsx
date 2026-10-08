@@ -60,6 +60,20 @@ const HL_LABEL: Record<HighlightColor, string> = {
 }
 
 /**
+ * 正文折叠门槛：**0 = 只要有一段就收进 `<details>`**。
+ *
+ * 这不是"忘了写阈值"——C1 改版（结论先行）刻意把全部段落都收起来，让每章先撞
+ * 核心判断 + 图表 + 结构化块，正文按需展开。判据 = `__tests__/reportLayoutC1.test.tsx`
+ * 的 C-F2（默认折叠但内容不卸载）与 `__tests__/reportBodyCollapsePolicy.test.tsx`。
+ *
+ * ⚠️ 生活圈报告页的门槛是 **2**（`lifecircle/LifeCircleReportView.tsx:42`）——
+ * **两边不同是各自记录在案的决定，不是漏写**：那边改动前落库的报告只有 2 段，
+ * 一律折叠会让老报告观感凭空变样。唯一的同源硬约束是类名 `report-body-collapse`
+ * （下面 beforeprint 按类名选节点强制展开，换名 = 导出 PDF 丢正文）。
+ */
+const COLLAPSE_MIN_PARAS = 0
+
+/**
  * 章节正文（C1）：移除首段评注直出，全部段落收进 <details> 折叠。
  * 折叠无条件渲染：编辑模式或本章有高亮命中时一次性置 open（评审②），
  * 其后用户仍可手动折叠；段落编辑键 `${secId}-p${i}` 与折叠前一致。
@@ -103,6 +117,11 @@ function VSectionProse({
       highlights={highlights}
     />
   )
+  // 门槛为 0 时下面这条短路分支今天不可达；它存在是为了让上面那个常量**真的说话**——
+  // 否则"申报式门槛"只是个改了也不改变行为的装饰，比不写更坏。
+  if (paragraphs.length <= COLLAPSE_MIN_PARAS) {
+    return <div className="mt-4 space-y-3">{paragraphs.map((p, i) => renderP(p, i))}</div>
+  }
   return (
     <div className="mt-4">
       <details

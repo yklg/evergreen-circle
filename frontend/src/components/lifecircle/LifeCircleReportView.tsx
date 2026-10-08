@@ -38,7 +38,13 @@ import {
 } from 'lucide-react'
 
 /** 正文超过这个段数才折叠：改动前落库的报告是 2 段，一律折叠会让老报告的观感凭空变样
- *  （读时无版本升级，见 db.py:1559-1586）。加深层（≥3 段）自然进入折叠态。 */
+ *  （读时无版本升级，见 db.py:1559-1586）。加深层（≥3 段）自然进入折叠态。
+ *  判据 = `__tests__/lcReportBodyBlocks.test.tsx` 的 B1（≤2 段不折叠）与 B3（>2 段必须折叠），
+ *  两侧门槛对照见 `__tests__/reportBodyCollapsePolicy.test.tsx`。
+ *  ⚠️ 调研侧 `pages/ReportPage.tsx` 的同名常量是 **0**（C1 决定：全部段落一律收进折叠）——
+ *  两个数不同是各自记录在案的决定，**不是漏写**；唯一的同源硬约束是类名
+ *  `report-body-collapse`：ReportPage 的 beforeprint 按**类名**选节点强制展开，
+ *  换任何别的类名 = 生活圈正文在导出的 PDF 里整段消失（评审 P0-3）。 */
 const COLLAPSE_MIN_PARAS = 2
 import type { Report, LivingCircleReport, LngLat, BlindSpot, ForensicAccount } from '../../types'
 import {
