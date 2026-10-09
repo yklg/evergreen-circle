@@ -37,6 +37,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.data import expert_by_id
 from app.living_circle.category_rule import CATEGORY_RULES
 from app.living_circle.isochrone import has_interpolation_form, reach_flags
+from app.living_circle.seat_registry import (
+    ARTIFACT_SEAT,
+    SECTION_SEAT,
+    TEAM_FALLBACK,
+    artifact_seat,
+)
 
 
 def sampling_counts(lc: Dict[str, Any]) -> Tuple[int, int, int]:
@@ -140,6 +146,26 @@ def _expert(eid: str) -> Dict[str, str]:
 
 def _expert_name(eid: str) -> str:
     return _expert(eid)["name"]
+
+
+def _section_author(section_id: str) -> str:
+    """章节署名一律经 `SECTION_SEAT` 派生 —— 席位 id 不许再内联在装配代码里。
+
+    查不到即抛 KeyError 而不是回落成空署名：装配是确定性主链，"某章忘了登记席位"
+    必须当场炸出来，静默署给上一个人正是这张表要消灭的那族病。
+    `tests/test_lc_seat_registry_single_source.py` 的行为判据保证凡带 claims 的章都在表里。
+    """
+    return _expert_name(SECTION_SEAT[section_id])
+
+
+def _artifact_name(artifact: str) -> str:
+    """证据的 `collected_by`（报告载荷侧）：由注册表席位派生，不再硬写姓名。
+
+    ⚠️ 这里发的是**姓名**，而 SSE 的 `collected_by` 发的是**席位 id** —— 两个空间并存
+    是已知债务，统一成 id 属 A2（要付一次报告代次升级 + 金标重取）。改派生不改值：
+    `_expert_name(ARTIFACT_SEAT["measure"]) == "路遥川"` 与今天的字面量逐字相同。
+    """
+    return _expert_name(artifact_seat(artifact))
 
 
 def _fmt_min(m) -> str:
@@ -770,7 +796,7 @@ def _sec_medical(lc: dict) -> dict:
                      + (f"：圈内 {in_circle} 处中基层医疗门槛项 {req} 处 ⇒ 覆盖度 {_pct(cov)}"
                         if req is not None else f"：圈内覆盖度 {_pct(cov)}")),
             "field": "coverage", "evidence_ids": [f"ev-lc-poi-medical"],
-            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-001"),
+            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _section_author("medical"),
         }],
         "source_evidence_ids": [f"ev-lc-poi-medical"],
     }
@@ -803,7 +829,7 @@ def _sec_education(lc: dict) -> dict:
                      + (f"；覆盖度 {_pct(cov)}（分子取门槛项 {req} 处）" if req is not None else f"；覆盖度 {_pct(cov)}")
                      + f" ⇒ 置信度 {'high' if cov >= 0.75 else 'medium'}（判据是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）"),
             "field": "coverage", "evidence_ids": ["ev-lc-poi-education"],
-            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-002"),
+            "confidence": "high" if cov >= 0.75 else "medium", "cross_validated": True, "author": _section_author("education"),
         }],
         "source_evidence_ids": ["ev-lc-poi-education"],
     }
@@ -829,7 +855,7 @@ def _sec_market(lc: dict) -> dict:
             "claim_id": "c-lc-market-1",
             "text": f"菜市场三要素{_triad_claim(triad)}；购物覆盖 {_pct(_cov_score(sp))}",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-market"],
-            "confidence": "high" if _cov_score(mk) >= 0.75 else "medium", "cross_validated": True, "author": _expert_name("L2-004"),
+            "confidence": "high" if _cov_score(mk) >= 0.75 else "medium", "cross_validated": True, "author": _section_author("market"),
         }],
         "source_evidence_ids": ["ev-lc-poi-market"],
     }
@@ -877,7 +903,7 @@ def _sec_elderly(lc: dict) -> dict:
             "claim_id": "c-lc-elderly-1",
             "text": f"养老配置{_LC_ELDERLY_UNDETECTED_CLAIM}" if missing else "养老配置覆盖正常",
             "field": "coverage", "evidence_ids": ["ev-lc-poi-elderly"],
-            "confidence": "high" if missing else "medium", "cross_validated": False, "author": _expert_name("L2-003"),
+            "confidence": "high" if missing else "medium", "cross_validated": False, "author": _section_author("elderly"),
         }],
         "source_evidence_ids": ["ev-lc-poi-elderly"],
     }
@@ -901,7 +927,7 @@ def _sec_isochrone(lc: dict, ev_id: str) -> dict:
             "claim_id": "c-lc-isochrone-1",
             "text": f"15 分钟步行可达圈约 {next((a for m_, a in areas if m_ == 15), 0):.2f} km²，{len(lc.get('blindspots', []))} 处盲区均位于圈内覆盖空洞",
             "field": "reachability", "evidence_ids": [ev_id],
-            "confidence": "high", "cross_validated": True, "author": _expert_name("L2-005"),
+            "confidence": "high", "cross_validated": True, "author": _section_author("isochrone"),
         }],
         "charts": [{"chart_id": "chart-isochrone-area", "type": "bar", "title": "分级步行等时圈面积（km²）", "option": _chart_isochrone(lc)},
                    {"chart_id": "chart-isochrone-minutes", "type": "bar", "title": "各类别最近可达耗时（分钟）", "option": _chart_minutes(lc)}],
@@ -1371,7 +1397,7 @@ def _sec_blindspot(lc: dict) -> dict:
                 f"建议 {_fix_short(r['fix'])}"
             ),
             "field": "blindspot", "evidence_ids": [f"ev-lc-bs-{r['id']}"],
-            "confidence": "high", "cross_validated": True, "author": _expert_name("L3-002"),
+            "confidence": "high", "cross_validated": True, "author": _section_author("blindspot"),
         }
         for r in rows
     ]
@@ -1466,7 +1492,7 @@ def _sec_conclusion(lc: dict) -> dict:
             "claim_id": "c-lc-conclusion-1",
             "text": f"样区综合 {total} 分（{_grade(total)}），首要整改方向：{suggestions[0].lstrip('· ') if suggestions else '持续监测'}",
             "field": "conclusion", "evidence_ids": [f"ev-lc-bs-{b['id']}" for b in lc.get("blindspots", [])],
-            "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
+            "confidence": "high", "cross_validated": True, "author": _section_author("conclusion"),
         }],
         "highlights": _section_highlights(lc, "conclusion"),
         # 结论章没有焦点对象：能画的焦点都在前面各章，这里再挂一张只是把别章的图重画一遍。
@@ -1500,19 +1526,19 @@ def build_evidence(lc: dict) -> List[dict]:
         "source_url": "live://measure", "source_type": "api_measure",
         "title": f"采样点测时记录（{_n} 点）",
         "excerpt": f"批量算路返回 {_timed} 条耗时，其中圈内可达 {_in_reach} 条",
-        "credibility": 0.95, "collected_by": "路遥川", "captured_at": lc.get("generated_at", ""), "domain": "walkability",
+        "credibility": 0.95, "collected_by": _artifact_name("measure"), "captured_at": lc.get("generated_at", ""), "domain": "walkability",
     }]
     for c in lc.get("poi", {}).get("categories", []):
         ev.append({
             "evidence_id": f"ev-lc-poi-{c['category']}", "source_url": "live://poi", "source_type": "poi_search",
             "title": f"{c['label']} POI 检索", "excerpt": f"命中 {c['total']} 处，圈内 {c['in_circle']} 处",
-            "credibility": 0.92, "collected_by": "苏堤春", "captured_at": lc.get("generated_at", ""), "domain": c["category"],
+            "credibility": 0.92, "collected_by": _artifact_name("collect"), "captured_at": lc.get("generated_at", ""), "domain": c["category"],
         })
     for b in lc.get("blindspots", []):
         ev.append({
             "evidence_id": f"ev-lc-bs-{b['id']}", "source_url": "live://blindspot", "source_type": "grid_scan",
             "title": f"盲区点位 {b['id']}", "excerpt": f"1km 内无 {'、'.join(b.get('missing_facilities', []))}",
-            "credibility": 0.98, "collected_by": "许映川", "captured_at": lc.get("generated_at", ""), "domain": "coverage",
+            "credibility": 0.98, "collected_by": _artifact_name("blindspot"), "captured_at": lc.get("generated_at", ""), "domain": "coverage",
         })
     return ev
 
@@ -1562,7 +1588,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
                 "claim_id": "c-lc-offline-1",
                 "text": "离线估算模式：不产出可比评分/盲区，待实时体检",
                 "field": "conclusion", "evidence_ids": [],
-                "confidence": "high", "cross_validated": True, "author": _expert_name("L3-001"),
+                "confidence": "high", "cross_validated": True, "author": _section_author("conclusion"),
             }],
             "source_evidence_ids": [],
         },
@@ -1607,11 +1633,9 @@ def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dic
     experts = team_info.get("expert_ids") if isinstance(team_info, dict) else None
     
     if not experts:
-        # 保底：决策层 + 核心策略顾问 + 关键方法专家
-        experts = [
-            "L3-001", "L3-002", "L3-003", "L2-001", "L2-002", "L2-003",
-            "L2-004", "L2-005", "L2-008", "L1-001", "L1-004", "L1-005", "L1-008",
-        ]
+        # 装配期兜底名单：见 seat_registry 的文件头 —— 它与编排期的 10 席保底队
+        # **故意不同**（多出的是"每章至少有一位可署名的人"的覆盖需要），不要合并。
+        experts = list(TEAM_FALLBACK)
     
     reasons = team_info.get("reasons", []) if isinstance(team_info, dict) else []
     dispatch = [

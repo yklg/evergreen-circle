@@ -18,13 +18,14 @@ from app.core.pipeline.living_circle import (
     living_circle_pipeline,
 )
 from app.data import load_experts
-
-# Phase 6：诊断模板 fallback 保底团队（动态编排失败时使用）
-DISPATCH_IDS = (
-    "L3-001", "L3-002", "L3-003",
-    "L2-001", "L2-002", "L2-003", "L2-004", "L2-005", "L2-008",
-    "L1-001", "L1-004", "L1-005", "L1-008",
+from app.living_circle.seat_registry import (
+    SECTION_SEAT as _SECTION_SEAT,
+    TEAM_FALLBACK as _TEAM_FALLBACK,
 )
+
+# Phase 6：诊断模板 fallback 保底团队（动态编排失败时使用）。
+# 这张名单与下面的 SECTION_SEAT 都**不在本文件抄写** —— 唯一出口是席位注册表。
+DISPATCH_IDS = _TEAM_FALLBACK
 
 KAILI = {
     "scene_name": "凯里老街",
@@ -109,20 +110,10 @@ def test_report_authors_and_reasons_come_from_roster(signed_report):
 
 
 # ── 取错域的反向钉（本轮根因的结构性防线）──────────────────────────
-# 章节 → 席位 id：逐条对照 `diagnosis_templates.py` 的 `_sec_*` 构造点
-#   :592 medical→L2-001 / :624 education→L2-002 / :648 market→L2-004
-#   :693 elderly→L2-003 / :714 isochrone→L2-005 / :981 blindspot→L3-002
-#   :1069 conclusion→L3-001
-# A2（报告瘦身）会把这张表搬进生产注册表；在那之前它是本文件与规范化脚本共用的口径。
-SECTION_SEAT = {
-    "medical": "L2-001",
-    "education": "L2-002",
-    "market": "L2-004",
-    "elderly": "L2-003",
-    "isochrone": "L2-005",
-    "blindspot": "L3-002",
-    "conclusion": "L3-001",
-}
+# 章节 → 席位 id 取自生产注册表 `app/living_circle/seat_registry.SECTION_SEAT`。
+# 本文件原先自带一份、`scripts/normalize_report_signatures.py` 再自带一份，与装配代码三处
+# 并存 —— A2 挂账的"搬进生产注册表"已由 C1 落地，这里改为 import，不再抄。
+SECTION_SEAT = _SECTION_SEAT
 
 
 def test_no_travel_only_persona_appears_anywhere_in_report(signed_report):

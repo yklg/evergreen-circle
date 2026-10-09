@@ -5,8 +5,8 @@
 仍写着「苏明哲·行程策略专家」，且同地点 30 天缓存会继续复用（`living_circle.py:274-285`
 命中即复用既有 report_id，连新算的 team 都不落库）。
 
-算法是**结构性直写**，不做姓名反查：章节 id → 席位 id 取自实码
-（`diagnosis_templates.py:592/624/648/693/714/981/1069`），再要求"当前 author 必须等于
+算法是**结构性直写**，不做姓名反查：章节 id → 席位 id 取自生产注册表
+（`app/living_circle/seat_registry.SECTION_SEAT`，与装配代码同源），再要求"当前 author 必须等于
 travel 名册里该席位 id 的姓名"才替换。
 为什么不能按姓名反查：两本名册存在**交叉重名** —— travel L2-005 也叫「温叙白」，而生活圈
 L3-001 才是「温叙白」。按姓名反查会把可达性章正确的 L2-005 席位改成生活圈 L3-001 的人。
@@ -29,16 +29,11 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent
 DATA = BACKEND / "app" / "data"
 
-#: 章节 id → 席位 id（与 `diagnosis_templates.py` 的 `_sec_*` 构造点一一对应）
-SECTION_SEAT = {
-    "medical": "L2-001",
-    "education": "L2-002",
-    "market": "L2-004",
-    "elderly": "L2-003",
-    "isochrone": "L2-005",
-    "blindspot": "L3-002",
-    "conclusion": "L3-001",
-}
+# 章节 id → 席位 id 的唯一出口是生产注册表；这份脚本**不再自带一张表**
+# （原先这里抄了一份、tests/test_expert_signature_derivation.py 又抄一份，
+#  与装配代码三处并存 —— 改一处必漏两处）。
+sys.path.insert(0, str(BACKEND))
+from app.living_circle.seat_registry import SECTION_SEAT  # noqa: E402
 
 
 def _roster(fname: str) -> dict[str, dict]:

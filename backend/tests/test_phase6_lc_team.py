@@ -19,12 +19,12 @@ from pathlib import Path
 import pytest
 
 from app.core.pipeline.lc_team import (
-    _FALLBACK_SEATS,
     _all_categories_text,
     _fallback_team,
     _roster_index,
     select_living_circle_team,
 )
+from app.living_circle.seat_registry import FALLBACK_TEAM
 
 LC_TEAM_SRC = Path(__file__).resolve().parent.parent / "app" / "core" / "pipeline" / "lc_team.py"
 PIPELINE_SRC = Path(__file__).resolve().parent.parent / "app" / "core" / "pipeline" / "living_circle.py"
@@ -93,34 +93,12 @@ class TestFallbackTeam:
         assert len(ids) == len(reasons)
         assert len(set(ids)) == len(ids), "保底名单不该有重复席位"
 
-    def test_advisors_match_living_circle_roles(self):
-        """四枚领域顾问席位必须真的是管这件事的人（职位文字含对应领域）。"""
-        from app.data import load_experts
-
-        role = {e["id"]: e["role_title"] for e in load_experts("living_circle")}
-        expect = {
-            "L2-001": "医疗",
-            "L2-002": "教育",
-            "L2-003": "养老",
-            "L2-004": "菜市",
-        }
-        for seat, keyword in expect.items():
-            assert keyword in role[seat], f"{seat} 的职位是「{role[seat]}」，不含「{keyword}」，保底名单要重排"
-
-    def test_method_seats_cover_the_four_pipeline_steps(self):
-        """定位 / 核验 / 测时 / 评分四步都要有对应方法专家。"""
-        from app.data import load_experts
-
-        role = {e["id"]: e["role_title"] for e in load_experts("living_circle")}
-        ids, _ = _fallback_team()
-        for seat, keyword in (
-            ("L1-025", "空间定位"),
-            ("L1-030", "核验"),
-            ("L1-027", "可达性"),
-            ("L1-032", "评分建模"),
-        ):
-            assert seat in ids, f"保底名单缺方法专家 {seat}"
-            assert keyword in role[seat], f"{seat} 职位是「{role[seat]}」，不含「{keyword}」"
+    # 席位↔名册职位的互指判据已上收到 `tests/test_lc_seat_registry_consistency.py`
+    # （它覆盖注册表五张表里的**每一个**席位，而不是这里手点的 8 对）。
+    # 原先这里的 `test_advisors_match_living_circle_roles` /
+    # `test_method_seats_cover_the_four_pipeline_steps` 各抄了一份「席位→关键词」，
+    # 与保底名单本身是同一件事的第二份抄本 —— 删它们的前提是新判据是**超集**，
+    # 那条前提由 consistency 文件里的「FALLBACK_TEAM 全员必须被 _fallback_team() 交付」保证。
 
     def test_dropped_seat_is_not_silently_kept(self, monkeypatch):
         """名册里查不到的席位必须被摘掉，不能交出一个悬空 id。"""
@@ -202,6 +180,7 @@ class TestNoGhostCategoryPlumbing:
         "_FACILITY_DOMAINS.": "设施域席位表的使用点",
         "_FACILITY_DOMAINS =": "设施域席位表的定义",
         "_FALLBACK_TEAM =": "无人引用的旧保底常量",
+        "_FALLBACK_SEATS =": "编排期保底名单的第二份抄本（唯一出口是 seat_registry.FALLBACK_TEAM）",
     }
 
     @pytest.mark.parametrize("src", [LC_TEAM_SRC, PIPELINE_SRC], ids=["lc_team", "living_circle"])
@@ -210,7 +189,15 @@ class TestNoGhostCategoryPlumbing:
         hit = {shape: why for shape, why in self.DEAD_SHAPES.items() if shape in text}
         assert not hit, f"{src.name} 里还有：{hit}"
 
-    def test_fallback_seats_are_the_only_team_constant(self):
-        """`_FALLBACK_SEATS` 必须是唯一一份保底名单来源，且席位都在名册里。"""
+    def test_fallback_team_is_delivered_from_the_registry(self):
+        """保底队必须由注册表交付：席位都在名册里，且 `_fallback_team()` 逐条等于 `FALLBACK_TEAM`。
+
+        原判据是「`_FALLBACK_SEATS` 必须是唯一一份保底名单来源」—— 那张常量已收进
+        `seat_registry.FALLBACK_TEAM`（形状残留由上面的 DEAD_SHAPES 判据钉死），
+        这里改判"交付结果 == 注册表内容"，比数源码更硬。
+        """
         roster = _roster_index()
-        assert all(eid in roster for eid, _ in _FALLBACK_SEATS)
+        assert all(s.seat_id in roster for s in FALLBACK_TEAM), "保底名单有席位不在生活圈名册"
+        ids, reasons = _fallback_team()
+        assert ids == [s.seat_id for s in FALLBACK_TEAM]
+        assert reasons == [s.duty for s in FALLBACK_TEAM]

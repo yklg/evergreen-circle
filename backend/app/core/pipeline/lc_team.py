@@ -14,25 +14,16 @@ from typing import Any, Dict, List, Tuple
 logger = logging.getLogger(__name__)
 
 
-# ── 保底团队（决策层 2 ＋ 四领域顾问 ＋ 四方法专家）─────────────────
+# ── 保底团队：席位与理由见 `app/living_circle/seat_registry.FALLBACK_TEAM` ──
+# 这里原先自己抄着一份 `_FALLBACK_SEATS`（10 席 + 理由）。它和章节署名表、装配期 13 人
+# 名单、事件归属表是同一件事的四份抄本，改一处必漏三处 ⇒ 收进注册表唯一出口。
+#
 # 刻意**不按设施类别裁剪**：原先有一张「类别→顾问」的映射表，但它依赖的
 # `facility_categories` 参数前端从未传过、`TaskParams` 里也没这个字段，且组队排在
 # POI 采集之前（类别那时还没确定）⇒ 那条分支线上永远走不到，只有测试在跑。
 # 同时它还有席位错位（elderly 挂的 L1-019/L1-020 其实是「无障碍环境顾问」
 # 「儿童友好规划师」，机构养老顾问是 L1-008）。与其留一份假装在工作的表，
 # 不如把保底名单写成一份确定的、与名册职位对得上的组合。
-_FALLBACK_SEATS: Tuple[Tuple[str, str], ...] = (
-    ("L3-001", "统筹体检全流程、统一指标口径并终审签发"),
-    ("L3-002", "把控设施覆盖与评分建模的逻辑严谨性"),
-    ("L2-001", "负责医疗类设施的配置密度与就医可达性评估"),
-    ("L2-002", "负责教育类设施的学位与就近入学情况评估"),
-    ("L2-003", "负责养老与托育设施的配置评估"),
-    ("L2-004", "负责菜市场与商业配套的覆盖评估"),
-    ("L1-025", "负责中心点定位与坐标解析"),
-    ("L1-030", "负责设施点位检索与核验"),
-    ("L1-027", "负责步行耗时测时与可达性测算"),
-    ("L1-032", "负责四维体检评分计算与建模"),
-)
 
 
 def _all_categories_text() -> str:
@@ -128,14 +119,16 @@ def select_living_circle_team(
 
 
 def _fallback_team() -> Tuple[List[str], List[str]]:
-    """保底团队：决策层 2 ＋ 四领域顾问 ＋ 四方法专家（席位与理由见 `_FALLBACK_SEATS`）。
+    """保底团队：决策层 2 ＋ 四领域顾问 ＋ 四方法专家（席位与理由见注册表）。
 
     名册里查不到的席位直接跳过并记 warning —— 保底名单自己绝不能交出一个悬空 id，
     否则报告署名会退化成裸 id（`diagnosis_templates._expert` 的回落路径）。
     """
+    from app.living_circle.seat_registry import FALLBACK_TEAM
+
     roster = _roster_index()
-    pairs = [(eid, reason) for eid, reason in _FALLBACK_SEATS if eid in roster]
-    dropped = [eid for eid, _ in _FALLBACK_SEATS if eid not in roster]
+    seats = [s for s in FALLBACK_TEAM if s.seat_id in roster]
+    dropped = [s.seat_id for s in FALLBACK_TEAM if s.seat_id not in roster]
     if dropped:
         logger.warning("保底名单有席位不在生活圈名册，已跳过：%s", "、".join(dropped))
-    return [eid for eid, _ in pairs], [reason for _, reason in pairs]
+    return [s.seat_id for s in seats], [s.duty for s in seats]
