@@ -168,3 +168,20 @@ def test_every_section_author_equals_its_declared_seat(signed_report):
         assert set(authors) == {roster[seat]["name"]}, (
             f"{sid} 章席位 {seat} 应为「{roster[seat]['name']}」，实得 {sorted(set(authors))}"
         )
+
+
+def test_evidence_collected_by_is_a_roster_name(signed_report):
+    """B9（报告载荷半边）：`evidence[].collected_by` 必须是名册**姓名**，不得漂回裸席位 id。
+
+    为什么分两处：SSE 那一侧发的是席位 id（由 `test_sse_evidence_collected_by_is_a_registered_seat`
+    钉），载荷这一侧发的是由 id 派生的姓名 —— 两个空间并存是已知债务，统一成 id 属 A2
+    （要付一次报告代次升级 + 金标重取）。B1 的 AST 扫描只认 `L\\d-\\d{3}` 形状，硬写一个**姓名**
+    它抓不到，所以这一侧由本条兜住。
+    变异：把 `diagnosis_templates` 的 `_artifact_name("measure")` 换成裸 `"L2-005"` ⇒ 本条红。
+    """
+    rep = signed_report
+    names = {e["name"] for e in _roster().values()}
+    got = [ev.get("collected_by") for ev in (rep.get("evidence") or [])]
+    assert got, "signed_report 里没有一条 evidence ⇒ 本条在空转"
+    bad = sorted({c for c in got if c not in names})
+    assert not bad, f"报告证据署名不在生活圈名册姓名里（漂回裸 id／取错域）：{bad}"

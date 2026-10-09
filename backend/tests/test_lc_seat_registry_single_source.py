@@ -1,14 +1,14 @@
 """席位注册表是**唯一出口**：任何第二份抄本、任何空转判据，都必须当场红。
 
-守住三件事：
-  - B2「又抄了一张表」的赋值形状不得出现在生产码与测试里（必须 import 注册表）。
+守住四件事：
+  - B1 席位 id 字面量只能住在注册表（AST 扫字符串常量，不扫注释）；
+  - B2「又抄了一张表」的赋值形状不得出现在生产码与测试里（必须 import 注册表）；
   - B3 键集闭合（stage 轴）+ 行为闭合（带署名的章节必须在表里）；
   - TC-A1 **反空转**：注册表被清空、或判据的探针失效时，本文件必须红而不是恒绿。
 
-B1（`L\\d-\\d{3}` 字面量只能住在注册表）**不在本文件**，因为它要求
-`pipeline/living_circle.py` 里的 5 处 `collected_by` 与 2 处 `node.expert` 也先清空 ——
-那是 C2（传输层）的活。C1 单独立这条会当场红，反而逼人在守卫里开豁免名单。
-C2 落地时必须把 B1 加进本文件，并把 `living_circle.py` 纳入扫描面。
+B1 为什么与其余三条同笔而不是早一笔：它要求 `pipeline/living_circle.py` 里那 5 处
+`collected_by` 与 2 处 `node.expert` 先清空（C2 的活）。C1 单独立这条会当场红，
+反而逼人在守卫里开豁免名单 —— 而"守卫自带豁免名单"就是这条守卫要消灭的形状。
 """
 from __future__ import annotations
 
@@ -113,3 +113,66 @@ def test_the_two_fallback_lists_stay_different_by_design():
     # 断言"互有独有成员"而不是"谁包含谁"—— 上一版写了子集，实测并不成立。
     assert orchestration - assembly, f"编排期独有席位被删空：{sorted(orchestration)}"
     assert assembly - orchestration, f"装配期独有席位被删空：{sorted(assembly)}"
+
+# ── B1（C2 起生效）：席位字面量只能住在注册表 ──────────────────────
+# 用 AST 找**字符串常量**，不拿正则扫全文：上一版残留扫描判据就是被自己注释里的
+# 字面形状绊倒的（散文里提一句"SECTION_SEAT = {"不该算抄表，注释里写 L2-001 也不该）。
+SEAT_LITERAL = re.compile(r"^L[123]-\d{3}$")
+#: 扫描面 = **生活圈域**的代码。刻意不扫全仓：两本名册共用同一套 48 个 id，
+#: `app/core/audit.py` 里的 "L3-003" 指旅游域的质检总监**周翊**，生活圈同 id 是**裴砚秋** ——
+#: 把 travel 域的字面量也算进这条守卫，等于假设"一个 id 只有一个含义"，
+#: 而那正是本批所有署名缺陷的根因。travel 域要收口时另立一张表、另开一条守卫。
+SCAN_TARGETS = [
+    *(BACKEND / "app" / "living_circle").rglob("*.py"),
+    BACKEND / "app" / "core" / "pipeline" / "living_circle.py",
+    BACKEND / "app" / "core" / "pipeline" / "lc_team.py",
+    BACKEND / "app" / "core" / "pipeline" / "diagnosis_templates.py",
+]
+
+
+def _seat_literals_in(path: Path) -> list[str]:
+    """返回该文件里作为**字符串常量**出现的席位 id（含所在行号）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    hits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and SEAT_LITERAL.match(node.value):
+            hits.append(f"{path.name}:{node.lineno}={node.value}")
+    return hits
+
+
+def test_seat_literal_detector_actually_detects():
+    """反空转：探针喂一段真含席位字面量的代码，必须报命中。"""
+    probe = BACKEND / "app" / "living_circle" / "seat_registry.py"
+    assert _seat_literals_in(probe), "探针在注册表自身上都扫不出席位 ⇒ 判据在空转"
+
+
+def test_registry_scan_scope_covers_the_living_circle_domain():
+    """反空转（B1 自己的）：扫描面必须真的覆盖生活圈子域的全部模块。
+
+    上一版把扫描面写成"整个 app/"，结果被 travel 域的同形 id 顶红 —— 收窄成显式清单后，
+    新风险变成"加了新模块忘了纳入"。这条判据把那个遗漏变成红，而不是静默漏检。
+    """
+    from app.living_circle import __name__ as _pkg  # noqa: F401  只为确认包存在
+
+    pkg = BACKEND / "app" / "living_circle"
+    modules = {p.name for p in pkg.glob("*.py") if p.name != "__init__.py"}
+    covered = {p.name for p in SCAN_TARGETS if p.parent == pkg and p.name != '__init__.py'}
+    assert covered == modules, f"扫描面漏了生活圈子域模块：{sorted(modules - covered)}"
+
+
+def test_seat_id_literals_live_only_in_the_registry():
+    """`app/**` 生产码里除注册表外不得再出现席位字面量（travel 域 research/** 除外）。
+
+    这条是 C2 的收口判据：`living_circle.py` 曾有 5 处 `collected_by` + 2 处 `node.expert`
+    硬编码，`diagnosis_templates.py` 曾有 8 处章节署名 + 3 处证据姓名 + 1 份 13 人名单。
+    """
+    offenders = []
+    for path in sorted(SCAN_TARGETS):
+        if not path.is_file() or path.name == "seat_registry.py":
+            continue
+        offenders += _seat_literals_in(path)
+    assert not offenders, (
+        "席位字面量泄漏到注册表之外（唯一出口是 app/living_circle/seat_registry.py）："
+        f"{offenders}"
+    )

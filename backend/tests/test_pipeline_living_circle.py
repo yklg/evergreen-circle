@@ -741,3 +741,131 @@ def test_shape_gate_observation_is_fed_by_the_real_write_path(monkeypatch):
     assert obs["assessed"] == 1, f"新产物经过唯一收口的次数不是 1：{obs}"
     assert obs["flagged"] == 0, f"引擎自己发的件被自家形状闸拦下了（假红当场现形）：{obs}"
     reset_shape_gate_observation()
+
+
+# ── C2 · 席位归属上帧（判据 B6 / B7 / B8 / B9 / B11 + TC-D1）──────────────
+# 归属值一律**现读注册表**，不在这里再抄一份席位 —— 那正是本批要消灭的那族病。
+_FIXTURE_STREAM: list = []
+
+
+def _fixture_stream() -> list:
+    """fixture 路径跑一次，全节共用（每跑一次就往测试库多塞一份报告）。"""
+    if not _FIXTURE_STREAM:
+        _FIXTURE_STREAM.extend(_run_pipeline(create_living_circle_task({
+            **KAILI, "scene_name": "凯里老街-C2归属",
+        })))
+    return _FIXTURE_STREAM
+
+
+def _progress_frames(events: list) -> list:
+    return [e["data"] for e in events if e["type"] == "progress"]
+
+
+def test_every_stage_frame_carries_its_registered_owner():
+    """B6：7 帧 progress 逐位带 `expert`，且值等于注册表对该 stage 的登记。
+
+    判据形态是**逐位比对整个序列**，不是"至少有一帧带 expert"：
+    变异「只删 diagnose 那一处 owner」⇒ 本条恰在这一位红（证明它逐条数）。
+    """
+    from app.living_circle.seat_registry import STAGE_SEAT
+
+    frames = _progress_frames(_fixture_stream())
+    assert [f["stage"] for f in frames] == list(STAGES), "阶段序列变了，本判据要跟着改"
+    expected = [(s, STAGE_SEAT[s]) for s in STAGES]
+    actual = [(f["stage"], f.get("expert")) for f in frames]
+    assert actual == expected, f"归属与注册表不符：{list(zip(actual, expected))}"
+
+
+def test_plan_nodes_are_attributed_to_the_chief_inspector():
+    """B8：组队那两个节点必须署总检（L3-001），不是首席规划分析师（L3-002）。
+
+    这是本轮"署错人"那件事的红针 —— 名册里「组建专家队」写在 L3-001 的 one_liner 上，
+    而两个节点历史上一直硬编码 L3-002。
+    """
+    from app.living_circle.seat_registry import STAGE_SEAT
+
+    nodes = [e["data"]["node"] for e in _fixture_stream() if e["type"] == "node_update"]
+    assert nodes, "台架没产出 node_update，本条会空转"
+    for n in nodes:
+        assert n["expert"] == STAGE_SEAT["plan"] == "L3-001", (
+            f"节点 {n['id']} 署的是 {n['expert']!r} ⇒ 有人把 L3-002 改回去了"
+        )
+
+
+def test_sse_evidence_collected_by_is_a_registered_seat():
+    """B9（SSE 半边）：事件里的 `collected_by` 必须是注册表登记的**席位 id**。
+
+    报告载荷那半边发的是姓名，由 `test_expert_signature_derivation.py` 钉 ——
+    两个空间并存是已知债务（统一成 id 属 A2），这里只保证各自那一侧不漂。
+    """
+    from app.living_circle.seat_registry import ARTIFACT_SEAT
+
+    seats = set(ARTIFACT_SEAT.values())
+    got = [e["data"]["evidence"]["collected_by"] for e in _fixture_stream() if e["type"] == "evidence"]
+    assert got, "台架没产出 evidence ⇒ 本条会空转"
+    assert set(got) <= seats, f"证据署名不在注册表席位集合里：{sorted(set(got) - seats)}"
+
+
+def test_progress_literals_survive_the_consolidation():
+    """B11（可入库的那半）：收口成 `_progress()` 后，各点**自己的字面量必须原样在**。
+
+    为什么单独立这条：`stage_seq == 1..7` 与 percent 单调那五条既有契约都只读特定字段，
+    「把 `percent: 100` 顺手统一成 STAGE_PERCENT['audit']（=99）」或「把 evidence_count
+    的字面量归零」它们一条都抓不到。改造前后的全流等值另有用 worktree 比对的一次性取证
+    （见台账 v14），这条负责把它变成常态守卫。
+    """
+    from app.core.pipeline.living_circle import STAGE_PERCENT
+
+    frames = {f["stage"]: f for f in _progress_frames(_fixture_stream())}
+    assert frames["audit"]["percent"] == 100, (
+        f"audit 帧 percent={frames['audit']['percent']} ⇒ 收口时把硬编码 100 统一成了阶段百分比"
+    )
+    assert frames["report"]["percent"] == STAGE_PERCENT["report"], (
+        f"report 帧 percent={frames['report']['percent']}"
+    )
+    # fixture 路径的证据计数：measure 1 条、collect 1 条、diagnose 2 条（盲区那帧另计）
+    for stage, want in (("measure", 1), ("collect", 1), ("diagnose", 2)):
+        assert frames[stage]["evidence_count"] == want, (
+            f"{stage} 帧 evidence_count={frames[stage]['evidence_count']}，应为 {want}"
+            " ⇒ 收口时把该点自己的计数归一了（进度条会显示一个没发生过的取证数）"
+        )
+    assert [f["stage_seq"] for f in _progress_frames(_fixture_stream())] == list(range(1, 8))
+
+
+def test_cache_hit_frames_carry_no_owner(monkeypatch):
+    """B7：缓存命中时**被跳过的那五步**不发归属 —— 它们什么都没算。
+
+    复用 U27 的幂等台架：同一 scene 跑两次，第二次的 progress 走命中分支。
+    变异「删掉 owner=None 让它走缺省」⇒ 本条红。
+    """
+    stub = PipelineStubBaidu(KAILI_CENTER)
+    _live_source(stub, monkeypatch)
+    params = _live_params(scene_name="凯里老街-C2命中")
+    _run_pipeline(create_living_circle_task(params))          # 第一次：真算，落缓存
+    events = _run_pipeline(create_living_circle_task(params))  # 第二次：命中复用
+    frames = _progress_frames(events)
+    assert [f["stage_seq"] for f in frames] == list(range(1, 8)), "命中分支的阶段完整性变了"
+    # intake / plan 在缓存判定**之前**真的执行了（参数归一 + 组队），所以它们照发归属；
+    # 被跳过的是 measure/collect/diagnose/report/audit 五步 —— 只有这五步不许发。
+    skipped = {"measure", "collect", "diagnose", "report", "audit"}
+    leaked = [f["stage"] for f in frames if f["stage"] in skipped and "expert" in f]
+    assert not leaked, f"这几步什么都没算却署了归属（替没发生的事举证）：{leaked}"
+    computed = [f["stage"] for f in frames if f["stage"] not in skipped]
+    assert computed and all("expert" in f for f in frames if f["stage"] in computed), (
+        f"真执行过的阶段丢了归属：{computed}")
+
+
+def test_unregistered_stage_omits_owner_and_warns(caplog):
+    """TC-D1：未登记的 stage ⇒ **不抛**、不发 `expert` 键、留一条 warning。
+
+    SSE 中途 KeyError 会打断一次真跑；"新增 stage 忘登记"该红的是键集闭合判据
+    （test_lc_seat_registry_single_source），不是用户的体检。
+    """
+    import logging
+
+    from app.core.pipeline.living_circle import _progress
+
+    with caplog.at_level(logging.WARNING):
+        frame = _progress("teleport", percent=50, seq=8, evidence_count=0)
+    assert "expert" not in frame["data"], "未登记阶段不该发归属"
+    assert any("teleport" in r.getMessage() for r in caplog.records), "静默不发 ⇒ 漂移无人知"

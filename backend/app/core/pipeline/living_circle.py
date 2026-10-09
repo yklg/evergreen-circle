@@ -48,6 +48,7 @@ from app.living_circle.report_contract import (
     narrative_refresh_needed,
     observe_shape_gate,
 )
+from app.living_circle.seat_registry import STAGE_SEAT, artifact_seat, stage_owner
 
 from .diagnosis_templates import NARRATIVE_VERSION, assemble_report
 
@@ -103,6 +104,35 @@ class TaskParams(TypedDict, total=False):
 
 def _ev(type_: str, data: Dict[str, Any]) -> Dict[str, Any]:
     return {"type": type_, "data": data}
+
+
+_AUTO_OWNER = object()
+
+
+def _progress(stage: str, *, percent: float, seq: int, evidence_count: int,
+              owner: Any = _AUTO_OWNER) -> Dict[str, Any]:
+    """进度帧的**唯一构造点**：除阶段/百分比/序号/证据数外，再带上「这一步由哪位席位负责」。
+
+    席位一律查 `seat_registry.STAGE_SEAT`，不在 15 个发射点各写一遍 —— 手写等于把
+    「一份表散在多处」从数据层搬到调用层，是同一种病换个长相。
+
+    `owner` 三种取法：
+      - 缺省（`_AUTO_OWNER`）＝ 按 stage 查注册表；未登记的 stage 返回 None ⇒ 不发该键
+        （缺席即不印；"新增 stage 忘登记"该红的是键集闭合判据，不是用户的体检任务）；
+      - 显式 `None` ＝ 这里**什么都没算**（缓存命中路径复用旧结果），署上去就是替
+        一次没发生的事举证，故不发；
+      - 显式席位 id ＝ 调用点确有更强事实（目前没有，留此形状是给将来留口子）。
+    """
+    data: Dict[str, Any] = {"stage": stage, "percent": percent, "stage_seq": seq,
+                            "evidence_count": evidence_count}
+    who = stage_owner(stage) if owner is _AUTO_OWNER else owner
+    if owner is _AUTO_OWNER and who is None:
+        # 未登记不是"没有负责人"，是**有人加了 stage 忘了登记** —— 静默不发会让这件事
+        # 一直藏到下次看屏。键集闭合判据会红，但那条只在测试里跑；线上这次也要留痕。
+        logger.warning("stage %r 未在 STAGE_SEAT 登记，本帧不发归属", stage)
+    if who:
+        data["expert"] = who
+    return _ev("progress", data)
 
 
 def create_living_circle_task(params: TaskParams) -> str:
@@ -227,7 +257,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
 
     # ── intake ───────────────────────────────────────────
     yield _ev("message", {"stage": "intake", "percent": STAGE_PERCENT["intake"], "text": f"已确立体检中心点：{params.get('scene_name', '')}（{center[0]:.4f}, {center[1]:.4f}），研究范围 {(params.get('study_radius_m') or 2500) / 1000:.1f}km，模式 {sample_profile}"})
-    yield _ev("progress", {"stage": "intake", "percent": STAGE_PERCENT["intake"], "stage_seq": 1, "evidence_count": 0})
+    yield _progress("intake", percent=STAGE_PERCENT["intake"], seq=1, evidence_count=0)
 
     # ── plan（专家队编排）────────────────────────────────
     from app.core.pipeline.lc_team import select_living_circle_team
@@ -239,8 +269,8 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         travel_mode=travel_mode,
     )
 
-    yield _ev("node_update", {"stage": "plan", "node": {"id": "n-plan", "label": "专家队编排", "status": "working", "expert": "L3-002"}})
-    yield _ev("node_update", {"stage": "plan", "node": {"id": "n-dispatch", "label": f"按域指派 {len(dispatch_ids)} 位专家", "status": "done", "expert": "L3-002"}})
+    yield _ev("node_update", {"stage": "plan", "node": {"id": "n-plan", "label": "专家队编排", "status": "working", "expert": STAGE_SEAT["plan"]}})
+    yield _ev("node_update", {"stage": "plan", "node": {"id": "n-dispatch", "label": f"按域指派 {len(dispatch_ids)} 位专家", "status": "done", "expert": STAGE_SEAT["plan"]}})
     # 组队结果（含降级）走 **message 事件加字段**，不新增事件 type：
     #   · 新增 type 会撞 A4 白名单（`test_pipeline_event_contract`），且未登记的 type
     #     在前端 `SSE_SUBSCRIPTIONS` 处被传输层静默丢弃（`warn` 就是这么丢了很久的）；
@@ -258,7 +288,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             else f"编排完成：{len(dispatch_ids)} 位专家就位，覆盖医疗/教育/购物/养老等核心民生领域"
         ),
     })
-    yield _ev("progress", {"stage": "plan", "percent": STAGE_PERCENT["plan"], "stage_seq": 2, "evidence_count": 0})
+    yield _progress("plan", percent=STAGE_PERCENT["plan"], seq=2, evidence_count=0)
 
     engine = IsochroneEngine()
     check = CheckParams(
@@ -294,9 +324,9 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             else:
                 hit_text = "缓存命中：同地点 30 天内已有体检结果，直接复用（未消耗百度额度）"
             yield _ev("message", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "text": hit_text})
-            yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 0})
-            yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 0})
-            yield _ev("progress", {"stage": "diagnose", "percent": STAGE_PERCENT["diagnose"], "stage_seq": 5, "evidence_count": 0})
+            yield _progress("measure", percent=STAGE_PERCENT["measure"], seq=3, evidence_count=0, owner=None)
+            yield _progress("collect", percent=STAGE_PERCENT["collect"], seq=4, evidence_count=0, owner=None)
+            yield _progress("diagnose", percent=STAGE_PERCENT["diagnose"], seq=5, evidence_count=0, owner=None)
 
             report_data = cached_hit
             report_data["team"] = _team_payload(dispatch_ids, dispatch_reasons)
@@ -315,8 +345,8 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
             if report_id is not None:
                 db.mark_task_done(task_id, report_id)
                 yield _ev("message", {"stage": "report", "percent": STAGE_PERCENT["report"], "text": f"报告已签发（复用既有体检结果 · {served_from}）"})
-                yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report_data.get("evidence") or [])})
-                yield _ev("progress", {"stage": "audit", "percent": 100, "stage_seq": 7, "evidence_count": len(report_data.get("evidence") or [])})
+                yield _progress("report", percent=STAGE_PERCENT["report"], seq=6, evidence_count=len(report_data.get("evidence") or []), owner=None)
+                yield _progress("audit", percent=100, seq=7, evidence_count=len(report_data.get("evidence") or []), owner=None)
                 yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report_data.get("title") or report_data.get("scene", {}).get("name", "生活圈体检")})
                 yield _ev("done", {"reportId": report_id, "report_id": report_id})
                 return
@@ -399,9 +429,9 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 yield _ev("evidence", {"stage": "measure", "evidence": {
                     "evidence_id": f"ev-{task_id}-measure", "source_url": "live://measure", "source_type": "api_measure",
                     "title": "采样点测时记录", "excerpt": f"批量算路返回 {n_timed} 条耗时，其中 ≤{REACH_FULL_MIN:g}min 可达 {n_in_reach} 条",
-                    "credibility": 0.95, "collected_by": "L2-005", "captured_at": _now_iso(),
+                    "credibility": 0.95, "collected_by": artifact_seat("measure"), "captured_at": _now_iso(),
                 }})
-                yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 1})
+                yield _progress("measure", percent=STAGE_PERCENT["measure"], seq=3, evidence_count=1)
 
             elif step.kind == STEP_DEGRADED:
                 # 总量熔断降级（rev3 §四G / v3 §3.5）：预算耗尽时产出诚实离线报告
@@ -414,7 +444,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 yield _ev("message", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "text": f"百度{_label}：降级为离线估算，评分与盲区需配额恢复后实时重检"})
                 # U36：熔断降级同样发 collect progress —— 保持 STAGES 进度连续（48→72→86），
                 # 否则前端进度条在降级路径从 measure 直接跳到 diagnose。
-                yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 0})
+                yield _progress("collect", percent=STAGE_PERCENT["collect"], seq=4, evidence_count=0)
 
             elif step.kind == STEP_COLLECT:
                 _n_poi = sum(len(v) for v in step.collected.per_category.values())
@@ -433,9 +463,9 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
                 yield _ev("evidence", {"stage": "collect", "evidence": {
                     "evidence_id": f"ev-{task_id}-collect", "source_url": "live://poi", "source_type": "poi_search",
                     "title": "POI 采集", "excerpt": f"共 {_n_poi} 处",
-                    "credibility": 0.92, "collected_by": "L2-004", "captured_at": _now_iso(),
+                    "credibility": 0.92, "collected_by": artifact_seat("collect"), "captured_at": _now_iso(),
                 }})
-                yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 2})
+                yield _progress("collect", percent=STAGE_PERCENT["collect"], seq=4, evidence_count=2)
 
             elif step.kind == STEP_JUDGE:
                 # 判定步只交事实（掩码 + 三态账目），不发事件：上屏时序与片 0 逐字节相同。
@@ -518,15 +548,15 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         yield _ev("evidence", {"stage": "measure", "evidence": {
             "evidence_id": f"ev-{task_id}-measure", "source_url": "fixture://measure", "source_type": "api_measure",
             "title": "采样点测时记录（fixture）", "excerpt": f"{iso['sample_count']} 点 · 已测时 {iso['sampling']['timed_count']} · ≤{REACH_FULL_MIN:g}min 可达 {iso['sampling']['in_reach_count']}",
-            "credibility": 0.95, "collected_by": "L2-005", "captured_at": _now_iso(),
+            "credibility": 0.95, "collected_by": artifact_seat("measure"), "captured_at": _now_iso(),
         }})
-        yield _ev("progress", {"stage": "measure", "percent": STAGE_PERCENT["measure"], "stage_seq": 3, "evidence_count": 1})
+        yield _progress("measure", percent=STAGE_PERCENT["measure"], seq=3, evidence_count=1)
         yield _ev("evidence", {"stage": "collect", "evidence": {
             "evidence_id": f"ev-{task_id}-collect", "source_url": "fixture://poi", "source_type": "poi_search",
             "title": "POI 采集（fixture）", "excerpt": f"共 {(report_data.get('poi') or {}).get('total', 0)} 处，圈内 {(report_data.get('poi') or {}).get('in_circle', 0)} 处",
-            "credibility": 0.92, "collected_by": "L2-004", "captured_at": _now_iso(),
+            "credibility": 0.92, "collected_by": artifact_seat("collect"), "captured_at": _now_iso(),
         }})
-        yield _ev("progress", {"stage": "collect", "percent": STAGE_PERCENT["collect"], "stage_seq": 4, "evidence_count": 1})
+        yield _progress("collect", percent=STAGE_PERCENT["collect"], seq=4, evidence_count=1)
 
     # ── diagnose（盲区/评分结论）───────────────────────────
     scores = report_data["scores"]
@@ -540,9 +570,9 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
         yield _ev("evidence", {"stage": "diagnose", "evidence": {
             "evidence_id": f"ev-{task_id}-bs", "source_url": "live://blindspot", "source_type": "grid_scan",
             "title": f"盲区点位 {b0['id']}", "excerpt": f"1km 内无 {'、'.join(b0.get('missing_facilities', []))}",
-            "credibility": 0.98, "collected_by": "L3-002", "captured_at": _now_iso(),
+            "credibility": 0.98, "collected_by": artifact_seat("blindspot"), "captured_at": _now_iso(),
         }})
-    yield _ev("progress", {"stage": "diagnose", "percent": STAGE_PERCENT["diagnose"], "stage_seq": 5, "evidence_count": 2})
+    yield _progress("diagnose", percent=STAGE_PERCENT["diagnose"], seq=5, evidence_count=2)
 
     # ── report（D4 完整报告组装）──────────────────────────
     if report_data.get("data_origin") == "offline":
@@ -566,7 +596,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     # 那条链里没有 `CachingDataSource`、没有任何复用可言），这里只负责把**这次真实的模式**递进去。
     report_id, reason, report = _finalize_living_report(
         report_data, scene_key, replace_scene=False, data_mode=data_mode)
-    yield _ev("progress", {"stage": "report", "percent": STAGE_PERCENT["report"], "stage_seq": 6, "evidence_count": len(report.get("evidence") or [])})
+    yield _progress("report", percent=STAGE_PERCENT["report"], seq=6, evidence_count=len(report.get("evidence") or []))
 
     if reason is not None:
         msg = f"质检未通过：{reason}。请更换中心点或检查配额"
@@ -579,7 +609,7 @@ async def living_circle_pipeline(task_id: str) -> AsyncIterator[Dict[str, Any]]:
     # ── audit（报告已由 _finalize_living_report 落库，此处标记任务终态 + 广播）────────
     db.mark_task_done(task_id, report_id)
     yield _ev("message", {"stage": "audit", "percent": STAGE_PERCENT["audit"], "text": "质检通过：证据溯源完整，报告已签发并归档"})
-    yield _ev("progress", {"stage": "audit", "percent": 100, "stage_seq": 7, "evidence_count": len(report.get("evidence") or [])})
+    yield _progress("audit", percent=100, seq=7, evidence_count=len(report.get("evidence") or []))
     yield _ev("report_ready", {"reportId": report_id, "report_id": report_id, "title": report["title"]})
     yield _ev("done", {"reportId": report_id, "report_id": report_id})
 
