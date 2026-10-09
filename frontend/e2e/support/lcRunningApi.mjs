@@ -91,7 +91,16 @@ function json(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-/** 事件序列：一条一条发，让页面真的经历"横幅逐行长高"的过程 */
+/** 事件序列：一条一条发，让页面真的经历"横幅逐行长高"的过程
+ *
+ *  `expert` 这一位是 **C2 之后后端实发的形状**（`app/living_circle/seat_registry.STAGE_SEAT`
+ *  按 stage 决议，`_progress()` 统一注入）：每条 progress 都带自己那一步的负责席位。
+ *  刻意用**真阶段名**（collect / diagnose）—— 上一版这里写的是 `analyze`，它根本不在
+ *  `living_circle.STAGES` 里，前端 `stageLabel()` 拿不到中文名只能原样印，
+ *  于是"横幅席位随阶段换人"这条主张在 e2e 里没法被真实地断言。
+ *  值只在本 mock 内部当"已知输入"用；用例断言的是"行出现且含这一位"，不写死人名
+ *  （CI 的 mock 未桩 `/api/experts`，页面会回落到静态册 `/assets/experts/living_circle.json`，
+ *  与生产取数不同路径 —— 写死人名会让静态册漂移误伤这条用例）。 */
 function streamSteps(n) {
   return [
     // 后端 plan 阶段现在会发一条 `kind:'team'` 的 message（携带成员与降级码）。
@@ -104,10 +113,10 @@ function streamSteps(n) {
       degraded: 'llm_error',
       text: '本次专家队由保底名单编排（llm_error），未经模型按场景挑选',
     })],
-    [0, sse('progress', { stage: 'collect', percent: 24 })],
+    [0, sse('progress', { stage: 'collect', percent: 24, expert: 'L1-030' })],
     [120, sse('message', { text: '采集圈内 POI 与采样点' })],
     ...Array.from({ length: n }, (_, i) => [240 + i * 160, sse('round', roundRow(i))]),
-    [240 + n * 160, sse('progress', { stage: 'analyze', percent: 62 })],
+    [240 + n * 160, sse('progress', { stage: 'diagnose', percent: 82, expert: 'L1-032' })],
   ]
 }
 
@@ -146,12 +155,17 @@ const server = createServer((req, res) => {
     noRecords = on === '0'
     return json(res, 200, { noRecords })
   }
+  // 只读回显当前全局态：给用例做**开头前置断言**用（Playwright 的 context 隔离管不到
+  // 服务端进程级变量，上一批"整批读数全同"就是这么来的）。
+  if (req.method === 'GET' && path === '/api/e2e/state') return json(res, 200, { noRecords, rounds })
   if (req.method === 'POST' && path === '/api/tasks') return json(res, 200, { taskId: TASK_ID, kind: 'life_circle' })
   if (req.method === 'GET' && path === `/api/tasks/${TASK_ID}/stream`) return openStream(req, res)
   // 浮动条会轮询任务状态；不给它会拿到 404（虽然前端有兜底，但那是另一条链路，别混进这条用例）
   if (req.method === 'GET' && path === `/api/tasks/${TASK_ID}/status`) {
+    // 与上面最后一帧**同一个阶段**：悬浮条每 3s 轮这个端点并把 stage/percent 写回 registry
+    // （`TaskFloatBar.tsx:43-49` 是脱离 SSE 的兜底），两边不一致时屏上会看见阶段倒回去。
     return json(res, 200, {
-      status: 'running', percent: 62, stage: 'analyze', evidence_count: 0,
+      status: 'running', percent: 82, stage: 'diagnose', evidence_count: 0,
       report_id: null, started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
   }

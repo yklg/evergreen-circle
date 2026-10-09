@@ -108,6 +108,49 @@ test('横幅被撑到超过 22vh 时：它自己滚，地图格与右栏仍有�
 })
 
 /**
+ * 2.2d · 横幅上那一行「当前席位」真的随阶段换人（计划 TC-F1 / TC-F2）
+ *
+ * 两条纪律都是从上一批的教训里来的，写在这里免得下次又忘：
+ *
+ * - **web-first**：行是异步到位的（SSE 帧到 → registry 写 → 名册可能还没到 ⇒ 三态里先不印），
+ *   所以先用 `expect(...).toBeVisible()` 轮询，**之后**才量几何。一次性 `evaluate` 快照
+ *   在名册晚到时会是假红，在行被后续帧改写时会是假绿。
+ * - **开头断言服务端态**：Playwright 的 context 隔离**不覆盖 mock server 的全局态**
+ *   （`rounds` / `records` 是进程级变量，同一次运行里所有用例共享）。上一批真踩过"整批读数全同"。
+ *
+ * 刻意**不写死人名**：CI 的 mock 没桩 `/api/experts`，页面会回落到静态册
+ * `public/assets/experts/living_circle.json`，与生产取数不是同一条路径 —— 写死人名会让
+ * 名册漂移误伤这条几何用例。只断言"行出现且含这一位席位 id"，id 是本 mock 自己发的已知输入。
+ */
+const OWNER_ROW = '[role="status"] .text-tag:has-text("当前席位")'
+
+test('席位行随阶段换人：停在 diagnose 时印 L1-032，且不再挂着 collect 的 L1-030', async ({ page, request }) => {
+  // TC-F2：本用例假设"有历史记录 ⇒ 页面停在有记录态那个挂载点"。先证它成立再往下走。
+  const state = await (await request.get(`${MOCK}/api/e2e/state`)).json()
+  expect(state.noRecords, 'mock 的 records 全局态不是本用例假设的"有记录"').toBe(false)
+
+  await startRun(page, 1)
+  // 最后一帧（diagnose，带 L1-032）在 240+160=400ms；轮询到行出现为止
+  const row = page.locator(OWNER_ROW).first()
+  await expect(row, '横幅里没有「当前席位」行 ⇒ 归属没上屏').toBeVisible({ timeout: 10_000 })
+  await expect(row).toContainText('L1-032')
+  await expect(row, 'collect 那一位还挂着 ⇒ 末次写覆盖没生效').not.toContainText('L1-030')
+
+  // 行必须在横幅那一列**里面**（挂在别处＝两个挂载点之外的第三处实现冒出来了）
+  const inCell = await row.evaluate((el) => !!el.closest('[role="status"] > div.min-w-0'))
+  expect(inCell, '席位行不在横幅列里').toBe(true)
+  const box = await row.boundingBox()
+  expect(box!.height, `席位行高 ${box!.height}px 异常`).toBeGreaterThan(8)
+  expect(box!.height, `席位行高 ${box!.height}px 异常`).toBeLessThan(60)
+  // 加这一行之后，横幅仍然有界、地图格不被压塌（与上面两条几何用例同一把尺）
+  const view = page.viewportSize()!
+  const bm = await metrics(page.locator(BANNER_CELL))
+  expect(bm.client, `横幅列高 ${bm.client}px 超过 22vh ⇒ 限高失效`).toBeLessThanOrEqual(Math.round(view.height * 0.22) + 2)
+  const cell = await page.locator('main [class*="lg:grid-rows-"] > div').first().boundingBox()
+  expect(cell!.height, `地图格被压到 ${cell!.height}px`).toBeGreaterThan(view.height * 0.45)
+})
+
+/**
  * ── 出行方式段控（travel_mode 前端可见可控）───────────────────────────
  *
  * 页面数据通道与上面两条相同：真实模式 + `e2e/support/lcRunningApi.mjs`。

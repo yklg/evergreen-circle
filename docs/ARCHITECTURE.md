@@ -315,6 +315,16 @@ id 会被逐个丢弃，所以它编不出人。口径绑定挂在**职能槽位
 名册侧同理：`public/assets/experts*.json` 两份离线回落册由
 `frontend/scripts/gen-static-rosters.mjs` 从后端名册生成，`--check` 模式在漂移时退出 1。
 
+**「谁做哪一步」也是一张表，且只有一份**：生活圈侧的章节署名、流水线阶段归属、证据采集席位、
+两张保底名单全部住在 `backend/app/living_circle/seat_registry.py`（四张轴 + 一位 `Seat`），
+建它之前同一个事实在仓里散着 9 份手抄并互相矛盾过（`plan` 那两个节点历史上一直署错人）。
+三条边界写死在这里：只服务生活圈（travel 域要过程可见时另立一张表，别共用）、
+注册表本体不得 import pipeline（成环且撞治理闸 G-5）、席位与名册人设必须互指
+（`role_keyword` 对 `role_title` 中文段，只比中文段是为了"改英文人设"不误红）。
+过程可见性走 `progress.expert` 一位（**不新增事件 type**，见上面第 2 条口径），
+前端读它的位置是 `RunNotices` 那一行，数据经 `taskRegistry` 与 `stage` 同源。详见
+[AGENTS.md §3.2](./AGENTS.md)。
+
 ---
 
 ## 12. 测试与守卫（结构约束的机器化）

@@ -108,7 +108,22 @@ graph TD
 
 （`overview` 体检概览不带论断作者，故不在表内。）
 
-四条实测口径，写代码或写文档时都别记错：
+**这张表只是镜像，权威在 `app/living_circle/seat_registry.py`** —— 它同时管着四件事，
+建表之前这四件事散在仓里 9 处手抄（且互相矛盾过）：
+
+| 轴 | 注册表里的名字 | 谁读它 |
+|---|---|---|
+| 报告章节 → 署名席位 | `SECTION_SEAT` | `diagnosis_templates._section_author`、`scripts/normalize_report_signatures.py` |
+| 流水线阶段 → 负责席位 | `STAGE_SEAT` | `_progress()` 注入的 `progress.expert` ⇒ 前端横幅「当前席位」那一行 |
+| 证据产物 → 采集席位 | `ARTIFACT_SEAT` | SSE 的 `evidence.collected_by`（发 id）与报告载荷那侧（发派生**姓名**） |
+| 编排期保底队 / 装配期兜底名单 | `FALLBACK_TEAM`(10 席) / `TEAM_FALLBACK`(13 人) | `lc_team._fallback_team()` / `assemble_report` 的 `report.dispatch` |
+
+那两张保底名单**故意不是一张**（成员、数量、用途都不同）；合并会改 `report.dispatch` 的字节
+＝报告代次换代，判据 `test_the_two_fallback_lists_stay_different_by_design` 会拦。
+注册表本体**不得 import `app.core.pipeline.*`**（否则 pipeline→registry→pipeline 成环，撞治理闸 G-5），
+所以"键集与流水线阶段相等"这类判据一律落在 `tests/`。
+
+五条实测口径，写代码或写文档时都别记错：
 
 1. 席位名一律由 `diagnosis_templates._expert()` **固定取 living_circle 域**派生 —— 早先它
    走默认域，导致一份真报告 7 章署名 7/7 是旅游人设（现存报告已由
@@ -116,8 +131,10 @@ graph TD
 2. 组队降级**必须可见**：`lc_team` 返回 `(ids, reasons, degraded)`，`degraded ∈
    ""|llm_error|team_too_small`，plan 阶段以 `message` 事件 `kind:'team'` 带 `members`/`degraded`
    发前端常驻显示。**不新增事件 type**（新增 type 若未进前端 union，传输层按 union 穷举会静默丢弃）。
-3. 证据的 `collected_by` 目前是**硬编码常量**（粗报写槽位 id、精报模板写姓名），且前端
-   **零消费者** —— 别把它当"谁采的"的可信字段用；要上屏之前先统一成 id 并补派生。
+3. 证据的 `collected_by` 已**不再是硬编码常量**：两侧都改成按 `ARTIFACT_SEAT` 派生
+   （SSE 发席位 id，报告载荷发由 id 派生的姓名），并由 `test_seat_id_literals_live_only_in_the_registry`
+   钉住"席位字面量只能住在注册表"。**但两个空间仍并存**（id vs 姓名），且前端对 `collected_by`
+   依然**零消费者** —— 统一成 id 属下面的 A2，要付一次报告代次升级。
 4. **报告正文只有一个生产者**：`diagnosis_templates.assemble_report` 必须是**载荷的纯函数**。
    库里 `living_circle_reports.data` 那份 Report 是它在某个代次下的**产物**，角色是兜底与审计副本、
    **不作展示源**；展示走 `living_circle.refresh_report_for_display`，按 Report 顶层 `narrative_version`
@@ -127,6 +144,25 @@ graph TD
    判据 = `tests/test_narrative_assembly_golden.py`（逐面金标 + 配对闸：不升戳就红，只升戳不改产物也红）
    与 `tests/test_narrative_read_assembly.py` ⑧（库里那行必须仍是它自带载荷的产物）。
    派生链（精炼 / 一页纸 / 复跑）继续读 `db.get_report` 拿到的**冻结快照** —— 它们要可复现输入。
+5. **过程可见 ≠ 参与计算**：横幅那一行与报告里那张「报告署名席位（N）」卡都是**读数**，
+   不改变任何计算 —— 别把它们读成"专家在跑"。归属的语义纪律是**缺席即不印**：
+   被缓存跳过的五步后端**故意不发** `progress.expert`（判据 `test_cache_hit_frames_carry_no_owner`），
+   前端收到"这帧没有归属"就把行清掉（`taskRegistry` 里 `expert: null` 那一档），
+   而 `TaskFloatBar` 那种**不提归属**的 status 快照不许清 —— 权威只有 SSE 那一帧。
+
+#### 挂账 A2（本批刻意没做，做之前先看清代价）
+
+1. **`collected_by` 统一成席位 id**。现在 SSE 那侧发 id、报告载荷那侧发由 id 派生的**姓名**，
+   两个空间并存。统一成 id 屏上零变化（前端对它仍零消费者），但要付一次
+   `NARRATIVE_VERSION` `nar-3 → nar-4` 升戳 + 三份金标重取（配方：改装配器 ⇒ 同笔升戳 ⇒
+   `tests/test_narrative_assembly_golden.py` 会指出哪个面变了 ⇒ 核对新面确实是有意的变化再重取）。
+2. **`CATEGORY_SEAT`（逐设施类别的署名）上屏**。本批刻意不建这张表：零消费者的抽象不进注册表。
+   它要等 A2 那次代次升级一起落。
+3. **演示夹具与注册表对账**。`frontend/src/mocks/livingCircle/eventFlow.json` 里每个 stage 的
+   `expert` 是注册表文件头列出的**第 9 份抄本**，实测与 `STAGE_SEAT` 不符（夹具 measure→L2-005 /
+   collect→L2-004 / diagnose→L3-002，注册表是 L1-027 / L1-030 / L1-032）。
+   重录夹具后应加一条"夹具 ↔ `STAGE_SEAT` 逐位相等"的比对判据 —— 现在不加，是因为夹具正在重录，
+   加了会把一笔未完成的 WIP 焊进闸门。
 
 ---
 
