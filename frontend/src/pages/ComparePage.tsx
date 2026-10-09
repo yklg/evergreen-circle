@@ -12,7 +12,12 @@ import { ArrowLeftRight, ArrowUpRight, GitCompare, Inbox } from 'lucide-react'
 import { demoCompareSamples } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
-import { COMPARE_ROWS, compareCaliberNotices, compareRows, planComparisonOverlay, poiConservationNote } from '../lib/livingCircle'
+import {
+  COMPARE_ROWS, LC_BLIND_SEV, LC_ISO_COLORS, LC_ISO_COLORS_B, categoryCompareRows, compareCaliberNotices, compareRows,
+  emptyBlindspotNote, gapScoreOf, lcCompareCaliberGapNote, planComparisonOverlay, poiConservationNote, severityOf,
+} from '../lib/livingCircle'
+import type { CategorySideStat } from '../lib/livingCircle'
+import { CategoryCaliberNotes } from '../components/lifecircle/CategoryCaliberNotes'
 import { VStatLine } from '../components/ui'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
@@ -74,6 +79,142 @@ function OverlayLegend({ names }: { names: [string, string] }) {
         <span className="h-2.5 w-2.5 rounded-full border-2" style={{ borderColor: '#1677ff', background: 'rgba(22,119,255,0.35)' }} />
         B · {names[1]}
       </span>
+    </div>
+  )
+}
+
+/**
+ * 逐类目差距（笔1 · P1/P2）。
+ *
+ * 这张表存在的理由：差异表只有两个合计，于是「这一类一个都没有」（`total=0`、后端不给最近耗时）
+ * 与「这一类有 N 家但全在可达圈外」（`in_circle=0`、最近耗时有值）在屏上**塌成同一句话** ——
+ * 前者是供给缺失、后者是可达缺失，整改动作完全不同。
+ *
+ * 行内条与读数同排：不再"上面一张表、下面另一张图"读两遍。条只画在两侧都有值时 ——
+ * 一侧没值时画半条会让读者把"没有"看成"很近"。
+ */
+const DB_MAX_MIN = 20
+
+function MinBar({ a, b }: { a: number | null; b: number | null }) {
+  const colA = LC_ISO_COLORS[0].stroke
+  const colB = LC_ISO_COLORS_B[0].stroke
+  const px = (v: number) => 6 + (Math.min(v, DB_MAX_MIN) / DB_MAX_MIN) * 148
+  if (a == null || b == null) {
+    return <span className="text-tag text-ink-3">{a == null && b == null ? '两侧都没有' : '一侧没有，不画条'}</span>
+  }
+  return (
+    <svg width="160" height="14" viewBox="0 0 160 14" role="img" aria-label={`A ${a} 分钟，B ${b} 分钟`}>
+      <line x1={px(a)} y1="7" x2={px(b)} y2="7" stroke={colA} strokeOpacity="0.35" strokeWidth="4" />
+      <circle cx={px(a)} cy="7" r="4.5" fill={colA} />
+      <circle cx={px(b)} cy="7" r="4.5" fill={colB} />
+    </svg>
+  )
+}
+
+const minText = (s: CategorySideStat | null) =>
+  !s ? '没这一类' : s.minMinutes == null ? '一个都没有' : `${s.minMinutes}`
+
+function CategoryGapTable({ a, b }: { a: LivingCircleReport; b: LivingCircleReport }) {
+  const rows = categoryCompareRows(a, b)
+  const gapNote = lcCompareCaliberGapNote(a, b)
+  return (
+    <div className="rounded-card border border-line bg-card p-5 shadow-card">
+      <div className="mb-1 text-aux font-semibold text-ink">逐类目差距</div>
+      <p className="mb-3 text-tag text-ink-3">
+        点位数与圈内数是「有多少」，最近耗时是「够不够得着」；「一个都没有」与「有但全在圈外」各占一档写法。
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-left">
+          <thead>
+            <tr className="border-b border-line text-tag text-ink-3">
+              <th className="py-2 pr-3 font-medium">类目</th>
+              <th className="py-2 pr-3 font-medium">点位 A → B</th>
+              <th className="py-2 pr-3 font-medium">圈内 A → B</th>
+              <th className="py-2 pr-3 font-medium">最近耗时对比</th>
+              <th className="py-2 pr-3 font-medium">A</th>
+              <th className="py-2 pr-3 font-medium">B</th>
+              <th className="py-2 font-medium">差</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.category} className="border-b border-line/60 text-body text-ink">
+                <td className="py-2.5 pr-3 font-medium text-ink">{row.label}</td>
+                <td className="py-2.5 pr-3 tabular-nums">{row.a ? row.a.total : '—'} → {row.b ? row.b.total : '—'}</td>
+                <td className="py-2.5 pr-3 tabular-nums">{row.a ? row.a.inCircle : '—'} → {row.b ? row.b.inCircle : '—'}</td>
+                <td className="py-2.5 pr-3"><MinBar a={row.a?.minMinutes ?? null} b={row.b?.minMinutes ?? null} /></td>
+                <td className="py-2.5 pr-3 tabular-nums">{minText(row.a)}</td>
+                <td className="py-2.5 pr-3 tabular-nums">{minText(row.b)}</td>
+                <td className="py-2.5 text-aux text-ink-2 tabular-nums">
+                  {row.deltaMin == null ? '一侧没值' : `${row.deltaMin > 0 ? '+' : ''}${row.deltaMin} min`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 border-t border-line pt-3 md:grid-cols-2">
+        <div className="min-w-0">
+          <div className="text-tag font-medium text-ink-2">门槛项口径 · {a.scene.name}</div>
+          <CategoryCaliberNotes lc={a} className="mt-1" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-tag font-medium text-ink-2">门槛项口径 · {b.scene.name}</div>
+          <CategoryCaliberNotes lc={b} className="mt-1" />
+        </div>
+      </div>
+      {gapNote && (
+        <p className="mt-2 rounded-chip bg-warn/10 px-3 py-2 text-tag font-medium text-warn">{gapNote}</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 盲区成对并排（笔1 · P5）。
+ *
+ * 一句"0 处"不够：0 处到底是"三要素齐备"还是"还有格子判不了所以没说"，由
+ * `emptyBlindspotNote` 按台账覆盖率给那句 —— 与体检台同一颗出口，不在这里另写一套。
+ */
+function BlindspotPair({ a, b }: { a: LivingCircleReport; b: LivingCircleReport }) {
+  return (
+    <div className="rounded-card border border-line bg-card p-5 shadow-card">
+      <div className="mb-3 text-aux font-semibold text-ink">盲区成对并排</div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {[a, b].map((lc, side) => (
+          // 键取槽位不取场景名：两份载荷同名（同城两份、或 A/B 互换后的同一份）时，
+          // 用名字当键会撞出 duplicate key —— React 明说这种情况下渲染结果不可保证。
+          <div key={`blindside-${side}`} className="min-w-0">
+            <div className="text-tag font-medium text-ink-2">{lc.scene.name} · {lc.blindspots.length} 处</div>
+            {lc.blindspots.length === 0 ? (
+              <p className="mt-1.5 text-tag leading-relaxed text-ink-3">{emptyBlindspotNote(lc)}</p>
+            ) : (
+              <div className="mt-1.5 flex flex-col gap-2">
+                {lc.blindspots.map((bs) => {
+                  const spec = LC_BLIND_SEV[severityOf(bs)]
+                  const gap = gapScoreOf(bs)
+                  return (
+                    <div key={bs.id} className="rounded-btn border border-line/70 bg-ink-3/10 p-2.5">
+                      <div className="flex flex-wrap items-center gap-1.5 text-aux font-medium text-ink">
+                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: spec?.dot ?? '#8a8a8a' }} />
+                        {bs.id.replace('bs-', '盲区 ')}
+                        {spec?.label && <span style={{ color: spec.stroke }}>· {spec.label}</span>}
+                        {gap != null && <span className="text-tag text-ink-3">· 缺口 {gap}</span>}
+                      </div>
+                      <div className="mt-1 text-tag text-ink-3">缺失：{bs.missing_facilities.join(' / ')}</div>
+                      {bs.nearest.map((n) => (
+                        <div key={`${bs.id}-${n.facility}`} className="text-tag text-ink-3">
+                          最近「{n.name}」{Math.round(n.distance_m)}m（{n.direction}）
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -369,6 +510,13 @@ export default function ComparePage() {
         </div>
       ) : (
         diffBlock
+      )}
+
+      {cards.length >= 2 && (
+        <>
+          <CategoryGapTable a={cards[0]} b={cards[1]} />
+          <BlindspotPair a={cards[0]} b={cards[1]} />
+        </>
       )}
     </div>
   )

@@ -1546,6 +1546,104 @@ export function lcCategoryCaliberNote(c: FacilityCategoryStat): string | null {
   return `${c.label} · 覆盖度只数「${hit.join(' / ')}」：圈内 ${c.in_circle} 处中 ${req} 处 ⇒ ${Math.round(c.coverage * 100)}%${miss}`
 }
 
+/* ── 对比页逐类目差距（笔1 · P1/P2）─────────────────────────────────────────
+ *
+ * 立表理由：这两种空值在旧差异表里**塌成同一行**。
+ *  - `total=0`（这一类在研究范围内一个都没有）⇒ 后端不给最近耗时（`min_minutes` 为 `null`）；
+ *  - `in_circle=0` 而 `total>0`（有，但全在可达圈外）⇒ `min_minutes` 有值。
+ * 旧表只有两个合计，凯里「养老一个都没有」与北京「养老有 2 家都在圈外」读出来都是「0」。
+ *
+ * 三件事约束它的形状：
+ *  ① 展示值即比较值：`deltaMin` 先四舍五入到一位小数再返回，屏上印的就是被减出来的那个数
+ *     （同 `_isoArea15` 那条纪律 —— 否则 7.44 与 13.94 显示成 7.4/13.9 却判出 +6.5 之外的差）；
+ *  ② 前端**不许**重判子类：门槛口径只读 `required_in_circle`／`scored_as`，
+ *     键缺席与 `null` 是两种事实，各自一档（`'absent'` / `'none'`），**都不许塌成 0**；
+ *  ③ 类目按 `category` 键配对，不按数组下标 —— 两份载荷的类目顺序不保证一致。
+ */
+
+/** 一侧的类目读数；整份载荷没有这一类时调用方拿到 `null`（不是 0）。 */
+export interface CategorySideStat {
+  total: number
+  inCircle: number
+  /** `null` = 这一类一个都没有 ⇒ 没有"最近耗时"可言 */
+  minMinutes: number | null
+  /** `number` 门槛项数；`'none'` 发了子类表但这一类未建表；`'absent'` 整份载荷没发过子类表 */
+  required: number | 'none' | 'absent'
+  /** 按哪些类别计分（后端算好的名单，前端只印不判） */
+  scoredAs: string[] | null
+}
+
+export interface CategoryCompareRow {
+  category: string
+  label: string
+  a: CategorySideStat | null
+  b: CategorySideStat | null
+  /** B − A 的最近耗时（min，一位小数）；任一侧没值 ⇒ `null`，调用方不得印 0 */
+  deltaMin: number | null
+}
+
+function _sideOf(c: FacilityCategoryStat | undefined): CategorySideStat | null {
+  if (!c) return null
+  const req = 'required_in_circle' in c ? c.required_in_circle : undefined
+  return {
+    total: c.total,
+    inCircle: c.in_circle,
+    minMinutes: c.min_minutes ?? null,
+    required: req === undefined ? 'absent' : req === null ? 'none' : req,
+    scoredAs: c.scored_as && c.scored_as.length ? c.scored_as : null,
+  }
+}
+
+/**
+ * 逐类目并排行。行名与行序取自 **A 侧载荷**，B 侧多出来的类别追加在末尾 ——
+ * 与 `COMPARE_ROWS` 同一取向：行名来自 payload，不来自前端硬编码名单。
+ */
+export function categoryCompareRows(
+  a: LivingCircleReport,
+  b: LivingCircleReport,
+): CategoryCompareRow[] {
+  const ca = a.poi?.categories ?? []
+  const cb = b.poi?.categories ?? []
+  const codes: string[] = []
+  for (const c of ca) if (!codes.includes(c.category)) codes.push(c.category)
+  for (const c of cb) if (!codes.includes(c.category)) codes.push(c.category)
+  return codes.map((code) => {
+    const rowA = ca.find((c) => c.category === code)
+    const rowB = cb.find((c) => c.category === code)
+    const sa = _sideOf(rowA)
+    const sb = _sideOf(rowB)
+    const d = sa?.minMinutes != null && sb?.minMinutes != null ? sb.minMinutes - sa.minMinutes : null
+    return {
+      category: code,
+      label: rowA?.label ?? rowB?.label ?? code,
+      a: sa,
+      b: sb,
+      deltaMin: d === null ? null : Number(d.toFixed(1)),
+    }
+  })
+}
+
+/**
+ * 对比页那句「一侧按门槛项计分、另一份整份没发过这个口径」。
+ *
+ * 为什么单份页面没有这句、两份并排才需要：`CategoryCaliberNotes` 的纪律是"缺席即不印"
+ * （单份看没问题 —— 没口径就别提口径）。但并排时沉默会被读成"这一侧没有门槛要求"，
+ * 而事实是"这份载荷没发过这个键"⇒ 两侧覆盖度不是同一把尺。这句只报这一件事。
+ *
+ * 判定仍走同一颗 `lcCategoryCaliberNote`：不另建一套"看键"逻辑，否则就成了第二份真源。
+ */
+export function lcCompareCaliberGapNote(a: LivingCircleReport, b: LivingCircleReport): string | null {
+  const shipped = (lc: LivingCircleReport) =>
+    (lc.poi?.categories ?? []).some((c) => lcCategoryCaliberNote(c) !== null)
+  const sa = shipped(a)
+  const sb = shipped(b)
+  if (sa === sb) return null
+  const gap = sa ? b : a
+  const ok = sa ? a : b
+  return `${gap.scene.name} 这份载荷没发过门槛项口径（覆盖度按圈内点数解释）；`
+    + `${ok.scene.name} 按门槛项数计分 ⇒ 两侧覆盖度不是同一把尺，别横着比分子。`
+}
+
 /* ── 逐格台账（契约 B13 · 计划 cells-ledger-judge-scale §6）───────────────────
  *
  * 这片只做**解码**，不做判定：五个字母（`1`/`0`/`.`/`-`/格型）与十张矩阵的含义都由

@@ -4,7 +4,7 @@
  * 数据模式已运行时化：演示态（fixture）直接渲染；真实联调态 vi.mock api + 注入 store。
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 import ComparePage from '../pages/ComparePage'
@@ -62,6 +62,21 @@ function rec(id: string, name: string, city: string): LifeCircleRecord {
     data_origin: 'fixture_sample',
     interpolation: 'idw',
   }
+}
+
+/**
+ * 差异表定位。
+ *
+ * 笔1 之前本页只有一个 `<table>`（卡片指标行是 div），所以 `getAllByRole('row')` 天然只取到差异表。
+ * 逐类目差距表上屏后这个前提不再成立 —— 用「表头首格＝指标」认那张差异表，
+ * 而不是把期望行数改小或给生产码加 testid。
+ */
+function diffTable(): HTMLTableElement {
+  const hit = [...document.querySelectorAll('table')].find(
+    (t) => t.querySelector('th')?.textContent?.trim() === '指标',
+  )
+  if (!hit) throw new Error('没找到差异表（表头首格应为「指标」）')
+  return hit as HTMLTableElement
 }
 
 /**
@@ -134,9 +149,8 @@ describe('ComparePage（演示态 · fixture）', () => {
     )
     expect(screen.getAllByText('关键差异').length).toBeGreaterThan(0)
     const want = COMPARE_ROWS.map((d) => d.key)
-    // 行序：读差异表每一行的第一格。本页只有差异表一个 <table>（卡片指标行是 div），
-    // 故 getAllByRole('row') 只会取到它 —— 不必为测试加 testid。
-    const got = screen
+    // 行序：读差异表每一行的第一格（表已按「表头首格＝指标」定位，见 diffTable 那段）。
+    const got = within(diffTable())
       .getAllByRole('row')
       .slice(1) // 去掉表头行
       .map((tr) => tr.querySelector('td')?.textContent?.trim() ?? '')
@@ -154,7 +168,7 @@ describe('ComparePage（演示态 · fixture）', () => {
         <ComparePage />
       </MemoryRouter>,
     )
-    const body = screen.getAllByRole('row').slice(1)
+    const body = within(diffTable()).getAllByRole('row').slice(1)
     expect(body.length, '差异表应有 6 行').toBe(COMPARE_ROWS.length)
     for (const tr of body) {
       const tds = [...tr.querySelectorAll('td')].map((td) => td.textContent?.trim() ?? '')
@@ -445,5 +459,75 @@ describe('ComparePage（真实联调 · 手动选择 + 跨城呈现）', () => {
     })
     expect(screen.getAllByText(/图上仅 98 个点/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/旧版按每类上限截断所致/).length).toBeGreaterThan(0)
+  })
+})
+
+/* ── 笔1 · 逐类目差距与盲区成对 ───────────────────────────────────────────
+ *
+ * 这一批判据守的不是"有没有多一块卡"，而是三种塌缩：
+ *  ① 两种空值塌成一句（「一个都没有」vs「有但全在圈外」）；
+ *  ② 门槛口径的"没发键"塌成 0（`types.ts` 明写不得印成 0）；
+ *  ③ 0 处盲区塌成留白（读者分不清"齐备"与"还有格子判不了"）。
+ * 另加一条反向守：一侧没值时**不许**画半条。
+ */
+describe('笔1 · 逐类目差距与盲区成对', () => {
+  const renderFixture = () =>
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+
+  it('逐类目差距上屏，八行类目全在（行名取自载荷，不是前端名单）', () => {
+    renderFixture()
+    expect(screen.getByText('逐类目差距')).toBeTruthy()
+    for (const c of demoA.report.poi.categories) {
+      expect(screen.getAllByText(c.label).length, `类目「${c.label}」没上屏`).toBeGreaterThan(0)
+    }
+  })
+
+  it('两种空值形态各占一档：养老行 A 侧「一个都没有」、B 侧印最近耗时，差值列不硬算', () => {
+    renderFixture()
+    expect(screen.getByText('一个都没有')).toBeTruthy()
+    // 劲松养老：total>0 而 in_circle=0 ⇒ 有最近耗时可言
+    expect(screen.getByText('19.9')).toBeTruthy()
+    expect(screen.getByText('一侧没值')).toBeTruthy()
+  })
+
+  it('一侧没值时不画半条（否则"没有"会被读成"很近"）', () => {
+    renderFixture()
+    expect(screen.getByText('一侧没有，不画条')).toBeTruthy()
+  })
+
+  it('门槛口径：只印发过口径那一侧的两句；没发键那一侧一句都不印，改由并排那句提示承担', () => {
+    renderFixture()
+    // 劲松有门槛项口径的类别恰好两类（医疗、教育）；若 ev2 被误当成"门槛 0"就会翻倍
+    expect(screen.getAllByText(/覆盖度只数/).length).toBe(2)
+    expect(screen.queryByText(/菜市场 · 覆盖度只数/)).toBeNull()
+    const note = screen.getByText(/没发过门槛项口径/)
+    expect(note.textContent).toContain(demoA.report.scene.name)
+  })
+
+  it('盲区成对：有盲区那一侧印出缺口与缺失类别，0 处那一侧印出空态句而不是留白', () => {
+    renderFixture()
+    expect(screen.getByText('盲区成对并排')).toBeTruthy()
+    expect(screen.getByText(/缺失：小学/)).toBeTruthy()
+    expect(screen.getByText(/缺口 0\.262/)).toBeTruthy()
+    expect(screen.getAllByText(/未发现 1km 服务盲区/).length).toBeGreaterThan(0)
+  })
+
+  it('两侧都 0 处盲区 ⇒ 两侧都走空态句（真实态：凯里 × 劲松）', async () => {
+    useDataModeStore.setState({ mode: 'live' })
+    mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('j1', '北京劲松', '北京朝阳')])
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'j1']))
+    expect(kailiReport.blindspots.length).toBe(0)
+    expect(jinsongReport.blindspots.length).toBe(0)
+    expect(screen.getAllByText(/未发现 1km 服务盲区/).length).toBe(2)
+    expect(screen.queryByText(/缺失：/)).toBeNull()
   })
 })
