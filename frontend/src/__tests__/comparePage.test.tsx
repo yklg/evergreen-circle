@@ -253,8 +253,52 @@ describe('ComparePage（演示态 · fixture）', () => {
     })
     expect(screen.getAllByText('圈形对比 · 归一化示意').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/两圈中心已归一对齐/).length).toBeGreaterThan(0)
-    // fixture 态不出现选择器
-    expect(screen.queryByText('对比对象')).toBeNull()
+    // 选择器**现在两态都有**（笔4）。原来这一条断言的是「fixture 态不出现选择器」——
+    // 那条决定作废的理由：演示态是评审与提交材料实际看的那一态，把对子焊死在代码里
+    // 意味着评委看到的"双样例对比"永远只有同一对，而名册里另有两份样区读不出来。
+    // 断言改成反向半边：选择器必须出现，且候选是整份名册（它若再消失，这条立刻红）。
+    expect(screen.getByText('对比对象')).toBeTruthy()
+    const selA = screen.getByLabelText('场景 A') as HTMLSelectElement
+    expect(selA.options.length).toBe(SAMPLE_COMMUNITIES.length)
+    expect(selA.options.length, '名册少于两份 ⇒ 演示态选择器没有意义').toBeGreaterThanOrEqual(2)
+  })
+
+  it('演示态换 A ⇒ 卡片、差异表与逐类目那节都跟着换（不是只换下拉的显示值）', async () => {
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    const sel = screen.getByLabelText('场景 A') as HTMLSelectElement
+    // 默认 A 是名册首项（ev2）；换成同城那份冻结件 ⇒ 总分从 68.4 变 65.4
+    const other = SAMPLE_COMMUNITIES.map((c) => ({ id: c.id, total_score: c.report.scores.total, scene_name: c.report.scene.name })).find((o) => o.id !== sel.value)!
+    fireEvent.change(sel, { target: { value: other.id } })
+    await waitFor(() => {
+      expect(screen.getAllByText(String(other.total_score)).length).toBeGreaterThan(0)
+    })
+    expect(screen.queryByText(String(demoA.report.scores.total))).toBeNull()
+    // 副句由名字派生：原来这里写死「凯里老街（欠发达样本）vs 北京劲松（成熟样本）」，
+    // 换样区后那句话就说谎了。断言两半：写死的样本标签不再出现，且副句等于当前这一对的名字。
+    expect(screen.queryByText(/欠发达样本|成熟样本/)).toBeNull()
+    expect(
+      screen.getAllByText(`${other.scene_name} vs ${demoB.report.scene.name} —— 同一口径下的设施覆盖差距`).length,
+    ).toBeGreaterThan(0)
+  })
+
+  it('演示态交换 A/B ⇒ 两侧对调；选择器仍不许把 A 选成与 B 相同', async () => {
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    const before = (screen.getByLabelText('场景 B') as HTMLSelectElement).value
+    fireEvent.click(screen.getByLabelText('交换 A / B'))
+    await waitFor(() => {
+      expect((screen.getByLabelText('场景 B') as HTMLSelectElement).value).not.toBe(before)
+    })
+    const selA = screen.getByLabelText('场景 A') as HTMLSelectElement
+    const disabled = [...selA.options].filter((o) => o.disabled).map((o) => o.value)
+    expect(disabled, 'A 里必须禁掉 B 当前那份').toEqual([(screen.getByLabelText('场景 B') as HTMLSelectElement).value])
   })
 })
 

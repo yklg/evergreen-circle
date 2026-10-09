@@ -66,3 +66,32 @@ test.describe('对比页 · 逐类目差距与盲区成对（笔1）', () => {
     expect(dup, `React 报了重复键：${dup.join(' | ')}`).toHaveLength(0)
   })
 })
+
+  /**
+   * 笔4：演示态的选择器。jsdom 那两条测的是"换了 id 之后读数跟着换"；这里测真浏览器里
+   * 一次真实的 `select` 交互之后**页面没有回到加载态、也没有留下上一对的读数**
+   * （演示态不发请求，最容易出的错是"下拉变了但卡没变"或"卡变了但副句还写着旧的一对"）。
+   */
+  test('演示态换 A ⇒ 分数与副句同步换，且不出现加载态残留', async ({ page }) => {
+    await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [LS_DATA_MODE, 'fixture'])
+    await page.goto('/compare', { waitUntil: 'load' })
+
+    const selA = page.getByLabel('场景 A')
+    const before = await page.locator('.score, [class*="text-[34px]"]').first().innerText()
+    const options = await selA.locator('option').evaluateAll((os) => os.map((o) => ({ v: (o as HTMLOptionElement).value, disabled: (o as HTMLOptionElement).disabled })))
+    expect(options.length, '演示态候选应来自整份名册').toBeGreaterThanOrEqual(3)
+    const curA = await selA.inputValue()
+    const target = options.find((o) => o.v !== curA && !o.disabled)!
+
+    await selA.selectOption(target.v)
+    await expect(page.locator('[class*="text-[34px]"]').first()).not.toHaveText(before)
+    // 副句跟着换：写死的「（欠发达样本）/（成熟样本）」标签不许再出现在页面上
+    await expect(page.getByText(/欠发达样本|成熟样本/)).toHaveCount(0)
+    // 交换键在两态都在，且演示态点它确实对调
+    const bBefore = await page.getByLabel('场景 B').inputValue()
+    await page.getByLabel('交换 A / B').click()
+    await expect(page.getByLabel('场景 B')).not.toHaveValue(bBefore)
+    // 换完仍不许把 A 选成 B
+    const aOpts = await page.getByLabel('场景 A').locator('option').evaluateAll((os) => os.filter((o) => (o as HTMLOptionElement).disabled).map((o) => (o as HTMLOptionElement).value))
+    expect(aOpts).toEqual([await page.getByLabel('场景 B').inputValue()])
+  })

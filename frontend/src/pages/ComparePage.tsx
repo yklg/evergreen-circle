@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeftRight, ArrowUpRight, GitCompare, Inbox } from 'lucide-react'
-import { demoCompareSamples } from '../mocks/livingCircleMock'
+import { SAMPLE_COMMUNITIES, demoCompareSamples } from '../mocks/livingCircleMock'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
 import {
@@ -36,13 +36,25 @@ import type { LivingCircleReport, LifeCircleCompare, LifeCircleRecord } from '..
 /** 演示态默认的一对对比样区：挑法收在 mock 层那一处出口，页面不自己写规则。 */
 const [DEMO_A, DEMO_B] = demoCompareSamples()
 
+/**
+ * 选择器的一项。真实态来自历史体检记录、演示态来自内置样区名册 ——
+ * 两边都只用到这四格，所以这里按**结构**收：让页面为了复用组件去伪造一份
+ * `LifeCircleRecord`（补 `checked_at`、`data_origin` 那些用不到的字段）才是坏味道。
+ */
+interface SceneOption {
+  id: string
+  scene_name: string
+  city: string
+  total_score: number | null
+}
+
 /** 对比对象下拉（原生 select，风格随项目，A/B 不可相同）。 */
 function SceneSelect({ label, value, taken, options, onChange }: {
   label: string
-  value: LifeCircleRecord | null
-  taken?: LifeCircleRecord | null
-  options: LifeCircleRecord[]
-  onChange: (r: LifeCircleRecord) => void
+  value: SceneOption | null
+  taken?: SceneOption | null
+  options: SceneOption[]
+  onChange: (r: SceneOption) => void
 }) {
   return (
     <label className="block min-w-0">
@@ -225,8 +237,13 @@ export default function ComparePage() {
 
   /* 真实分支：历史体检记录 + 用户手选的 A/B（默认最近两次） */
   const [records, setRecords] = useState<LifeCircleRecord[]>([])
-  const [selA, setSelA] = useState<LifeCircleRecord | null>(null)
-  const [selB, setSelB] = useState<LifeCircleRecord | null>(null)
+  const [selA, setSelA] = useState<SceneOption | null>(null)
+  const [selB, setSelB] = useState<SceneOption | null>(null)
+  /** 演示态的 A/B（笔4）：默认那一对仍由 `demoCompareSamples()` 挑，这里只存被选中的 id。 */
+  const [demoSel, setDemoSel] = useState<[string, string]>(() => {
+    const [x, y] = demoCompareSamples()
+    return [x.id, y.id]
+  })
   const [cmp, setCmp] = useState<LifeCircleCompare | null>(null)
   const [loading, setLoading] = useState(!isFixture)
 
@@ -276,8 +293,8 @@ export default function ComparePage() {
   // 演示态这一对 = 名册首项 + 第一个**不同城**的样区。不能写死"取前两份"：名册里现在有
   // 两份同中心的凯里（台账上线前的冻结件 + ev-2 那份），按位置取会把这页配成同城一对，
   // 北京劲松直接从对比页消失（10-03 插样区那天实测红 5 条）。
-  const a = DEMO_A
-  const b = DEMO_B
+  const a = SAMPLE_COMMUNITIES.find((c) => c.id === demoSel[0]) ?? DEMO_A
+  const b = SAMPLE_COMMUNITIES.find((c) => c.id === demoSel[1]) ?? DEMO_B
   const ra: LivingCircleReport = a.report
   const rb: LivingCircleReport = b.report
 
@@ -395,12 +412,26 @@ export default function ComparePage() {
     setLoading(true)
   }
 
+  /* 笔4：演示态的候选与选择。名册只有三份、且不发请求，所以这里只换 id；
+     两态共用同一套选择器 JSX，差异收在下面 pairOptions / valueA / onA 这三对上。 */
+  // 候选由名册现拼。读分数这件事留在页面（`visitorUnrated` 棘轮在册的消费点，且未评分支已在
+  // `SceneSelect` 里）；往 mock 层加一颗 `scores.total` 消费点，等于给那本账添一个没有未评分支的新条目。
+  const demoOptions = SAMPLE_COMMUNITIES.map((c) => ({
+    id: c.id,
+    scene_name: c.report.scene.name,
+    city: c.city,
+    total_score: c.report.scores.total,
+  }))
+  const swapDemo = () => setDemoSel(([x, y]) => [y, x])
+  const pickDemo = (slot: 0 | 1) => (o: SceneOption) =>
+    setDemoSel((cur) => (slot === 0 ? [o.id, cur[1]] : [cur[0], o.id]))
+
   // 选择即切换：事件上下文里同步置 loading（规避在 effect 里同步 setState 的级联渲染告警）
-  const pickA = (r: LifeCircleRecord) => {
+  const pickA = (r: SceneOption) => {
     setSelA(r)
     setLoading(true)
   }
-  const pickB = (r: LifeCircleRecord) => {
+  const pickB = (r: SceneOption) => {
     setSelB(r)
     setLoading(true)
   }
@@ -413,7 +444,7 @@ export default function ComparePage() {
           <p className="mt-1 text-aux text-ink-2">
             {useReal
               ? `${names[0]} vs ${names[1]} —— 同一口径下的设施覆盖差距`
-              : '凯里老街（欠发达样本）vs 北京劲松（成熟样本）—— 同一口径下的设施覆盖差距'}
+              : `${names[0]} vs ${names[1]} —— 同一口径下的设施覆盖差距`}
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-chip border border-line bg-card px-3 h-9 text-tag text-ink-3">
@@ -421,25 +452,41 @@ export default function ComparePage() {
         </span>
       </div>
 
-      {/* 对比对象选择（真实联调态）：A/B 从历史体检记录任选，可一键交换 */}
-      {!isFixture && records.length >= 2 && (
+      {/* 对比对象选择（笔4 起两态都有）：真实态从历史体检记录任选，演示态从内置样区名册任选 */}
+      {(isFixture ? demoOptions.length : records.length) >= 2 && (
         <div className="rounded-card border border-line bg-card p-4 shadow-card">
           <div className="mb-2 text-aux font-semibold text-ink">对比对象</div>
           <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[1fr_auto_1fr]">
-            <SceneSelect label="场景 A" value={selA} taken={selB} options={records} onChange={pickA} />
+            <SceneSelect
+              label="场景 A"
+              value={isFixture ? demoOptions.find((o) => o.id === demoSel[0]) ?? null : selA}
+              taken={isFixture ? demoOptions.find((o) => o.id === demoSel[1]) ?? null : selB}
+              options={isFixture ? demoOptions : records}
+              onChange={isFixture ? pickDemo(0) : pickA}
+            />
             <button
-              onClick={swap}
-              disabled={!selA || !selB || selA.id === selB.id}
+              onClick={isFixture ? swapDemo : swap}
+              disabled={isFixture
+                ? demoSel[0] === demoSel[1]
+                : !selA || !selB || selA.id === selB.id}
               aria-label="交换 A / B"
               title="交换 A / B"
               className="grid h-10 w-10 place-items-center rounded-btn border border-line bg-card text-ink-2 transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowLeftRight size={16} />
             </button>
-            <SceneSelect label="场景 B" value={selB} taken={selA} options={records} onChange={pickB} />
+            <SceneSelect
+              label="场景 B"
+              value={isFixture ? demoOptions.find((o) => o.id === demoSel[1]) ?? null : selB}
+              taken={isFixture ? demoOptions.find((o) => o.id === demoSel[0]) ?? null : selA}
+              options={isFixture ? demoOptions : records}
+              onChange={isFixture ? pickDemo(1) : pickB}
+            />
           </div>
           <p className="mt-2 text-tag text-ink-3">
-            从历史体检记录中任选两份对比（A/B 不可相同）；评价、雷达与差异表随选择即时更新。
+            {isFixture
+              ? '从内置样区名册中任选两份对比（A/B 不可相同）；评价、雷达、差异表与各并排节随选择即时更新。'
+              : '从历史体检记录中任选两份对比（A/B 不可相同）；评价、雷达与差异表随选择即时更新。'}
           </p>
         </div>
       )}
