@@ -21,11 +21,11 @@
  * ⚠️ 名册只收录**已经两档齐**的层；未登记的层不许混进来（否则判据会把"没迁"读成"一致"）。
  */
 import type { LngLat, LivingCircleReport, ShapeCaliber } from '../../types'
-import { cellLayerPlan } from './CellLayer'
+import { cellLayerPlan, cellsGridPlan } from './CellLayer'
 import { isoCompareOf, judgeRulerM } from '../../lib/livingCircle'
 
 /** 已入册的图层。加一层＝在这里加一个名字，并让**两档**的绘制点都消费 `layerRoster`。 */
-export const LC_LAYERS = ['judge-ruler', 'iso-compare', 'shape-sectors', 'selected-cell'] as const
+export const LC_LAYERS = ['judge-ruler', 'iso-compare', 'shape-sectors', 'selected-cell', 'cells-grid'] as const
 export type LcLayer = (typeof LC_LAYERS)[number]
 
 /** 名册的输入：三类信息各管各的 —— 开关（用户意图）、对照态/脱敏（闸）、数据在场性（有没有东西可画）。 */
@@ -37,11 +37,14 @@ export interface RosterInput {
   showJudgeScale: boolean
   showIsoCompare: boolean
   shapeOn: boolean
+  /** 整幅格阵（笔3b）：把台账那一页的五档结论画到地图上。与"选中格"是两层，别混。 */
+  showCellsGrid: boolean
   /** 数据在场性，逐层一条（取不到尺 / 环未闭合 / 没形状键 / 没台账或越界 ⇒ false） */
   hasRuler: boolean
   hasCompareRing: boolean
   hasShape: boolean
   hasCell: boolean
+  hasGrid: boolean
 }
 
 /**
@@ -55,6 +58,8 @@ export function layerRoster(i: RosterInput): LcLayer[] {
   if (i.showIsoCompare && i.hasCompareRing) out.push('iso-compare')
   if (i.shapeOn && i.hasShape) out.push('shape-sectors')
   if (!i.desensitize && i.hasCell) out.push('selected-cell')
+  // 格阵与选中格同一条脱敏闸：逐格地理边界在分享态一律不许上屏（P0-5）。
+  if (!i.desensitize && i.showCellsGrid && i.hasGrid) out.push('cells-grid')
   return out
 }
 
@@ -94,11 +99,13 @@ export function rosterFactsOf(
   lc: LivingCircleReport,
   shapeCal: ShapeCaliber | null,
   selectedCell: [number, number] | null,
-): Pick<RosterInput, 'hasRuler' | 'hasCompareRing' | 'hasShape' | 'hasCell'> {
+  showCellsGrid = false,
+): Pick<RosterInput, 'hasRuler' | 'hasCompareRing' | 'hasShape' | 'hasCell' | 'hasGrid'> {
   return {
     hasRuler: judgeRulerM(lc) !== null,
     hasCompareRing: compareRingPresent(lc),
     hasShape: shapeCal !== null,
     hasCell: cellLayerPlan(lc, selectedCell) !== null,
+    hasGrid: showCellsGrid && cellsGridPlan(lc) !== null,
   }
 }

@@ -19,6 +19,7 @@ import {
 } from '../lib/livingCircle'
 import type { CategorySideStat } from '../lib/livingCircle'
 import { CategoryCaliberNotes } from '../components/lifecircle/CategoryCaliberNotes'
+import { cellsGridPlan } from '../components/lifecircle/CellLayer'
 import { VStatLine } from '../components/ui'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
@@ -246,6 +247,7 @@ export default function ComparePage() {
      "点下去没反应"那个本仓反复出事的形状（`lcLayers.ts` 文件头记着判定尺当年只补了一半）。 */
   const [isoCompareOn, setIsoCompareOn] = useState(false)
   const [shapeOn, setShapeOn] = useState(false)
+  const [gridOn, setGridOn] = useState(false)
   /** 演示态的 A/B（笔4）：默认那一对仍由 `demoCompareSamples()` 挑，这里只存被选中的 id。 */
   const [demoSel, setDemoSel] = useState<[string, string]>(() => {
     const [x, y] = demoCompareSamples()
@@ -560,6 +562,13 @@ export default function ComparePage() {
                   方位形状（八方位最远可达）
                 </label>
               )}
+              {cards.some((r) => cellsGridPlan(r) !== null) && (
+                <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
+                  <input type="checkbox" className="h-3.5 w-3.5" checked={gridOn}
+                         onChange={(e) => setGridOn(e.target.checked)} />
+                  逐格判定台账（整幅格阵）
+                </label>
+              )}
               <span className="text-tag text-ink-3">
                 两张图各按自己那份载荷画：一侧没发这一层时，那一侧整层不出现。
               </span>
@@ -574,6 +583,7 @@ export default function ComparePage() {
                   onMapMode={() => {}}
                   showIsoCompare={isoCompareOn}
                   showShapeSectors={shapeOn}
+                  showCellsGrid={gridOn}
                 />
               </div>
             ))}

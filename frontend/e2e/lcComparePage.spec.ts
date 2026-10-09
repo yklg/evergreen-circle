@@ -95,3 +95,29 @@ test.describe('对比页 · 逐类目差距与盲区成对（笔1）', () => {
     const aOpts = await page.getByLabel('场景 A').locator('option').evaluateAll((os) => os.filter((o) => (o as HTMLOptionElement).disabled).map((o) => (o as HTMLOptionElement).value))
     expect(aOpts).toEqual([await page.getByLabel('场景 B').inputValue()])
   })
+
+/**
+ * 笔3b · 整幅格阵。live 侧覆盖物不进 DOM ⇒ 任何 querySelector 型判据在 live 档天然失明
+ * （本域 10-07 实测过），所以这里问的是组件自己写回的 `data-lc-layers` 申报；
+ * 降级档则直接数图元。两档问同一件事，是因为"只补一半"正是这一层要防的病。
+ */
+test('勾上整幅格阵 ⇒ 只有带台账那一侧出现这一层，另一侧整层不画', async ({ page }) => {
+  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [LS_DATA_MODE, 'fixture'])
+  await page.goto('/compare', { waitUntil: 'load' })
+  await page.getByLabel(/逐格判定台账/).check()
+
+  const roots = page.locator('[data-lc-mode]')
+  await expect(async () => {
+    const decl = await roots.evaluateAll((els) => els.map((e) => e.getAttribute('data-lc-layers') ?? ''))
+    expect(decl.filter((d) => d.includes('cells-grid')).length, '应恰好一侧带台账并申报了格阵').toBe(1)
+  }).toPass({ timeout: 20_000 })
+
+  const mode = await roots.nth(0).getAttribute('data-lc-mode')
+  const cells = await page.locator('[data-lc-layer="cells-grid"] polygon').count()
+  // DOM 型判据只在降级档问：live 的格阵是 canvas 覆盖物，不进 DOM（上面那句申报已经管住 live）。
+  if (mode === 'fallback') {
+    expect(cells, '降级档格阵一枚都没画').toBeGreaterThan(20)
+    // 另一侧（没发台账）不许出现一个空的格阵组 —— 缺席即不渲染，不是画个空壳
+    expect(await page.locator('[data-lc-layer="cells-grid"]').count()).toBe(1)
+  }
+})

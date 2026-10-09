@@ -28,6 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
+import kailiEv2 from '../mocks/fixtures/livingCircle/kaili-ev2.json'
 import contract from './fixtures/cellsLedgerContract.json'
 import type { CellsLedgerRaw, LivingCircleReport } from '../types'
 import {
@@ -41,7 +42,7 @@ import {
   lcRing,
   lcToPx,
 } from '../lib/livingCircle'
-import { cellLayerPlan } from '../components/lifecircle/CellLayer'
+import { LC_LEDGER_FILL, cellLayerPlan, cellsGridPlan } from '../components/lifecircle/CellLayer'
 import { instances, mapConfig, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
 
 vi.mock('../lib/bmap', async () => {
@@ -223,3 +224,46 @@ function cellLayerBoxPoly() {
   if (!hit) throw new Error('live 侧没建出选中格方框（mode 没落到 live？或 plan 取空？）')
   return hit as unknown as { point: unknown[]; opts: Record<string, unknown> }
 }
+
+/* ── 笔3b · 整幅格阵的 plan（"画哪些格"必须有交叉锚，不能自证） ───────────── */
+describe('cellsGridPlan（整幅格阵的几何与结论）', () => {
+  const ev2 = kailiEv2 as unknown as LivingCircleReport
+
+  it('格数与 `caliber.cells_inside` 逐字相等 —— 交叉锚，不是自造期望值', () => {
+    const plan = cellsGridPlan(ev2)
+    expect(plan, 'ev2 带 15×15 台账，plan 不该为空').not.toBeNull()
+    expect(plan!.n).toBe(15)
+    expect(plan!.cells.length, '画出来的格数必须等于载荷声明的"圈内格数"')
+      .toBe(ev2.caliber!.cells_inside)
+  })
+
+  it('`outside` 一格都不画（与台账卡同一档口径：区外不上色，画了会像"这里没问题"）', () => {
+    const plan = cellsGridPlan(ev2)!
+    expect(plan.cells.some((c) => c.verdict === 'outside')).toBe(false)
+    expect(plan.cells.every((c) => LC_LEDGER_FILL[c.verdict] !== 'transparent')).toBe(true)
+  })
+
+  it('每格是四角闭合方框（live 的 Polygon 与降级 SVG 都只吃这四角）', () => {
+    for (const c of cellsGridPlan(ev2)!.cells.slice(0, 5)) {
+      expect(c.corners).toHaveLength(4)
+      expect(c.corners[0]).not.toEqual(c.corners[2])
+    }
+  })
+
+  it('没发台账的样区 ⇒ null（整层不出现，不是画一张空图）', () => {
+    expect(cellsGridPlan(kaili as unknown as LivingCircleReport)).toBeNull()
+  })
+
+  it('五档色表只有一份：台账卡里不许再自带字面量', async () => {
+    // 路径按 `process.cwd()` 解（与 `roadContrast.test.ts` 那颗源扫守卫同一写法）：
+    // jsdom 下 `import.meta.url` 不是 file: 协议，new URL(...) 会直接抛。
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), 'utf8')
+    const card = read('src/components/lifecircle/CellsLedgerCard.tsx')
+    expect(card.includes("outside: 'transparent'"),
+      '台账卡又长出一份五档表 ⇒ 地图格阵与卡迟早一个灰一个红').toBe(false)
+    const layer = read('src/components/lifecircle/CellLayer.ts')
+    expect(layer.match(/outside: 'transparent'/g)).toHaveLength(1)
+  })
+})

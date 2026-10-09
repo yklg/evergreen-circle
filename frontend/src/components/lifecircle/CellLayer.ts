@@ -17,7 +17,8 @@
  * （`lib/livingCircle.ts:263` 那条 P0 记录）。**同一份数、两种基元**，与判定尺那层同一套做法。
  */
 import type { LngLat, LivingCircleReport } from '../../types'
-import { cellCenter, cellsLedgerOf, lcFromMeters } from '../../lib/livingCircle'
+import { LC_JUDGE_SCALE_COLOR, cellCenter, cellVerdict, cellsLedgerOf, lcFromMeters } from '../../lib/livingCircle'
+import type { LedgerVerdict } from '../../lib/livingCircle'
 
 export interface CellLayerPlan {
   /** 格界四角（真实米制下的方框；`<polygon>` 自动闭合，live 的 Polygon 也吃这四角） */
@@ -49,4 +50,71 @@ export function cellLayerPlan(
     center: c,
     radiusM: led.radius_m,
   }
+}
+
+/* ── 整幅格阵（笔3b）：一份五档色表，台账卡与地图图层共用 ───────────────────
+ *
+ * 为什么把表挪到这里而不是在地图侧再抄一份：五档（`outside`/`clear`/`unknown`/`capped`/`blind`）
+ * 是台账那一页的**结论口径**，地图只是同一个结论的第二种画法。两处各写一遍颜色，
+ * 迟早出现"卡里判盲是灰的、图上是红的"这种没法自证的分裂 —— 本域为这类分叉写过四次勘误。
+ *
+ * `outside` 一律不上色，是既有决定：可达区外语义上就不该判盲，画出来会像"这里没问题"。
+ */
+export const LC_LEDGER_FILL: Record<LedgerVerdict, string> = {
+  outside: 'transparent',
+  clear: LC_JUDGE_SCALE_COLOR,
+  unknown: '#E0B775',
+  capped: '#C9A87C',
+  blind: '#6E6E6E',
+}
+export const LC_LEDGER_OPACITY: Record<LedgerVerdict, number> = {
+  outside: 0, clear: 0.34, unknown: 0.55, capped: 0.55, blind: 0.8,
+}
+export const LC_LEDGER_WORD: Record<LedgerVerdict, string> = {
+  outside: '可达区外 · 不判',
+  clear: '确认不盲（三类皆有据且皆命中）',
+  unknown: '未定（有类没查全 —— 我们的取证缺口）',
+  capped: '判不动（接口能力封顶）',
+  blind: '判盲（至少一类有据且 1km 内确实没有）',
+}
+
+export interface LedgerGridCell {
+  i: number
+  j: number
+  verdict: LedgerVerdict
+  /** 格界四角（真实米制下的方框；live 的 Polygon 与降级 SVG 的 points 都吃这四角） */
+  corners: LngLat[]
+}
+
+export interface LedgerGridPlan {
+  n: number
+  stepM: number
+  /** 只含**非 `outside`** 的格（可达区外不上色，与台账卡同一档口径） */
+  cells: LedgerGridCell[]
+}
+
+/**
+ * 整幅格阵的几何与结论。拿不到台账、或一格都不在可达区内 ⇒ `null` = 整层不画。
+ *
+ * 结论逐格走 `cellVerdict`（全仓唯一那颗解码出口）；这里不重算"缺哪类算盲"。
+ */
+export function cellsGridPlan(lc: Pick<LivingCircleReport, 'caliber'>): LedgerGridPlan | null {
+  const led = cellsLedgerOf(lc)
+  if (!led) return null
+  const half = led.step_m / 2
+  const cells: LedgerGridCell[] = []
+  for (let i = 0; i < led.n; i += 1) {
+    for (let j = 0; j < led.n; j += 1) {
+      const st = cellVerdict(lc, [i, j])
+      if (!st || st.verdict === 'outside') continue
+      const c = cellCenter(led, i, j)
+      cells.push({
+        i, j, verdict: st.verdict,
+        corners: [[-half, -half], [half, -half], [half, half], [-half, half]]
+          .map(([dx, dy]) => lcFromMeters(c, dx, dy)),
+      })
+    }
+  }
+  if (!cells.length) return null
+  return { n: led.n, stepM: led.step_m, cells }
 }

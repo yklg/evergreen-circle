@@ -9,6 +9,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import ComparePage from '../pages/ComparePage'
 import { SAMPLE_COMMUNITIES, demoCompareSamples } from '../mocks/livingCircleMock'
+import { cellsGridPlan } from '../components/lifecircle/CellLayer'
 import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
 import {
@@ -646,7 +647,27 @@ describe('笔3a · 对照页解释层开关', () => {
     })
   })
 
-  it('同图叠加那一支不摆这两颗勾（对照态名册整批退场，摆了就是点了没反应）', async () => {
+it('勾上整幅格阵 ⇒ 只有带台账那一侧画出来，格数等于 plan 的格数（另一侧整层不出现）', async () => {
+    const { container } = renderFixture()
+    await settleMaps(container)
+    expect(container.querySelectorAll('[data-lc-layer="cells-grid"]').length).toBe(0)
+
+    fireEvent.click(screen.getByLabelText(/逐格判定台账/))
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-lc-layer="cells-grid"]').length).toBe(1)
+    })
+    const plan = cellsGridPlan(demoA.report)
+    expect(plan, 'A 侧（ev2）该有台账，否则本条是恒真').not.toBeNull()
+    expect(cellsGridPlan(demoB.report), 'B 侧（劲松）不该有台账').toBeNull()
+    expect(container.querySelectorAll('[data-lc-layer="cells-grid"] polygon').length).toBe(plan!.cells.length)
+
+    fireEvent.click(screen.getByLabelText(/逐格判定台账/))
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-lc-layer="cells-grid"]').length).toBe(0)
+    })
+  })
+
+  it('同图叠加那一支不摆这三颗勾（对照态名册整批退场，摆了就是点了没反应）', async () => {
     useDataModeStore.setState({ mode: 'live' })
     mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('k2', '凯里·近邻', '贵州凯里')])
     render(
@@ -658,6 +679,7 @@ describe('笔3a · 对照页解释层开关', () => {
     expect(screen.getByText('同图叠加 · 等时圈对比')).toBeTruthy()
     expect(screen.queryByLabelText(/口径对照环/)).toBeNull()
     expect(screen.queryByLabelText(/方位形状/)).toBeNull()
+    expect(screen.queryByLabelText(/逐格判定台账/)).toBeNull()
     // 笔3c 落地时这条要显式改写（不是删）：那时同图那张也允许画这几层，勾就该出现。
   })
 })

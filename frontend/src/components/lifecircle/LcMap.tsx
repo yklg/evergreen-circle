@@ -18,7 +18,7 @@ import { useMapNotesStore } from '../../store/mapNotesStore'
 import { asBdLngLat, asBdLngLatOrNull, bmapEventLngLat, describeBMapEvent, rejectBdLngLatSource, toDiagPair } from '../../lib/geo'
 import type { CoordSys } from '../../lib/geo'
 import { shapeSectors } from './ShapeSectorOverlay'
-import { cellLayerPlan } from './CellLayer'
+import { LC_LEDGER_FILL, LC_LEDGER_OPACITY, LC_LEDGER_WORD, cellLayerPlan, cellsGridPlan } from './CellLayer'
 import { LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
 import {
   layerAttr,
@@ -118,6 +118,13 @@ export interface LcMapProps {
    *  它是**两把尺的对比**，不是主叙事层；且载荷没发（骑行/驾车档、离线件、存量件）
    *  时这一层根本不存在，页面那颗开关也就不出现（`isoCompareOf` 返回 null）。 */
   showIsoCompare?: boolean
+  /**
+   * 整幅格阵（笔3b）：把台账那一页的五档结论（不盲 / 判盲 / 未定 / 判不动；区外不上色）
+   * 画到地图上。默认关 —— 与判定尺、对照环、扇区同一条纪律：解释层不是主叙事层。
+   * 与 `selectedCell` 那层是两件事：那层是"卡里选中的一格"，这层是"整页结论"。
+   * 载荷没发台账（出厂样区里两份就是没发）⇒ 整层不出现，页面那颗开关也不出现。
+   */
+  showCellsGrid?: boolean
   /** C5：选中的判定格 `(行i, 列j)`，与逐格台账卡（C4）双向 —— 卡里点一格、或地图上点一块，
    *  都画同一枚方框 + 该格的判定圆。`null` ⇒ 不画。 */
   selectedCell?: [number, number] | null
@@ -394,7 +401,7 @@ function ShapeToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, selectedCell = null, onCellPick, showShapeSectors, shapeLayerDefault = false,
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, showCellsGrid = false, selectedCell = null, onCellPick, showShapeSectors, shapeLayerDefault = false,
       selectedSector = null, onSectorPick, desensitize = false, focusBlindspotId },
   ref,
 ) {
@@ -460,7 +467,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     showJudgeScale,
     showIsoCompare,
     shapeOn,
-    ...rosterFactsOf(report, shapeCal, selectedCell),
+    showCellsGrid,
+    ...rosterFactsOf(report, shapeCal, selectedCell, showCellsGrid),
   })
   const rosterStr = layerAttr(roster)
   const declareLayer = (n: LcLayer, on: boolean) => {
@@ -471,6 +479,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   }
   /** 扇区覆盖物单独记账（照证据盘那条纪律）：不进 `overlaysRef`，免得被主重绘误摘。 */
   const sectorRefs = useRef<BMapMapOverlay[]>([])
+  /** 格阵覆盖物同样单独记账：一次开关可能挂几十枚，绝不能被主重绘误摘或漏摘。 */
+  const gridOverlaysRef = useRef<BMapMapOverlay[]>([])
   const clearSectors = () => {
     const map = mapRef.current
     for (const o of sectorRefs.current) {
@@ -1302,6 +1312,37 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     declareLayer('iso-compare', true)                    // R1：建出来了才申报
   }, [mode, report, compareReport, showIsoCompare, rosterStr])
 
+  /* 笔3b · 整幅格阵（live 半边）。三条纪律照抄对照环那条：
+     ① 不吃点击（`enableClicking: false`）—— 它是背景结论，不该抢走等时圈的点击；
+     ② 不进 `fitPts` —— 开一次格阵不该把地图视野弹走；
+     ③ 画不画只问名册，缺席即未发生（没台账 ⇒ 开关与图层都不出现）。 */
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (mode !== 'live' || !map || !bmap) return
+    for (const o of gridOverlaysRef.current) map.removeOverlay(o)
+    gridOverlaysRef.current = []
+    if (!parseLayerAttr(rosterStr).includes('cells-grid') || typeof bmap.Polygon !== 'function') {
+      declareLayer('cells-grid', false)
+      return
+    }
+    const grid = cellsGridPlan(report)
+    if (!grid) return
+    for (const c of grid.cells) {
+      const poly = new bmap.Polygon(c.corners.map((pt) => new bmap.Point(pt[0], pt[1])), {
+        strokeColor: LC_LEDGER_FILL[c.verdict],
+        strokeWeight: 0.5,
+        strokeOpacity: 0.6,
+        fillColor: LC_LEDGER_FILL[c.verdict],
+        fillOpacity: LC_LEDGER_OPACITY[c.verdict],
+        enableClicking: false,
+      })
+      map.addOverlay(poly)
+      gridOverlaysRef.current.push(poly)
+    }
+    declareLayer('cells-grid', true)                     // R1：建出来了才申报
+  }, [mode, report, compareReport, showCellsGrid, rosterStr])
+
   /* C5 · 选中格：方框 + **这一格自己的**判定圆，让卡片上的文字与图上的圈一一对应。
    *
    * 与 C2 同一套三条硬约束（只描边、不参与命中、不进 fitPts）。**这里没有可命中的格层** ——
@@ -1444,6 +1485,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // `compareReport` 半边）、`!desensitize`（P0-5：分享链接不得画逐格地理边界）、拿不到台账 ⇒
     // `plan` 为 `null` ⇒ 整层不画。
     const cellPlan = wantsLayer('selected-cell') ? cellLayerPlan(report, selectedCell) : null
+    const gridPlan = wantsLayer('cells-grid') ? cellsGridPlan(report) : null
     const onCanvasClick = (e: ReactMouseEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect()
       // ⚠️ rect 为 0×0 时（尚未布局 / 被 display:none 隐藏 / 无布局引擎的环境），
@@ -1528,6 +1570,21 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
                     textAnchor="middle" fontWeight={600}>
                 口径对照 {cmpZone?.minutes} min · {cmpZone?.area_km2} km²
               </text>
+            </g>
+          )}
+
+          {/* 笔3b · 整幅格阵（降级半边）：与 live 那条 effect 读同一份 `cellsGridPlan`、
+              同一张五档色表；`outside` 不上色这条与台账卡同源。命名用 `data-lc-layer`，
+              不叫 `data-cell` —— 那是台账卡示意网格的名字，e2e 按它数选中格。 */}
+          {gridPlan && (
+            <g data-lc-layer="cells-grid">
+              {gridPlan.cells.map((c) => (
+                <polygon key={`g-${c.i}-${c.j}`} points={lcPolyPts(center, c.corners)}
+                         fill={LC_LEDGER_FILL[c.verdict]} fillOpacity={LC_LEDGER_OPACITY[c.verdict]}
+                         stroke={LC_LEDGER_FILL[c.verdict]} strokeWidth={0.5} strokeOpacity={0.6}>
+                  <title>{`(${c.i},${c.j}) ${LC_LEDGER_WORD[c.verdict]}`}</title>
+                </polygon>
+              ))}
             </g>
           )}
 

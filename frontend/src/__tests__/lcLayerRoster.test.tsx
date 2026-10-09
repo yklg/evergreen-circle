@@ -50,7 +50,7 @@ const BARE = {
   isochrones: (kaili as unknown as LivingCircleReport).isochrones.map((z) => ({ ...z, shape: undefined })),
 } as unknown as LivingCircleReport
 
-const ALL_ON = { showJudgeScale: true, showIsoCompare: true, showShapeSectors: true, selectedCell: [1, 1] }
+const ALL_ON = { showJudgeScale: true, showIsoCompare: true, showShapeSectors: true, selectedCell: [1, 1], showCellsGrid: true }
 
 type Poly = { opts: Record<string, unknown> }
 type Circle = { opts: Record<string, unknown>; radius: number }
@@ -122,19 +122,29 @@ describe('两档名册相等 · 全开', () => {
       'live 档形状扇面没建出来').toBe(true)
     expect(polys().some((p) => p.opts.strokeColor === LC_JUDGE_SCALE_COLOR && p.opts.fillOpacity === 0.08),
       'live 档选中格方框没建出来').toBe(true)
+    // 格阵（笔3b）：五档色表里"判盲"那一档的填充色是它的指纹，与台账卡同一份表
+    expect(polys().some((p) => p.opts.fillColor === '#6E6E6E'),
+      'live 档整幅格阵没建出来（没有一格按 blind 档填充）').toBe(true)
   })
 })
 
 describe('两档名册相等 · 逐道闸各关一次', () => {
   it('关判定尺 ⇒ 两档**同样只少** judge-ruler，其余三层都在（用集合差，不用数量）', async () => {
     const { want } = await bothModes(FULL, { ...ALL_ON, showJudgeScale: false })
-    expect(want).toEqual(['iso-compare', 'selected-cell', 'shape-sectors'])
+    expect(want).toEqual(['cells-grid', 'iso-compare', 'selected-cell', 'shape-sectors'])
   })
 
-  it('脱敏态（分享链接）⇒ 两档都只少 selected-cell（P0-5 那道闸与名册同一处出口）', async () => {
+  it('关格阵开关 ⇒ 两档**同样只少** cells-grid（这一层不是常驻背景）', async () => {
+    const { want, fb } = await bothModes(FULL, { ...ALL_ON, showCellsGrid: false })
+    expect(want).toEqual(['iso-compare', 'judge-ruler', 'selected-cell', 'shape-sectors'])
+    expect(fb.container.querySelectorAll('[data-lc-layer="cells-grid"]')).toHaveLength(0)
+  })
+
+  it('脱敏态（分享链接）⇒ 逐格地理边界一律不上屏：selected-cell 与 cells-grid 同时退场（P0-5）', async () => {
     const { want, fb } = await bothModes(FULL, { ...ALL_ON, desensitize: true })
     expect(want).toEqual(['iso-compare', 'judge-ruler', 'shape-sectors'])
     expect(fb.container.querySelectorAll('[data-lc-layer="selected-cell"]')).toHaveLength(0)
+    expect(fb.container.querySelectorAll('[data-lc-layer="cells-grid"]')).toHaveLength(0)
   })
 
   it('对照态 ⇒ 解释层整批退场，两档都报空（这一条与上面几条一对，才排除"只有一档退场"）', async () => {

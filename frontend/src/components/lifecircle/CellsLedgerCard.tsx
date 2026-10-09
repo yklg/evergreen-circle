@@ -15,27 +15,16 @@
  * 不是同一件事，合并成"没结论"就是把失职洗成天经地义。
  */
 import { LC_JUDGE_SCALE_COLOR } from '../../lib/livingCircle'
+import { LC_LEDGER_FILL, LC_LEDGER_OPACITY, LC_LEDGER_WORD } from './CellLayer'
 import type { LedgerCellState, LedgerVerdict } from '../../lib/livingCircle'
 import type { CellsLedgerRaw } from '../../types'
 
 /** 五档配色。`outside` 不上色（可达区外语义上就不该判盲，画出来会像"这里没问题"）。 */
-const FILL: Record<LedgerVerdict, string> = {
-  outside: 'transparent',
-  clear: LC_JUDGE_SCALE_COLOR,
-  unknown: '#E0B775',
-  capped: '#C9A87C',
-  blind: '#6E6E6E',
-}
-const OPACITY: Record<LedgerVerdict, number> = {
-  outside: 0, clear: 0.34, unknown: 0.55, capped: 0.55, blind: 0.8,
-}
-const WORD: Record<LedgerVerdict, string> = {
-  outside: '可达区外 · 不判',
-  clear: '确认不盲（三类皆有据且皆命中）',
-  unknown: '未定（有类没查全 —— 我们的取证缺口）',
-  capped: '判不动（接口能力封顶）',
-  blind: '判盲（至少一类有据且 1km 内确实没有）',
-}
+// 五档色表与词表已提到 `CellLayer`（笔3b）：地图格阵层与这张卡共用同一份，
+// 这里只留别名，避免"卡里灰的、图上红的"那种没法自证的分裂。
+const FILL = LC_LEDGER_FILL
+const OPACITY = LC_LEDGER_OPACITY
+const WORD = LC_LEDGER_WORD
 
 const cellXy = (led: CellsLedgerRaw, i: number, j: number): [number, number] => [
   Math.round(-led.scan_m + j * led.step_m),
