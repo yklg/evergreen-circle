@@ -575,3 +575,89 @@ describe('笔1 · 逐类目差距与盲区成对', () => {
     expect(screen.queryByText(/缺失：/)).toBeNull()
   })
 })
+
+/* ── 笔3a · 对照页的解释层开关（只钉通道，不在页面层重测几何与缺席） ──────────
+ *
+ * 为什么这里不重复"一侧没发 ⇒ 那一侧不出现"：那件事的判据在名册与图层两侧
+ * （`lcLayerRoster`、`isoCompareLayer`），页面层再抄一遍只会得到一条更难做、
+ * 更容易因错误原因通过的重复判据。本组钉的是四件别处抓不到的事：
+ *  ① 默认关（解释层不是主叙事层）；② 勾选 ⇒ 图层真的挂上；③ 取消 ⇒ 摘干净；
+ *  ④ 开关**只出现在真能起作用的呈现分支**里 —— 同图叠加那张是对照态，
+ *     名册今天整批退场，把勾摆在那儿就是"点下去没反应"那个形状。
+ */
+describe('笔3a · 对照页解释层开关', () => {
+  const renderFixture = () =>
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+
+  /**
+   * 等两张图离开 boot。
+   *
+   * `LcMap` 起盘时先渲染 `data-lc-mode="boot"`，等地图配置回来才进 live 或降级树。
+   * 不等它就数图层，会得到一条**恒真**判据：本条第一版就这么"绿"过 ——
+   * 把默认值改成开，它照样报 0。变异测出来的，不是推出来的。
+   */
+  const settleMaps = async (container: HTMLElement) => {
+    await waitFor(() => {
+      const settled = [...container.querySelectorAll('[data-lc-mode]')]
+        .filter((e) => e.getAttribute('data-lc-mode') !== 'boot')
+      expect(settled.length, '两张图都该落定（boot 没结束 ⇒ 下面的计数是恒真）').toBe(2)
+    })
+  }
+
+  it('默认关：落定之后两张图仍没有对照环与扇区（解释层不自动上屏）', async () => {
+    const { container } = renderFixture()
+    await settleMaps(container)
+    expect(screen.getByLabelText(/口径对照环/) instanceof HTMLInputElement).toBe(true)
+    expect((screen.getByLabelText(/口径对照环/) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByLabelText(/方位形状/) as HTMLInputElement).checked).toBe(false)
+    expect(container.querySelectorAll('[data-lc-iso-compare]').length).toBe(0)
+    expect(container.querySelectorAll('[data-sector]').length).toBe(0)
+  })
+
+  it('勾上口径对照环 ⇒ 两侧各挂一条；取消 ⇒ 摘干净不留残影', async () => {
+    const { container } = renderFixture()
+    await settleMaps(container)
+    const box = screen.getByLabelText(/口径对照环/) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-lc-iso-compare]').length).toBe(2)
+    })
+    fireEvent.click(box)
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-lc-iso-compare]').length).toBe(0)
+    })
+  })
+
+  it('勾上方位形状 ⇒ 两侧各八枚楔形；取消 ⇒ 回 0（通道两向都钉）', async () => {
+    const { container } = renderFixture()
+    await settleMaps(container)
+    fireEvent.click(screen.getByLabelText(/方位形状/))
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-sector]').length).toBe(16)
+    })
+    fireEvent.click(screen.getByLabelText(/方位形状/))
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-sector]').length).toBe(0)
+    })
+  })
+
+  it('同图叠加那一支不摆这两颗勾（对照态名册整批退场，摆了就是点了没反应）', async () => {
+    useDataModeStore.setState({ mode: 'live' })
+    mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('k2', '凯里·近邻', '贵州凯里')])
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'k2']))
+    expect(screen.getByText('同图叠加 · 等时圈对比')).toBeTruthy()
+    expect(screen.queryByLabelText(/口径对照环/)).toBeNull()
+    expect(screen.queryByLabelText(/方位形状/)).toBeNull()
+    // 笔3c 落地时这条要显式改写（不是删）：那时同图那张也允许画这几层，勾就该出现。
+  })
+})

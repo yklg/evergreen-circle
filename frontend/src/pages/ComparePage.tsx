@@ -14,7 +14,8 @@ import { useDataModeStore } from '../store/dataModeStore'
 import { fetchLifeCircleReports, fetchLifeCircleCompare } from '../lib/api'
 import {
   COMPARE_ROWS, LC_BLIND_SEV, LC_ISO_COLORS, LC_ISO_COLORS_B, categoryCompareRows, compareCaliberNotices, compareRows,
-  emptyBlindspotNote, gapScoreOf, lcCompareCaliberGapNote, planComparisonOverlay, poiConservationNote, severityOf,
+  emptyBlindspotNote, gapScoreOf, isoCompareOf, lcCompareCaliberGapNote, planComparisonOverlay,
+  poiConservationNote, severityOf, shapeOfZone,
 } from '../lib/livingCircle'
 import type { CategorySideStat } from '../lib/livingCircle'
 import { CategoryCaliberNotes } from '../components/lifecircle/CategoryCaliberNotes'
@@ -239,6 +240,12 @@ export default function ComparePage() {
   const [records, setRecords] = useState<LifeCircleRecord[]>([])
   const [selA, setSelA] = useState<SceneOption | null>(null)
   const [selB, setSelB] = useState<SceneOption | null>(null)
+  /* 解释层开关（笔3a）。默认全关 —— 与体检台同一纪律：解释层不是主叙事层，
+     一次勾选不该改变主图讲了什么。开关**只出现在真能起作用的那一支**：
+     同图叠加那张是对照态（`compareReport`），名册今天整批退场，把勾摆在那儿就是
+     "点下去没反应"那个本仓反复出事的形状（`lcLayers.ts` 文件头记着判定尺当年只补了一半）。 */
+  const [isoCompareOn, setIsoCompareOn] = useState(false)
+  const [shapeOn, setShapeOn] = useState(false)
   /** 演示态的 A/B（笔4）：默认那一对仍由 `demoCompareSamples()` 挑，这里只存被选中的 id。 */
   const [demoSel, setDemoSel] = useState<[string, string]>(() => {
     const [x, y] = demoCompareSamples()
@@ -537,10 +544,37 @@ export default function ComparePage() {
           <p className="text-tag text-ink-3">
             两样区位处不同城市或远离同框尺度，已按各自城市分别展示真实等时圈；跨城设施差距请以卡片与差异表为准。
           </p>
+          {cards.length >= 2 && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+              {cards.some((r) => isoCompareOf(r) !== null) && (
+                <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
+                  <input type="checkbox" className="h-3.5 w-3.5" checked={isoCompareOn}
+                         onChange={(e) => setIsoCompareOn(e.target.checked)} />
+                  口径对照环（文献阈值）
+                </label>
+              )}
+              {cards.some((r) => shapeOfZone(r, 15) !== null) && (
+                <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
+                  <input type="checkbox" className="h-3.5 w-3.5" checked={shapeOn}
+                         onChange={(e) => setShapeOn(e.target.checked)} />
+                  方位形状（八方位最远可达）
+                </label>
+              )}
+              <span className="text-tag text-ink-3">
+                两张图各按自己那份载荷画：一侧没发这一层时，那一侧整层不出现。
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {cards.map((r, i) => (
               <div key={i} className="relative h-[400px]">
-                <LcMap report={r} draggableCenter={false} onMapMode={() => {}} />
+                <LcMap
+                  report={r}
+                  draggableCenter={false}
+                  onMapMode={() => {}}
+                  showIsoCompare={isoCompareOn}
+                  showShapeSectors={shapeOn}
+                />
               </div>
             ))}
           </div>
