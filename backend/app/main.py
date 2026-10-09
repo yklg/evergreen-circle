@@ -879,20 +879,32 @@ def list_life_circle_reports():
 
 @app.get("/api/life-circle/compare")
 def compare_life_circle(ids: str = ""):
-    """双样例对比（对齐前端 LifeCircleCompare 契约）。"""
+    """双样例对比（对齐前端 LifeCircleCompare 契约），可带第三份作**参照列**。
+
+    契约形状：`reports` 恒为两份（A/B），`diff` 恒为 A/B 两两 —— 加第三份不改动它们，
+    第三份走新增的可选 `reference` 键。理由：差异表的行语义、前后端共用的那份契约夹具、
+    以及 A>B / A<B 的双向措辞全都建立在"两份"上；把它扩成多变比较的收益是零，
+    代价是那套措辞判据整体重排。
+    ⚠️ 超过三份直接 422，不再静默截断 —— 原先的 `reps[:2]` 就是把第四份悄悄吃掉的那类形状。
+    """
     parts = [p.strip() for p in ids.split(",") if p.strip()]
     if len(parts) < 2:
         raise HTTPException(status_code=422, detail="compare 需要至少两个 report id（逗号分隔）")
+    if len(parts) > 3:
+        raise HTTPException(status_code=422, detail="compare 最多三份（两份对比 + 一份参照）")
     reps = []
     for pid in parts:
         rep = db.get_living_circle_report(pid)
         if not rep:
             raise HTTPException(status_code=404, detail=f"体检报告不存在: {pid}")
         reps.append(rep)
-    return {
+    out = {
         "reports": [rep.get("living_circle") for rep in reps[:2]],
         "diff": _lc_diff(reps[0].get("living_circle") or {}, reps[1].get("living_circle") or {}),
     }
+    if len(reps) == 3:
+        out["reference"] = reps[2].get("living_circle")
+    return out
 
 
 @app.get("/api/life-circle/{report_id}/share")

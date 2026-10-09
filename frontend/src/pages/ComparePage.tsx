@@ -403,6 +403,11 @@ export default function ComparePage() {
      （两侧 `caliber.scope_policy_version` 不同时，「服务盲区 / 综合评分」的结论必须换成
      「不可比」：旧口径只判了可达区一角的格，分差会被读成「社区不同」而不是「尺子换了」）。 */
   const caliberNotices = cards.length >= 2 ? compareCaliberNotices(cards[0], cards[1]) : []
+  /* 参照（笔5）：真实态取后端 `reference` 槽位；演示态取名册里没被选为 A/B 的那一份
+     —— 于是"参照"在两态都读得到，且都不需要新造一份挑法。 */
+  const reference: LivingCircleReport | null = useReal
+    ? (cmp!.reference ?? null)
+    : (SAMPLE_COMMUNITIES.find((c) => c.id !== demoSel[0] && c.id !== demoSel[1])?.report ?? null)
   const diffRows: LifeCircleCompare['diff'] = useReal
     ? cmp!.diff
     : compareRows(cards[0], cards[1], names[0], names[1])
@@ -435,15 +440,21 @@ export default function ComparePage() {
               <th className="py-2 pr-3 font-medium">指标</th>
               <th className="py-2 pr-3 font-medium">{names[0]}</th>
               <th className="py-2 pr-3 font-medium">{names[1]}</th>
+              {reference && <th className="py-2 pr-3 font-medium">参照 · {reference.scene.name}</th>}
               <th className="py-2 font-medium">解读</th>
             </tr>
           </thead>
           <tbody>
-            {diffRows.map((row) => (
+            {diffRows.map((row, i) => (
               <tr key={row.metric} className="border-b border-line/60 text-body text-ink">
                 <td className="py-2.5 pr-3 font-medium text-ink">{row.metric}</td>
                 <td className="py-2.5 pr-3">{row.a_value}</td>
                 <td className="py-2.5 pr-3">{row.b_value}</td>
+                {/* 参照列的取值走 `COMPARE_ROWS[i].cell` —— 与卡片、A/B 列同一份行定义表，
+                    不在这里重算任何一个数；解读列只由 A/B 决定，参照不参与那句方向词。 */}
+                {reference && (
+                  <td className="py-2.5 pr-3">{COMPARE_ROWS[i]?.cell(reference) ?? '—'}</td>
+                )}
                 <td className="py-2.5 text-aux text-ink-2">{row.desc}</td>
               </tr>
             ))}

@@ -1402,6 +1402,9 @@ export interface LivingCircleReport {
 /** 双样例对比（ComparePage 数据） */
 export interface LifeCircleCompare {
   reports: LivingCircleReport[]
+  /** 第三份参照（笔5）：可选键。缺席 = 这一对没有参照；有值也只进"参照"那一列，
+   *  不参与 `diff` 的方向句 —— 措辞出口仍只看 A/B 两份。 */
+  reference?: LivingCircleReport | null
   diff: {
     metric: string
     a_value: number | string

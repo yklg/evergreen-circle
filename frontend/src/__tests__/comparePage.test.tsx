@@ -173,7 +173,10 @@ describe('ComparePage（演示态 · fixture）', () => {
     expect(body.length, '差异表应有 6 行').toBe(COMPARE_ROWS.length)
     for (const tr of body) {
       const tds = [...tr.querySelectorAll('td')].map((td) => td.textContent?.trim() ?? '')
-      expect(tds, `每行应恰好 4 列（行名/A/B/解读），实得 ${JSON.stringify(tds)}`).toHaveLength(4)
+      // 列数 = 行名 + A + B + [参照] + 解读：参照是可选列（笔5），有则 5、无则 4。
+      const hasRef = (document.body.textContent ?? '').includes('参照 ·')
+      expect(tds, `每行应 4 或 5 列（行名/A/B/[参照]/解读），实得 ${JSON.stringify(tds)}`)
+        .toHaveLength(hasRef ? 5 : 4)
       for (const [i, v] of [tds[1], tds[2]].entries()) {
         expect(
           /^-?\d+(\.\d+)?$/.test(v),
@@ -277,7 +280,10 @@ describe('ComparePage（演示态 · fixture）', () => {
     await waitFor(() => {
       expect(screen.getAllByText(String(other.total_score)).length).toBeGreaterThan(0)
     })
-    expect(screen.queryByText(String(demoA.report.scores.total))).toBeNull()
+    // ev2 的 68.4 不该再出现在 A 卡上，但它**合法地**出现在参照列（A/B 用剩的那份自动成为参照）。
+    // 所以这里数的是"还剩几处"，不是"有没有"——写 queryByText 为 null 会把新功能判成回归。
+    expect(screen.getAllByText(String(demoA.report.scores.total))).toHaveLength(1)
+    expect(screen.getByText(/^参照 · /)).toBeTruthy()
     // 副句由名字派生：原来这里写死「凯里老街（欠发达样本）vs 北京劲松（成熟样本）」，
     // 换样区后那句话就说谎了。断言两半：写死的样本标签不再出现，且副句等于当前这一对的名字。
     expect(screen.queryByText(/欠发达样本|成熟样本/)).toBeNull()
@@ -731,5 +737,74 @@ it('勾上整幅格阵 ⇒ 只有带台账那一侧画出来，格数等于 plan
     expect(screen.queryByLabelText(/方位形状/)).toBeNull()
     expect(screen.queryByLabelText(/逐格判定台账/)).toBeNull()
     // 笔3c 落地时这条要显式改写（不是删）：那时同图那张也允许画这几层，勾就该出现。
+  })
+})
+
+/* ── 笔5 · 第三份参照列（P6）──────────────────────────────────────────────
+ * 参照只是多一列，不改 A/B 的语义 —— 所以这一组钉的是"多出来的东西没挤掉原来的口径"：
+ *  ① 有参照时列出现、取值走同一份行定义表；② 后端没发这个键时整列不出现（不是空列）；
+ *  ③ 行数与行序仍是那 6 行；④ 方向句只由 A/B 决定，参照件分数再高也不改判。
+ */
+describe('笔5 · 第三份参照列', () => {
+  it('演示态：A/B 用掉两份后，名册里剩下那份自动成为参照列', async () => {
+    renderFixture()
+    await waitFor(() => expect(screen.getAllByText('关键差异').length).toBeGreaterThan(0))
+    expect(screen.getByText(/^参照 · /)).toBeTruthy()
+    // 默认对是 ev2 × 劲松 ⇒ 剩下的是凯里那份冻结件（65.4）
+    const refHeader = screen.getByText(/^参照 · /).textContent ?? ''
+    expect(refHeader).toContain('凯里')
+    expect(screen.getByText('65.4')).toBeTruthy()
+  })
+
+  it('真实态后端没发 reference 键 ⇒ 整列不出现（不是摆一个空列）', async () => {
+    useDataModeStore.setState({ mode: 'live' })
+    mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('j1', '北京劲松', '北京朝阳')])
+    mockCompare.mockResolvedValue(makeCompare(['k1', 'j1']))
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'j1']))
+    expect(screen.queryByText(/^参照 · /)).toBeNull()
+  })
+
+  it('有参照时：值走 COMPARE_ROWS 的展示出口，且差异表仍是 6 行、行序不变', async () => {
+    useDataModeStore.setState({ mode: 'live' })
+    mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('j1', '北京劲松', '北京朝阳')])
+    mockCompare.mockResolvedValue({ ...makeCompare(['k1', 'j1']), reference: kailiReport })
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'j1']))
+    const rows = within(diffTable()).getAllByRole('row').slice(1)
+    expect(rows.map((tr) => tr.querySelector('td')?.textContent?.trim())).toEqual(COMPARE_ROWS.map((d) => d.key))
+    // 参照格与卡片同一出口：拿行定义表现算一份去比，而不是写死字面量
+    for (let i = 0; i < COMPARE_ROWS.length; i += 1) {
+      const tds = [...rows[i].querySelectorAll('td')]
+      expect(tds[3].textContent?.trim(), `第 ${i} 行参照格应等于行定义表的 cell()`)
+        .toBe(COMPARE_ROWS[i].cell(kailiReport))
+    }
+  })
+
+  it('参照不参与那句方向词：解读列逐字等于后端给的 desc，与参照件分数无关', async () => {
+    useDataModeStore.setState({ mode: 'live' })
+    mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('j1', '北京劲松', '北京朝阳')])
+    const plain = makeCompare(['k1', 'j1'])
+    // 参照故意挑总分更高的那份：若实现把参照卷进比较，方向句必然变
+    mockCompare.mockResolvedValue({ ...plain, reference: jinsongReport })
+    render(
+      <MemoryRouter>
+        <ComparePage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'j1']))
+    await screen.findByText('关键差异')
+    const rows = within(diffTable()).getAllByRole('row').slice(1)
+    const shown = rows.map((tr) => [...tr.querySelectorAll('td')].pop()?.textContent?.trim() ?? '')
+    expect(shown, '解读列必须逐字来自 diff.desc（参照不参与）').toEqual(plain.diff.map((r) => r.desc))
+    expect(shown).toHaveLength(COMPARE_ROWS.length)
   })
 })

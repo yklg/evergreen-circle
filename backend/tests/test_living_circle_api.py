@@ -980,3 +980,51 @@ def test_every_guard_named_by_the_contract_fixture_actually_exists():
     assert not missing, (
         f"契约夹具点名的判据在 tests/ 里查无此人：{missing} —— "
         "要么把判据补回来，要么改掉夹具里那句引用；留着就是替一条不存在的闸背书")
+
+
+# ── 笔5 · 第三份走 reference 槽位（P6）─────────────────────────────────────
+def test_compare_reference_slot_keeps_the_ab_diff_word_for_word():
+    """加第三份 ⇒ `reports` 仍两份、`diff` 与不带第三份时**逐字相同**。
+
+    这条是哨兵：它防的不是"参照列没出来"，而是"加第三份时偷偷改了 A/B 的语义"——
+    差异表的行序、数值与那句方向词都建立在"两份"上，任何一处跟着变都说明设计被换掉了。
+    """
+    rid_a = _make_record("凯里老街", [107.9758, 26.5734], "贵州·凯里")
+    rid_b = _make_record("北京劲松", [116.4637, 39.8832], "北京·朝阳")
+    # 参照件用自带载荷落库：`_make_record` 走流水线、scene 名按样区固定，
+    # 造不出可辨识的第三份；这里要验的正是"第三份被原样搬进 reference 槽"。
+    rid_c = _store_payload_record("ref-slot", {
+        "scene": {"name": "凯里·参照", "city": "贵州·凯里", "center": [107.98, 26.576]},
+        "scores": {"total": 61.0, "radar": []},
+        "blindspots": [],
+        "isochrones": [],
+        "poi": {"categories": [], "total": 0, "in_circle": 0},
+        "caliber": {},
+    })
+
+    two = client.get(f"/api/life-circle/compare?ids={rid_a},{rid_b}").json()
+    three = client.get(f"/api/life-circle/compare?ids={rid_a},{rid_b},{rid_c}").json()
+
+    assert "reference" not in two, "两份时不该凭空多出参照键"
+    assert len(three["reports"]) == 2, "reports 必须恒为两份（A/B）"
+    assert three["reference"]["scene"]["name"] == "凯里·参照"
+    assert three["diff"] == two["diff"], "第三份偷偷改了 A/B 差异表"
+    assert three["reports"] == two["reports"], "第三份偷偷改了 A/B 两份载荷"
+
+
+def test_compare_rejects_more_than_three_ids_instead_of_silently_dropping():
+    """四份以上 ⇒ 422。旧实现是 `reps[:2]` 静默截断，第四份被吃掉而屏上没有任何话说这件事。"""
+    ids = ",".join(
+        _make_record(f"样区{i}", [107.9 + i * 0.01, 26.5], f"城{i}") for i in range(4)
+    )
+    resp = client.get(f"/api/life-circle/compare?ids={ids}")
+    assert resp.status_code == 422
+    assert "最多三份" in resp.json()["detail"]
+
+
+def test_compare_reference_survives_the_offline_pair_path():
+    """离线那两条既有判据管的是两份；参照槽位是**可选键**，缺席即不出现，不许塞半份。"""
+    rid_a = _make_record("凯里老街", [107.9758, 26.5734], "贵州·凯里")
+    rid_b = _make_record("北京劲松", [116.4637, 39.8832], "北京·朝阳")
+    body = client.get(f"/api/life-circle/compare?ids={rid_a},{rid_b}").json()
+    assert set(body.keys()) == {"reports", "diff"}
