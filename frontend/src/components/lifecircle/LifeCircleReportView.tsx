@@ -107,11 +107,8 @@ import LcMap from './LcMap'
 import DirectionBars from './DirectionBars'
 import { VChart } from '../VChart'
 import { VDataGrid } from '../VDataGrid'
-import { useExpertStore } from '../../store/expertStore'
+import { EMPTY_ROSTER, useExpertStore } from '../../store/expertStore'
 import type { Expert } from '../../types'
-
-/** zustand selector 的稳定空值（每次返回新数组会造成无限重渲染）。 */
-const EMPTY_ROSTER: Expert[] = []
 
 /* ── 地图快照（静态投影，非交互） ─────────────────────────── */
 
@@ -331,6 +328,49 @@ function PartialNote({ lc }: { lc: LivingCircleReport }) {
  *  那一份是后端同一个 `to_row()` 产的，上屏与落库无从各说各话。
  *  ⚠️ 缺 `forensic` ⇒ **整块不渲染**：离线估算与判盲口径升级前的旧快照从没走过取证，
  *  这里回落成「0 轮」就是替一次没发生的事举证。 */
+/** 报告署名席位小节（乙）。数据只有 `report.dispatch` 一个来源 —— 后端 `assemble_report`
+ *  已经把席位 id 与指派理由拼好，且**兜底句子只有一个实现**。前端若自己 zip
+ *  `lc.team.expert_ids × reasons` 再自己写一句兜底，就是把那唯一实现抄成第二份
+ *  （`_team_payload` 的注释记的血案正是"三份手写迟早再漂"）。
+ *
+ *  ⚠️ 缺 `dispatch` 或为空 ⇒ **整块不渲染**：印一个「0 位」就是替没署名的报告举证。
+ *  标题写「报告署名席位（N）」而不是"本次派出的 N 位"：`dispatch` 是**装配期**的署名集合，
+ *  可能与横幅那支**编排期**保底队人数不同（13 vs 10），写"派出"会被当场问住。
+ *  行分隔用 `border-b border-line/60 last:border-0`（与取证回合表同一族）—— 刻意不用
+ *  `divide-y`：那个 utility 全仓没人用过，Tailwind 只生成源码里出现过的类名，写了就是静默无分隔。 */
+function DispatchSection({
+  rows,
+  resolve,
+}: {
+  rows: { id: string; reason: string }[]
+  resolve: (key: string) => Expert | undefined
+}) {
+  return (
+    <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-aux font-semibold text-ink">
+        <Users size={15} className="text-primary" /> 报告署名席位（{rows.length}）
+        <span className="text-tag font-normal text-ink-3">理由＝席位登记的职责原文</span>
+      </div>
+      <ul className="text-tag">
+        {rows.map((d) => {
+          const e = resolve(d.id)
+          const role = (e?.role_title ?? '').split(' / ')[0]
+          return (
+            <li key={d.id} className="flex items-start gap-2 border-b border-line/60 py-1.5 last:border-0">
+              <Users size={13} className="mt-0.5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1">
+                <b className="font-medium text-ink">{e ? (role ? `${e.name} · ${role}` : e.name) : d.id}</b>
+                {e && <span className="ml-1 text-ink-3">{d.id}</span>}
+                <span className="block text-ink-2">{d.reason}</span>
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 function ForensicSection({ account }: { account: ForensicAccount }) {
   return (
     <div className="mt-4 rounded-card border border-line bg-card p-4 shadow-card">
@@ -976,6 +1016,11 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
 
           {/* 片 5：取证回合账目（与顶部 chip、SSE `round` 事件三处同源一份 `to_row()`） */}
           {forensic && <ForensicSection account={forensic} />}
+
+          {/* 乙：报告署名席位与指派理由（与上面同一族卡片、同一个"缺件即不印"门控） */}
+          {(report.dispatch?.length ?? 0) > 0 && (
+            <DispatchSection rows={report.dispatch ?? []} resolve={resolveExpert} />
+          )}
 
           <div className="mt-4 flex justify-center pb-4">
             <button
