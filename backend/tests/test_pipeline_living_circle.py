@@ -9,7 +9,9 @@ v5 U17-U19/U22/U27/U30/U31/U36：live 分支（stub client + 内存缓存）驱�
   预算感知采样 / 配额计数 / 熔断降级 / 缓存命中幂等。
 """
 import asyncio
+import importlib.util
 import math
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -580,15 +582,42 @@ def test_u40_miss_path_reverse_geocode_message_and_stage_order(monkeypatch):
     assert db.get_task_full(tid)["status"] == "done"
 
 
+def _source_event_types() -> set[str]:
+    """A4 白名单的**出处**：`living_circle.py` 源码里 `_ev("<type>", …)` 的发射点集合。
+
+    尺子只许有一把 —— 直接借 `test_sse_event_type_single_source.py` 的源扫函数；在这里另写
+    一份正则就是造第二个"事件类型真相"，而那正是那条守卫要消灭的形状。`tests/` 不是包
+    （无 `__init__.py`），`from tests.x import y` 走不通 ⇒ 按路径装载；文件缺失或改名时
+    `exec_module` 当场抛，不会静默交出一个空集把本判据变成恒真。
+    """
+    spec = importlib.util.spec_from_file_location(
+        "_lc_event_type_scan",
+        Path(__file__).resolve().parent / "test_sse_event_type_single_source.py",
+    )
+    assert spec is not None and spec.loader is not None, "源扫守卫找不到 ⇒ 本判据没有出处"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    emitted = set(module._emitted_types()["living_circle.py"])
+    assert emitted, "源扫在 living_circle.py 上解析出空集 ⇒ 发射点形状或那把正则变了"
+    return emitted
+
+
 def test_pipeline_event_contract():
-    """A4：事件类型白名单 + 阶段顺序单调 + 收尾 report_ready/done 双字段。"""
+    """A4：实发事件 ⊆ 源码发射点 + 阶段顺序单调 + 收尾 report_ready/done 双字段。"""
     tid = create_living_circle_task(KAILI)
     events = _run_pipeline(tid)
     types = [e["type"] for e in events]
-    # warn 补进白名单：`living_circle.py:198` 的名称/坐标不同源告警一直在发，
-    # 此前只是恰好没在 fixture 路径上触发才没红（`test_intake_and_shell.py` 反而依赖它存在）。
-    allowed = {"node_update", "message", "progress", "evidence", "report_ready", "done", "warn"}
-    assert set(types) <= allowed
+    # 白名单原本是手写的 7 个 type，漏了 `round`（`:484` 发）与 `error`（`:372`/`:605` 发），
+    # 只因 fixture 路径打不到那两条分支才一直没红 —— "手写清单 × 只跑一条路径"这个**形态**
+    # 就是缺陷本身：新增 type 的人只会撞到这张清单，撞不到"前端到底收不收"（那一侧由
+    # test_sse_event_type_single_source 判，`warn` 的教训就是它抓而这张清单放）。
+    # 改成"实发 ⊆ 源码实发"后它才真的抓住病：运行时发出一条源码里不存在的 type
+    # （拼字符串、变量传参、或从别处 import 来的事件工厂）。
+    allowed = _source_event_types()
+    assert set(types) <= allowed, (
+        f"运行时发出源码里不存在的 type：{sorted(set(types) - allowed)}"
+        " ⇒ 有地方在用变量/拼接决定事件类型，源扫看不见它"
+    )
     assert "report_ready" in types and "done" in types
 
     # progress 阶段序列：与 STAGES 顺序一致且单调
