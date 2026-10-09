@@ -74,6 +74,8 @@ type Ev = {
   degraded?: string
   members?: string[]
   code?: string
+  /** 这一步的负责席位 id。live 发在 `progress` 上，演示夹具发在 `message` 上 ⇒ 两条源都收。 */
+  expert?: string
 }
 
 /** 终端报告 id：report_ready/done 统一取 reportId → report_id 的任一非空。 */
@@ -134,7 +136,26 @@ function instrumentRegistry(taskId: string, type: string, data: unknown, getEvid
     // 终态（done/failed）后到达的迟到 progress 不回退状态/进度：幂等收敛。
     const cur = reg().tasks[taskId]
     if (!cur || cur.status !== 'running') return
-    reg().upsert({ taskId, stage: d.stage, percent: d.percent ?? 0, evidence_count: getEvidence() })
+    // owner 的权威只在这一帧上：`expert: d.expert ?? null` 里的 **null 是"这帧明确没有归属"**，
+    // 与"这一笔压根不提 expert"（`TaskFloatBar` 的 status 轮询就是那种）是两件事。
+    // 后端 C2 对被缓存跳过的五步刻意不发 `expert` ⇒ 这里必须把它清掉，
+    // 否则横幅会拿上一档的席位替"什么都没算"的那一步举证（那条判据在 `test_cache_hit_frames_carry_no_owner`）。
+    reg().upsert({
+      taskId,
+      stage: d.stage,
+      percent: d.percent ?? 0,
+      evidence_count: getEvidence(),
+      expert: d.expert ?? null,
+    })
+    return
+  }
+  if (type === 'message' && d.expert != null) {
+    // 演示夹具把归属挂在 `message.expert` 上（live 挂在 `progress.expert`）⇒ 两条源都收，
+    // 否则就成了"真跑有、演示空"，把要消除的分叉反过来造一遍。
+    // 这一笔不带 stage ⇒ 按合并规则只**补写** owner，改不动阶段。
+    const cur = reg().tasks[taskId]
+    if (!cur || cur.status !== 'running') return
+    reg().upsert({ taskId, expert: d.expert })
     return
   }
   const rid = (type === 'report_ready' || type === 'done') && reportIdOf(d) ? reportIdOf(d) : null

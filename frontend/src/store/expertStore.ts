@@ -17,6 +17,15 @@ export type ExpertDomainName = 'travel' | 'living_circle'
 /** 合法域清单（与后端 `app/data.DOMAINS` 同集；端点/静态文件判据共用这一份） */
 export const EXPERT_DOMAINS = ['travel', 'living_circle'] as const
 
+/**
+ * 名册未到时的**稳定**空数组。
+ *
+ * 订阅名册的组件一律写 `s.expertsByDomain.<域> ?? EMPTY_ROSTER`：这里必须给同一个数组引用，
+ * 每次现造 `[]` 会让 zustand 的选择器每帧都算"变了"，于是无限重渲染。
+ * 只导出这一份 —— 上一版 `LifeCircleReportView` 里私有一份，第二处要订阅名册的代码就会再造一份。
+ */
+export const EMPTY_ROSTER: Expert[] = []
+
 interface ExpertState {
   /** 按域缓存的名册槽 */
   expertsByDomain: Partial<Record<ExpertDomainName, Expert[]>>

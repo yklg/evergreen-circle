@@ -12,6 +12,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const TRAVEL = [
   { id: 'L2-005', name: '温叙白', nickname: 'T5', level: 'L2', role_title: '花费与性价比分析师 / Cost Analyst', group: 'strategy' },
@@ -94,5 +96,47 @@ describe('生活圈报告署名解析域', () => {
     expect(chips.length).toBeGreaterThan(0)
     // 只有 travel 册在场时，绝不允许把「谷穗安」解析成旅游人设里的某个人
     expect(screen.queryAllByText(/谷穗安 · 行程策略专家/)).toHaveLength(0)
+  })
+})
+
+/* ══ F5 · 生活圈视图不得伸手去要 travel 人设 ══
+ *
+ * 上面几条测的是"解析对不对"，这条测的是"有没有人把域写错"：两本名册共用同一套 48 个 id，
+ * `resolve(id, 'travel')` 不会报错、不会 404，只会把「谷穗安·基层医疗配置顾问」静默换成
+ * 「苏明哲·行程策略专家」—— 本批所有署名缺陷的成因就是这个形状。
+ * 那 5 个 travel 渲染器（VAgentStream / VFlowDag / VTracePanel / VClaimCard / VDecisionReplay）
+ * 内部硬写 `'travel'` 是它们的本职，所以扫描面**只圈生活圈侧文件**，不扫全仓。
+ */
+describe('F5 · 生活圈源码里不得出现取 travel 名册的调用', () => {
+  const SRC = join(process.cwd(), 'src')
+  const LC_DIR = join(SRC, 'components', 'lifecircle')
+  const LC_FILES = new Set<string>([
+    join(SRC, 'pages', 'LifeCirclePage.tsx'),
+    join(SRC, 'lib', 'lifeCircleFlow.ts'),
+    join(SRC, 'store', 'taskRegistry.ts'),
+    ...readdirSync(LC_DIR).filter((f) => /\.tsx?$/.test(f)).map((f) => join(LC_DIR, f)),
+  ])
+  const TRAVEL_ARG = /,\s*'travel'\s*\)/
+
+  it('扫描面真的覆盖到了生活圈侧（探针不空转）', () => {
+    expect(LC_FILES.size, `生活圈侧只扫到 ${LC_FILES.size} 个文件`).toBeGreaterThanOrEqual(5)
+    for (const f of LC_FILES) expect(existsSync(f), `扫描面里有文件不存在：${f}`).toBe(true)
+    // 正则本身要有落点：travel 侧那 5 个渲染器里必须还能找到这种调用，
+    // 否则"零命中"可能只是正则写错了。
+    const hits = readdirSync(join(SRC, 'components'))
+      .filter((f) => /^V.+\.tsx$/.test(f))
+      .some((f) => TRAVEL_ARG.test(readFileSync(join(SRC, 'components', f), 'utf-8')))
+    expect(hits, "`, 'travel')` 形状在 travel 渲染器里也扫不到 ⇒ 这条正则已失效").toBe(true)
+  })
+
+  it('生活圈侧没有任何一处按 travel 域取名册', () => {
+    const offenders: string[] = []
+    for (const f of LC_FILES) {
+      const lines = readFileSync(f, 'utf-8').split('\n')
+      lines.forEach((line, i) => {
+        if (TRAVEL_ARG.test(line)) offenders.push(`${f.split('/src/')[1]}:${i + 1}  ${line.trim()}`)
+      })
+    }
+    expect(offenders, `生活圈侧出现 travel 域取数（同 id 不同人，不会报错只会换人）：\n${offenders.join('\n')}`).toEqual([])
   })
 })

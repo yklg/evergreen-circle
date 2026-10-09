@@ -21,6 +21,7 @@ import {
   Play,
   X,
   Navigation,
+  Users,
 } from 'lucide-react'
 import {
   SAMPLE_COMMUNITIES,
@@ -31,6 +32,7 @@ import { replayLivingCircleStream, LC_STAGES, stageLabel } from '../mocks/living
 import { fetchLifeCircleReports, fetchLifeCircleReport } from '../lib/api'
 import { launchLifeCircle, subscribeLifeCircleTask } from '../lib/lifeCircleFlow'
 import { useDataModeStore } from '../store/dataModeStore'
+import { useExpertStore, EMPTY_ROSTER } from '../store/expertStore'
 import { useTaskRegistry } from '../store/taskRegistry'
 import LcMap from '../components/lifecircle/LcMap'
 import CellsLedgerCard from '../components/lifecircle/CellsLedgerCard'
@@ -104,16 +106,39 @@ interface TaskInput {
 /** 盲区清单默认只摊前 N 条：它是右栏里最高的那块，右栏内部滚之后没必要一次铺完。 */
 const BLIND_TOP_N = 3
 
-/** 运行期常驻提示：组队降级 ＋ 口径告警。
+/** 运行期常驻提示：当前席位 ＋ 组队降级 ＋ 口径告警。
  *
- * 与 `runMsg` 的区别是**不被后续 message 冲掉** —— "这次的人是模型挑的还是兜底凑的"、
- * "名称与中心点可能不同源"都是这一趟体检的可信度信息，一闪而过等于没说。
+ * 与 `runMsg` 的区别是**不被后续 message 冲掉** —— "这一步是谁在做"、
+ * "这次的人是模型挑的还是兜底凑的"、"名称与中心点可能不同源"都是这一趟体检的可信度信息，
+ * 一闪而过等于没说。
  * 有记录态与无记录空态两个横幅共用这一份实现。
  */
-function RunNotices({ teamNotice, intakeWarns }: { teamNotice: string; intakeWarns: string[] }) {
-  if (!teamNotice && intakeWarns.length === 0) return null
+function RunNotices({ teamNotice, intakeWarns, owner }: { teamNotice: string; intakeWarns: string[]; owner?: string }) {
+  // 订阅的是**名册数组本身**，不是 store 上的 `resolve` 函数：函数引用恒定不变，名册异步到位时
+  // 这里不会重渲染 ⇒ 行会永远停在裸 id（同一个教训由 `lcSignatureDomain.test.tsx` 抓到过）。
+  const roster = useExpertStore((s) => s.expertsByDomain.living_circle ?? EMPTY_ROSTER)
+  // 体检台这一页原先**从来没人加载过名册**（只有报告页有那个 effect）⇒ 光订阅数组会永远拿到
+  // 空册，于是"名册未到 ⇒ 整行不印"这条正确的语义在这里变成"行永远不出现"。
+  // `load` 自带按域防重入，横幅挂载即触发。
+  const loadExperts = useExpertStore((s) => s.load)
+  useEffect(() => {
+    void loadExperts('living_circle')
+  }, [loadExperts])
+  if (!owner && !teamNotice && intakeWarns.length === 0) return null
+  const seat = owner ? roster.find((e) => e.id === owner) : undefined
+  const role = (seat?.role_title ?? '').split(' / ')[0]
   return (
     <>
+      {owner && roster.length > 0 && (
+        <div className="mt-1 flex items-start gap-1.5 rounded-btn bg-card/70 px-2 py-1 text-tag text-ink-2">
+          <Users size={12} className="mt-0.5 shrink-0 text-primary" />
+          <span>
+            当前席位 <b className="font-medium text-ink">{seat ? (role ? `${seat.name} · ${role}` : seat.name) : owner}</b>
+            {/* 查到人才补 id；查不到时上面已经是裸 id，别再印一遍 */}
+            {seat && <span className="ml-1 text-ink-3">{owner}</span>}
+          </span>
+        </div>
+      )}
       {teamNotice && (
         <div className="mt-1 rounded-btn border border-warn/40 bg-warn/10 px-2 py-1 text-tag text-warn" role="status">
           {teamNotice}
@@ -483,7 +508,7 @@ export default function LifeCirclePage() {
                   <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
                 </div>
                 {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
-                <RunNotices teamNotice={teamNotice} intakeWarns={intakeWarns} />
+                <RunNotices teamNotice={teamNotice} intakeWarns={intakeWarns} owner={regTask?.expert} />
               </div>
               <div className="h-1.5 w-24 overflow-hidden rounded-chip bg-line">
                 <div className="h-full rounded-chip bg-primary" style={{ width: `${Math.max(0, Math.min(100, runPercent))}%` }} />
@@ -772,7 +797,7 @@ export default function LifeCirclePage() {
               <span className="text-tag font-medium text-primary-deep">{runPercent}%</span>
             </div>
             {runMsg && <div className="truncate text-tag text-ink-2" title={runMsg}>{runMsg}</div>}
-            <RunNotices teamNotice={teamNotice} intakeWarns={intakeWarns} />
+            <RunNotices teamNotice={teamNotice} intakeWarns={intakeWarns} owner={regTask?.expert} />
             {/* 片 5：取证扩容回合的实时账（文案 = 后端 `round` 事件自带 text，唯一措辞出处）。
                 刻意不改 stage/percent：那一格额度花在补算上，但阶段没变（仍是采集）。 */}
             {roundLines.map((l) => (
