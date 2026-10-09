@@ -516,13 +516,6 @@ describe('ComparePage（真实联调 · 手动选择 + 跨城呈现）', () => {
  * 另加一条反向守：一侧没值时**不许**画半条。
  */
 describe('笔1 · 逐类目差距与盲区成对', () => {
-  const renderFixture = () =>
-    render(
-      <MemoryRouter>
-        <ComparePage />
-      </MemoryRouter>,
-    )
-
   it('逐类目差距上屏，八行类目全在（行名取自载荷，不是前端名单）', () => {
     renderFixture()
     expect(screen.getByText('逐类目差距')).toBeTruthy()
@@ -577,6 +570,85 @@ describe('笔1 · 逐类目差距与盲区成对', () => {
   })
 })
 
+/**
+ * 等两张图离开 boot。
+ *
+ * `LcMap` 起盘时先渲染 `data-lc-mode="boot"`，等地图配置回来才进 live 或降级树。
+ * 不等它就数图层，会得到一条**恒真**判据：笔3a 第一条就这么"绿"过 ——
+ * 把默认值改成开，它照样报 0。变异测出来的，不是推出来的。
+ */
+const settleMaps = async (container: HTMLElement) => {
+  await waitFor(() => {
+    const settled = [...container.querySelectorAll('[data-lc-mode]')]
+      .filter((e) => e.getAttribute('data-lc-mode') !== 'boot')
+    expect(settled.length, '两张图都该落定（boot 没结束 ⇒ 下面的计数是恒真）').toBe(2)
+  })
+}
+
+const renderFixture = () =>
+  render(
+    <MemoryRouter>
+      <ComparePage />
+    </MemoryRouter>,
+  )
+
+/* ── 笔2 · 八方位形状并排与档位 ───────────────────────────────────────────
+ * 钉四件：默认档、换档读数跟着换、选中态在"两张卡＋两张图"之间只有一份、
+ * 以及一条反向守（地图楔形不跟卡片档位联动 —— 图上那颗出口只读 15min）。
+ */
+describe('笔2 · 八方位形状并排', () => {
+  it('默认读 15min 档：两栏八方位齐全，A 侧正北是 438 米', async () => {
+    renderFixture()
+    expect(await screen.findByText('八方位最远可达 · 两城对照')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /正北方向最远可达 438 米/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '15min' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getAllByText('正北')).toHaveLength(2)
+  })
+
+  it('换到 20min ⇒ 两栏读数一起换（A 438→535、B 941→1273），不是多挂一张图', async () => {
+    renderFixture()
+    await screen.findByText('八方位最远可达 · 两城对照')
+    // 换档前先确认两栏各读各的 15min（B 侧 941 是劲松正北）
+    expect(screen.getByRole('button', { name: /正北方向最远可达 941 米/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '20min' }))
+    expect(await screen.findByRole('button', { name: /正北方向最远可达 535 米/ })).toBeTruthy()
+    // 半边是 B 栏：只验 A 的那条判据名不副实（K2 试过：把 B 焊在 15min 它照样绿）
+    expect(screen.getByRole('button', { name: /正北方向最远可达 1273 米/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /正北方向最远可达 438 米/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /正北方向最远可达 941 米/ })).toBeNull()
+  })
+
+  it('点一侧的方位 ⇒ 两张图的那一枚楔形同时高亮（选中态只有一份）', async () => {
+    const { container } = renderFixture()
+    await settleMaps(container)
+    fireEvent.click(screen.getByLabelText(/方位形状/))
+    await waitFor(() => expect(container.querySelectorAll('[data-sector]').length).toBe(16))
+    // 正北是下标 0：点之前两枚都不该是红（红只由选中态产生）
+    const before = [...container.querySelectorAll('[data-sector="0"]')].map((e) => e.getAttribute('fill'))
+    expect(before).toHaveLength(2)
+    expect(before.some((f) => f === '#B9665E')).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: /正北方向最远可达 438 米/ }))
+    await waitFor(() => {
+      const after = [...container.querySelectorAll('[data-sector="0"]')].map((e) => e.getAttribute('fill'))
+      // 两张图各一枚，都该变红 —— 若两侧各持一份 state，这里只会红一枚
+      expect(after.filter((f) => f === '#B9665E')).toHaveLength(2)
+    })
+  })
+
+  it('反向守：卡片换到 20min，图上楔形仍是 15min 那一把（点数与形状都不许跟着变）', async () => {
+    const { container } = renderFixture()
+    await settleMaps(container)
+    fireEvent.click(screen.getByLabelText(/方位形状/))
+    await waitFor(() => expect(container.querySelectorAll('[data-sector]').length).toBe(16))
+    const pts15 = [...container.querySelectorAll('[data-sector]')].map((e) => e.getAttribute('points'))
+    fireEvent.click(screen.getByRole('button', { name: '20min' }))
+    await screen.findByRole('button', { name: /正北方向最远可达 535 米/ })
+    const pts20 = [...container.querySelectorAll('[data-sector]')].map((e) => e.getAttribute('points'))
+    expect(pts20).toEqual(pts15)
+  })
+})
+
 /* ── 笔3a · 对照页的解释层开关（只钉通道，不在页面层重测几何与缺席） ──────────
  *
  * 为什么这里不重复"一侧没发 ⇒ 那一侧不出现"：那件事的判据在名册与图层两侧
@@ -587,28 +659,6 @@ describe('笔1 · 逐类目差距与盲区成对', () => {
  *     名册今天整批退场，把勾摆在那儿就是"点下去没反应"那个形状。
  */
 describe('笔3a · 对照页解释层开关', () => {
-  const renderFixture = () =>
-    render(
-      <MemoryRouter>
-        <ComparePage />
-      </MemoryRouter>,
-    )
-
-  /**
-   * 等两张图离开 boot。
-   *
-   * `LcMap` 起盘时先渲染 `data-lc-mode="boot"`，等地图配置回来才进 live 或降级树。
-   * 不等它就数图层，会得到一条**恒真**判据：本条第一版就这么"绿"过 ——
-   * 把默认值改成开，它照样报 0。变异测出来的，不是推出来的。
-   */
-  const settleMaps = async (container: HTMLElement) => {
-    await waitFor(() => {
-      const settled = [...container.querySelectorAll('[data-lc-mode]')]
-        .filter((e) => e.getAttribute('data-lc-mode') !== 'boot')
-      expect(settled.length, '两张图都该落定（boot 没结束 ⇒ 下面的计数是恒真）').toBe(2)
-    })
-  }
-
   it('默认关：落定之后两张图仍没有对照环与扇区（解释层不自动上屏）', async () => {
     const { container } = renderFixture()
     await settleMaps(container)

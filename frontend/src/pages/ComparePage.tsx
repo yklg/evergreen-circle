@@ -22,6 +22,7 @@ import { CategoryCaliberNotes } from '../components/lifecircle/CategoryCaliberNo
 import { cellsGridPlan } from '../components/lifecircle/CellLayer'
 import { VStatLine } from '../components/ui'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
+import DirectionBars from '../components/lifecircle/DirectionBars'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
 import LcMap from '../components/lifecircle/LcMap'
 import type { LivingCircleReport, LifeCircleCompare, LifeCircleRecord } from '../types'
@@ -185,6 +186,48 @@ function CategoryGapTable({ a, b }: { a: LivingCircleReport; b: LivingCircleRepo
 }
 
 /**
+ * 八方位形状差并排（笔2 · P3）。
+ *
+ * 两栏各按**本城最长那个方位**归一（`DirectionBars` 的既有画法），所以横着比长短不可比、
+ * 比数字可比 —— 想跨城比长短得先把两侧放到同一张图上，那是另一件事（同图叠加那一支）。
+ * 档位只影响这两张卡：地图上的楔形恒按 15min 档画（`LcMap` 里那颗出口今天只读 15min 的形状键），
+ * 卡与图不同档时以图注为准，别把卡上的 20min 读数当成图上楔形的长度。
+ */
+function ShapePair({ cards, minutes, onMinutes, selected, onPick }: {
+  cards: LivingCircleReport[]
+  minutes: number
+  onMinutes: (m: number) => void
+  selected: number | null
+  onPick: (i: number | null) => void
+}) {
+  const both = cards.filter((r) => shapeOfZone(r, minutes) !== null)
+  if (both.length === 0) return null            // 两侧都没发这一档 ⇒ 整节不出现（不摆空卡）
+  return (
+    <div className="rounded-card border border-line bg-card p-5 shadow-card">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-aux font-semibold text-ink">八方位最远可达 · 两城对照</div>
+        <div className="inline-flex overflow-hidden rounded-btn border border-line" role="group" aria-label="形状档位">
+          {[15, 20].map((m) => (
+            <button key={m} type="button" aria-pressed={minutes === m} onClick={() => onMinutes(m)}
+                    className={'px-3 py-1 text-tag ' + (minutes === m ? 'bg-primary font-semibold text-white' : 'bg-card text-ink-3')}>
+              {m}min
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mb-3 text-tag text-ink-3">
+        两栏各自按本城最长方位归一：比数字可比，比条长不可比。点任一侧的方位，两张图上的那一块楔形同时高亮。
+      </p>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {cards.map((r, i) => (
+          <DirectionBars key={i} lc={r} minutes={minutes} selected={selected} onPick={onPick} className="shadow-none" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
  * 盲区成对并排（笔1 · P5）。
  *
  * 一句"0 处"不够：0 处到底是"三要素齐备"还是"还有格子判不了所以没说"，由
@@ -248,6 +291,11 @@ export default function ComparePage() {
   const [isoCompareOn, setIsoCompareOn] = useState(false)
   const [shapeOn, setShapeOn] = useState(false)
   const [gridOn, setGridOn] = useState(false)
+  /* 笔2 · 八方位形状：条形卡的档位（15/20 两把都发了键）与选中方位。
+     选中态是**一个** state 同时喂两张图与两张卡 —— 看的就是"同一方位在两城各走多远"，
+     各持一份就退化成两张互不相干的图。 */
+  const [shapeMinutes, setShapeMinutes] = useState(15)
+  const [shapeSector, setShapeSector] = useState<number | null>(null)
   /** 演示态的 A/B（笔4）：默认那一对仍由 `demoCompareSamples()` 挑，这里只存被选中的 id。 */
   const [demoSel, setDemoSel] = useState<[string, string]>(() => {
     const [x, y] = demoCompareSamples()
@@ -584,6 +632,8 @@ export default function ComparePage() {
                   showIsoCompare={isoCompareOn}
                   showShapeSectors={shapeOn}
                   showCellsGrid={gridOn}
+                  selectedSector={shapeSector}
+                  onSectorPick={setShapeSector}
                 />
               </div>
             ))}
@@ -606,6 +656,8 @@ export default function ComparePage() {
       {cards.length >= 2 && (
         <>
           <CategoryGapTable a={cards[0]} b={cards[1]} />
+          <ShapePair cards={cards} minutes={shapeMinutes} onMinutes={setShapeMinutes}
+                     selected={shapeSector} onPick={setShapeSector} />
           <BlindspotPair a={cards[0]} b={cards[1]} />
         </>
       )}
