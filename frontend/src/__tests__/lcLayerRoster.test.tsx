@@ -25,9 +25,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import ev2 from '../mocks/fixtures/livingCircle/kaili-ev2.json'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
-import type { LivingCircleReport } from '../types'
+import type { LngLat, LivingCircleReport } from '../types'
 import { LC_ISO_COMPARE_COLOR, LC_JUDGE_SCALE_COLOR } from '../lib/livingCircle'
-import { LC_LAYERS, parseLayerAttr } from '../components/lifecircle/lcLayers'
+import { LAYER_ATTR_BY_SIDE, LC_LAYERS, parseLayerAttr } from '../components/lifecircle/lcLayers'
 import { instances, mapConfig, resetInstances, resetStyleCalls } from './helpers/bmapGLFake'
 
 vi.mock('../lib/bmap', async () => {
@@ -81,6 +81,30 @@ async function bothModes(report: LivingCircleReport, props: Record<string, unkno
   const want = declaredIn(fb.container)
   await waitFor(() => expect(declaredIn(live.container)).toEqual([...want].sort()))
   return { live, fb, want }
+}
+
+/** 笔 3c：对照态一份申报说不清归谁 ⇒ 按侧读两份（属性名取自生产常量，不在此写死字面）。 */
+function declaredSides(root: HTMLElement) {
+  const read = (side: 'a' | 'b') => {
+    const attr = LAYER_ATTR_BY_SIDE[side]
+    const el = root.querySelector(`[${attr}]`)
+    return { present: el !== null, layers: parseLayerAttr(el?.getAttribute(attr)) }
+  }
+  return { a: read('a').layers, b: read('b').layers, aPresent: read('a').present, bPresent: read('b').present }
+}
+
+async function bothSides(report: LivingCircleReport, props: Record<string, unknown>) {
+  const live = await mountLive(report, props)
+  const fb = await mountFallback(report, props)
+  const wantA = declaredSides(fb.container).a
+  const wantB = declaredSides(fb.container).b
+  // live 侧那两份申报由四条 effect 分别写 ⇒ 轮询到与降级侧一致（不一致就是"只有一档画得出"）
+  await waitFor(() => {
+    const ls = declaredSides(live.container)
+    expect(ls.a).toEqual([...wantA].sort())
+    expect(ls.b).toEqual([...wantB].sort())
+  })
+  return { live, fb, wantA, wantB }
 }
 
 beforeEach(() => {
@@ -147,9 +171,77 @@ describe('两档名册相等 · 逐道闸各关一次', () => {
     expect(fb.container.querySelectorAll('[data-lc-layer="cells-grid"]')).toHaveLength(0)
   })
 
-  it('对照态 ⇒ 解释层整批退场，两档都报空（这一条与上面几条一对，才排除"只有一档退场"）', async () => {
-    const { want } = await bothModes(FULL, { ...ALL_ON, compareReport: FULL })
-    expect(want).toEqual([])
+  /* 笔 3c 显式改写（不是删）：这条原来钉的是"对照态 ⇒ 解释层整批退场"。
+     退场已被换成白名单（`SECONDARY_LAYERS`），所以这里改成钉**白名单边界**：
+     三层进得来、两层（判定尺 / 选中格）仍旧两侧都进不来。
+     为什么仍要"两档各问一次"这一对：本域四次出事都是"只有一档画得出"。 */
+  it('对照态 ⇒ 白名单三层两档都报出，白名单外两层两侧都退场', async () => {
+    const { wantA, wantB, fb } = await bothSides(FULL, { ...ALL_ON, compareReport: FULL })
+    expect(wantA).toEqual(['cells-grid', 'iso-compare', 'shape-sectors'])
+    expect(wantB).toEqual(wantA)                      // 两侧同值 ⇒ 同一组层（合枚，归两侧）
+    expect(fb.container.querySelector('[data-lc-mode="fallback"]')
+      ?.getAttribute('data-lc-layers'), '对照态下 legacy 那份申报仍是 A 侧那一份')
+      .toEqual(wantA.join(','))
+    for (const n of ['judge-ruler', 'selected-cell']) {
+      expect(wantA.concat(wantB), `${n} 不该进对照态白名单`).not.toContain(n)
+      expect(fb.container.querySelectorAll(`[data-lc-layer="${n}"]`), `${n} 一枚都不许画`).toHaveLength(0)
+    }
+  })
+})
+
+/* ══ 笔 3c · 同框图的层归属：同值合枚 / 一侧没发 / 不同值各画一枚 ══
+ * 这三条钉的是"两侧画进同一坐标系时谁是谁"——预览量出来的事实：演示名册里唯一同框的那一对
+ * （kaili-ev2 × kaili）四档环、对照环、八方位楔形**逐字节相同**，只有结论层不同。
+ * 所以"按侧换色"在几何层买到零信息，规则改成：同值只画一枚、不同值才两枚、没发就显式缺席。 */
+describe('笔3c · 对照态按侧归属', () => {
+  /** 与 FULL 同形但对照环整体平移：造"两侧都有环、值不同"那一态（出厂件里没有这一态）。 */
+  const SHIFTED_RING = (() => {
+    const src = FULL as unknown as { iso_compare: { geojson: { coordinates: LngLat[][] } } }
+    const ring = src.iso_compare.geojson.coordinates[0]
+    const moved = ring.map(([lng, lat]) => [lng + 0.02, lat + 0.02] as LngLat)
+    return { ...(FULL as unknown as LivingCircleReport), iso_compare: { ...src.iso_compare, geojson: { coordinates: [moved] } } } as unknown as LivingCircleReport
+  })()
+
+  it('两侧同值 ⇒ 该层只画一枚，且这一枚同时申报给两侧', async () => {
+    const { fb, live } = await bothSides(FULL, { ...ALL_ON, compareReport: FULL })
+    const root = fb.container.querySelector('[data-lc-mode="fallback"]')!
+    for (const n of ['iso-compare', 'shape-sectors', 'cells-grid']) {
+      const drawn = [...root.querySelectorAll(`[data-lc-layer="${n}"]`)]
+      expect(drawn.length, `${n} 一枚都没画`).toBeGreaterThan(0)
+      const sides = new Set(drawn.map((el) => el.getAttribute('data-lc-side')))
+      // 合枚 = 这一层只有一份实例、归属写 both。两枚（a 与 b 各一份）就是没合。
+      expect([...sides], `${n} 同值却按侧各画了一份`).toEqual(['both'])
+    }
+    // live 侧同判：两侧各自那份申报里都有这三层
+    const ls = declaredSides(live.container)
+    expect(ls.a).toEqual(ls.b)
+  })
+
+  it('一侧没发这一层 ⇒ 另一侧照画，缺席那侧申报为空（不是画 0 格、也不是整层退场）', async () => {
+    const { wantA, wantB, fb } = await bothSides(FULL, { ...ALL_ON, compareReport: BARE })
+    expect(wantA, 'A 侧三层都该在').toEqual(['cells-grid', 'iso-compare', 'shape-sectors'])
+    expect(wantB, 'BARE 什么都没有 ⇒ 一侧都不报').toEqual([])
+    const root = fb.container.querySelector('[data-lc-mode="fallback"]')!
+    for (const n of ['iso-compare', 'shape-sectors', 'cells-grid']) {
+      const sides = [...root.querySelectorAll(`[data-lc-layer="${n}"]`)].map((el) => el.getAttribute('data-lc-side'))
+      expect([...new Set(sides)], `${n} 只该有 A 侧那一枚`).toEqual(['a'])
+    }
+    expect(root.getAttribute(LAYER_ATTR_BY_SIDE.b), 'B 侧那份申报必须存在且为空（属性在、值为空串）')
+      .toBe('')
+  })
+
+  it('两侧都有但值不同 ⇒ 该层各画一枚，且两枚分别归侧（不合枚）', async () => {
+    const { wantA, wantB, fb } = await bothSides(FULL, { ...ALL_ON, compareReport: SHIFTED_RING })
+    expect(wantA).toContain('iso-compare')
+    expect(wantB).toContain('iso-compare')
+    const root = fb.container.querySelector('[data-lc-mode="fallback"]')!
+    const rings = [...root.querySelectorAll('[data-lc-layer="iso-compare"]')]
+    expect(rings, '对照环该有两枚（两侧不同值）').toHaveLength(2)
+    expect(rings.map((el) => el.getAttribute('data-lc-side')).sort()).toEqual(['a', 'b'])
+    // 形状楔形两侧仍旧同值 ⇒ 那一层必须还是只一枚（证明合枚是按层判的，不是一刀切）
+    const secs = new Set([...root.querySelectorAll('[data-lc-layer="shape-sectors"]')]
+      .map((el) => el.getAttribute('data-lc-side')))
+    expect([...secs], '楔形两侧同值 ⇒ 仍只一枚').toEqual(['both'])
   })
 })
 

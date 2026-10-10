@@ -97,6 +97,54 @@ test.describe('对比页 · 逐类目差距与盲区成对（笔1）', () => {
   })
 
 /**
+ * 笔3c · 同图叠加那一支的按侧归属（演示名册里唯一能同框的那一对：凯里 ev2 × 凯里）。
+ *
+ * 这一对是预览量出来的实底：四档环、对照环、八方位楔形**两侧逐字节相同**，
+ * 只有结论层不同（ev2 带台账、凯里那份冻结件没带）。所以三条断言各钉一态：
+ *  ① 同值的对照环 ⇒ 只画一枚、申报给两侧（`data-lc-side="both"`）+ 屏上那句"两侧同值、只画一枚"；
+ *  ② 一侧没发的格阵 ⇒ 另一侧照画（只一个组、归 a）+ 缺席被显式说出来，不是画 0 格；
+ *  ③ 两份按侧申报都在同一张图的根节点上（对照态一份申报说不清归谁）。
+ * 与笔3b 同一条纪律：DOM 型判据只在降级档问，live 档问组件自己写回的申报属性。
+ */
+test('同图叠加：勾解释层 ⇒ 同值的层只一枚并归两侧，没发的那侧显式缺席', async ({ page }) => {
+  /* 强制降级画布：本机 8010 上真跑着后端 ⇒ map-config 会发出真 AK ⇒ 地图走 live，
+     而 live 的层是 canvas 覆盖物不进 DOM，下面那些数图元的断言会**静默跳过**
+     （第一版就是这样：把合枚判据改成恒假，这条 e2e 照样全绿）。
+     这里把配置桩成空 AK，让这一条在真实浏览器里问得到 DOM；CI 无后端本来就是这一档。 */
+  await page.route('**/api/life-circle/map-config', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ browser_ak: '', map_style_id: '' }) }),
+  )
+  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [LS_DATA_MODE, 'fixture'])
+  await page.goto('/compare', { waitUntil: 'load' })
+  await page.getByLabel('场景 A').selectOption('kaili-ev2')
+  await page.getByLabel('场景 B').selectOption('kaili')
+  await expect(page.getByText('同图叠加 · 等时圈对比')).toBeVisible()
+
+  await page.getByLabel(/口径对照环/).check()
+  await page.getByLabel(/逐格判定台账/).check()
+
+  const root = page.locator('[data-lc-mode]')
+  await expect(async () => {
+    const a = (await root.nth(0).getAttribute('data-lc-layers-a')) ?? ''
+    const b = (await root.nth(0).getAttribute('data-lc-layers-b')) ?? ''
+    expect(a, 'A 侧那份申报没等到').toContain('iso-compare')
+    expect(b, 'B 侧那份申报没等到（同值 ⇒ 这一枚也归 B）').toContain('iso-compare')
+    expect(b, 'B 侧没发台账 ⇒ 它那份里不该有格阵').not.toContain('cells-grid')
+  }).toPass({ timeout: 20_000 })
+
+  expect(await root.nth(0).getAttribute('data-lc-mode'),
+    '这一条问的是真实浏览器里的降级画布 ⇒ 必须落在 fallback，不然下面的数图元是空转').toBe('fallback')
+  expect(await page.locator('[data-lc-iso-compare]').count(), '两侧同值 ⇒ 对照环只该有一枚').toBe(1)
+  expect(await page.locator('[data-lc-iso-compare][data-lc-side="both"]').count()).toBe(1)
+  expect(await page.locator('[data-lc-layer="cells-grid"]').count(), '格阵只该有 A 侧那一组').toBe(1)
+  expect(await page.locator('[data-lc-layer="cells-grid"]').first().getAttribute('data-lc-side')).toBe('a')
+  expect(await page.locator('[data-lc-layer="cells-grid"] polygon').count(),
+    'A 侧那一组要真有格子上屏（不是空壳组）').toBeGreaterThan(20)
+  await expect(page.getByText(/两侧同值、只画一枚：口径对照环/)).toBeVisible()
+  await expect(page.getByText(/B 侧没发逐格判定台账/)).toBeVisible()
+})
+
+/**
  * 笔3b · 整幅格阵。live 侧覆盖物不进 DOM ⇒ 任何 querySelector 型判据在 live 档天然失明
  * （本域 10-07 实测过），所以这里问的是组件自己写回的 `data-lc-layers` 申报；
  * 降级档则直接数图元。两档问同一件事，是因为"只补一半"正是这一层要防的病。

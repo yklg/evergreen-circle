@@ -21,11 +21,11 @@ import { shapeSectors } from './ShapeSectorOverlay'
 import { LC_LEDGER_FILL, LC_LEDGER_OPACITY, LC_LEDGER_WORD, cellLayerPlan, cellsGridPlan } from './CellLayer'
 import { LcCanvasBackdrop, LcIsochroneBands, LcPoiDots, LcSceneCenterMark } from './LcSvgCanvas'
 import {
+  framePlanOf,
+  LAYER_ATTR_BY_SIDE,
   layerAttr,
-  layerRoster,
   type LcLayer,
   parseLayerAttr,
-  rosterFactsOf,
 } from './lcLayers'
 import { shapeOfZone, shapeWeakStrong } from '../../lib/livingCircle'
 import { HeatFieldOverlay, minuteHeatColor } from './HeatFieldOverlay'
@@ -460,23 +460,32 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
      live 侧的申报走 **DOM 属性**不走 state：eslint 的 react-hooks 规则明令禁止在 effect 体内同步
      setState（会级联重渲染），而"这条 effect 真的建出了哪些层"本来就是一笔外部系统记账，与它记
      overlay 句柄、摘覆盖物同源。也因此**不在 JSX 里写 `data-lc-layers`** —— 写了 React 就会在重渲染
-     时把它管回初值，那条名册从此有两个作者。降级侧不需要这一步：那棵树整个按名册渲染。 */
-  const roster = layerRoster({
-    secondary: Boolean(compareReport),
-    desensitize,
-    showJudgeScale,
-    showIsoCompare,
-    shapeOn,
-    showCellsGrid,
-    ...rosterFactsOf(report, shapeCal, selectedCell, showCellsGrid),
-  })
+     时把它管回初值，那条名册从此有两个作者。降级侧不需要这一步：那棵树整个按名册渲染。
+     笔 3c：同图叠加那一支不再"整批退场"，改由 `framePlanOf` 出**按侧的绘制清单**
+     （两侧同值 ⇒ 合一枚；一侧没发 ⇒ 另一侧照画 + 记一条缺席）。清单是这里唯一的作者。 */
+  const plan = framePlanOf(report, compareReport ?? null, {
+    showJudgeScale, showIsoCompare, shapeOn, showCellsGrid, selectedCell,
+  }, desensitize)
+  /** 每层该画的实例（一枚或多枚，各带归属与几何出处）。 */
+  const sidesFor = (layer: LcLayer) => {
+    const inst = plan.instances.filter((i) => i.layer === layer)
+    return { inst, a: inst.some((i) => i.sides.includes('a')), b: inst.some((i) => i.sides.includes('b')) }
+  }
+  /** 实例的几何出自哪一份载荷（合枚那枚取 A 侧 —— 同值才合，取哪侧画出来一样）。 */
+  const lcOf = (src: 'a' | 'b') => (src === 'a' ? report : compareReport!)
+  const roster = plan.declared.a
   const rosterStr = layerAttr(roster)
-  const declareLayer = (n: LcLayer, on: boolean) => {
+  const declareOn = (attr: string, n: LcLayer, on: boolean) => {
     const el = containerRef.current
     if (!el) return
-    const cur = parseLayerAttr(el.getAttribute('data-lc-layers'))
-    el.setAttribute('data-lc-layers', on ? layerAttr([...cur, n]) : layerAttr(cur.filter((x) => x !== n)))
+    const cur = parseLayerAttr(el.getAttribute(attr))
+    el.setAttribute(attr, on ? layerAttr([...cur, n]) : layerAttr(cur.filter((x) => x !== n)))
   }
+  const declareLayer = (n: LcLayer, on: boolean) => {
+    declareOn('data-lc-layers', n, on)
+    if (compareReport) declareOn(LAYER_ATTR_BY_SIDE.a, n, on)
+  }
+  const declareLayerB = (n: LcLayer, on: boolean) => declareOn(LAYER_ATTR_BY_SIDE.b, n, on)
   /** 扇区覆盖物单独记账（照证据盘那条纪律）：不进 `overlaysRef`，免得被主重绘误摘。 */
   const sectorRefs = useRef<BMapMapOverlay[]>([])
   /** 格阵覆盖物同样单独记账：一次开关可能挂几十枚，绝不能被主重绘误摘或漏摘。 */
@@ -494,39 +503,56 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     const bmap = bmapRef.current
     if (!map || !bmap || typeof bmap.Polygon !== 'function') return
     clearSectors()
-    // R1：画不画由名册说了算（`rosterStr` 已折进 shapeOn／有没有形状键／对照态三条判据），
+    // R1：画不画由名册说了算（`plan` 已折进 shapeOn／有没有形状键／对照态白名单三条判据），
     // 这里不再各抄一遍 —— 抄的每一遍都是将来会跟另一档对不上的第二份口径。
-    if (!parseLayerAttr(rosterStr).includes('shape-sectors')) {
+    const { inst, a, b } = sidesFor('shape-sectors')
+    if (inst.length === 0) {
       declareLayer('shape-sectors', false)
+      if (compareReport) declareLayerB('shape-sectors', false)
       return
     }
-    if (shapeCal === null) return        // 只给 TS 收窄：名册里的 hasShape 就是 shapeCal !== null
-    // 原点恒取 report.scene.center —— 键就是按它量的；用 customCenter 会让楔形
-    // 与绝对坐标画的等时圈环各说各话（见 ShapeSectorOverlay 模块头）。
-    const sectors = shapeSectors(report.scene.center, shapeCal)
-    const { weak } = shapeWeakStrong(shapeCal)
-    for (const sec of sectors) {
-      const pts = sec.ring.map((l) => new bmap.Point(l[0], l[1]))
-      const active = selectedSector === sec.index
-      const poly = new bmap.Polygon(pts, {
-        strokeColor: active ? '#A5625B' : '#5F7B69',
-        fillColor: active ? '#B9665E' : '#7C9885',
-        strokeWeight: active ? 1.6 : 1,
-        strokeOpacity: active ? 1 : 0.45,
-        fillOpacity: active ? 0.32 : (sec.index === weak ? 0.2 : 0.08),
-        // 类型面只承认这六个键（`bmap.ts` 的窄声明）；手型指针交给 CSS 容器，
-        // 不往 SDK 选项里塞未声明字段 —— 那会在真 SDK 上被静默忽略、在桩上炸。
-        enableClicking: true,
-      })
-      poly.addEventListener?.('click', () => onSectorPick?.(sec.index))
-      map.addOverlay(poly)
-      sectorRefs.current.push(poly)
+    for (const i of inst) {
+      const lc = lcOf(i.source)
+      const cal = shapeOfZone(lc, 15)
+      if (cal === null) continue        // 只给 TS 收窄：名册里的 hasShape 就是 shapeCal !== null
+      // 只有 B 侧单独那一枚才上 B 侧色（两侧同值已合成一枚，用默认色就是诚实的画法）。
+      // 选中态只服务 A 侧那组楔形 —— 两张卡共用一颗 selectedSector（笔2 的决定），
+      // 给 B 侧再配一套"选中砖红"会让同一个方位在同一张图上有两种高亮。
+      const bOnly = i.sides.length === 1 && i.sides[0] === 'b'
+      // 原点恒取该份载荷的 scene.center —— 键就是按它量的；用 customCenter 会让楔形
+      // 与绝对坐标画的等时圈环各说各话（见 ShapeSectorOverlay 模块头）。
+      const sectors = shapeSectors(lc.scene.center, cal)
+      const { weak } = shapeWeakStrong(cal)
+      for (const sec of sectors) {
+        const pts = sec.ring.map((l) => new bmap.Point(l[0], l[1]))
+        const active = !bOnly && selectedSector === sec.index
+        const stroke = bOnly ? '#1677ff' : active ? '#A5625B' : '#5F7B69'
+        const fill = bOnly ? '#1677ff' : active ? '#B9665E' : '#7C9885'
+        const poly = new bmap.Polygon(pts, {
+          strokeColor: stroke,
+          fillColor: fill,
+          strokeWeight: active ? 1.6 : 1,
+          strokeOpacity: active ? 1 : 0.45,
+          fillOpacity: active ? 0.32 : (sec.index === weak ? 0.2 : 0.08),
+          // 类型面只承认这六个键（`bmap.ts` 的窄声明）；手型指针交给 CSS 容器，
+          // 不往 SDK 选项里塞未声明字段 —— 那会在真 SDK 上被静默忽略、在桩上炸。
+          enableClicking: true,
+        })
+        poly.addEventListener?.('click', () => onSectorPick?.(sec.index))
+        map.addOverlay(poly)
+        sectorRefs.current.push(poly)
+      }
     }
-    declareLayer('shape-sectors', true)                  // R1：建出来了才申报（不是"打算建"）
+    declareLayer('shape-sectors', a)                     // R1：建出来了才申报（不是"打算建"）
+    if (compareReport) declareLayerB('shape-sectors', b)
     return () => {
       clearSectors()
       declareLayer('shape-sectors', false)
+      if (compareReport) declareLayerB('shape-sectors', false)
     }
+    // 名册串 `rosterStr` 就是这几条 effect 的依赖代理：`sidesFor`/`lcOf`/`declareLayer*` 都由
+    // 同一批输入派生，把它们塞进 deps 会让每次 render 都重建覆盖物并把相机复位（`:417` 那条教训）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, shapeOn, shapeCal, selectedSector, report, compareReport, onSectorPick, rosterStr])
 
   /** C6：当前 1km 服务范围圈。走 add() 双登记（重绘随 overlaysRef 摘除）+ 独立 ref 供替换/清除。 */
@@ -1258,89 +1284,122 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     if (mode !== 'live' || !map || !bmap) return
     for (const o of scaleOverlaysRef.current) map.removeOverlay(o)
     scaleOverlaysRef.current = []
-    if (!parseLayerAttr(rosterStr).includes('judge-ruler') || typeof bmap.Circle !== 'function') {
+    // 判定尺不在对照态白名单里（这一支没有第四颗勾）⇒ `inst` 为空 ⇒ 与改闸之前逐字同效。
+    const { inst, a, b } = sidesFor('judge-ruler')
+    if (inst.length === 0 || typeof bmap.Circle !== 'function') {
       declareLayer('judge-ruler', false)
+      if (compareReport) declareLayerB('judge-ruler', false)
       return
     }
-    const rulerM = judgeRulerM(report)
-    if (rulerM === null) return
-    for (const b of report.blindspots ?? []) {
-      const circle = new bmap.Circle(new bmap.Point(b.center[0], b.center[1]), rulerM, {
-        strokeColor: LC_JUDGE_SCALE_COLOR,
-        strokeWeight: 1.6,
-        strokeOpacity: 0.85,
-        strokeStyle: 'dashed',
-        fillColor: LC_JUDGE_SCALE_COLOR,
-        fillOpacity: 0,
-        enableClicking: false,
-      })
-      map.addOverlay(circle)
-      scaleOverlaysRef.current.push(circle)
+    for (const i of inst) {
+      const lc = lcOf(i.source)
+      const rulerM = judgeRulerM(lc)
+      if (rulerM === null) continue
+      for (const bs of lc.blindspots ?? []) {
+        const circle = new bmap.Circle(new bmap.Point(bs.center[0], bs.center[1]), rulerM, {
+          strokeColor: i.sides.length === 1 && i.sides[0] === 'b' ? '#1677ff' : LC_JUDGE_SCALE_COLOR,
+          strokeWeight: 1.6,
+          strokeOpacity: 0.85,
+          strokeStyle: 'dashed',
+          fillColor: LC_JUDGE_SCALE_COLOR,
+          fillOpacity: 0,
+          enableClicking: false,
+        })
+        map.addOverlay(circle)
+        scaleOverlaysRef.current.push(circle)
+      }
     }
-    declareLayer('judge-ruler', true)                    // R1：建出来了才申报
+    declareLayer('judge-ruler', a)                        // R1：建出来了才申报
+    if (compareReport) declareLayerB('judge-ruler', b)
+    // 名册串 `rosterStr` 就是这几条 effect 的依赖代理：`sidesFor`/`lcOf`/`declareLayer*` 都由
+    // 同一批输入派生，把它们塞进 deps 会让每次 render 都重建覆盖物并把相机复位（`:417` 那条教训）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, report, compareReport, showJudgeScale, rosterStr])
 
   /* 笔 B · 口径对照环（live）。单独一个 effect、单独一组 overlay 句柄，理由与判定尺同例：
    * 解释层不该混进主色阶的绘制循环（那里按 `i % colors.length` 取色，多一条线就会串色）。
    * 三条纪律照抄判定尺：① `enableClicking: false`（不吃点击）；② 只描边不填充；
-   * ③ **不进 `fitPts`** —— 勾开它不该改变自动视野，否则一次勾选会把地图弹走。 */
+   * ③ **不进 `fitPts`** —— 勾开它不该改变自动视野，否则一次勾选会把地图弹走。
+   * 笔 3c：同图叠加时按 `plan` 的实例画 —— 两侧同值只画一枚（这条环是"文献阈值"那把公共尺，
+   * 同值就是同一条线，画两枚只是让绘制顺序决定谁露脸）；两侧不同值才各画一枚、B 侧上侧色。 */
   useEffect(() => {
     const map = mapRef.current
     const bmap = bmapRef.current
     if (mode !== 'live' || !map || !bmap) return
     for (const o of compareOverlaysRef.current) map.removeOverlay(o)
     compareOverlaysRef.current = []
-    if (!parseLayerAttr(rosterStr).includes('iso-compare') || typeof bmap.Polygon !== 'function') {
+    const { inst, a, b } = sidesFor('iso-compare')
+    if (inst.length === 0 || typeof bmap.Polygon !== 'function') {
       declareLayer('iso-compare', false)
+      if (compareReport) declareLayerB('iso-compare', false)
       return
     }
-    const cmp = isoCompareOf(report)
-    if (!cmp) return
-    const ring = cmp.geojson.coordinates[0] ?? []
-    if (ring.length < 4) return
-    const poly = new bmap.Polygon(ring.map((p) => new bmap.Point(p[0], p[1])), {
-      strokeColor: LC_ISO_COMPARE_COLOR,
-      strokeWeight: 2,
-      strokeOpacity: 0.9,
-      strokeStyle: 'dashed',
-      fillColor: LC_ISO_COMPARE_COLOR,
-      fillOpacity: 0,
-      enableClicking: false,
-    })
-    map.addOverlay(poly)
-    compareOverlaysRef.current.push(poly)
-    declareLayer('iso-compare', true)                    // R1：建出来了才申报
+    for (const i of inst) {
+      const cmp = isoCompareOf(lcOf(i.source))
+      if (!cmp) continue
+      const ring = cmp.geojson.coordinates[0] ?? []
+      if (ring.length < 4) continue
+      const bOnly = i.sides.length === 1 && i.sides[0] === 'b'
+      const poly = new bmap.Polygon(ring.map((p) => new bmap.Point(p[0], p[1])), {
+        strokeColor: bOnly ? '#1677ff' : LC_ISO_COMPARE_COLOR,
+        strokeWeight: 2,
+        strokeOpacity: 0.9,
+        strokeStyle: 'dashed',
+        fillColor: LC_ISO_COMPARE_COLOR,
+        fillOpacity: 0,
+        enableClicking: false,
+      })
+      map.addOverlay(poly)
+      compareOverlaysRef.current.push(poly)
+    }
+    declareLayer('iso-compare', a)                        // R1：建出来了才申报
+    if (compareReport) declareLayerB('iso-compare', b)
+    // 名册串 `rosterStr` 就是这几条 effect 的依赖代理：`sidesFor`/`lcOf`/`declareLayer*` 都由
+    // 同一批输入派生，把它们塞进 deps 会让每次 render 都重建覆盖物并把相机复位（`:417` 那条教训）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, report, compareReport, showIsoCompare, rosterStr])
 
   /* 笔3b · 整幅格阵（live 半边）。三条纪律照抄对照环那条：
      ① 不吃点击（`enableClicking: false`）—— 它是背景结论，不该抢走等时圈的点击；
      ② 不进 `fitPts` —— 开一次格阵不该把地图视野弹走；
-     ③ 画不画只问名册，缺席即未发生（没台账 ⇒ 开关与图层都不出现）。 */
+     ③ 画不画只问名册，缺席即未发生（没台账 ⇒ 开关与图层都不出现）。
+     笔 3c：B 侧那一枚**不换填充色** —— 五档填充是结论口径（`CellLayer` 那张表），
+     按侧换色等于再造一套结论色；改用虚线描边区分归属。 */
   useEffect(() => {
     const map = mapRef.current
     const bmap = bmapRef.current
     if (mode !== 'live' || !map || !bmap) return
     for (const o of gridOverlaysRef.current) map.removeOverlay(o)
     gridOverlaysRef.current = []
-    if (!parseLayerAttr(rosterStr).includes('cells-grid') || typeof bmap.Polygon !== 'function') {
+    const { inst, a, b } = sidesFor('cells-grid')
+    if (inst.length === 0 || typeof bmap.Polygon !== 'function') {
       declareLayer('cells-grid', false)
+      if (compareReport) declareLayerB('cells-grid', false)
       return
     }
-    const grid = cellsGridPlan(report)
-    if (!grid) return
-    for (const c of grid.cells) {
-      const poly = new bmap.Polygon(c.corners.map((pt) => new bmap.Point(pt[0], pt[1])), {
-        strokeColor: LC_LEDGER_FILL[c.verdict],
-        strokeWeight: 0.5,
-        strokeOpacity: 0.6,
-        fillColor: LC_LEDGER_FILL[c.verdict],
-        fillOpacity: LC_LEDGER_OPACITY[c.verdict],
-        enableClicking: false,
-      })
-      map.addOverlay(poly)
-      gridOverlaysRef.current.push(poly)
+    for (const i of inst) {
+      const grid = cellsGridPlan(lcOf(i.source))
+      if (!grid) continue
+      const bOnly = i.sides.length === 1 && i.sides[0] === 'b'
+      for (const c of grid.cells) {
+        const poly = new bmap.Polygon(c.corners.map((pt) => new bmap.Point(pt[0], pt[1])), {
+          strokeColor: LC_LEDGER_FILL[c.verdict],
+          strokeWeight: 0.5,
+          strokeOpacity: 0.6,
+          strokeStyle: bOnly ? 'dashed' : 'solid',
+          fillColor: LC_LEDGER_FILL[c.verdict],
+          fillOpacity: LC_LEDGER_OPACITY[c.verdict],
+          enableClicking: false,
+        })
+        map.addOverlay(poly)
+        gridOverlaysRef.current.push(poly)
+      }
     }
-    declareLayer('cells-grid', true)                     // R1：建出来了才申报
+    declareLayer('cells-grid', a)                         // R1：建出来了才申报
+    if (compareReport) declareLayerB('cells-grid', b)
+    // 名册串 `rosterStr` 就是这几条 effect 的依赖代理：`sidesFor`/`lcOf`/`declareLayer*` 都由
+    // 同一批输入派生，把它们塞进 deps 会让每次 render 都重建覆盖物并把相机复位（`:417` 那条教训）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, report, compareReport, showCellsGrid, rosterStr])
 
   /* C5 · 选中格：方框 + **这一格自己的**判定圆，让卡片上的文字与图上的圈一一对应。
@@ -1364,10 +1423,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     }
     // 几何唯一出自 `CellLayer.cellLayerPlan` —— 降级那侧读同一份。没台账／索引越界 ⇒ `null`
     // ⇒ 整层不画（缺席即不渲染），这四条守卫从此只有一处，不再两棵树各抄一遍。
-    const plan = cellLayerPlan(report, selectedCell)
-    if (!plan) return
-    const [cx, cy] = plan.center
-    const box = new bmap.Polygon(plan.corners.map(([a, b]) => new bmap.Point(a, b)), {
+    const cellPlan = cellLayerPlan(report, selectedCell)
+    if (!cellPlan) return
+    const [cx, cy] = cellPlan.center
+    const box = new bmap.Polygon(cellPlan.corners.map(([a, b]) => new bmap.Point(a, b)), {
       strokeColor: LC_JUDGE_SCALE_COLOR,
       strokeWeight: 2,
       strokeOpacity: 1,
@@ -1378,7 +1437,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     map.addOverlay(box)
     cellOverlaysRef.current.push(box)
     if (typeof bmap.Circle === 'function') {
-      const ring = new bmap.Circle(new bmap.Point(cx, cy), plan.radiusM, {
+      const ring = new bmap.Circle(new bmap.Point(cx, cy), cellPlan.radiusM, {
         strokeColor: LC_JUDGE_SCALE_COLOR,
         strokeWeight: 1.6,
         strokeOpacity: 0.9,
@@ -1391,6 +1450,9 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       cellOverlaysRef.current.push(ring)
     }
     declareLayer('selected-cell', true)                  // R1：建出来了才申报
+    // 名册串 `rosterStr` 就是这几条 effect 的依赖代理：`sidesFor`/`lcOf`/`declareLayer*` 都由
+    // 同一批输入派生，把它们塞进 deps 会让每次 render 都重建覆盖物并把相机复位（`:417` 那条教训）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, report, compareReport, selectedCell, desensitize, rosterStr])
 
   useEffect(() => {
@@ -1469,8 +1531,19 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // R1：这三层（以及下面的形状扇面、选中格）画不画，全部问同一份 `rosterStr` —— 也就是 live 侧
     // effect 问的那一份。两档各抄一遍条件，就是本域四次"只画得出一档"的根因。
     const wantsLayer = (n: LcLayer) => parseLayerAttr(rosterStr).includes(n)
-    const cmpZone = wantsLayer('iso-compare') ? isoCompareOf(report) : null
-    const cmpPts = cmpZone ? lcPolyPts(center, cmpZone.geojson.coordinates[0] ?? []) : ''
+    /* 笔 3c：同图叠加那一支按 `plan` 的**实例**画 —— 两侧同值合成一枚、不同值各画一枚、
+       一侧没发就整层只有另一侧。两档读同一份清单（live 那三条 effect 问的就是它）。 */
+    const instOf = (n: LcLayer) => plan.instances.filter((i) => i.layer === n)
+    const isBOnly = (i: { sides: Array<'a' | 'b'> }) => i.sides.length === 1 && i.sides[0] === 'b'
+    /** 申报给判据的归属：两侧同值合枚那枚是 'both'。 */
+    const sideTag = (i: { sides: Array<'a' | 'b'> }) => (i.sides.length === 2 ? 'both' : i.sides[0])
+    const cmpRings = instOf('iso-compare').flatMap((i) => {
+      const ring = isoCompareOf(lcOf(i.source))?.geojson.coordinates[0] ?? []
+      return ring.length >= 4
+        ? [{ key: `cmp-${i.source}`, side: sideTag(i), merged: i.sides.length === 2, pts: lcPolyPts(center, ring),
+             stroke: isBOnly(i) ? '#1677ff' : LC_ISO_COMPARE_COLOR, lc: lcOf(i.source) }]
+        : []
+    })
     const scaleRings =
       // `scaleRulerM !== null` 只给 TS 收窄：名册里的 hasRuler 就是 `judgeRulerM(report) !== null`，
       // 同一次渲染里两者不会不同意（不许把它当成第二个判据来改）。
@@ -1481,11 +1554,19 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
           }))
         : []
     // 选中格（降级半边）：几何出自 `CellLayer.cellLayerPlan` —— 与 live `:1280` 那对方框＋判定圆
-    // **同一份数**，不是第二套算法。守卫照 live 同值：`!secondary`（对照态不画，对应 live 的
-    // `compareReport` 半边）、`!desensitize`（P0-5：分享链接不得画逐格地理边界）、拿不到台账 ⇒
+    // **同一份数**，不是第二套算法。守卫照 live 同值：选中格在对照态白名单之外（`SECONDARY_LAYERS`
+    // 不含它 ⇒ 对照态两侧都不画）、`!desensitize`（P0-5：分享链接不得画逐格地理边界）、拿不到台账 ⇒
     // `plan` 为 `null` ⇒ 整层不画。
     const cellPlan = wantsLayer('selected-cell') ? cellLayerPlan(report, selectedCell) : null
-    const gridPlan = wantsLayer('cells-grid') ? cellsGridPlan(report) : null
+    const gridLayers = instOf('cells-grid').flatMap((i) => {
+      const g = cellsGridPlan(lcOf(i.source))
+      return g ? [{ key: `grid-${i.source}`, side: sideTag(i), dashed: isBOnly(i), cells: g.cells }] : []
+    })
+    const sectorLayers = instOf('shape-sectors').flatMap((i) => {
+      const lc = lcOf(i.source)
+      const cal = shapeOfZone(lc, 15)
+      return cal ? [{ key: `sh-${i.source}`, side: sideTag(i), bOnly: isBOnly(i), secs: shapeSectors(lc.scene.center, cal) }] : []
+    })
     const onCanvasClick = (e: ReactMouseEvent<SVGSVGElement>) => {
       const rect = e.currentTarget.getBoundingClientRect()
       // ⚠️ rect 为 0×0 时（尚未布局 / 被 display:none 隐藏 / 无布局引擎的环境），
@@ -1529,64 +1610,75 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
       // （`lcStageStructure:90` 拿它当反证、`judgeScaleCanvas:170` 拿它当"已落到 live"的门…）。
       // 10-06 我把它加宽到两档通用，实测打红一条常驻判据、又把另一条判据的门变成恒真 —— 语义加宽
       // 就是 docs/AGENTS.md §7.2 那条"一词多义，按名字搜会全错"。"两档都数得到实例"改由本属性承担。
-      <div className="relative h-full w-full" data-lc-mode="fallback" data-lc-layers={rosterStr}>
+      <div className="relative h-full w-full" data-lc-mode="fallback" data-lc-layers={rosterStr}
+           /* 笔 3c：对照态一份申报说不清归谁 ⇒ 两侧各一份。属性名与 `LAYER_ATTR_BY_SIDE`
+              同字面（JSX 属性名写不了变量），由 `lcLayerRoster` 那条判据按常量去问 DOM ——
+              改了常量而忘了这里，那条判据立刻红。 */
+           data-lc-layers-a={compareReport ? layerAttr(plan.declared.a) : undefined}
+           data-lc-layers-b={compareReport ? layerAttr(plan.declared.b) : undefined}>
         <svg viewBox={`0 0 ${LC_CANVAS.W} ${LC_CANVAS.H}`} className="block w-full cursor-crosshair select-none" role="img" aria-label="生活圈等时圈画布（降级）" onClick={onCanvasClick}>
           <LcCanvasBackdrop />
 
-          {wantsLayer('shape-sectors') && shapeCal
-            /* 几何原点恒取 report.scene.center（形状键就是按它量的），**不是**上面那个
+          {sectorLayers.flatMap((sl) =>
+            /* 几何原点恒取**该份载荷**的 scene.center（形状键就是按它量的），不是上面那个
                `center` —— 后者是画布投影原点，在体检台会被 customCenter 拖拽改写。
                混用会让楔形跟着选点跑、而环留在原地（图面自相矛盾）。 */
-            ? shapeSectors(report.scene.center, shapeCal).map((sec) => {
-                const active = selectedSector === sec.index
-                return (
-                  <polygon
-                    key={`sh-${sec.index}`}
-                    data-lc-layer="shape-sectors"
-                    data-sector={sec.index}
-                    points={lcPolyPts(center, sec.ring)}
-                    fill={active ? '#B9665E' : '#7C9885'}
-                    fillOpacity={active ? 0.32 : 0.1}
-                    stroke={active ? '#A5625B' : '#5F7B69'}
-                    strokeOpacity={active ? 1 : 0.4}
-                    strokeWidth={active ? 1.6 : 1}
-                    className="cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onSectorPick?.(sec.index)
-                    }}
-                  />
-                )
-              })
-            : null}
+            sl.secs.map((sec) => {
+              const active = !sl.bOnly && selectedSector === sec.index
+              return (
+                <polygon
+                  key={`${sl.key}-${sec.index}`}
+                  data-lc-layer="shape-sectors"
+                  data-lc-side={sl.side}
+                  data-sector={sec.index}
+                  points={lcPolyPts(center, sec.ring)}
+                  fill={sl.bOnly ? '#1677ff' : active ? '#B9665E' : '#7C9885'}
+                  fillOpacity={active ? 0.32 : sl.bOnly ? 0.1 : 0.1}
+                  stroke={sl.bOnly ? '#1677ff' : active ? '#A5625B' : '#5F7B69'}
+                  strokeOpacity={active ? 1 : 0.4}
+                  strokeWidth={active ? 1.6 : 1}
+                  className="cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSectorPick?.(sec.index)
+                  }}
+                />
+              )
+            }),
+          )}
 
           <LcIsochroneBands center={center} zones={isoZones} />
 
-          {cmpPts && (
-            <g data-lc-iso-compare data-lc-layer="iso-compare">
-              <polygon points={cmpPts} fill="none" stroke={LC_ISO_COMPARE_COLOR}
+          {cmpRings.map((r, ri) => (
+            <g key={r.key} data-lc-iso-compare data-lc-layer="iso-compare" data-lc-side={r.side}>
+              <polygon points={r.pts} fill="none" stroke={r.stroke}
                       strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
-              <text x={LC_CANVAS.W / 2} y={22} fontSize={11} fill={LC_ISO_COMPARE_COLOR}
-                    textAnchor="middle" fontWeight={600}>
-                口径对照 {cmpZone?.minutes} min · {cmpZone?.area_km2} km²
-              </text>
+              {ri === 0 && (
+                <text x={LC_CANVAS.W / 2} y={22} fontSize={11} fill={LC_ISO_COMPARE_COLOR}
+                      textAnchor="middle" fontWeight={600}>
+                  口径对照 {r.lc.iso_compare?.minutes} min · {r.lc.iso_compare?.area_km2} km²
+                  {r.merged ? '（两侧同值 · 只画一枚）' : ''}
+                </text>
+              )}
             </g>
-          )}
+          ))}
 
           {/* 笔3b · 整幅格阵（降级半边）：与 live 那条 effect 读同一份 `cellsGridPlan`、
               同一张五档色表；`outside` 不上色这条与台账卡同源。命名用 `data-lc-layer`，
-              不叫 `data-cell` —— 那是台账卡示意网格的名字，e2e 按它数选中格。 */}
-          {gridPlan && (
-            <g data-lc-layer="cells-grid">
-              {gridPlan.cells.map((c) => (
-                <polygon key={`g-${c.i}-${c.j}`} points={lcPolyPts(center, c.corners)}
+              不叫 `data-cell` —— 那是台账卡示意网格的名字，e2e 按它数选中格。
+              笔 3c：B 侧那一枚**不换填充色**（五档填充是结论口径），改用虚线描边标归属。 */}
+          {gridLayers.map((gl) => (
+            <g key={gl.key} data-lc-layer="cells-grid" data-lc-side={gl.side}>
+              {gl.cells.map((c) => (
+                <polygon key={`${gl.key}-${c.i}-${c.j}`} points={lcPolyPts(center, c.corners)}
                          fill={LC_LEDGER_FILL[c.verdict]} fillOpacity={LC_LEDGER_OPACITY[c.verdict]}
-                         stroke={LC_LEDGER_FILL[c.verdict]} strokeWidth={0.5} strokeOpacity={0.6}>
-                  <title>{`(${c.i},${c.j}) ${LC_LEDGER_WORD[c.verdict]}`}</title>
+                         stroke={LC_LEDGER_FILL[c.verdict]} strokeWidth={0.5} strokeOpacity={0.6}
+                         strokeDasharray={gl.dashed ? '3 2' : undefined}>
+                  <title>{`(${c.i},${c.j}) ${LC_LEDGER_WORD[c.verdict]}${gl.side === 'both' ? ' · 两侧同值' : ` · ${gl.side.toUpperCase()} 侧`}`}</title>
                 </polygon>
               ))}
             </g>
-          )}
+          ))}
 
           {secondary &&
             secondary.isochrones.map((z, zi) => {
@@ -1750,29 +1842,28 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
           )}
 
           <LcSceneCenterMark center={center} name={report.scene.name} />
-          {wantsLayer('shape-sectors') && shapeCal
-            /* 命中层：楔形本身画在设施点**之下**（视觉上半透明底纹不该盖住数据点），
-               但那样点上有设施点的方位就永远点不动 —— e2e 实测被 `circle r=5` 拦截。
-               这里在顶层铺一层同形状的透明面专职接点击，手法照 live 分支那条
-               `strokeOpacity: 0.01` 的命中线（同一个"视觉层与命中层分离"的决定）。 */
-            ? shapeSectors(report.scene.center, shapeCal).map((sec) => {
-                return (
-                  <polygon
-                    key={`sh-hit-${sec.index}`}
-                    data-sector-hit={sec.index}
-                    points={lcPolyPts(center, sec.ring)}
-                    fill="transparent"
-                    stroke="none"
-                    className="cursor-pointer"
-                    aria-hidden
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onSectorPick?.(sec.index)
-                    }}
-                  />
-                )
-              })
-            : null}
+          {/* 命中层：楔形本身画在设施点**之下**（视觉上半透明底纹不该盖住数据点），
+              但那样点上有设施点的方位就永远点不动 —— e2e 实测被 `circle r=5` 拦截。
+              这里在顶层铺一层同形状的透明面专职接点击，手法照 live 分支那条
+              `strokeOpacity: 0.01` 的命中线（同一个"视觉层与命中层分离"的决定）。
+              笔 3c：按实例铺 —— 两侧同值合成一枚时只铺一份，不因为归两侧就铺两份互相抢点击。 */}
+          {sectorLayers.flatMap((sl) =>
+            sl.secs.map((sec) => (
+              <polygon
+                key={`${sl.key}-hit-${sec.index}`}
+                data-sector-hit={sec.index}
+                points={lcPolyPts(center, sec.ring)}
+                fill="transparent"
+                stroke="none"
+                className="cursor-pointer"
+                aria-hidden
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onSectorPick?.(sec.index)
+                }}
+              />
+            )),
+          )}
         </svg>
         <div className="absolute right-2 top-2 z-10 flex flex-col items-end gap-1">
           <div className="rounded-chip border border-warn/50 bg-warn/10 px-2.5 py-1 text-tag font-medium text-ink-2">

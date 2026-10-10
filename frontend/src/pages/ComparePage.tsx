@@ -25,6 +25,7 @@ import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import DirectionBars from '../components/lifecircle/DirectionBars'
 import { NormalizedOverlay } from '../components/lifecircle/NormalizedOverlay'
 import LcMap from '../components/lifecircle/LcMap'
+import { framePlanOf, type LcLayer } from '../components/lifecircle/lcLayers'
 import type { LivingCircleReport, LifeCircleCompare, LifeCircleRecord } from '../types'
 
 /**
@@ -276,6 +277,50 @@ function BlindspotPair({ a, b }: { a: LivingCircleReport; b: LivingCircleReport 
   )
 }
 
+/**
+ * 三颗解释层开关（笔3a 起，笔3c 起**两支共用**）。
+ *
+ * 为什么必须共用而不是两支各写一遍：条件式（"这一侧有没有东西可画"）抄第二份，
+ * 将来一支改了另一支没改，就又是本仓反复出事的那个形状 —— 开关摆着、点下去没反应。
+ * 两支的差别只在最后那句图注：双图那支各画各的，同图那支两侧同值会合成一枚。
+ */
+function ExplainSwitches(props: {
+  cards: LivingCircleReport[]
+  isoCompareOn: boolean
+  shapeOn: boolean
+  gridOn: boolean
+  onToggle: (key: 'isoCompareOn' | 'shapeOn' | 'gridOn', on: boolean) => void
+  note: string
+}) {
+  const { cards, isoCompareOn, shapeOn, gridOn, onToggle, note } = props
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {cards.some((r) => isoCompareOf(r) !== null) && (
+        <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
+          <input type="checkbox" className="h-3.5 w-3.5" checked={isoCompareOn}
+                 onChange={(e) => onToggle('isoCompareOn', e.target.checked)} />
+          口径对照环（文献阈值）
+        </label>
+      )}
+      {cards.some((r) => shapeOfZone(r, 15) !== null) && (
+        <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
+          <input type="checkbox" className="h-3.5 w-3.5" checked={shapeOn}
+                 onChange={(e) => onToggle('shapeOn', e.target.checked)} />
+          方位形状（八方位最远可达）
+        </label>
+      )}
+      {cards.some((r) => cellsGridPlan(r) !== null) && (
+        <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
+          <input type="checkbox" className="h-3.5 w-3.5" checked={gridOn}
+                 onChange={(e) => onToggle('gridOn', e.target.checked)} />
+          逐格判定台账（整幅格阵）
+        </label>
+      )}
+      <span className="text-tag text-ink-3">{note}</span>
+    </div>
+  )
+}
+
 export default function ComparePage() {
   const navigate = useNavigate()
   const isFixture = useDataModeStore((s) => s.mode === 'fixture')
@@ -285,9 +330,10 @@ export default function ComparePage() {
   const [selA, setSelA] = useState<SceneOption | null>(null)
   const [selB, setSelB] = useState<SceneOption | null>(null)
   /* 解释层开关（笔3a）。默认全关 —— 与体检台同一纪律：解释层不是主叙事层，
-     一次勾选不该改变主图讲了什么。开关**只出现在真能起作用的那一支**：
-     同图叠加那张是对照态（`compareReport`），名册今天整批退场，把勾摆在那儿就是
-     "点下去没反应"那个本仓反复出事的形状（`lcLayers.ts` 文件头记着判定尺当年只补了一半）。 */
+     一次勾选不该改变主图讲了什么。开关摆出来的前提是"点下去真会起作用"：
+     笔3a 时同图叠加那一支还整批退场，所以勾只摆在双图那一支；笔3c 把退场换成
+     名册白名单（`lcLayers.ts` 的 `SECONDARY_LAYERS`）⇒ 两支共用同一份条件式各摆一次，
+     而"这一侧有没有东西可画"仍旧由那颗 `cards.some(...)` 判 —— 没发这一层就不摆勾。 */
   const [isoCompareOn, setIsoCompareOn] = useState(false)
   const [shapeOn, setShapeOn] = useState(false)
   const [gridOn, setGridOn] = useState(false)
@@ -424,6 +470,32 @@ export default function ComparePage() {
 
   // 「选谁」与「怎么呈现」由同一决策驱动：同片→单图真实叠加；跨城→双图+归一示意
   const plan = cards.length >= 2 ? planComparisonOverlay(cards[0].scene.center, cards[1].scene.center) : null
+
+  /** 三颗解释层开关共用一个入口：两支（同图 / 双图）都走它，条件式只此一份。 */
+  const setExplainLayer = (key: 'isoCompareOn' | 'shapeOn' | 'gridOn', on: boolean) => {
+    if (key === 'isoCompareOn') setIsoCompareOn(on)
+    else if (key === 'shapeOn') setShapeOn(on)
+    else setGridOn(on)
+  }
+  /* 笔 3c · 同图那一支的层归属：与 `LcMap` 问的是同一颗 `framePlanOf`（同参数 ⇒ 同答案），
+     页面只负责把结论说成人话，不另判一次"该不该画"。 */
+  const framePlan = plan?.shareMap && cards.length >= 2
+    ? framePlanOf(cards[0], cards[1], {
+        showJudgeScale: false, showIsoCompare: isoCompareOn, shapeOn, showCellsGrid: gridOn, selectedCell: null,
+      }, false)
+    : null
+  const frameNote = (() => {
+    if (!framePlan) return ''
+    const word: Partial<Record<LcLayer, string>> = {
+      'iso-compare': '口径对照环', 'shape-sectors': '方位形状', 'cells-grid': '逐格判定台账',
+    }
+    const merged = framePlan.instances.filter((i) => i.sides.length === 2).map((i) => word[i.layer] ?? i.layer)
+    const absent = framePlan.absent.map((x) => `${x.side.toUpperCase()} 侧没发${word[x.layer] ?? x.layer}`)
+    return [
+      merged.length ? `两侧同值、只画一枚：${merged.join('、')}` : '',
+      absent.length ? `${absent.join('、')} —— 没发这一层不等于这一侧没有` : '',
+    ].filter(Boolean).join('；')
+  })()
 
   // 差异表抽为复用块：hasNormalize 时置于右列，否则全宽
   const hasNormalize = !!plan?.normalize && cards.length >= 2
@@ -584,16 +656,23 @@ export default function ComparePage() {
         ))}
       </div>
 
-      {/* 呈现策略：同片 → 单图真实叠加；跨城 → 双图各居其城 + 归一化圈形示意 */}
+      {/* 呈现策略：同片 → 单图真实叠加；跨城 → 双图各居其城 + 归一化圈形示意。
+          笔 3c：两支都摆解释层开关（同一份条件式），差别只在图注。 */}
       {plan && cards.length >= 2 && (plan.shareMap ? (
-        <div className="rounded-card border border-line bg-card shadow-card">
-          <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
+        <div className="flex flex-col gap-4 rounded-card border border-line bg-card p-4 shadow-card">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-aux font-semibold text-ink">同图叠加 · 等时圈对比</div>
             <OverlayLegend names={[names[0], names[1]]} />
           </div>
+          <ExplainSwitches cards={cards} isoCompareOn={isoCompareOn} shapeOn={shapeOn} gridOn={gridOn}
+                           onToggle={setExplainLayer}
+                           note="两侧画进同一坐标系：两侧同值的层只画一枚，一侧没发的层整层不出现并在下面写明。" />
+          {frameNote && <p className="text-tag text-ink-3">{frameNote}</p>}
           {/* 必须有确定高度：BMapGL canvas 按父容器像素高度撑开 */}
           <div className="relative h-[440px]">
-            <LcMap report={cards[0]} compareReport={cards[1]} draggableCenter={false} onMapMode={() => {}} />
+            <LcMap report={cards[0]} compareReport={cards[1]} draggableCenter={false} onMapMode={() => {}}
+                   showIsoCompare={isoCompareOn} showShapeSectors={shapeOn} showCellsGrid={gridOn}
+                   selectedSector={shapeSector} onSectorPick={setShapeSector} />
           </div>
         </div>
       ) : (
@@ -606,32 +685,9 @@ export default function ComparePage() {
             两样区位处不同城市或远离同框尺度，已按各自城市分别展示真实等时圈；跨城设施差距请以卡片与差异表为准。
           </p>
           {cards.length >= 2 && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-              {cards.some((r) => isoCompareOf(r) !== null) && (
-                <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
-                  <input type="checkbox" className="h-3.5 w-3.5" checked={isoCompareOn}
-                         onChange={(e) => setIsoCompareOn(e.target.checked)} />
-                  口径对照环（文献阈值）
-                </label>
-              )}
-              {cards.some((r) => shapeOfZone(r, 15) !== null) && (
-                <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
-                  <input type="checkbox" className="h-3.5 w-3.5" checked={shapeOn}
-                         onChange={(e) => setShapeOn(e.target.checked)} />
-                  方位形状（八方位最远可达）
-                </label>
-              )}
-              {cards.some((r) => cellsGridPlan(r) !== null) && (
-                <label className="flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2">
-                  <input type="checkbox" className="h-3.5 w-3.5" checked={gridOn}
-                         onChange={(e) => setGridOn(e.target.checked)} />
-                  逐格判定台账（整幅格阵）
-                </label>
-              )}
-              <span className="text-tag text-ink-3">
-                两张图各按自己那份载荷画：一侧没发这一层时，那一侧整层不出现。
-              </span>
-            </div>
+            <ExplainSwitches cards={cards} isoCompareOn={isoCompareOn} shapeOn={shapeOn} gridOn={gridOn}
+                             onToggle={setExplainLayer}
+                             note="两张图各按自己那份载荷画：一侧没发这一层时，那一侧整层不出现。" />
           )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {cards.map((r, i) => (

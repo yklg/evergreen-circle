@@ -583,11 +583,12 @@ describe('笔1 · 逐类目差距与盲区成对', () => {
  * 不等它就数图层，会得到一条**恒真**判据：笔3a 第一条就这么"绿"过 ——
  * 把默认值改成开，它照样报 0。变异测出来的，不是推出来的。
  */
-const settleMaps = async (container: HTMLElement) => {
+const settleMaps = async (container: HTMLElement, expectMaps = 2) => {
   await waitFor(() => {
     const settled = [...container.querySelectorAll('[data-lc-mode]')]
       .filter((e) => e.getAttribute('data-lc-mode') !== 'boot')
-    expect(settled.length, '两张图都该落定（boot 没结束 ⇒ 下面的计数是恒真）').toBe(2)
+    // 张数按分支给：跨城那支两张图、同图叠加那支一张。数量不对 ⇒ 后面的计数没有基线。
+    expect(settled.length, `${expectMaps} 张图都该落定（boot 没结束 ⇒ 下面的计数是恒真）`).toBe(expectMaps)
   })
 }
 
@@ -661,8 +662,8 @@ describe('笔2 · 八方位形状并排', () => {
  * （`lcLayerRoster`、`isoCompareLayer`），页面层再抄一遍只会得到一条更难做、
  * 更容易因错误原因通过的重复判据。本组钉的是四件别处抓不到的事：
  *  ① 默认关（解释层不是主叙事层）；② 勾选 ⇒ 图层真的挂上；③ 取消 ⇒ 摘干净；
- *  ④ 开关**只出现在真能起作用的呈现分支**里 —— 同图叠加那张是对照态，
- *     名册今天整批退场，把勾摆在那儿就是"点下去没反应"那个形状。
+ *  ④ 开关**只出现在真能起作用的呈现分支**里 —— 笔3c 起两支都能起作用（同图那张按白名单画），
+ *     所以这一条钉的是"摆出来就必须真挂上图层"，而"一侧没发这一层 ⇒ 那颗勾不出现"仍旧钉着。
  */
 describe('笔3a · 对照页解释层开关', () => {
   it('默认关：落定之后两张图仍没有对照环与扇区（解释层不自动上屏）', async () => {
@@ -723,20 +724,40 @@ it('勾上整幅格阵 ⇒ 只有带台账那一侧画出来，格数等于 plan
     })
   })
 
-  it('同图叠加那一支不摆这三颗勾（对照态名册整批退场，摆了就是点了没反应）', async () => {
+  /* 笔 3c 显式改写（不是删）：这条原本钉"同图那一支不摆这三颗勾"，给的理由是"名册整批退场 ⇒
+     摆了就是点了没反应"。3c 把退场换成白名单，那句前提不再成立 ⇒ 现在钉的是**摆出来且真起作用**。
+     同框独有的两态这一对恰好各占一条：这份近邻件只挪了中心点、没挪对照环 ⇒ 环两侧同值（合一枚），
+     楔形按各自中心发射 ⇒ 不同值（各一枚）。 */
+  it('同图叠加那一支也摆这三颗勾，勾下去真起作用：同值只一枚、不同值各一枚', async () => {
     useDataModeStore.setState({ mode: 'live' })
     mockReports.mockResolvedValue([rec('k1', '凯里老街', '贵州凯里'), rec('k2', '凯里·近邻', '贵州凯里')])
-    render(
+    const { container } = render(
       <MemoryRouter>
         <ComparePage />
       </MemoryRouter>,
     )
     await waitFor(() => expect(mockCompare).toHaveBeenCalledWith(['k1', 'k2']))
     expect(screen.getByText('同图叠加 · 等时圈对比')).toBeTruthy()
-    expect(screen.queryByLabelText(/口径对照环/)).toBeNull()
-    expect(screen.queryByLabelText(/方位形状/)).toBeNull()
+    await settleMaps(container, 1)
+
+    // 默认关：与双图那一支同一条纪律 —— 解释层不是主叙事层
+    expect(container.querySelectorAll('[data-lc-iso-compare]').length).toBe(0)
+    expect(container.querySelectorAll('[data-sector]').length).toBe(0)
+
+    fireEvent.click(screen.getByLabelText(/口径对照环/))
+    await waitFor(() => expect(container.querySelectorAll('[data-lc-iso-compare]')).toHaveLength(1))
+    expect(container.querySelector('[data-lc-iso-compare]')?.getAttribute('data-lc-side'),
+      '两侧同值 ⇒ 那一枚归两侧').toBe('both')
+    expect(screen.getByText(/两侧同值、只画一枚：口径对照环/),
+      '合枚这件事要在屏上说出来，不能只藏在图元里').toBeTruthy()
+
+    fireEvent.click(screen.getByLabelText(/方位形状/))
+    await waitFor(() => expect(container.querySelectorAll('[data-sector]')).toHaveLength(16))
+    const sides = new Set([...container.querySelectorAll('[data-sector]')].map((el) => el.getAttribute('data-lc-side')))
+    expect([...sides].sort(), '两侧楔形不同值 ⇒ 各一枚、分别归侧').toEqual(['a', 'b'])
+
+    // 这一对两侧都没发台账 ⇒ 那颗勾压根不出现（缺席即未发生，不摆点了没反应的入口）
     expect(screen.queryByLabelText(/逐格判定台账/)).toBeNull()
-    // 笔3c 落地时这条要显式改写（不是删）：那时同图那张也允许画这几层，勾就该出现。
   })
 })
 
