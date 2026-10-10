@@ -1360,6 +1360,16 @@ export function reachCaliberGap(
 }
 
 /**
+ * 形状口径版本号安全取值（`sh-*`）。**只读载荷自带的声明**，不跟任何"当前版本常量"比 ——
+ * 那把尺的家在后端 `isochrone.SHAPE_CALIBER_VERSION`（另存一颗前端常量就是零消费者字段，
+ * 还会诱导出"拿代码常量当对照值"那个老错：两份都没有这把尺时，它们互相之间确实是同一把）。
+ */
+export function shapeCaliberVersionOf(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = lc?.caliber?.shape_caliber_version
+  return typeof v === 'string' && v ? v : null
+}
+
+/**
  * 两份报告用的是不是**同一代形状口径**（`sh-*`，含一侧根本没声明）。
  *
  * ⚠️ 刻意**不在前端另存一颗"当前版本号"常量**：`rc`/`ev`/`cov` 那三把都有单份报告要读的
@@ -1373,11 +1383,7 @@ export function shapeCaliberGap(
   a: Pick<LivingCircleReport, 'caliber'>,
   b: Pick<LivingCircleReport, 'caliber'>,
 ): boolean {
-  const read = (lc: Pick<LivingCircleReport, 'caliber'>) => {
-    const v = lc?.caliber?.shape_caliber_version
-    return typeof v === 'string' && v ? v : null
-  }
-  return read(a) !== read(b)
+  return shapeCaliberVersionOf(a) !== shapeCaliberVersionOf(b)
 }
 
 /**
@@ -1980,19 +1986,72 @@ export function compareCoverageCaliberNotice(
   return null
 }
 
+/** 横幅句里"升级了什么"那半句的唯一来源：直接取登记表的子句，不在这里另抄一份措辞。
+ *  登记表与后端 `_GAP_CLAUSES`、契约夹具逐字同源（由 `compareDiffContract` 两侧判据钉住）⇒
+ *  改子句只需改表，横幅自动跟着变；在横幅里手写一份就等于造出第二份真源。
+ *  ⚠️ 范围只到 rc/sh 这两句：ev/cov 那两句是**登记表之前**的手写措辞（各自带着"建议重新体检"
+ *  那句 CTA），改表不带动它们 —— 2026-10-10 补 rc/sh 时按"不顺手改既有用户可见文案"留着，
+ *  真要让四句同源是一次独立的措辞变更，得重取那两句的逐字判据。 */
+function caliberClause(axis: CaliberAxis): string {
+  return CALIBER_AXES.find((s) => s.axis === axis)?.clause ?? axis
+}
+
+const shownVersion = (v: string | null): string => v ?? '升级前（未声明）'
+
 /**
- * 横幅清单（**页面只调这一个**）：两轴各一句，各出现各的。
+ * 对比页横幅的**可达解释轴**那一句（`rc-*`）。
+ *
+ * ⚠️ 与 `compareCaliberNotice`/`compareCoverageCaliberNotice` 有**两处有意不同**，都是
+ * `REACH_CALIBER_VERSION` 上头那两条理由的延伸，别当疏漏"顺手补齐"：
+ *  ① 不发「建议重新体检较旧的一份」—— `rc-1` 没改任何一行读数，那句 CTA 承诺的是
+ *     一件重跑之后并不会发生的事；
+ *  ② 两份都没发这把键 ⇒ **不报**（它们互相之间确实是同一把尺），不像 ev/cov 那样
+ *     另给一句"两份都旧"。
+ */
+export function compareReachCaliberNotice(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string | null {
+  const ra = reachCaliberVersionOf(a)
+  const rb = reachCaliberVersionOf(b)
+  if (ra === rb) return null
+  return `两侧可达口径不同（${shownVersion(ra)} vs ${shownVersion(rb)}）⇒ ${caliberClause('rc')}；`
+    + '它不改任何一行读数，只决定那块解释在不在 ⇒ 不必重新体检，但别把「没这块」读成「没有差异」'
+}
+
+/** 对比页横幅的**形状尺轴**那一句（`sh-*`）。两条"有意不同"与上面那颗同源。 */
+export function compareShapeCaliberNotice(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): string | null {
+  const sa = shapeCaliberVersionOf(a)
+  const sb = shapeCaliberVersionOf(b)
+  if (sa === sb) return null
+  return `两侧形状口径不同（${shownVersion(sa)} vs ${shownVersion(sb)}）⇒ ${caliberClause('sh')}；`
+    + '报告页那一屏八方位诊断只在一侧存在 ⇒ 不必重新体检，但别把「没这块」读成「没有差异」'
+}
+
+/** 横幅清单（**页面只调这一个**）：四轴各一句，各出现各的。
  *
  * 为什么不是合成一句：只调 `compareCaliberNotice` 时，"两轴都不同"那一屏会出现**横幅只报判盲、
  * 表格里那格却写着"两把尺都换了"**的自相矛盾（10-01 落地后重渲预览当场看到的）—— 同屏两处披露
  * 各说一半，正是本批一直在堵的形状。
+ *
+ * ⚠️ 2026-10-10 L0 真实态现形：这里原本**只拼 ev + cov 两句**，而 `CALIBER_AXES` 与
+ * `REACH_CALIBER_VERSION` 的注释都写着 rc/sh「对比页横幅照报」——那句承诺没有消费者：
+ * 真库 `lc-51b782d2`（rc-1/sh-2）× `lc-4ef46187`（两戳都没发）只差这两根轴，
+ * 行级按设计不拦、横幅又不报 ⇒ 屏上一句口径提示都没有。后两句就是补这条。
  */
 export function compareCaliberNotices(
   a: Pick<LivingCircleReport, 'caliber'>,
   b: Pick<LivingCircleReport, 'caliber'>,
 ): string[] {
-  return [compareCaliberNotice(a, b), compareCoverageCaliberNotice(a, b)]
-    .filter((s): s is string => !!s)
+  return [
+    compareCaliberNotice(a, b),
+    compareCoverageCaliberNotice(a, b),
+    compareReachCaliberNotice(a, b),
+    compareShapeCaliberNotice(a, b),
+  ].filter((s): s is string => !!s)
 }
 
 /**

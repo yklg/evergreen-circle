@@ -25,6 +25,9 @@ import {
   COMPARE_ROWS,
   COVERAGE_CALIBER_VERSION,
   COVERAGE_GAP_DESC,
+  compareReachCaliberNotice,
+  compareShapeCaliberNotice,
+  REACH_CALIBER_VERSION,
   COVERAGE_GAP_ROW_KEYS,
   REACH_GAP_ROW_KEYS,
   SHAPE_GAP_DESC,
@@ -573,5 +576,86 @@ describe('降档徽标与置信度安全取值', () => {
       scores: { ...KAILI.scores, confidence: 'full' },
     } as unknown as LivingCircleReport
     expect(confidenceBadgeLabel(full)).toBeNull()
+  })
+})
+
+/* ── 横幅的**真出口**：`compareCaliberNotices`（页面只调这一颗）──────────────────
+ *
+ * 2026-10-10 L0 真实态现形的缺陷：上面那组用例的名字写着"横幅报"，测的却是 `caliberGapDesc`
+ * ——那是**行级/组合句**出口；对比页横幅渲染读的是 `compareCaliberNotices`，而它只拼 ev + cov
+ * 两句。于是 rc/sh 两根轴"横幅照报"这件事**注释有、测试有、页面没有**，真库那对只差 rc/sh 的
+ * 件在屏上一句提示都不出。本组把判据挪到页面真正调的那颗出口上。
+ */
+describe('横幅真出口 · 四根轴各一句（L0 补的这条防线）', () => {
+  const GAP = C.caliber_incomparable
+  const F = GAP.axis_fields as Record<CaliberAxis, string>
+  /** 只让**一根**轴不同，其余三根两侧一律盖成同一个当前值 —— 造"只差这一根"的最小档。
+   *  （不能把其余轴抹成"两份都没声明"：ev/cov 有"两份都旧也要报"那条规则，
+   *    抹了会平白多出两句，测出来的就不是"只差一根"了 —— 第一版我就栽在这儿。） */
+  const CUR: Record<CaliberAxis, string> = {
+    ev: GAP.policy_version_current, cov: GAP.coverage_version_current,
+    rc: GAP.reach_version_current, sh: GAP.shape_version_current,
+  }
+  const onlyAxis = (lc: LivingCircleReport, axis: CaliberAxis, v: string | null) => {
+    const cal = { ...(lc.caliber ?? {}) } as Record<string, unknown>
+    for (const ax of ['ev', 'cov', 'rc', 'sh'] as CaliberAxis[]) {
+      if (ax === axis) { if (v === null) delete cal[F[ax]]; else cal[F[ax]] = v }
+      else cal[F[ax]] = CUR[ax]
+    }
+    return { ...lc, caliber: cal } as LivingCircleReport
+  }
+  const clause = (axis: CaliberAxis) => CALIBER_AXES.find((s) => s.axis === axis)!.clause
+
+  it('只差 rc ⇒ 横幅出一句可达轴的话，且**不含**"建议重新体检"（rc 不改读数，那句是空头承诺）', () => {
+    const a = onlyAxis(KAILI, 'rc', REACH_CALIBER_VERSION)
+    const b = onlyAxis(JINSONG, 'rc', null)
+    const notices = compareCaliberNotices(a, b)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain('可达口径')
+    expect(notices[0]).toContain(REACH_CALIBER_VERSION)
+    expect(notices[0]).toContain(clause('rc'))          // 子句取自登记表，不是另抄
+    expect(notices[0]).not.toContain('建议重新体检')
+  })
+
+  it('只差 sh ⇒ 横幅出一句形状轴的话；两份都没这把尺 ⇒ 一句都不出（不谎报不可比）', () => {
+    const a = onlyAxis(KAILI, 'sh', GAP.shape_version_current)
+    const b = onlyAxis(JINSONG, 'sh', null)
+    const notices = compareCaliberNotices(a, b)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain(clause('sh'))
+    expect(notices[0]).not.toContain('建议重新体检')
+    expect(compareCaliberNotices(onlyAxis(KAILI, 'sh', null), onlyAxis(JINSONG, 'sh', null)))
+      .toEqual([])
+  })
+
+  it('四根轴全不同 ⇒ 四句齐、顺序恒为 ev→cov→rc→sh（少一句或换序都红）', () => {
+    const newGen = (lc: LivingCircleReport) => {
+      const cal = { ...(lc.caliber ?? {}) } as Record<string, unknown>
+      cal[F.ev] = GAP.policy_version_current
+      cal[F.cov] = GAP.coverage_version_current
+      cal[F.rc] = GAP.reach_version_current
+      cal[F.sh] = GAP.shape_version_current
+      return { ...lc, caliber: cal } as LivingCircleReport
+    }
+    const oldGen = (lc: LivingCircleReport) => {
+      const cal = { ...(lc.caliber ?? {}) } as Record<string, unknown>
+      for (const ax of ['ev', 'cov', 'rc', 'sh'] as CaliberAxis[]) delete cal[F[ax]]
+      return { ...lc, caliber: cal } as LivingCircleReport
+    }
+    const four = compareCaliberNotices(newGen(KAILI), oldGen(JINSONG))
+    expect(four).toHaveLength(4)
+    expect(four.map((x) => x.slice(0, 8))).toEqual(['两侧判盲口径不同', '两侧评分口径不同', '两侧可达口径不同', '两侧形状口径不同'])
+    // 反着问：句序仍按登记表（不是按传入顺序），但版本对是 A vs B 的读法 ⇒ 逐句只翻括号里那半
+    const rev = compareCaliberNotices(oldGen(KAILI), newGen(JINSONG))
+    expect(rev.map((x) => x.slice(0, 8))).toEqual(four.map((x) => x.slice(0, 8)))
+    expect(rev[3]).toContain(`升级前（未声明） vs ${GAP.shape_version_current}`)
+    expect(four[3]).toContain(`${GAP.shape_version_current} vs 升级前（未声明）`)
+  })
+
+  it('横幅句里不许出现"没这块 ⇒ 没有差异"那种误读引导（两句都点名"别把没这块读成没有差异"）', () => {
+    const rc = compareReachCaliberNotice(onlyAxis(KAILI, 'rc', REACH_CALIBER_VERSION), onlyAxis(JINSONG, 'rc', null))
+    const sh = compareShapeCaliberNotice(onlyAxis(KAILI, 'sh', GAP.shape_version_current), onlyAxis(JINSONG, 'sh', null))
+    expect(rc).toContain('没有差异')
+    expect(sh).toContain('没有差异')
   })
 })

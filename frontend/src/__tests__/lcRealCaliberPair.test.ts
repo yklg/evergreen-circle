@@ -18,7 +18,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import pair from './helpers/realCaliberPair.json'
-import { caliberGapDesc } from '../lib/livingCircle'
+import { CALIBER_AXES, caliberGapDesc, compareCaliberNotices, type CaliberAxis } from '../lib/livingCircle'
 import { framePlanOf } from '../components/lifecircle/lcLayers'
 import type { LivingCircleReport } from '../types'
 
@@ -63,6 +63,22 @@ describe('真件对 · 横幅那句不可比（代次前 × 当代）', () => {
   })
   it('反过来问同一句（横幅不该按 A/B 顺序变词序）', () => {
     expect(caliberGapDesc(B, A)).toBe(caliberGapDesc(A, B))
+  })
+  // ↓ 2026-10-10 L0 现形的缺口补的这条：行出口 `caliberGapDesc` 早就是四根轴全报，
+  //   页出口 `compareCaliberNotices` 却只拼 ev + cov ⇒ 真件对打开时横幅少两句，
+  //   而这一对**正是**用户真会点到的态（两份 ev 相同、cov/rc/sh 三根不同）。
+  //   判据写成"整串逐字 + 数量"而非"包含某句"：少一句、多一句、串了序都要红。
+  it('横幅真出口在这对上给三句（评分/可达/形状），且**不报判盲那句**（两份都是 ev-2）', () => {
+    const notices = compareCaliberNotices(A, B)
+    expect(notices.map((n) => n.slice(0, 8))).toEqual(['两侧评分口径不同', '两侧可达口径不同', '两侧形状口径不同'])
+    expect(notices.join('')).not.toContain('判盲')
+  })
+  it('新补的这两句里"升级了什么"那半句逐字来自登记表（cov/ev 那两句是登记表之前的手写措辞，本次没动）', () => {
+    const notices = compareCaliberNotices(A, B)
+    for (const ax of ['rc', 'sh'] as CaliberAxis[]) {
+      const clause = CALIBER_AXES.find((s) => s.axis === ax)!.clause
+      expect(notices.some((n) => n.includes(clause)), `横幅缺 ${ax} 那根轴的登记子句`).toBe(true)
+    }
   })
 })
 
