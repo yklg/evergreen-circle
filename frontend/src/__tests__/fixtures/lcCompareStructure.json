@@ -1,0 +1,234 @@
+{
+  "maxDepth": 3,
+  "cross": {
+    "order": [
+      "对比对象",
+      "凯里老街 · 逐格台账口径",
+      "北京劲松",
+      "A / B 所在城市等时圈 · 真实地理位置",
+      "圈形对比 · 归一化示意",
+      "关键差异",
+      "逐类目差距",
+      "八方位最远可达 · 两城对照",
+      "方位最远可达 · 15 min",
+      "方位最远可达 · 15 min",
+      "盲区成对并排"
+    ],
+    "ancestors": [
+      {
+        "tag": "MAIN",
+        "class": "mx-auto max-w-[1180px]"
+      },
+      {
+        "tag": "DIV",
+        "class": "mx-auto flex min-h-full max-w-[1100px] flex-col gap-4 px-6 py-6"
+      },
+      {
+        "tag": "DIV",
+        "class": "flex flex-col gap-4 rounded-card border border-line bg-card p-4 shadow-card"
+      }
+    ],
+    "mapCard": {
+      "tag": "DIV",
+      "class": "flex flex-col gap-4 rounded-card border border-line bg-card p-4 shadow-card",
+      "kids": [
+        {
+          "tag": "DIV",
+          "class": "flex flex-wrap items-center justify-between gap-2",
+          "kids": [
+            {
+              "tag": "DIV",
+              "class": "text-aux font-semibold text-ink"
+            },
+            {
+              "tag": "DIV",
+              "class": "flex items-center gap-3 text-tag text-ink-3",
+              "kids": [
+                {
+                  "tag": "SPAN",
+                  "class": "inline-flex items-center gap-1.5"
+                },
+                {
+                  "tag": "SPAN",
+                  "class": "inline-flex items-center gap-1.5"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "P",
+          "class": "text-tag text-ink-3"
+        },
+        {
+          "tag": "DIV",
+          "class": "flex flex-wrap items-center gap-x-4 gap-y-1.5",
+          "kids": [
+            {
+              "tag": "LABEL",
+              "class": "flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2",
+              "kids": [
+                {
+                  "tag": "INPUT",
+                  "class": "h-3.5 w-3.5",
+                  "type": "checkbox"
+                }
+              ]
+            },
+            {
+              "tag": "LABEL",
+              "class": "flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2",
+              "kids": [
+                {
+                  "tag": "INPUT",
+                  "class": "h-3.5 w-3.5",
+                  "type": "checkbox"
+                }
+              ]
+            },
+            {
+              "tag": "LABEL",
+              "class": "flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2",
+              "kids": [
+                {
+                  "tag": "INPUT",
+                  "class": "h-3.5 w-3.5",
+                  "type": "checkbox"
+                }
+              ]
+            },
+            {
+              "tag": "SPAN",
+              "class": "text-tag text-ink-3"
+            }
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "grid grid-cols-1 gap-4 md:grid-cols-2",
+          "kids": [
+            {
+              "tag": "DIV",
+              "class": "relative h-[400px]",
+              "stop": "map-slot",
+              "kidCount": 1
+            },
+            {
+              "tag": "DIV",
+              "class": "relative h-[400px]",
+              "stop": "map-slot",
+              "kidCount": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "co": {
+    "order": [
+      "对比对象",
+      "凯里老街 · 逐格台账口径",
+      "凯里老街",
+      "同图叠加 · 等时圈对比",
+      "关键差异",
+      "逐类目差距",
+      "八方位最远可达 · 两城对照",
+      "方位最远可达 · 15 min",
+      "方位最远可达 · 15 min",
+      "盲区成对并排"
+    ],
+    "ancestors": [
+      {
+        "tag": "MAIN",
+        "class": "mx-auto max-w-[1180px]"
+      },
+      {
+        "tag": "DIV",
+        "class": "mx-auto flex min-h-full max-w-[1100px] flex-col gap-4 px-6 py-6"
+      },
+      {
+        "tag": "DIV",
+        "class": "flex flex-col gap-4 rounded-card border border-line bg-card p-4 shadow-card"
+      }
+    ],
+    "mapCard": {
+      "tag": "DIV",
+      "class": "flex flex-col gap-4 rounded-card border border-line bg-card p-4 shadow-card",
+      "kids": [
+        {
+          "tag": "DIV",
+          "class": "flex flex-wrap items-center justify-between gap-2",
+          "kids": [
+            {
+              "tag": "DIV",
+              "class": "text-aux font-semibold text-ink"
+            },
+            {
+              "tag": "DIV",
+              "class": "flex items-center gap-3 text-tag text-ink-3",
+              "kids": [
+                {
+                  "tag": "SPAN",
+                  "class": "inline-flex items-center gap-1.5"
+                },
+                {
+                  "tag": "SPAN",
+                  "class": "inline-flex items-center gap-1.5"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "flex flex-wrap items-center gap-x-4 gap-y-1.5",
+          "kids": [
+            {
+              "tag": "LABEL",
+              "class": "flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2",
+              "kids": [
+                {
+                  "tag": "INPUT",
+                  "class": "h-3.5 w-3.5",
+                  "type": "checkbox"
+                }
+              ]
+            },
+            {
+              "tag": "LABEL",
+              "class": "flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2",
+              "kids": [
+                {
+                  "tag": "INPUT",
+                  "class": "h-3.5 w-3.5",
+                  "type": "checkbox"
+                }
+              ]
+            },
+            {
+              "tag": "LABEL",
+              "class": "flex cursor-pointer items-center gap-1.5 text-tag font-medium text-ink-2",
+              "kids": [
+                {
+                  "tag": "INPUT",
+                  "class": "h-3.5 w-3.5",
+                  "type": "checkbox"
+                }
+              ]
+            },
+            {
+              "tag": "SPAN",
+              "class": "text-tag text-ink-3"
+            }
+          ]
+        },
+        {
+          "tag": "DIV",
+          "class": "relative h-[440px]",
+          "stop": "map-slot",
+          "kidCount": 1
+        }
+      ]
+    }
+  }
+}
