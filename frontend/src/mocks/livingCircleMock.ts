@@ -34,14 +34,14 @@ export const SAMPLE_COMMUNITIES: SampleCommunity[] = [
     id: 'kaili',
     title: '凯里老街',
     city: '贵州·凯里',
-    blurb: '欠发达样区 · 核心圈设施可及，外围 1km 存在 4 处服务盲区',
+    blurb: '欠发达样区 · 教育门槛项未计满（33%）；72 格只判过 9 格 ⇒ 盲区 0 处不等于没有盲区',
     report: kailiJson as unknown as LivingCircleReport,
   },
   {
     id: 'beijing-jinsong',
     title: '北京劲松',
     city: '北京·朝阳',
-    blurb: '成熟城区样区 · 三要素齐备，仅东南边缘 1 处轻微盲区',
+    blurb: '成熟城区样区 · 三要素齐备；99 格只判过 21 格 ⇒ 盲区 0 处不等于没有盲区',
     report: jinsongJson as unknown as LivingCircleReport,
   },
 ]
