@@ -115,7 +115,9 @@ describe('A · 面层负向不变量（本次事故的直接防线）', () => {
       'src/components/lifecircle/LifeCircleReportView.tsx',
     ]) {
       const src = read(rel)
-      expect(src, `${rel} 没渲染共享底网格装配`).toContain('<LcCanvasBackdrop />')
+      // 钉的是"渲染了共享装配"，不是"它不带参数"——2026-10-10 起降级画布按取景框传 `frame`，
+      // 原来那句 `<LcCanvasBackdrop />` 把"无参"也一起钉住了，那是这条判据的意外收获，不是本意。
+      expect(src, `${rel} 没渲染共享底网格装配`).toContain('<LcCanvasBackdrop')
       expect(src, `${rel} 又自带了一份地色副本 ⇒ 色差台阶回到原点`).not.toContain(`fill="${CANVAS_BG}"`)
     }
     // 归一化遮罩是另一张画布（对比页圈形示意），没参与本次收装配 ⇒ 继续逐字比它的 rect。

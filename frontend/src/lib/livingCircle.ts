@@ -314,22 +314,23 @@ export interface LcFrame { x: number; y: number; w: number; h: number }
  * （与 `lcSnapshotPoiLayer` 同一份点集，不是第二套取数）、盲区面与中心、场景中心自己。
  * 空载荷/退化（不足两点、全非有限值）退回整幅画布，绝不产 NaN 或零宽高框。
  */
-export function lcContentFrame(lc: LivingCircleReport): LcFrame {
-  const full: LcFrame = { x: 0, y: 0, w: LC_CANVAS.W, h: LC_CANVAS.H }
-  const center = lc.scene?.center as LngLat | undefined
-  if (!Array.isArray(center) || center.length < 2) return full
-
-  const xs: number[] = []
-  const ys: number[] = []
+/**
+ * 一份载荷在**给定投影原点**下贡献的画布坐标点集。
+ *
+ * 取景只认这一份点集：`lcContentFrame`（分章静态图）与 `lcCoFrame`（对照态降级画布）共用它，
+ * 免得两处各数一遍"哪些点该框进来"（那正是本仓一直在堵的第二实现）。
+ * 口径与旧版逐字相同：等时圈族环、盲区面与盲区中心、`poiRenderSet` 的代表点、载荷自己的场景中心。
+ */
+function lcFramePx(lc: LivingCircleReport, origin: LngLat): Array<[number, number]> {
+  const pts: Array<[number, number]> = []
   const push = (lng: number, lat: number): void => {
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) return
-    const [x, y] = lcToPx(center, lng, lat)
-    if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y) }
+    const [x, y] = lcToPx(origin, lng, lat)
+    if (Number.isFinite(x) && Number.isFinite(y)) pts.push([x, y])
   }
   const pushRing = (ring: LngLat[] | undefined): void => {
     for (const p of ring ?? []) if (Array.isArray(p) && p.length >= 2) push(p[0], p[1])
   }
-
   for (const z of lc.isochrones ?? []) pushRing(z.geojson?.coordinates?.[0])
   for (const b of lc.blindspots ?? []) {
     pushRing(b.polygon?.coordinates?.[0])
@@ -338,9 +339,17 @@ export function lcContentFrame(lc: LivingCircleReport): LcFrame {
   for (const p of poiRenderSet(lc.poi?.points ?? []).reps) {
     if (Array.isArray(p?.lnglat) && p.lnglat.length >= 2) push(p.lnglat[0], p.lnglat[1])
   }
-  push(center[0], center[1])
-  if (xs.length < 2) return full
+  const own = lc.scene?.center as LngLat | undefined
+  if (Array.isArray(own) && own.length >= 2) push(own[0], own[1])
+  return pts
+}
 
+/** 点集 → 带留白的包围盒；不足两点或退化（零宽高）时退回整幅画布，绝不产 NaN 框。 */
+function lcFrameBox(pts: Array<[number, number]>): LcFrame {
+  const full: LcFrame = { x: 0, y: 0, w: LC_CANVAS.W, h: LC_CANVAS.H }
+  if (pts.length < 2) return full
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
   const minX = Math.min(...xs); const maxX = Math.max(...xs)
   const minY = Math.min(...ys); const maxY = Math.max(...ys)
   const padX = Math.max((maxX - minX) * 0.08, 24)
@@ -349,6 +358,49 @@ export function lcContentFrame(lc: LivingCircleReport): LcFrame {
   const h = maxY - minY + padY * 2
   if (!(w > 0) || !(h > 0)) return full
   return { x: minX - padX, y: minY - padY, w, h }
+}
+
+/**
+ * 对照态降级画布的取景：把**两侧**真画得出来的内容都框进来，且保持画布宽高比。
+ *
+ * 为什么需要它（2026-10-10 真跑两发才第一次撞见）：降级画布原本恒用 `0 0 860 620`，
+ * 而投影原点＝A 侧 `scene.center`、世界半径＝`LC_CANVAS.R` 2500 m —— 两份件相距 2486 m 时
+ * B 侧格阵实测落在 x `722..1024`，**右边缘出框 164 px**（图被切，读者看到"少一侧"）。
+ * 之前点不出来，是因为库里可见的四份两两最近 14,014 m ⇒ 全走双图那一支。
+ *
+ * 三条不变式（判据逐条钉）：
+ *  ① 宽高比恒等于画布比例 ⇒ svg 自身高度与那个定高槽都不跟着变（改取景不许顺手改布局）；
+ *  ② 结果**必含整幅画布** ⇒ 两侧内容没超出今天取景时（同中心那一对就是），
+ *     返回逐字是 `{0,0,860,620}`，对照态今天的画面一格没动；
+ *  ③ 只改"看得见多大一片"，投影原点与 `lcToPx` 一字不动 ⇒ 米制比例尺、判定尺圆、
+ *     点击反投影全跟着同一个 frame 走（`LcMap` 那侧必须用返回值换算，不许再各算各的）。
+ */
+export function lcCoFrame(a: LivingCircleReport, b: LivingCircleReport, origin: LngLat): LcFrame {
+  const box = lcFrameBox([...lcFramePx(a, origin), ...lcFramePx(b, origin)])
+  const full: LcFrame = { x: 0, y: 0, w: LC_CANVAS.W, h: LC_CANVAS.H }
+  // 内容还在今天的画布里 ⇒ **逐字**退回整幅（同中心那一对就是这种）。不这么做会留下
+  // 1e-14 的浮点残渣（实测 `x: -5.68e-14`）—— 渲染上被 `toFixed(1)` 吃掉，但"没病的画面一格没动"
+  // 这条不变式要能被判据**精确**问出来，而不是靠容差。
+  if (box.x >= 0 && box.y >= 0 && box.x + box.w <= LC_CANVAS.W && box.y + box.h <= LC_CANVAS.H) return full
+  const minX = Math.min(box.x, 0)
+  const minY = Math.min(box.y, 0)
+  const maxX = Math.max(box.x + box.w, LC_CANVAS.W)
+  const maxY = Math.max(box.y + box.h, LC_CANVAS.H)
+  const ar = LC_CANVAS.W / LC_CANVAS.H
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  let w = maxX - minX
+  let h = maxY - minY
+  if (w / h > ar) h = w / ar
+  else w = h * ar
+  return { x: cx - w / 2, y: cy - h / 2, w, h }
+}
+
+export function lcContentFrame(lc: LivingCircleReport): LcFrame {
+  const center = lc.scene?.center as LngLat | undefined
+  const full: LcFrame = { x: 0, y: 0, w: LC_CANVAS.W, h: LC_CANVAS.H }
+  if (!Array.isArray(center) || center.length < 2) return full
+  return lcFrameBox(lcFramePx(lc, center))
 }
 
 /** 画框 → `viewBox` 字符串（一位小数足够：画布本身是 860×620 的整数域）。 */

@@ -43,6 +43,8 @@ import {
   cellAt,
   cellIndex,
   cellsLedgerOf,
+  lcCoFrame,
+  lcFrameViewBox,
   lcMeters,
   isoCompareOf,
   judgeRulerM,
@@ -1518,6 +1520,15 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   /* 降级静态画布（评审无网 / 无 AK 可用；图例与右栏由页面提供） */
   if (mode === 'fallback') {
     const center: LngLat = customCenter ?? report.scene.center
+    /**
+     * 取景框：单图那一支**逐字**是今天的整幅画布；同图叠加那一支按**两侧内容并集**扩框
+     * （`lcCoFrame` 的三条不变式：保画布宽高比、必含整幅画布、不动投影）。
+     * ⚠️ 这个 `frame` 是 viewBox、点击反投影、底网格三处的**同一个数** —— 任何一处再按
+     * `LC_CANVAS.W/H` 自己算一遍，就会出现"看得见但点不准"或底色留白边。
+     */
+    const frame = compareReport
+      ? lcCoFrame(report, compareReport, center)
+      : { x: 0, y: 0, w: LC_CANVAS.W, h: LC_CANVAS.H }
     const isoZones = report.isochrones
     const secondary = compareReport
     // 与 live 路径同一份点集（阶段 2.2：原 `cap=60` 与 live 的 120 口径不一，两图点数会打架）
@@ -1580,10 +1591,13 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
         )
         return
       }
-      const px = ((e.clientX - rect.left) / rect.width) * LC_CANVAS.W
-      const py = ((e.clientY - rect.top) / rect.height) * LC_CANVAS.H
-      const mx = ((px - LC_CANVAS.W / 2) / (LC_CANVAS.W / 2)) * LC_CANVAS.R
-      const my = ((LC_CANVAS.H / 2 - py) / (LC_CANVAS.H / 2)) * LC_CANVAS.R
+      // 点击 → 画布坐标：先按**取景框**换算（`frame` 就是整幅画布时，这两行逐字退化成今天的算法），
+      // 再交给唯一的逆运算 `lcFromMeters`。⚠️ 不许在这里另抄一份 `LC_CANVAS.W/H` 的除法 ——
+      //  viewBox 一扩而点击还按老框算，就会"看得见但点不准"（选格与挪中心全偏）。
+      const vx = frame.x + ((e.clientX - rect.left) / rect.width) * frame.w
+      const vy = frame.y + ((e.clientY - rect.top) / rect.height) * frame.h
+      const mx = ((vx - LC_CANVAS.W / 2) / (LC_CANVAS.W / 2)) * LC_CANVAS.R
+      const my = ((LC_CANVAS.H / 2 - vy) / (LC_CANVAS.H / 2)) * LC_CANVAS.R
       // 这是**算出来的** BD-09（中心 + 米偏移反投影），仍需过值域闸：
       // R 派生自 study_radius_m 后若失控，算出的点会越界，此处是最后一道网。
       // 反投影本身走 `lcFromMeters` —— 与证据盘环（`lcRing`）同一个逆运算，不再自带一份系数。
@@ -1616,8 +1630,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               改了常量而忘了这里，那条判据立刻红。 */
            data-lc-layers-a={compareReport ? layerAttr(plan.declared.a) : undefined}
            data-lc-layers-b={compareReport ? layerAttr(plan.declared.b) : undefined}>
-        <svg viewBox={`0 0 ${LC_CANVAS.W} ${LC_CANVAS.H}`} className="block w-full cursor-crosshair select-none" role="img" aria-label="生活圈等时圈画布（降级）" onClick={onCanvasClick}>
-          <LcCanvasBackdrop />
+        <svg viewBox={lcFrameViewBox(frame)} className="block w-full cursor-crosshair select-none" role="img" aria-label="生活圈等时圈画布（降级）" onClick={onCanvasClick}>
+          <LcCanvasBackdrop frame={frame} />
 
           {sectorLayers.flatMap((sl) =>
             /* 几何原点恒取**该份载荷**的 scene.center（形状键就是按它量的），不是上面那个
@@ -1654,7 +1668,10 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               <polygon points={r.pts} fill="none" stroke={r.stroke}
                       strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />
               {ri === 0 && (
-                <text x={LC_CANVAS.W / 2} y={22} fontSize={11} fill={LC_ISO_COMPARE_COLOR}
+                /* 标题贴着**可见画框**的上沿，而不是画布上沿：`frame` 一扩（同框两侧离得远），
+                   按 `y=22` 写死会让它落在放大后的框里"往下掉一截"。单图那一支 frame 就是整幅画布
+                   ⇒ `frame.x + w/2 = W/2`、`frame.y + 22 = 22`，逐字是今天的位置。 */
+                <text x={frame.x + frame.w / 2} y={frame.y + 22} fontSize={11} fill={LC_ISO_COMPARE_COLOR}
                       textAnchor="middle" fontWeight={600}>
                   口径对照 {r.lc.iso_compare?.minutes} min · {r.lc.iso_compare?.area_km2} km²
                   {r.merged ? '（两侧同值 · 只画一枚）' : ''}

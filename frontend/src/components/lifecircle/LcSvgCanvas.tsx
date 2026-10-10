@@ -20,23 +20,35 @@
  * 命名与结构对齐本文件。折算口径本来就同源（`coarseBlindFootprint`），那是值层而非 JSX 层的重复。
  */
 import { LC_CANVAS, LC_ISO_COLORS, lcPolyPts, lcRightmost, lcToPx } from '../../lib/livingCircle'
-import type { LcSnapshotPoiDot } from '../../lib/livingCircle'
+import type { LcFrame, LcSnapshotPoiDot } from '../../lib/livingCircle'
 import type { IsochroneZone, LngLat } from '../../types'
 
 /**
  * 画布底 ＋ 5×5 参照网格。尺寸只从 `LC_CANVAS` 取（唯一真相源），调用点不再各抄一份宽高 ——
  * 那两个数一旦分叉，两张图的投影比例就不同，而它们共用同一个 `lcToPx`。
+ *
+ * `frame` 只用来**扩覆盖范围**（对照态降级画布按两侧内容并集取景时会超出整幅画布），
+ * 网格间距仍是画布的 1/5 —— 那是比例尺本身，跟着画框走就成了"缩放改口径"。
+ * 不传 ⇒ 逐字是今天那张（`-2..2` 恰好铺满 860×620）。
  */
-export function LcCanvasBackdrop() {
+export function LcCanvasBackdrop({ frame }: { frame?: LcFrame } = {}) {
   const { W, H } = LC_CANVAS
+  const f = frame ?? { x: 0, y: 0, w: W, h: H }
+  const colOf = (i: number) => W / 2 + (i * W) / 5
+  const rowOf = (i: number) => H / 2 + (i * H) / 5
+  const span = (half: number, step: number, from: number, to: number) => {
+    const idx: number[] = []
+    for (let i = Math.ceil((from - half) / step); i <= Math.floor((to - half) / step); i += 1) idx.push(i)
+    return idx
+  }
   return (
     <>
-      <rect x={0} y={0} width={W} height={H} fill="#f9faf8" />
-      {[-2, -1, 0, 1, 2].map((i) => (
-        <line key={`v${i}`} x1={W / 2 + (i * W) / 5} y1={0} x2={W / 2 + (i * W) / 5} y2={H} stroke="#e7ebe7" strokeWidth={1} />
+      <rect x={f.x} y={f.y} width={f.w} height={f.h} fill="#f9faf8" />
+      {span(W / 2, W / 5, f.x, f.x + f.w).map((i) => (
+        <line key={`v${i}`} x1={colOf(i)} y1={f.y} x2={colOf(i)} y2={f.y + f.h} stroke="#e7ebe7" strokeWidth={1} />
       ))}
-      {[-2, -1, 0, 1, 2].map((i) => (
-        <line key={`h${i}`} x1={0} y1={H / 2 + (i * H) / 5} x2={W} y2={H / 2 + (i * H) / 5} stroke="#e7ebe7" strokeWidth={1} />
+      {span(H / 2, H / 5, f.y, f.y + f.h).map((i) => (
+        <line key={`h${i}`} x1={f.x} y1={rowOf(i)} x2={f.x + f.w} y2={rowOf(i)} stroke="#e7ebe7" strokeWidth={1} />
       ))}
     </>
   )
