@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { LS_DATA_MODE, SCROLL_TOL } from './stageChecks'
 
 /**
@@ -145,27 +146,71 @@ test('同图叠加：勾解释层 ⇒ 同值的层只一枚并归两侧，没发
 })
 
 /**
- * 笔3b · 整幅格阵。live 侧覆盖物不进 DOM ⇒ 任何 querySelector 型判据在 live 档天然失明
- * （本域 10-07 实测过），所以这里问的是组件自己写回的 `data-lc-layers` 申报；
- * 降级档则直接数图元。两档问同一件事，是因为"只补一半"正是这一层要防的病。
+ * 笔3b · 整幅格阵。拆成两条，是因为原来那一条把"数图元"写在 `if (mode === 'fallback')` 里：
+ * 本机 8010 跑着真后端 ⇒ `map-config` 发真 AK ⇒ 地图落 live ⇒ 那半个分支**从没执行过**，
+ * 全绿只验了申报属性（拿变异刀打上去才发现，同款坑见 3c 那条的注释）。
+ * 拆开后各管一段：申报通道与档位无关（两档都写），留在那条里问；图元只在这一档问得着。
  */
-test('勾上整幅格阵 ⇒ 只有带台账那一侧出现这一层，另一侧整层不画', async ({ page }) => {
+async function openCompareWithGrid(page: Page) {
   await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [LS_DATA_MODE, 'fixture'])
   await page.goto('/compare', { waitUntil: 'load' })
   await page.getByLabel(/逐格判定台账/).check()
+}
 
+test('笔3b · 勾上整幅格阵 ⇒ 恰好一侧申报了 cells-grid（两档都写这条申报，与档位无关）', async ({ page }) => {
+  await openCompareWithGrid(page)
   const roots = page.locator('[data-lc-mode]')
   await expect(async () => {
     const decl = await roots.evaluateAll((els) => els.map((e) => e.getAttribute('data-lc-layers') ?? ''))
     expect(decl.filter((d) => d.includes('cells-grid')).length, '应恰好一侧带台账并申报了格阵').toBe(1)
   }).toPass({ timeout: 20_000 })
+})
 
-  const mode = await roots.nth(0).getAttribute('data-lc-mode')
-  const cells = await page.locator('[data-lc-layer="cells-grid"] polygon').count()
-  // DOM 型判据只在降级档问：live 的格阵是 canvas 覆盖物，不进 DOM（上面那句申报已经管住 live）。
-  if (mode === 'fallback') {
-    expect(cells, '降级档格阵一枚都没画').toBeGreaterThan(20)
-    // 另一侧（没发台账）不许出现一个空的格阵组 —— 缺席即不渲染，不是画个空壳
-    expect(await page.locator('[data-lc-layer="cells-grid"]').count()).toBe(1)
-  }
+test('笔3b · 强制降级档 ⇒ 格阵真有图子上屏，另一侧不许留空壳组', async ({ page }) => {
+  // 桩空 AK 把这一张钉死在降级画布上：不这么做，本机有后端时这条又会静默跳过。
+  await page.route('**/api/life-circle/map-config', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ browser_ak: '', map_style_id: '' }) }),
+  )
+  await openCompareWithGrid(page)
+  const roots = page.locator('[data-lc-mode]')
+  await expect(async () => {
+    const decl = await roots.evaluateAll((els) => els.map((e) => e.getAttribute('data-lc-layers') ?? ''))
+    expect(decl.filter((d) => d.includes('cells-grid')).length).toBe(1)
+  }).toPass({ timeout: 20_000 })
+  expect(await roots.nth(0).getAttribute('data-lc-mode'),
+    '这一条只在降级档问得着图元 ⇒ 档位不成立就是空转，必须红').toBe('fallback')
+  expect(await page.locator('[data-lc-layer="cells-grid"] polygon').count(), '降级档格阵一枚都没画').toBeGreaterThan(20)
+  // 另一侧（没发台账）不许出现一个空的格阵组 —— 缺席即不渲染，不是画个空壳
+  expect(await page.locator('[data-lc-layer="cells-grid"]').count()).toBe(1)
+})
+
+/**
+ * 笔3c 补一条 live 档的按侧申报：3c 那条主判据被桩成降级档（要数图元），
+ * 于是"live 侧那两条 effect 真把 `-a`/`-b` 写回 DOM"这件事得有人问 ——
+ * 本机有后端时这一条走的就是 live。
+ */
+test('笔3c · 同框按侧申报在 live 档也写回（不靠降级档代答）', async ({ page }) => {
+  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [LS_DATA_MODE, 'fixture'])
+  await page.goto('/compare', { waitUntil: 'load' })
+  await page.getByLabel('场景 A').selectOption('kaili-ev2')
+  await page.getByLabel('场景 B').selectOption('kaili')
+  await expect(page.getByText('同图叠加 · 等时圈对比')).toBeVisible()
+  await page.getByLabel(/口径对照环/).check()
+  await page.getByLabel(/逐格判定台账/).check()
+
+  const root = page.locator('[data-lc-mode]').first()
+  // 先等这张图离开 boot（起盘那一下 `data-lc-mode="boot"`，读不到档位也读不到申报）
+  await expect(async () => {
+    expect(['live', 'fallback']).toContain(await root.getAttribute('data-lc-mode'))
+  }).toPass({ timeout: 20_000 })
+  const mode = await root.getAttribute('data-lc-mode')
+  console.log('笔3c 按侧申报这条落在哪一档：', mode)     // 本机有后端 ⇒ live；CI 无 AK ⇒ fallback
+  await expect(async () => {
+    const a = (await root.getAttribute('data-lc-layers-a')) ?? ''
+    const b = (await root.getAttribute('data-lc-layers-b')) ?? ''
+    expect(a, 'A 侧那份申报没写回').toContain('iso-compare')
+    expect(a, 'A 侧那份申报没写回格阵').toContain('cells-grid')
+    expect(b, 'B 侧那份申报没写回（同值 ⇒ 对照环也归 B）').toContain('iso-compare')
+    expect(b, 'B 侧没发台账 ⇒ 它那份里不该有格阵').not.toContain('cells-grid')
+  }).toPass({ timeout: 20_000 })
 })
