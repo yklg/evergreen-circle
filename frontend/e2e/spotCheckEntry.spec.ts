@@ -65,10 +65,11 @@ function guideReport() {
   }
 }
 
-test('地标体检入口 · 布局不随 hover 抖动，选中之后才可发起', async ({ page }) => {
+/** 两个用例共用的造数：一份带榜单与坐标的攻略报告 + 地图/回读端点 + 真实模式。 */
+async function stubReportPage(page: import('@playwright/test').Page) {
   await page.route('**/api/life-circle/map-config', (route) =>
-    // 桩成空 AK：本用例量的是那张卡的几何，与地图能不能画出来无关（拿不到 AK 时
-    // BMapBlock 退化成 120px 占位，页面照常渲染按钮行）。
+    // 桩成空 AK：这两个用例量的都不是"地图画不画得出来"（拿不到 AK 时 BMapBlock 退化成
+    // 120px 占位，页面照常渲染按钮行；体检台那边也照常渲染确认框）。
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -79,10 +80,20 @@ test('地标体检入口 · 布局不随 hover 抖动，选中之后才可发起
     // 未体检过的常态：不出现「查看最近一次的体检」
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ checks: [] }) }),
   )
+  // 体检台的历史列表桩成空：**这条正是"空库"那条路径** —— 曾经确认框住在 `if (!report)`
+  // 早退之后，空库时从景点发起会"什么都没发生"（已修，见 LifeCirclePage 的 renderConfirmDialog）。
+  await page.route(
+    (url) => url.pathname === '/api/life-circle',
+    (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  )
   await page.route('**/api/reports/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(guideReport()) }),
   )
   await page.addInitScript(([k, v]) => localStorage.setItem(k as string, v as string), [LS_DATA_MODE, 'live'])
+}
+
+test('地标体检入口 · 布局不随 hover 抖动，选中之后才可发起', async ({ page }) => {
+  await stubReportPage(page)
 
   await page.goto(`/report/${REPORT_ID}`, { waitUntil: 'domcontentloaded' })
 
@@ -119,4 +130,49 @@ test('地标体检入口 · 布局不随 hover 抖动，选中之后才可发起
   // 点过一行之后卡片几何仍不许变（这次是"选中"而不是"hover"引起的）
   const afterPick = await box()
   expect(afterPick.h, '选中之后卡片高度变了').toBe(base.h)
+})
+
+test('地标体检入口 · 点按钮真的跳到体检台并弹出确认框（未确认零建单）', async ({ page }) => {
+  await stubReportPage(page)
+
+  // 计一次 POST /api/tasks：确认框表达的是"意图"，**未确认前一个任务都不许建**（不耗配额）。
+  let taskPosts = 0
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && r.url().endsWith('/api/tasks')) taskPosts++
+  })
+
+  await page.goto(`/report/${REPORT_ID}`, { waitUntil: 'domcontentloaded' })
+  const bar = page.locator('[data-spot-launch]')
+  await expect(bar, '发起口那一行没渲染出来').toBeVisible({ timeout: 15_000 })
+
+  await page.locator('[data-spot-row]').first().click()
+  const launchBtn = bar.getByRole('button', { name: /发起体检/ })
+  await expect(launchBtn).toBeEnabled()
+  await launchBtn.click()
+
+  // ① 真的换页了。**这一条就是上次漏掉的那一步**：当时 VSpotAtlas 塞的是 `lnglat` 数组、
+  //    而映射函数读 `lat`/`lng` ⇒ 静默返回 null、URL 一动不动，控制台也没有任何提示。
+  await expect(page, '点了「发起体检」却没跳到体检台').toHaveURL(/\/life-circle\/custom$/, { timeout: 10_000 })
+
+  // ② 确认框弹出，且"来源"那一行带上了宿主报告的标题（纯展示，走路由状态）
+  const dialog = page.getByRole('dialog', { name: '确认发起体检' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('杭州动物园')
+  await expect(dialog).toContainText('来源')
+  await expect(dialog).toContainText('地标体检入口回归')
+  // 「来源」的值必须是**整句** `攻略「…」` —— 上一版这里写死了尾巴"· 景点"却没接景点名，
+  // 屏上就留了个孤零零的"· 景点"；按整句形状钉，别用"不含某个词"那种单点正则。
+  const srcValue = (await dialog.evaluate((el) => {
+    const row = [...el.querySelectorAll('div')].find(
+      (d) => d.children.length === 2 && d.children[0].textContent?.trim() === '来源',
+    )
+    return row?.children[1]?.textContent?.trim() ?? ''
+  })) as string
+  expect(srcValue, '「来源」那行有残片或没填上').toMatch(/^攻略「[^」]+」$/)
+
+  // ③ 未确认 ⇒ 零建单；取消之后仍然零建单
+  expect(taskPosts, '确认框弹出前就建了任务').toBe(0)
+  await page.getByRole('button', { name: '取消' }).click()
+  await expect(dialog).toBeHidden()
+  expect(taskPosts, '取消之后仍然建了任务').toBe(0)
 })

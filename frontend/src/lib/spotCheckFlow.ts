@@ -27,11 +27,17 @@ import type { LngLat, SpotCheckOrigin } from '../types'
 import type { CoordSys } from './geo'
 import { asBdLngLat, parseBdLngLat } from './geo'
 
-/** 跨模块边界类型：发起一次地标体检所必需的最小信息（与展示层形状解耦）。 */
+/** 跨模块边界类型：发起一次地标体检所必需的最小信息（与展示层形状解耦）。
+ *
+ * ⚠️ **四个字段都是必填**，这不是洁癖：上一版把坐标写成 `lnglat: LngLat`，而映射函数读的是
+ * `lat`/`lng` ⇒ 两处形状不一致，编译器**一声不响**（当时的入参类型是全可选的 `SpotLike`，
+ * 任何对象都能赋给它）⇒ 点按钮静默返回 `null`、什么都不发生、控制台也不报错。
+ * 现在两侧同形且必填，谁再把数组塞进来就是编译错误。 */
 export interface SpotLaunchTarget {
   spot_id: string
   name: string
-  lnglat: LngLat
+  lat: number
+  lng: number
 }
 
 /** 送到体检台的一次发起意图：坐标**与坐标系标签必须同行**（偏 600m 的那种错就出在这里）。
@@ -53,40 +59,39 @@ export interface SpotCheckNavState {
   spotCheck: SpotCheckIntent
 }
 
-/** 报告里的一行景点：只读它这里用得到的四个字段，其余（分数/区域）与发起无关。 */
-export interface SpotLike {
-  spot_id?: string | null
-  name?: string | null
-  lat?: number | null
-  lng?: number | null
-  matched?: boolean | null
-}
-
 const FALLBACK_NAME = '生活圈体检'
 
 /**
- * 景点行 → 体检台发起意图。**不可发起时返回 `null`**，坐标非法时**抛错**（见文件头两道门）。
+ * 景点行 → 体检台发起意图。
+ *
+ * ## 谁判"够不够格"
+ *
+ * **调用点判**（`VSpotAtlas` 的 `launchable`：坐标齐备且未命中失败才放行，否则按钮 `disabled`）
+ * —— 那张门用的是报告行自己的可选字段，是"这行数据能不能发起"的唯一裁决处。
+ * 本函数**不再重复判断**：重复判断必然漂移（上一版的静默 `null` 就是被重复字段名掩盖掉的），
+ * 而且它一旦判错只会静默不动作。类型说必填，这里就按必填用。
+ *
+ * ## 剩下唯一的运行期门：坐标值域
+ *
+ * 值域是真实数据唯一还会出错的地方（墨卡托米、越界、NaN）⇒ 走 `asBdLngLat` **抛错**：
+ * 宁可当场炸出一个可见的告警，也不要再来一次静默无动作。
  *
  * @param hostReportId 宿主报告 id（攻略页的 `r_xxx`）。它是溯源三元组的一半，
- *   缺了就不给入口 —— 一条查不到来源的关联等于没记。
+ *   缺了就不给入口 —— 一条查不到来源的关联等于没记。这一位仍返回 `null`
+ *   （它不是"数据脏"，而是"这个入口本就不该出现"）。
  * @param hostTitle 宿主报告标题（可选，纯展示；见 `SpotCheckIntent.hostTitle`）。
  */
-export function toSpotLaunch(spot: SpotLike, hostReportId: string, hostTitle?: string): SpotCheckNavState | null {
-  const spotId = String(spot?.spot_id ?? '').trim()
+export function toSpotLaunch(spot: SpotLaunchTarget, hostReportId: string, hostTitle?: string): SpotCheckNavState | null {
   const hostId = String(hostReportId ?? '').trim()
-  if (!spotId || !hostId) return null
-  if (spot?.matched === false) return null
-  const lat = spot?.lat
-  const lng = spot?.lng
-  if (typeof lat !== 'number' || typeof lng !== 'number') return null
+  if (!hostId) return null
 
   const title = String(hostTitle ?? '').trim()
   return {
     spotCheck: {
-      name: String(spot?.name ?? '').trim() || FALLBACK_NAME,
-      lnglat: asBdLngLat([lng, lat], 'spotCheckFlow.toSpotLaunch'),
+      name: String(spot.name ?? '').trim() || FALLBACK_NAME,
+      lnglat: asBdLngLat([spot.lng, spot.lat], 'spotCheckFlow.toSpotLaunch'),
       coordSys: 'bd09',
-      origin: { host_kind: 'guide', host_report_id: hostId, spot_id: spotId },
+      origin: { host_kind: 'guide', host_report_id: hostId, spot_id: String(spot.spot_id) },
       ...(title ? { hostTitle: title } : {}),
     },
   }

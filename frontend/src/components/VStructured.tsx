@@ -171,10 +171,14 @@ export function VSpotAtlas({ data, spot }: { data: Row[]; spot?: SpotCheckCtx })
               : '先在地图上点一个点位，或点一行榜单'}
             onClick={() => {
               if (!launchable) return
+              // 形状与 `SpotLaunchTarget` 逐字段对齐（lat/lng 分开给，**不是** lnglat 数组）：
+              // 上一版这里塞的是 `lnglat: [lng, lat]`，而映射函数读 `lat`/`lng` ⇒ 静默不动作。
+              // 现在类型都是必填，塞错形状是编译错误。
               spot.onLaunch({
                 spot_id: launchable.spot_id,
                 name: launchable.name,
-                lnglat: [launchable.lng as number, launchable.lat as number],
+                lat: launchable.lat as number,
+                lng: launchable.lng as number,
               })
             }}
             className="inline-flex h-8 items-center gap-1.5 rounded-btn bg-primary px-3 text-tag font-medium text-white shadow-card transition-colors hover:bg-primary-deep disabled:cursor-not-allowed disabled:bg-line disabled:text-ink-3 disabled:shadow-none"

@@ -31,16 +31,14 @@ const HOST = 'r_9e9c35b2'
 const MERCATOR = { lat: 2860409.52, lng: 11440230.81 }
 const OK_SPOT = { spot_id: 'spot_甲秀楼', name: '甲秀楼', lat: 26.5786, lng: 106.7123 }
 
-describe('toSpotLaunch · 够不够格发起（F-01）', () => {
-  it('缺坐标 / 未匹配 / 缺 spot_id ⇒ null；合法输入 ⇒ 才产出（正对照）', async () => {
-    expect(toSpotLaunch({ ...OK_SPOT, lat: null, lng: null }, HOST), '缺坐标不该给入口').toBeNull()
-    expect(toSpotLaunch({ ...OK_SPOT, matched: false }, HOST), '位置未命中的实体不该给入口').toBeNull()
-    expect(toSpotLaunch({ ...OK_SPOT, spot_id: '' }, HOST), '缺冻结实体键不该给入口').toBeNull()
+describe('toSpotLaunch · 唯一剩的运行期门（F-01）', () => {
+  it('缺宿主报告 id ⇒ null；合法输入 ⇒ 产出（正对照）', async () => {
     expect(toSpotLaunch(OK_SPOT, ''), '缺宿主报告 id 不该给入口').toBeNull()
+    expect(toSpotLaunch(OK_SPOT, '   '), '空白宿主报告 id 不该给入口').toBeNull()
 
-    // 正对照：合法输入必须产出可提交的载荷（否则上面四条是恒真判据）
+    // 正对照：合法输入必须产出可提交的载荷（否则上面两条是恒真判据）
     const out = toSpotLaunch(OK_SPOT, HOST)
-    expect(out, '合法输入却拿不到载荷 —— 上面四条断言在空转').not.toBeNull()
+    expect(out, '合法输入却拿不到载荷 —— 上面两条断言在空转').not.toBeNull()
     expect(out!.spotCheck.lnglat).toEqual([106.7123, 26.5786])
     expect(out!.spotCheck.coordSys).toBe('bd09')
     expect(out!.spotCheck.name).toBe('甲秀楼')
@@ -49,6 +47,11 @@ describe('toSpotLaunch · 够不够格发起（F-01）', () => {
     })
   })
 })
+
+// ⚠️ "缺坐标 / 未匹配 / 缺 spot_id ⇒ 不给入口"这三条**不在这里判**：裁决处是 `VSpotAtlas` 的
+// `launchable`（按钮 `disabled`），判据落在 `e2e/spotCheckEntry.spec.ts`（未选中即 disabled）。
+// 上一版把它们重复判在映射函数里，返回静默 `null` —— 正是那层重复把一个形状不匹配
+// （`lnglat` vs `lat`/`lng`）掩盖成了"点了没反应"。现在类型必填，重复判断已删。
 
 describe('toSpotLaunch · 坐标能不能采纳（F-02）', () => {
   it('墨卡托平面米量级 ⇒ 当场抛错；BD-09 值域内 ⇒ 不抛（正对照）', async () => {

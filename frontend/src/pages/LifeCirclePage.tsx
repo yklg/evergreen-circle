@@ -588,6 +588,8 @@ export default function LifeCirclePage() {
           </div>
           {ctaErr && <div className="text-tag text-risk">创建失败：{ctaErr}</div>}
           {realLoading && <div className="text-tag text-ink-3">正在加载历史记录……</div>}
+          {/* 空态同样要有确认框：从景点发起与"库里有没有历史记录"无关 */}
+          {renderConfirmDialog()}
         </div>
       )
     }
@@ -641,6 +643,97 @@ export default function LifeCirclePage() {
       ...(pending.origin ? { origin: pending.origin } : {}),
     })
   }
+  /** v5 A 的确认弹窗（「定位到我」与「地标体检入站」共用同一个）。
+   *
+   * 抽成函数而不是内联 JSX：**空态那条返回路径也要能弹它** —— 从景点发起这件事与"库里
+   * 有没有历史体检记录"无关，而内联那一份住在 `if (!report)` 早退之后，空库（或列表请求
+   * 失败）时用户在景点上点发起会看到"什么都没发生"。函数声明有提升，早退分支里也能调。
+   */
+  function renderConfirmDialog() {
+    if (isFixture || !pendingLocate) return null
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
+        role="dialog"
+        aria-label="确认发起体检"
+      >
+        <div className="w-full max-w-sm rounded-card border border-line bg-card p-6 shadow-float">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-aux font-semibold text-ink">
+              <Crosshair size={15} className="text-primary" /> 确认发起体检
+            </div>
+            <button
+              onClick={() => setPendingLocate(null)}
+              title="关闭"
+              className="grid h-8 w-8 place-items-center rounded-btn text-ink-3 hover:bg-primary-tint"
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="mt-4 flex flex-col gap-2 text-tag">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-3">定位名称</span>
+              <span className="truncate font-medium text-ink" title={pendingLocate.name}>
+                {pendingLocate.name}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-3">坐标</span>
+              <span className="font-medium text-ink">
+                {pendingLocate.lnglat[0].toFixed(5)}, {pendingLocate.lnglat[1].toFixed(5)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-3">坐标系</span>
+              <span className="font-medium text-ink">
+                {pendingLocate.coordSys === 'wgs84' ? 'WGS-84（提交时服务端转 BD-09）' : 'BD-09'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-3">数据模式</span>
+              <span className="font-medium text-ink">真实联调</span>
+            </div>
+            {/* 地标体检入站（片 2）：把"这不是你自己站的地方，而是攻略里的一个景点"摆在确认框上。
+                报告标题是路由状态带来的**纯展示**文本（服务端不采信，快照按 id 自取），
+                取不到就退回报告 id —— 那一串可核对，比编一个"某攻略"诚实。 */}
+            {pendingLocate.origin && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-ink-3">来源</span>
+                <span
+                  className="truncate font-medium text-ink"
+                  title={`宿主报告 ${pendingLocate.origin.host_report_id} · 景点 ${pendingLocate.origin.spot_id}`}
+                >
+                  攻略「{pendingLocate.hostTitle || pendingLocate.origin.host_report_id}」
+                </span>
+              </div>
+            )}
+          </div>
+          <p className="mt-4 flex items-start gap-1.5 rounded-btn border border-warn/40 bg-warn/10 px-3 py-2 text-tag text-ink-2">
+            <Info size={13} className="mt-0.5 shrink-0 text-warn" />
+            <span>
+              新中心点将消耗本次体检所需百度配额；同地点或邻近（≤500m）30 天内已有体检结果时走缓存，不消耗额度。
+            </span>
+          </p>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button
+              onClick={() => setPendingLocate(null)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-btn px-3.5 text-aux font-medium text-ink-2 hover:bg-primary-tint"
+            >
+              取消
+            </button>
+            <button
+              onClick={confirmLocateCheck}
+              title="以本次定位结果发起真实体检"
+              className="inline-flex h-9 items-center gap-1.5 rounded-btn bg-primary px-4 text-aux font-medium text-white shadow-card hover:bg-primary-deep"
+            >
+              <Crosshair size={14} /> 确认体检
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
 
   /** A4：回放体检流水线事件流（演示用；M3 由真实任务流接管） */
   function startDemoFlow() {
@@ -1355,88 +1448,7 @@ export default function LifeCirclePage() {
         </div>
       )}
 
-      {/* v5 A：定位确认弹窗（真实模式「定位到我」→ 确认才发起体检；取消不发起、不耗额度） */}
-      {!isFixture && pendingLocate && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
-          role="dialog"
-          aria-label="确认发起体检"
-        >
-          <div className="w-full max-w-sm rounded-card border border-line bg-card p-6 shadow-float">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-aux font-semibold text-ink">
-                <Crosshair size={15} className="text-primary" /> 确认发起体检
-              </div>
-              <button
-                onClick={() => setPendingLocate(null)}
-                title="关闭"
-                className="grid h-8 w-8 place-items-center rounded-btn text-ink-3 hover:bg-primary-tint"
-              >
-                <X size={15} />
-              </button>
-            </div>
-            <div className="mt-4 flex flex-col gap-2 text-tag">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-ink-3">定位名称</span>
-                <span className="truncate font-medium text-ink" title={pendingLocate.name}>
-                  {pendingLocate.name}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-ink-3">坐标</span>
-                <span className="font-medium text-ink">
-                  {pendingLocate.lnglat[0].toFixed(5)}, {pendingLocate.lnglat[1].toFixed(5)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-ink-3">坐标系</span>
-                <span className="font-medium text-ink">
-                  {pendingLocate.coordSys === 'wgs84' ? 'WGS-84（提交时服务端转 BD-09）' : 'BD-09'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-ink-3">数据模式</span>
-                <span className="font-medium text-ink">真实联调</span>
-              </div>
-              {/* 地标体检入站（片 2）：把"这不是你自己站的地方，而是攻略里的一个景点"摆在确认框上。
-                  报告标题是路由状态带来的**纯展示**文本（服务端不采信，快照按 id 自取），
-                  取不到就退回报告 id —— 那一串可核对，比编一个"某攻略"诚实。 */}
-              {pendingLocate.origin && (
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-ink-3">来源</span>
-                  <span
-                    className="truncate font-medium text-ink"
-                    title={`宿主报告 ${pendingLocate.origin.host_report_id} · 景点 ${pendingLocate.origin.spot_id}`}
-                  >
-                    攻略「{pendingLocate.hostTitle || pendingLocate.origin.host_report_id}」· 景点
-                  </span>
-                </div>
-              )}
-            </div>
-            <p className="mt-4 flex items-start gap-1.5 rounded-btn border border-warn/40 bg-warn/10 px-3 py-2 text-tag text-ink-2">
-              <Info size={13} className="mt-0.5 shrink-0 text-warn" />
-              <span>
-                新中心点将消耗本次体检所需百度配额；同地点或邻近（≤500m）30 天内已有体检结果时走缓存，不消耗额度。
-              </span>
-            </p>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                onClick={() => setPendingLocate(null)}
-                className="inline-flex h-9 items-center gap-1.5 rounded-btn px-3.5 text-aux font-medium text-ink-2 hover:bg-primary-tint"
-              >
-                取消
-              </button>
-              <button
-                onClick={confirmLocateCheck}
-                title="以本次定位结果发起真实体检"
-                className="inline-flex h-9 items-center gap-1.5 rounded-btn bg-primary px-4 text-aux font-medium text-white shadow-card hover:bg-primary-deep"
-              >
-                <Crosshair size={14} /> 确认体检
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderConfirmDialog()}
     </div>
   )
 }
