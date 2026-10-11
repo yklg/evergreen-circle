@@ -35,28 +35,32 @@
 ## 🏗️ 架构
 
 ```
-前端（React 19 + Vite —— 数据模式运行时可切：live / fixture）
- ├─ 工作台：输入社区名/坐标 → 发起体检 → /workspace/:taskId（SSE 思维流）
- ├─ 生活圈地图：等时圈族 + 彩色 POI + 盲区灰区 + 右侧体检单（live 走百度 BMapGL；无 AK/离线降级为内置 SVG 画布，零 AK 零依赖）
- ├─ 报告双层：指标速览（雷达/评分/盲区清单）+ 章节化诊断报告
- ├─ 双样例对比：指标差异表 + 双雷达
- └─ 历史 / 报告中心：/api/life-circle 真实记录归档
+前端（React 19 + Vite —— 数据模式运行时可切：live / fixture；路径均相对 frontend/src/）
+ ├─ pages/              # 路由页：工作台（/workspace/:taskId，SSE 思维流）、生活圈体检台、报告 / 对比 / 简报、历史·报告中心、专家、设置…
+ ├─ components/         # 组件：lifecircle/（等时圈地图 + 彩色 POI + 盲区灰区 + 右侧体检单）＋ 报告零件（V*：体检单 / 雷达 / 证据流…）
+ ├─ lib/                # api / bmap（BMapGL 唯一加载器；无 AK/离线降级 SVG）/ livingCircle（口径渲染器单一出口）/ geo / lsKeys…
+ ├─ store/              # zustand 全局态：dataMode（live / fixture）/ taskRegistry（任务流）/ annotation（划词批注）…
+ ├─ mocks/              # 内置演示数据：fixtures/（凯里老街 / 北京劲松 / 上海五角场 / 凯里下司等 5 样例）+ eventFlow（SSE 事件契约样本）
+ └─ main.tsx + App.tsx  # 入口与路由注册（其余目录 hooks/ layout/ dev/ 从略）
 
-后端（FastAPI）
- ├─ living_circle 域（独立子域，A1）
- │   ├─ core/pipeline/living_circle.py   # 体检流水线（A2 独立编排，SSE 事件契约对齐 A4）
- │   ├─ core/pipeline/diagnosis_templates.py # D4 专家诊断规则模板（数据驱动，无散乱 if-else）
- │   ├─ living_circle/isochrone.py  # 渔网采样 + 批量算路 + IDW 等值线（自实现，不引 scipy/shapely）
- │   ├─ living_circle/poi.py        # 8 类 POI 采集清洗 + 类别统计
- │   ├─ living_circle/blindspot.py  # 1km 盲区扫描 + 灰区聚合
- │   ├─ living_circle/scoring.py    # 四维加权评分（覆盖/可达/多样/均衡）+ 盲区扣分（0–100）
- │   ├─ living_circle/data_source.py # 三级数据源：Live(百度 AK+配额) / Offline(全国区划+距离模型) / fixture(内置演示)
+后端（FastAPI —— 路径均相对 backend/app/）
+ ├─ living_circle/                  # 生活圈域（独立子域，A1）
+ │   ├─ isochrone.py                # 渔网采样 + 批量算路 + IDW 等值线（自实现，不引 scipy/shapely）
+ │   ├─ poi.py                      # 8 类 POI 采集清洗 + 类别统计
+ │   ├─ blindspot.py                # 1km 盲区扫描 + 灰区聚合
+ │   ├─ scoring.py                  # 四维加权评分（覆盖/可达/多样/均衡）+ 盲区扣分（0–100）
+ │   ├─ data_source.py              # 三级数据源：Live(百度 AK+配额) / Offline(全国区划+距离模型) / fixture(内置演示)
  │   │                              #   + CachingDataSource 横切缓存（30 天落盘，无 AK 离线可查历史实时结果）
- │   ├─ living_circle/repository.py # SqliteCache 落盘缓存（lc_cache.db，WAL + busy_timeout）
- │   ├─ living_circle/geo_index/    # 全国省市区三级区划 + 区县中心坐标（离线地名定位，随仓库提交）
- │   └─ living_circle/baidu_client.py + request_guard.py  # 真实 API 调用 + 限流/退避（韧性）
- ├─ core/runner.py                  # 后台常驻任务调度（按 kind 分发，断连续跑，重连补帧）
- ├─ core/db.py                      # SQLite（含 living_circle_reports 独立文档）
+ │   ├─ repository.py               # SqliteCache 落盘缓存（lc_cache.db，WAL + busy_timeout）
+ │   ├─ geo_index/                  # 全国省市区三级区划 + 区县中心坐标（离线地名定位，随仓库提交）
+ │   └─ baidu_client.py + request_guard.py  # 真实 API 调用 + 限流/退避（韧性）
+ ├─ core/                           # 两域共享能力与 Trace/证据底座（其余模块从略）
+ │   ├─ runner.py                   # 后台常驻任务调度（按 kind 分发，断连续跑，重连补帧）
+ │   ├─ db.py                       # SQLite（含 living_circle_reports 独立文档）
+ │   └─ pipeline/
+ │       ├─ living_circle.py        # 体检流水线（A2 独立编排，SSE 事件契约对齐 A4）
+ │       ├─ diagnosis_templates.py  # D4 专家诊断规则模板（数据驱动，无散乱 if-else）
+ │       └─ research/               # 目的地调研域（攻略/评估流水线，见 docs/ARCHITECTURE.md §3）
  └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/regions、/api/life-circle/{id}/share、/api/life-circle/{id}/spot-checks…）
 ```
 
@@ -73,7 +77,7 @@ docker compose up --build
 # 前端 http://localhost:3400  后端 http://localhost:8010
 ```
 
-无需任何 AK：缺省走内置 fixture 演示（凯里老街 / 北京劲松双样例，等时圈零依赖可跑）。
+无需任何 AK：缺省走内置 fixture 演示（凯里老街 / 北京劲松 / 上海五角场 / 凯里下司等 5 份内置样例，等时圈零依赖可跑）。
 
 ### 方式 B：本地两命令
 
