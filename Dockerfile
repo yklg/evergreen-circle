@@ -27,7 +27,7 @@ COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制后端代码。
-# 运行时 DB 产物（data.db / verda.db*）是挂载卷里的，勿入镜像；
+# 运行时 DB 产物（data.db / evergreen.db*）是挂载卷里的，勿入镜像；
 # 静态数据 backend/app/data/experts.json 必须随镜像带入。
 COPY backend/ ./backend/
 WORKDIR /app/backend

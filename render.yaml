@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: verda-worker
+    name: evergreen-worker
     runtime: docker
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
@@ -13,8 +13,8 @@ services:
         value: "0.0.0.0"
       - key: APP_PORT
         value: "8000"
-      - key: VERDA_DB_PATH
-        value: "/data/verda.db"
+      - key: EVERGREEN_DB_PATH
+        value: "/data/evergreen.db"
       - key: LLM_API_KEY
         sync: false        # 在 Render 控制台「Environment」填真实密钥
       - key: LLM_BASE_URL
@@ -32,6 +32,6 @@ services:
       - key: BOCHA_BASE_URL
         value: "https://api.bocha.cn/v1"
     disk:
-      name: verda-data
+      name: evergreen-data
       mountPath: /data
       sizeGB: 1

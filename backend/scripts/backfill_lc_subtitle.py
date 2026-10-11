@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parent.parent
-DB = BACKEND / "app" / "data" / "verda.db"
+DB = BACKEND / "app" / "data" / "evergreen.db"
 sys.path.insert(0, str(BACKEND))
 
 from app.core.pipeline.diagnosis_templates import lc_subtitle  # noqa: E402
@@ -52,7 +52,7 @@ def snapshot(src: Path, dst: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只打印差异，不写库")
-    ap.add_argument("--db", default=str(DB), help="目标数据库（默认 backend/app/data/verda.db）")
+    ap.add_argument("--db", default=str(DB), help="目标数据库（默认 backend/app/data/evergreen.db）")
     args = ap.parse_args()
     db = Path(args.db)
     if not db.exists():

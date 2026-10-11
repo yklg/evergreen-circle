@@ -31,16 +31,21 @@ from app.core.research_types import DEFAULT_RESEARCH_TYPE
 def _resolve_db_path() -> Path:
     """选择数据库落盘位置。
 
-    本地：app/data/verda.db（持久）。
+    本地：app/data/evergreen.db（持久）。
     Vercel：文件系统只读，唯一可写目录是 /tmp（函数生命周期内有效，
-    用户已接受刷新/重启后不持久化）。可用 VERDA_DB_PATH 覆盖。
+    用户已接受刷新/重启后不持久化）。可用 EVERGREEN_DB_PATH 覆盖。
     """
-    override = os.environ.get("VERDA_DB_PATH")
+    # 改名过渡（2026-10-11）：本仓从上游项目改名，DB 文件名与 env 名一并换掉。
+    # **新名优先、旧名兜底** —— 已经部署出去的环境里仍设着旧名，改了认不出会让服务
+    # 悄悄落到默认路径（Railway/Render 上就是"数据不见了"）。两个都没设才走下面的默认。
+    # ⚠️ 这一行里的旧名是**刻意留下的兼容读口**（同 `db.py` 里那批 legacy 列/键的处置：
+    # 存量环境的旧标识必须能被认出来），不是漏改 —— 别顺手"清理"掉。
+    override = os.environ.get("EVERGREEN_DB_PATH") or os.environ.get("VERDA_DB_PATH")
     if override:
         return Path(override)
     if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-        return Path("/tmp/verda.db")
-    return Path(__file__).resolve().parent.parent / "data" / "verda.db"
+        return Path("/tmp/evergreen.db")
+    return Path(__file__).resolve().parent.parent / "data" / "evergreen.db"
 
 
 _DB_PATH = _resolve_db_path()
@@ -378,7 +383,7 @@ def _migrate_brand_to_destination(conn: sqlite3.Connection) -> None:
                 _backup_db(conn, bak)
         except sqlite3.Error as exc:
             import sys
-            print(f"[verda] 迁移前备份失败：{exc}", file=sys.stderr)
+            print(f"[evergreen] 迁移前备份失败：{exc}", file=sys.stderr)
             raise RuntimeError("schema 迁移前备份失败，已中止启动") from exc
 
     try:
@@ -394,8 +399,8 @@ def _migrate_brand_to_destination(conn: sqlite3.Connection) -> None:
             conn.commit()
     except sqlite3.Error as exc:
         import sys
-        print(f"[verda] schema 迁移失败（brand → destination）：{exc}\n"
-              f"[verda] 原始库已备份至 {bak}，请修复后重启（不会以半迁移态运行）。",
+        print(f"[evergreen] schema 迁移失败（brand → destination）：{exc}\n"
+              f"[evergreen] 原始库已备份至 {bak}，请修复后重启（不会以半迁移态运行）。",
               file=sys.stderr)
         raise RuntimeError("schema 迁移失败，原始库已备份") from exc
 

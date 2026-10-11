@@ -8,9 +8,9 @@ Wants=network-online.target
 # 用 docker compose 拉起单容器；oneshot + RemainAfterExit 让 systemd 把「compose up」当作一个长存单元管理
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/verda
-ExecStart=/usr/bin/docker compose -f /opt/verda/deploy/docker-compose.yml up -d
-ExecStop=/usr/bin/docker compose -f /opt/verda/deploy/docker-compose.yml down
+WorkingDirectory=/opt/evergreen-circle
+ExecStart=/usr/bin/docker compose -f /opt/evergreen-circle/deploy/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/evergreen-circle/deploy/docker-compose.yml down
 TimeoutStartSec=300
 
 [Install]

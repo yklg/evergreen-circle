@@ -13,7 +13,7 @@
     "env": {
       "APP_HOST": "0.0.0.0",
       "APP_PORT": "8000",
-      "VERDA_DB_PATH": "/data/verda.db",
+      "EVERGREEN_DB_PATH": "/data/evergreen.db",
       "LLM_API_KEY": "${LLM_API_KEY}",
       "LLM_BASE_URL": "https://open.bigmodel.cn/api/paas/v4",
       "LLM_MODEL": "glm-5.1",
@@ -23,7 +23,7 @@
       "BOCHA_API_KEY": "${BOCHA_API_KEY}"
     },
     "volumes": [
-      { "name": "verda_data", "mountPath": "/data", "size": 1 }
+      { "name": "evergreen_data", "mountPath": "/data", "size": 1 }
     ]
   }
 }

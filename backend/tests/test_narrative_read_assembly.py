@@ -210,7 +210,7 @@ def test_8_stored_snapshot_is_the_product_of_its_own_payload():
     ⚠️ 但这不等于 2′ 不需要金标准：本条对「装配器改了而戳没动」是恒等的（两侧同源），
        那一半落在 `test_narrative_assembly_golden.py`。
 
-    ⚠️ 刻意不读生产库（`app/data/verda.db` 被 gitignore，CI 里不存在）：判据必须自己
+    ⚠️ 刻意不读生产库（`app/data/evergreen.db` 被 gitignore，CI 里不存在）：判据必须自己
     造行，否则它在 CI 里恒 skip —— 恒 skip 的守卫比没有守卫更坏。
     """
     _seed()

@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]          # skip/
-DB = ROOT / "backend" / "app" / "data" / "verda.db"
+DB = ROOT / "backend" / "app" / "data" / "evergreen.db"
 CACHE = ROOT / "backend" / "app" / "lc_cache.db"
 BACKEND_FIXTURES = ROOT / "backend" / "app" / "living_circle" / "fixtures"
 FRONTEND_FIXTURES = ROOT / "frontend" / "src" / "mocks" / "fixtures" / "livingCircle"
@@ -262,7 +262,7 @@ def main() -> int:
     ap.add_argument(
         "--db",
         default=str(DB),
-        help="被检数据库路径（默认 backend/app/data/verda.db）。"
+        help="被检数据库路径（默认 backend/app/data/evergreen.db）。"
              "可指向副本以便做**负对照**：证明本脚本的判据真的会红，而不是永远绿。",
     )
     args = ap.parse_args()

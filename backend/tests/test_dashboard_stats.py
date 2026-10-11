@@ -2,7 +2,7 @@
 
 《同类项目对比与项目现状审查-测试覆盖方案》B-04（单元）/ B-05（API 契约）。
 种子模式（test_refine_evidence / test_report_brief 归纳）：
-- conftest 的 VERDA_DB_PATH 临时库隔离 + autouse _isolate；本文件另加逐用例清空业务表。
+- conftest 的 EVERGREEN_DB_PATH 临时库隔离 + autouse _isolate；本文件另加逐用例清空业务表。
 - 造数用 db.save_report 种子辅助（data 内嵌 metrics/claims/evidence 快照，evidences 表由 save_report 落库）。
 - API 契约用 TestClient（main.py:472/478），断言 200 + 关键字段形状。
 

@@ -1,4 +1,4 @@
-"""ECharts option 生成（莫兰迪配色）。后端报告内联图表用，PNG 由 verda-charts skill 另出。"""
+"""ECharts option 生成（莫兰迪配色）。后端报告内联图表用，PNG 由 evergreen-charts skill 另出。"""
 from __future__ import annotations
 
 from typing import Any, Dict, List

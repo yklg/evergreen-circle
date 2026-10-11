@@ -32,7 +32,7 @@ DEFAULT_AUX_TTL_S = 7 * 24 * 3600.0
 # 为什么要有这颗开关 —— 报告缓存的键只含「场景名 + 中心 + 半径 + 档位 + 出行方式」，
 # **不含检索词表**，所以改 `CATEGORY_RULES` 的词表不会让它自动失效：同参重跑必命中 30 天
 # 内的旧载荷（`snapshot_live` 重采演示夹具时就撞上过：一次外呼都不发、把补词前的数据写回夹具）。
-# 空串按「没设」处理，与 `core.db` 的 VERDA_DB_PATH 同形状。
+# 空串按「没设」处理，与 `core.db` 的 EVERGREEN_DB_PATH 同形状。
 CACHE_PATH_ENV = "LC_CACHE_PATH"
 DEFAULT_CACHE_PATH = Path(__file__).resolve().parent.parent / "lc_cache.db"
 

@@ -14,7 +14,7 @@
 - orchestrator._rewrite_section → monkeypatch 假实现（沿用 test_refine_evidence 模式）。
 
 mock 策略（对齐 test_refine_evidence.py）：patch orchestrator 模块属性，不调真实 LLM；
-TestClient 测端点；内嵌 asyncio.run 消费 pipeline；VERDA_DB_PATH 由 conftest 在 import app 前隔离。
+TestClient 测端点；内嵌 asyncio.run 消费 pipeline；EVERGREEN_DB_PATH 由 conftest 在 import app 前隔离。
 运行：backend/ 下 `pytest tests/test_report_brief.py -q`
 """
 import asyncio

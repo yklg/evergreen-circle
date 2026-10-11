@@ -139,7 +139,7 @@ def _dispatch_experts(query: str, destinations: List[str], focus: List[str]) -> 
     ]
     msgs = [
         {"role": "system", "content": (
-            "你是 Verda 首席指挥官。从专家名册中为本次旅游调研挑选最合适的团队。"
+            "你是常青圈首席指挥官。从专家名册中为本次旅游调研挑选最合适的团队。"
             f"规则：必须含 {_TEAM_QUOTA_DESC}。"
             "为每位被选专家给出一句指派理由（说明负责什么、为何适合），理由不超过 20 字。"
             '只输出 JSON：{"lead":"专家id","members":[{"id":"专家id","reason":"指派理由"}]}。'

@@ -360,7 +360,7 @@
     }
   ],
   "legacy_report_spec": {
-    "note": "从 verda.db 直接读出的 r_6dadffee 存量 spec（未回写、未重算）—— 它就是用户截图里那张词云的数据源，用于验证改动后老报告渲染逐位不变。",
+    "note": "从 evergreen.db 直接读出的 r_6dadffee 存量 spec（未回写、未重算）—— 它就是用户截图里那张词云的数据源，用于验证改动后老报告渲染逐位不变。",
     "chart_id": "ch_2995f33e",
     "title": "全网口碑热词词云",
     "words": [

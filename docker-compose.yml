@@ -15,7 +15,7 @@ services:
       # BAIDU_SERVER_AK: ${BAIDU_SERVER_AK:-}
       # BAIDU_BROWSER_AK: ${BAIDU_BROWSER_AK:-}
     volumes:
-      - verda_data:/app/backend/app/data
+      - evergreen_data:/app/backend/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8010/health')"]
       interval: 30s
@@ -34,4 +34,4 @@ services:
       - .:/app:ro
 
 volumes:
-  verda_data:
+  evergreen_data:

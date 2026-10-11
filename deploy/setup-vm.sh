@@ -8,11 +8,11 @@
 #   1. 本脚本会改系统（装包、写 systemd、改 Nginx）——请在你自己的主机上、确认无误后执行。
 #   2. 真实密钥与域名在交互提示中填入，脚本绝不硬编码任何密钥。
 #   3. 本脚本不连 Vercel、不 push 代码、不触碰本地开发环境。
-#   4. 默认把仓库放到 /opt/verda；若路径不同，请改下方 REPO_DIR 或先把仓库放到该处。
+#   4. 默认把仓库放到 /opt/evergreen-circle；若路径不同，请改下方 REPO_DIR 或先把仓库放到该处。
 set -euo pipefail
 
-REPO_DIR="${VERDA_REPO_DIR:-/opt/verda}"
-DOMAIN="${VERDA_DOMAIN:-verda.example.com}"
+REPO_DIR="${EVERGREEN_REPO_DIR:-/opt/evergreen-circle}"
+DOMAIN="${EVERGREEN_DOMAIN:-evergreen.example.com}"
 
 echo "==> [1/6] 安装 docker（若已装则跳过）"
 if ! command -v docker >/dev/null 2>&1; then
@@ -31,7 +31,7 @@ fi
 echo "==> [2/6] 校验代码位置 $REPO_DIR"
 if [ ! -d "$REPO_DIR/deploy" ]; then
   echo "未找到 $REPO_DIR/deploy。请先把仓库 clone/拷贝到 $REPO_DIR，"
-  echo "或修改本脚本顶部 VERDA_REPO_DIR，再重新执行。" >&2
+  echo "或修改本脚本顶部 EVERGREEN_REPO_DIR，再重新执行。" >&2
   exit 1
 fi
 
@@ -55,15 +55,15 @@ docker compose build
 docker compose up -d
 
 echo "==> [5/6] 注册 systemd 自启"
-cp "$REPO_DIR/deploy/systemd/verda-worker.service" /etc/systemd/system/verda-worker.service
+cp "$REPO_DIR/deploy/systemd/evergreen-worker.service" /etc/systemd/system/evergreen-worker.service
 systemctl daemon-reload
-systemctl enable --now verda-worker
+systemctl enable --now evergreen-worker
 
 echo "==> [6/6] 接入 Nginx（请确认域名与证书）"
-NGINX_CONF="/etc/nginx/conf.d/verda.conf"
+NGINX_CONF="/etc/nginx/conf.d/evergreen.conf"
 if [ -d /etc/nginx/conf.d ]; then
-  cp "$REPO_DIR/deploy/nginx/verda.conf" "$NGINX_CONF"
-  sed -i "s/verda.example.com/$DOMAIN/g" "$NGINX_CONF"
+  cp "$REPO_DIR/deploy/nginx/evergreen.conf" "$NGINX_CONF"
+  sed -i "s/evergreen.example.com/$DOMAIN/g" "$NGINX_CONF"
   if nginx -t 2>/dev/null; then
     systemctl reload nginx
     echo "Nginx 已接入：curl -i http://$DOMAIN/health 应返回 {\"status\":\"ok\",...}"
@@ -71,7 +71,7 @@ if [ -d /etc/nginx/conf.d ]; then
     echo "nginx -t 失败，请检查 $NGINX_CONF（域名/证书）后手动 reload nginx" >&2
   fi
 else
-  echo "未检测到 /etc/nginx/conf.d，跳过 Nginx（你可手动 include deploy/nginx/verda.conf）" >&2
+  echo "未检测到 /etc/nginx/conf.d，跳过 Nginx（你可手动 include deploy/nginx/evergreen.conf）" >&2
 fi
 
 echo "==> 完成。worker 监听 127.0.0.1:8000，由 Nginx 反代对外。"

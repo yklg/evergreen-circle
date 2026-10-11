@@ -1,22 +1,22 @@
 # 路径② 自管云主机（复用阿里云 ECS 47.114.101.59 等）
-# 仅 verda-worker 单服务：SQLite 落命名卷 verda_data，单实例（workers=1 硬约束）。
+# 仅 evergreen-worker 单服务：SQLite 落命名卷 evergreen_data，单实例（workers=1 硬约束）。
 #
 # 构建上下文 ..（本文件在 deploy/，Dockerfile 在仓库根）。
 # 启动：docker compose -f deploy/docker-compose.yml up -d
 # 密钥从同目录 .env 注入（见 .env.worker.example）；不要写死在本文。
 
 services:
-  verda-worker:
+  evergreen-worker:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: verda-worker:latest
-    container_name: verda-worker
+    image: evergreen-worker:latest
+    container_name: evergreen-worker
     restart: unless-stopped
     environment:
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
-      VERDA_DB_PATH: "/data/verda.db"
+      EVERGREEN_DB_PATH: "/data/evergreen.db"
       # 以下密钥从同级 .env 注入；未设则用 config.py 默认值（LLM 未配置 → 健康检查 ok:false）
       LLM_API_KEY: "${LLM_API_KEY}"
       LLM_BASE_URL: "${LLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}"
@@ -33,10 +33,10 @@ services:
       BILIBILI_COOKIE: "${BILIBILI_COOKIE:-}"
       ENABLE_DEMO_FALLBACK: "${ENABLE_DEMO_FALLBACK:-true}"
     volumes:
-      - verda_data:/data
+      - evergreen_data:/data
     # 不直暴公网；由宿主 Nginx 反代到 127.0.0.1:8000
     expose:
       - "8000"
 
 volumes:
-  verda_data:
+  evergreen_data:

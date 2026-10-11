@@ -9,14 +9,14 @@
        连续两个减号，整份 SVG 即解析失败、图标静默不显示。
        所以注释里不要写 CSS 自定义属性名 —— 它们正是那样开头的。 -->
   <defs>
-    <linearGradient id="verdaTile" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="evergreenTile" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#8daa97"/>
       <stop offset="1" stop-color="#6b8875"/>
     </linearGradient>
   </defs>
 
   <!-- 品牌色圆角片 -->
-  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#verdaTile)"/>
+  <rect x="0" y="0" width="48" height="48" rx="10.5" fill="url(#evergreenTile)"/>
 
   <!-- 嫩芽（奶白）：种子 + 茎 + 大叶 + 小叶 -->
   <g fill="#f7faf5">

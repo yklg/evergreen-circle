@@ -44,7 +44,7 @@ class TraceSpan:
 
 # 当前调用上下文（task_id, agent_id, stage, purpose）
 _CTX: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar(
-    "verda_trace_ctx", default={}
+    "evergreen_trace_ctx", default={}
 )
 
 _BUFFER: Dict[str, List[TraceSpan]] = {}

@@ -49,7 +49,7 @@ CREATE TABLE tasks (
 @pytest.fixture()
 def old_db():
     """建一个旧形态库（含中文数据行），返回 (path, 原始行快照)。"""
-    d = Path(tempfile.mkdtemp(prefix="verda-mig-"))
+    d = Path(tempfile.mkdtemp(prefix="evergreen-mig-"))
     p = d / "old.db"
     c = sqlite3.connect(str(p))
     c.executescript(_OLD_SCHEMA)
@@ -241,6 +241,31 @@ def test_post_migration_read_normalizes_legacy_json(old_db):
         db._DB_PATH, db._SCHEMA_READY = old_path, False
         db._LOCAL.__dict__.pop("conn", None)
         db.invalidate_aggregates()
+
+
+# ── 库名/环境变量改名（2026-10-11）的兼容过渡 ─────────────────────
+
+
+def test_db_path_env_rename_keeps_accepting_the_old_name(monkeypatch):
+    """`EVERGREEN_DB_PATH` 是新名，`VERDA_DB_PATH`（上游旧名）必须**仍被接受**。
+
+    为什么这条值得单独钉：已经部署出去的环境（Railway / Render / Fly / 自建 systemd）
+    里设的是旧名。改了识别不到，服务会**静默落到默认路径** —— 在那些平台上就是
+    "数据不见了"，而且不报错。新名优先（两处都设时以新名为准），旧名兜底。
+    """
+    def resolve(**env):
+        for k in ("EVERGREEN_DB_PATH", "VERDA_DB_PATH"):
+            monkeypatch.delenv(k, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        return db._resolve_db_path()
+
+    assert resolve(EVERGREEN_DB_PATH="/tmp/new.db") == Path("/tmp/new.db")
+    assert resolve(VERDA_DB_PATH="/tmp/old.db") == Path("/tmp/old.db"), "旧名不再被识别 ⇒ 老部署会落到默认路径"
+    assert resolve(EVERGREEN_DB_PATH="/tmp/new.db", VERDA_DB_PATH="/tmp/old.db") == Path("/tmp/new.db"), \
+        "两个名字都设时必须新名优先（否则新配置不生效）"
+    # 两个都不设 ⇒ 落到仓库内的默认文件名（同名换过，这条同时钉住新文件名）
+    assert resolve().name == "evergreen.db"
 
 
 if __name__ == "__main__":

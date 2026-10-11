@@ -166,7 +166,7 @@ def test_new_table_appears_on_an_existing_database_file():
     形状照 `test_db_migration.py:214-243`：直接换 `db._DB_PATH` 并重置 `_SCHEMA_READY`
     与线程本地连接，走真实读路径而不是手工建表。
     """
-    old_db = Path(tempfile.mkdtemp(prefix="verda-old-")) / "legacy.db"
+    old_db = Path(tempfile.mkdtemp(prefix="evergreen-old-")) / "legacy.db"
     c = sqlite3.connect(old_db)
     c.executescript(
         """

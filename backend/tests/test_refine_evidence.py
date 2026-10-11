@@ -16,7 +16,7 @@ import os
 import tempfile
 
 _TMP = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["VERDA_DB_PATH"] = _TMP.name
+os.environ["EVERGREEN_DB_PATH"] = _TMP.name
 
 from app.core import db  # noqa: E402
 from app.core.pipeline.research import engine as orchestrator  # noqa: E402
@@ -78,8 +78,8 @@ def test_tasks_kind_migration_idempotent():
     """全新临时库 reload → tasks 含 kind 列；重复迁移不报错（复用 collect:314 模板）。"""
     import importlib
     fresh = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    saved = os.environ.get("VERDA_DB_PATH")
-    os.environ["VERDA_DB_PATH"] = fresh.name
+    saved = os.environ.get("EVERGREEN_DB_PATH")
+    os.environ["EVERGREEN_DB_PATH"] = fresh.name
     try:
         importlib.reload(db)
         cols = [r[1] for r in db._connect().execute("PRAGMA table_info(tasks)").fetchall()]
@@ -89,7 +89,7 @@ def test_tasks_kind_migration_idempotent():
         cols2 = [r[1] for r in db._connect().execute("PRAGMA table_info(tasks)").fetchall()]
         assert "kind" in cols2
     finally:
-        os.environ["VERDA_DB_PATH"] = saved
+        os.environ["EVERGREEN_DB_PATH"] = saved
         importlib.reload(db)
 
 

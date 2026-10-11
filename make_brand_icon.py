@@ -133,7 +133,7 @@ def main() -> int:
 
     # 180x180 PNG：单独一页只放图，保证截图尺寸精确、无滚动条
     out = ROOT / "frontend" / "public" / "apple-touch-icon.png"
-    with tempfile.TemporaryDirectory(prefix="verda-icon-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="evergreen-icon-") as tmp:
         render = pathlib.Path(tmp) / "render180.html"
         render.write_text(
             "<!doctype html><html><head><meta charset='utf-8'><style>"

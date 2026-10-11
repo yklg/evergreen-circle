@@ -16,7 +16,7 @@ import os
 import tempfile
 
 _TMP = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["VERDA_DB_PATH"] = _TMP.name
+os.environ["EVERGREEN_DB_PATH"] = _TMP.name
 
 from app.core import db, runner  # noqa: E402
 

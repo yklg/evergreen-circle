@@ -20,7 +20,7 @@
 
 ⚠️ 效力上限（写在这里是因为它容易被读成"已经安全"）：A/B 只证**今天删不掉**，
 不证**将来接上时安全** —— 后半截是 C 那笔账，而 C 只能由台架驱动（生产没有入口走到它）。
-三条都跑在临时库上，绝不碰 `app/data/verda.db`。
+三条都跑在临时库上，绝不碰 `app/data/evergreen.db`。
 """
 from __future__ import annotations
 

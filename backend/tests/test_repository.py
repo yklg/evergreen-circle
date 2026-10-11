@@ -285,7 +285,7 @@ def test_u5_2_env_redirects_every_write(tmp_path, monkeypatch):
 
 
 def test_u5_3_empty_env_means_unset(monkeypatch):
-    """空串按「没设」处理（与 `core.db` 的 VERDA_DB_PATH 同形状）。
+    """空串按「没设」处理（与 `core.db` 的 EVERGREEN_DB_PATH 同形状）。
 
     不这么做，一个 `LC_CACHE_PATH=` 会把库指到空路径 —— 比默认更糟：当场炸或写到 cwd。
     """

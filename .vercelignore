@@ -8,11 +8,11 @@ dist
 *.log
 
 # 交付文档/素材包（部署不需要，体积大）
-Verda交付包
-Verda_完整交付包
+常青圈交付包
+常青圈_完整交付包
 *.jpeg
 agent网站图片.jpeg
 
 # 本地 SQLite（Vercel 用 /tmp，绝不上传本地库）
-backend/app/data/verda.db
+backend/app/data/evergreen.db
 backend/.env

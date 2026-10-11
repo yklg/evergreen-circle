@@ -92,12 +92,12 @@ npm run dev                     # http://localhost:3400
 
 | 路径 | 清单文件 | 持久化 |
 |---|---|---|
-| Railway | [railway.json](../railway.json)（DOCKERFILE builder，卷 `verda_data` → `/data/verda.db`） | 有卷，重启不丢 |
-| Render | [render.yaml](../render.yaml)（服务名 `verda-worker`） | free 实例**无持久磁盘**，重启即丢 SQLite |
+| Railway | [railway.json](../railway.json)（DOCKERFILE builder，卷 `evergreen_data` → `/data/evergreen.db`） | 有卷，重启不丢 |
+| Render | [render.yaml](../render.yaml)（服务名 `evergreen-worker`） | free 实例**无持久磁盘**，重启即丢 SQLite |
 | 自管云主机 / 容器 | [deploy/README.md](../deploy/README.md)（`setup-vm.sh` + `docker-compose.yml` + nginx + systemd） | 自己挂盘 |
 
 三者共同的环境变量：`APP_HOST=0.0.0.0`、`APP_PORT=8000`（**容器内端口**，与宿主映射端口无关）、
-`VERDA_DB_PATH=/data/verda.db`、`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL*`、`BOCHA_API_KEY`。
+`EVERGREEN_DB_PATH=/data/evergreen.db`、`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL*`、`BOCHA_API_KEY`。
 密钥一律走平台的环境变量面板，**不要把 `.env` 提交进仓库**。
 
 ---

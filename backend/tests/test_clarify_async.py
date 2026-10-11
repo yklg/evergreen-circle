@@ -1,6 +1,6 @@
 """方案 A（Clarify 异步化）回归测试：守护 3 个 P0 + 4 个 P1 不退化。
 
-复用 conftest 的 VERDA_DB_PATH 临时库隔离 + autouse _isolate。
+复用 conftest 的 EVERGREEN_DB_PATH 临时库隔离 + autouse _isolate。
 异步用例用 asyncio.run 包裹，避免引入 pytest-asyncio 依赖。
 """
 import asyncio
@@ -175,8 +175,8 @@ def test_db2_alter_migration():
     import tempfile
     import os
 
-    # 用 /tmp 临时库（与 conftest 的 VERDA_DB_PATH 隔离方式一致，规避 sandbox 对 tmp_path 的写限制）
-    d = tempfile.mkdtemp(prefix="verda-mig-")
+    # 用 /tmp 临时库（与 conftest 的 EVERGREEN_DB_PATH 隔离方式一致，规避 sandbox 对 tmp_path 的写限制）
+    d = tempfile.mkdtemp(prefix="evergreen-mig-")
     p = os.path.join(d, "old.db")
     conn = sqlite3.connect(p)
     # 模拟存量库：tasks 表无 clarify_questions 列

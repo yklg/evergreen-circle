@@ -1,4 +1,4 @@
-"""Verda 深度调研编排引擎（真实大脑，对标 Deep Research）。
+"""常青圈深度调研编排引擎（真实大脑，对标 Deep Research）。
 
 节点：intake → orchestrator → collect → analyze → spots(景点实体) → write → audit →(pass/rework)→ done
 

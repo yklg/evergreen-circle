@@ -214,7 +214,7 @@ SQLite（`app/core/db.py`），12 张表：
 | `prefs` / `settings` | 用户偏好与运行时配置（运行时改配置走 `/api/settings`，落库持久） |
 
 报告整份 JSON 一次下发（`GET /api/reports/:id`），前端零额外请求即可渲染 trace / metrics /
-结构化对象。库路径由 `VERDA_DB_PATH` 决定（默认 `backend/app/data/verda.db`），已开 WAL。
+结构化对象。库路径由 `EVERGREEN_DB_PATH` 决定（默认 `backend/app/data/evergreen.db`），已开 WAL。
 
 ---
 

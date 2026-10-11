@@ -28,7 +28,7 @@
 三路径**共用同一份后端代码 + 同一个 Dockerfile**，只是编排语法不同。镜像源单一，无代码分叉。
 
 > 主机 IP / 域名等环境值**不要写进本手册或仓库**（它们会随 git 历史长期留存）；
-> 放在本机 `deploy/.env` 与 `VERDA_DOMAIN` 入参里。
+> 放在本机 `deploy/.env` 与 `EVERGREEN_DOMAIN` 入参里。
 
 ---
 
@@ -45,7 +45,7 @@
 | `DOUYIN_COOKIE` / `XHS_COOKIE` / `BILIBILI_COOKIE` | | 空 | 平台采集（可选） |
 | `APP_HOST` | | `127.0.0.1` | **容器内必须 `0.0.0.0`**（config.py 默认仅本机） |
 | `APP_PORT` | | `8000` | 监听端口 |
-| `VERDA_DB_PATH` | ✅ | `backend/app/data/verda.db` | **指向持久卷**，如 `/data/verda.db` |
+| `EVERGREEN_DB_PATH` | ✅ | `backend/app/data/evergreen.db` | **指向持久卷**，如 `/data/evergreen.db` |
 | `ENABLE_DEMO_FALLBACK` | | `true` | 无 LLM 时降级演示 |
 
 > 密钥经 `backend/app/core/config.py` 读取；运行时改配置走 `/api/settings` 落 SQLite（同样落在卷里，持久）。
@@ -58,7 +58,7 @@
 ### Railway
 - 根目录 `railway.json` + `Dockerfile` 已就绪。
 - 控制台：创建 Project → 链接仓库；在 **Variables** 填 `LLM_API_KEY`、`BOCHA_API_KEY`（其余 `railway.json` 已带默认值，`${LLM_API_KEY}` 引用项目变量）。
-- **创建卷**：`railway.json` 引用卷名 `verda_data` 挂 `/data`，需在 Railway 控制台创建同名卷（size≥1GB），否则 `VERDA_DB_PATH=/data/verda.db` 写不进。
+- **创建卷**：`railway.json` 引用卷名 `evergreen_data` 挂 `/data`，需在 Railway 控制台创建同名卷（size≥1GB），否则 `EVERGREEN_DB_PATH=/data/evergreen.db` 写不进。
 - 部署后健康检查 `GET /health` 返回 `{"status":"ok",...}` 即就绪。
 
 ### Render
@@ -68,24 +68,24 @@
 - `healthCheckPath: /health` 已配。
 
 ### Fly
-- `fly launch` 用根 `Dockerfile`；`fly volumes create verda_data --size 1`；`fly deploy`。
-- env 经 `fly secrets set LLM_API_KEY=... BOCHA_API_KEY=...`；挂载 `/data` 并设 `VERDA_DB_PATH=/data/verda.db`。
+- `fly launch` 用根 `Dockerfile`；`fly volumes create evergreen_data --size 1`；`fly deploy`。
+- env 经 `fly secrets set LLM_API_KEY=... BOCHA_API_KEY=...`；挂载 `/data` 并设 `EVERGREEN_DB_PATH=/data/evergreen.db`。
 
 ---
 
 ## 4. 路径② 自管云主机（阿里云 ECS 等）
 
-镜像同源（根 `Dockerfile`），编排用 `deploy/docker-compose.yml`（单服务 + 命名卷 `verda_data`）。
+镜像同源（根 `Dockerfile`），编排用 `deploy/docker-compose.yml`（单服务 + 命名卷 `evergreen_data`）。
 
 ### 一键引导（手动执行，不自动跑真机）
 ```bash
-# 1) 把仓库放到 /opt/verda（或改脚本顶部 VERDA_REPO_DIR）
+# 1) 把仓库放到 /opt/evergreen-circle（或改脚本顶部 EVERGREEN_REPO_DIR）
 # 2) 执行引导脚本：装 docker → 写 .env → 构建启动 → systemd 自启 → Nginx 接入
-VERDA_DOMAIN=verda.your-domain.com bash deploy/setup-vm.sh
+EVERGREEN_DOMAIN=evergreen.your-domain.com bash deploy/setup-vm.sh
 ```
 脚本会：检测 docker、校验代码位置、生成 `deploy/.env`（交互填密钥，含占位符校验）、
-`docker compose up -d`、`systemctl enable --now verda-worker`、`cp deploy/nginx/verda.conf` 到
-`/etc/nginx/conf.d/verda.conf` 并替换域名、`nginx -t && reload`。
+`docker compose up -d`、`systemctl enable --now evergreen-worker`、`cp deploy/nginx/evergreen.conf` 到
+`/etc/nginx/conf.d/evergreen.conf` 并替换域名、`nginx -t && reload`。
 
 ### 手动步骤（等价）
 ```bash
@@ -93,11 +93,11 @@ cd deploy
 cp .env.worker.example .env      # 填入真实密钥
 docker compose build
 docker compose up -d
-# Nginx：include deploy/nginx/verda.conf，改 server_name，reload
-# systemd：cp deploy/systemd/verda-worker.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now verda-worker
+# Nginx：include deploy/nginx/evergreen.conf，改 server_name，reload
+# systemd：cp deploy/systemd/evergreen-worker.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now evergreen-worker
 ```
 
-### Nginx 要点（`deploy/nginx/verda.conf`）
+### Nginx 要点（`deploy/nginx/evergreen.conf`）
 - `proxy_buffering off` + `proxy_read_timeout 3600s`：SSE 思维流实时且不被截断。
 - `proxy_set_header Connection ""`：SSE 是 HTTP/1.1 流式，不需 WebSocket 的 Upgrade。
 - 容器不直暴公网，`expose 8000` 仅宿主内；由 Nginx 反代 `127.0.0.1:8000`。
@@ -109,7 +109,7 @@ docker compose up -d
 - 本地端口以仓库根 `.dev-ports.env` 为单一真值源（当前后端 `:8010` / 前端 `:3400`），
   由 `restart.sh` / `stop.sh` source（`start.sh` 已于 2026-10-11 从仓库移除），别在脚本或文档里写死。
 - 前端 `VITE_API_BASE` 留空 → 走 `vite.config.ts` 代理 `/api` → `127.0.0.1:8010`。
-- 本地 SQLite 默认 `backend/app/data/verda.db`（已 WAL）。
+- 本地 SQLite 默认 `backend/app/data/evergreen.db`（已 WAL）。
 
 ### 线上前端（Vercel 构建）
 - `frontend/.env.example`：`VITE_API_BASE=https://<worker-domain>`。
@@ -141,7 +141,7 @@ Worker 上线后该目录连同 `api/app` 副本**已删除**，双真相问题�
 
 - **`--workers 1`**：`runner._running` 是进程内存任务表，多 worker 会破坏断连续跑/回放/取消。
 - **单实例**：SQLite 单写，worker 必须单实例；水平扩展须换 Postgres + 外部任务队列（超出本手册）。
-- **持久卷 `/data`**：任务/报告/证据全落 `verda.db`，无卷重启即丢。
+- **持久卷 `/data`**：任务/报告/证据全落 `evergreen.db`，无卷重启即丢。
 - **SSE 代理放行**：`proxy_buffering off` + 高 `read_timeout`（Nginx 已配；PaaS 平台代理超时仅影响展示）。
 
 ---

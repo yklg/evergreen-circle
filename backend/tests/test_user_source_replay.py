@@ -138,7 +138,7 @@ def test_old_subscription_db_gets_the_column_and_existing_rows_read_empty():
     """
     fresh = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     fresh.close()
-    saved = os.environ.get("VERDA_DB_PATH")
+    saved = os.environ.get("EVERGREEN_DB_PATH")
     conn = sqlite3.connect(fresh.name)
     conn.execute(f"CREATE TABLE subscriptions ({SUB_COLS_OLD})")
     conn.execute(
@@ -147,7 +147,7 @@ def test_old_subscription_db_gets_the_column_and_existing_rows_read_empty():
         ("s_old", "旧订阅", '["大理"]', "guide", "2026-09-01T00:00:00", "", "", 3))
     conn.commit()
     conn.close()
-    os.environ["VERDA_DB_PATH"] = fresh.name
+    os.environ["EVERGREEN_DB_PATH"] = fresh.name
     try:
         importlib.reload(db)
         cols = [r[1] for r in db._connect().execute("PRAGMA table_info(subscriptions)").fetchall()]
@@ -160,7 +160,7 @@ def test_old_subscription_db_gets_the_column_and_existing_rows_read_empty():
         assert db.get_subscription("s_old")["source_urls"] == []
         assert db.get_subscription("s_old")["run_count"] == 3
     finally:
-        os.environ["VERDA_DB_PATH"] = saved
+        os.environ["EVERGREEN_DB_PATH"] = saved
         importlib.reload(db)
         try:
             os.unlink(fresh.name)

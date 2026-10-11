@@ -80,7 +80,7 @@ def main() -> int:
     only_travel = travel_only_names(travel, living)
     assert only_travel, "两本名册姓名完全相同，判据失去区分力"
 
-    db_path = DATA / "verda.db"
+    db_path = DATA / "evergreen.db"
     cache_path = BACKEND / "app" / "lc_cache.db"
     stamp = time.strftime("%Y%m%d-%H%M%S")
 
@@ -142,7 +142,7 @@ def main() -> int:
         print("\n无待改项，跳过写入。")
         return 0
 
-    bak = DATA / "_backup" / f"verda-{stamp}-pre-signature-normalize.db"
+    bak = DATA / "_backup" / f"evergreen-{stamp}-pre-signature-normalize.db"
     bak.parent.mkdir(exist_ok=True)
     shutil.copy2(db_path, bak)
     print(f"\n已备份 → {bak.relative_to(BACKEND.parent)}")

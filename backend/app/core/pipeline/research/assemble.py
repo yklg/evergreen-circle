@@ -37,7 +37,7 @@ def _make_cover_svg(title: str, destinations: List[str],
     safe_title = (title or "旅游调研").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     if len(safe_title) > 20:
         safe_title = safe_title[:20] + "…"
-    dest_line = " · ".join(destinations[:3]) if destinations else "Verda AI"
+    dest_line = " · ".join(destinations[:3]) if destinations else "常青圈"
     safe_dest = dest_line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">'
@@ -47,7 +47,9 @@ def _make_cover_svg(title: str, destinations: List[str],
         '<rect width="800" height="450" fill="url(#g)"/>'
         '<circle cx="650" cy="80" r="150" fill="#ffffff" opacity="0.06"/>'
         '<circle cx="110" cy="390" r="90" fill="#ffffff" opacity="0.05"/>'
-        f'<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">VERDA · {byline}</text>'
+        # 封面字标与前端封面同一形状（前端那份从品牌单一真相源取，见 `frontend/src/lib/cover.ts`）：
+        # 后端这条是服务端出图时的兜底，别在这里另起一个名字。
+        f'<text x="48" y="70" fill="#a7f3d0" font-family="sans-serif" font-size="20" letter-spacing="2">EVERGREENCIRCLE · {byline}</text>'
         f'<text x="46" y="225" fill="#ffffff" font-family="sans-serif" font-size="40" font-weight="700">{safe_title}</text>'
         f'<text x="48" y="272" fill="#ccfbf1" font-family="sans-serif" font-size="22">{safe_dest}</text>'
         '<text x="48" y="410" fill="#99f6e4" font-family="sans-serif" font-size="16" opacity="0.85">结论可溯源 · 证据可沉淀</text>'
@@ -219,8 +221,8 @@ def _assemble_report(query, destinations, focus, dispatch, claims, evidences, im
 
     toc = [{"id": s["id"], "title": s["title"], "level": 1} for s in sections]
     glossary = [
-        {"term": "交叉验证", "definition": "同一结论由 ≥2 个独立信源组支撑，判为高置信。", "source": "Verda 四铁律"},
-        {"term": "无证据不立论", "definition": "任何数据型结论必须挂载 evidence_ids，否则标记待验证。", "source": "Verda 四铁律"},
+        {"term": "交叉验证", "definition": "同一结论由 ≥2 个独立信源组支撑，判为高置信。", "source": "常青圈 四铁律"},
+        {"term": "无证据不立论", "definition": "任何数据型结论必须挂载 evidence_ids，否则标记待验证。", "source": "常青圈 四铁律"},
         {"term": "同质内容去重（信源组）", "definition": "同一内容被多站转载时归并为一个信源组，转载不冒充独立来源。", "source": "客观性加固 v2.1"},
         {"term": "舆论过热", "definition": "互动量超阈值的高热社媒内容，可信度扣分并如实标注，不代表普遍共识。", "source": "客观性加固 v2.1"},
         {"term": "观点阵营", "definition": "将相同立场的真实用户观点聚类，输出归一化占比与代表评论。", "source": "舆情管线"},

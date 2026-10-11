@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DB = ROOT / "backend" / "app" / "data" / "verda.db"
+DB = ROOT / "backend" / "app" / "data" / "evergreen.db"
 HEALTHCHECK = Path(__file__).resolve().parent / "lc_healthcheck.py"
 
 sys.path.insert(0, str(ROOT / "backend"))
@@ -52,7 +52,7 @@ def logical_fingerprint(db: Path) -> tuple[str, int, int]:
     """逻辑指纹（报告内容 + 任务状态）。
 
     为什么不用文件字节 sha256 作判据：真库正被后端以写连接持有，SQLite 会在 WAL 超阈值时
-    **自动 checkpoint**，于是 verda.db 的字节会合法地变化——拿它当"未改动"判据会随机误报。
+    **自动 checkpoint**，于是 evergreen.db 的字节会合法地变化——拿它当"未改动"判据会随机误报。
     逻辑指纹与物理布局无关，才是"数据没被改"的正确判据；字节 sha256 另行输出供人工比对。
     """
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -103,8 +103,8 @@ def pick_era_target(db: Path):
 def snapshot(src: Path, dst: Path) -> None:
     """对数据库做**一致性快照** —— 必须用 ``VACUUM INTO``。
 
-    踩过的坑：直接 ``shutil.copy2(verda.db)`` 会**静默丢掉 WAL 里尚未 checkpoint 的提交**。
-    实测真库 verda.db = 2.1MB、verda.db-wal = 4.2MB，只拷 ``.db`` 拿到的副本里
+    踩过的坑：直接 ``shutil.copy2(evergreen.db)`` 会**静默丢掉 WAL 里尚未 checkpoint 的提交**。
+    实测真库 evergreen.db = 2.1MB、evergreen.db-wal = 4.2MB，只拷 ``.db`` 拿到的副本里
     最近 3 份 live 报告集体消失（副本 12 行 vs 真实 15 行），而文件大小一模一样——
     这种"看起来成功的备份"比失败更危险。
     ``VACUUM INTO`` 只读源库、产出**自包含**副本（WAL 内容已并入），是 SQLite 官方推荐做法。
@@ -209,8 +209,8 @@ def main() -> int:
     print(f"\n真库数据未被改动：{'✅ 逻辑指纹一致' if unchanged else '❌ 逻辑指纹变化！'}"
           f"（报告 {n_rep}→{n_rep2} 条，任务 {n_tsk}→{n_tsk2} 条）")
     print(f"  逻辑 before = {log_before[:16]}…  after = {log_after[:16]}…")
-    # 字节 sha256 仅供人工比对：后端持写连接时会自动 checkpoint WAL，verda.db 字节合法变化。
-    print(f"  [信息] verda.db 字节 sha256 {real_before[:16]}… → {real_after[:16]}…"
+    # 字节 sha256 仅供人工比对：后端持写连接时会自动 checkpoint WAL，evergreen.db 字节合法变化。
+    print(f"  [信息] evergreen.db 字节 sha256 {real_before[:16]}… → {real_after[:16]}…"
           f"（{'未变' if byte_same else '已变，通常是 WAL 自动 checkpoint，非本脚本所致'}）")
 
     if failures or not unchanged:
