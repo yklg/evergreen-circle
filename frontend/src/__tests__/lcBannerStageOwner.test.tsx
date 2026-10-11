@@ -31,6 +31,7 @@ const { api, hands } = vi.hoisted(() => ({
     createLivingCircleTask: vi.fn(async () => ({ taskId: 'lc-r1' })),
     fetchLifeCircleReports: vi.fn(async (): Promise<unknown> => []),
     fetchLifeCircleReport: vi.fn(async (): Promise<unknown> => null),
+    fetchLifeCircleUsage: vi.fn(async (): Promise<number | null> => null),
     openTaskStream: vi.fn(),
     fetchExperts: vi.fn(async (domain: string): Promise<unknown[]> =>
       domain === 'living_circle'

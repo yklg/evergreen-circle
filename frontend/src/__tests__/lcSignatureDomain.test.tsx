@@ -26,6 +26,7 @@ const LIVING = [
 
 vi.mock('../lib/api', () => ({
   fetchExperts: vi.fn(async (domain: string) => (domain === 'living_circle' ? LIVING : TRAVEL)),
+  fetchLifeCircleUsage: vi.fn(async () => null),
 }))
 
 import { useExpertStore } from '../store/expertStore'

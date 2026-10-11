@@ -1779,6 +1779,45 @@ def _spot_check_origins_for(lc_report_ids: List[str]) -> Dict[str, Dict[str, Any
     return out
 
 
+def inflight_living_circle_tasks() -> List[Dict[str, Any]]:
+    """在途（未落终态）的生活圈体检任务：`task_id` / `query` / `created_at` / `origin`（有则给）。
+
+    终态只有两个 —— `done`（`mark_task_done`）与 `failed`（`set_task_failed`），其余都算在途。
+    `origin` 从 `clarifications` 这个 JSON 列里**用 Python 解**，不走 SQL 的 json1：
+    在途任务永远是个位数，没必要为它引一个 SQL 方言依赖（那会让"换个 SQLite 构建"变成风险面）。
+    """
+    rows = _connect().execute(
+        "SELECT task_id, query, created_at, clarifications FROM tasks"
+        " WHERE kind='living_circle' AND status NOT IN ('done','failed') ORDER BY created_at"
+    ).fetchall()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        try:
+            origin = (json.loads(d.get("clarifications") or "{}") or {}).get("origin") or None
+        except (TypeError, ValueError):
+            origin = None
+        out.append({
+            "task_id": d["task_id"], "query": d["query"],
+            "created_at": d["created_at"], "origin": origin,
+        })
+    return out
+
+
+def living_circle_launches_today() -> int:
+    """今天**已发起**的生活圈体检次数。
+
+    "今天"按 `_now()` 同一种日期格式取前 10 位比较 —— 生产者与消费者用同一个格式，
+    就不必在这里推理时区（`created_at` 与 `_now()` 同源）。
+    **它是"消耗了多少"的上界而不是等号**：缓存命中那次一个接口都没发，但任务确实建了。
+    文案必须照这个事实说话（见 `/api/life-circle/usage`）。
+    """
+    return int(_connect().execute(
+        "SELECT COUNT(*) FROM tasks WHERE kind='living_circle' AND substr(created_at,1,10)=?",
+        (_now()[:10],),
+    ).fetchone()[0])
+
+
 def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False) -> List[Dict[str, Any]]:
     """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。
 

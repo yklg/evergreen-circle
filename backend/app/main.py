@@ -459,6 +459,31 @@ async def post_task(body: CreateTaskBody):
         travel_mode = body.travel_mode if body.travel_mode in ("walking", "riding", "driving") else "walking"
         caliber = get_caliber(travel_mode)
         center = await _to_bd09(body.center, body.coord_sys) if body.center else None
+
+        # 在途闸（片 1b）：**同一份攻略一次只允许一个在途的地标体检**。
+        #
+        # 为什么必须做在后端：前端的 `ctaBusy || runActive` 只挡同一页的连点，而"从攻略页
+        # 点第二个景点"是一次新的跳转 ⇒ 页面状态全新、那道闸看不见任何在途任务 ⇒ 用户
+        # 连点两个景点就会**真的并行跑两个任务、烧两份配额**。账号级配额的唯一硬门在这里
+        # （日预算默认 0 ＝不限制，指望不上它）。
+        #
+        # 为什么只对**带来源**的发起生效：闸要判的是"同一份攻略"，而社区体检没有攻略可言
+        # （用户手输一个地名就是一次独立意图，不该因为上一次还没跑完而被拒）。
+        # 拒绝发生在 `create_living_circle_task` **之前** ⇒ 不建任务、不占额度。
+        if body.origin:
+            host = body.origin.host_report_id
+            running = [t for t in db.inflight_living_circle_tasks()
+                       if (t.get("origin") or {}).get("host_report_id") == host]
+            if running:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"这份攻略上已有一个地标体检在进行中（{running[0]['task_id']}）。"
+                        "同一份攻略一次只允许一个在途，避免重复消耗百度配额 —— "
+                        "等它出报告或失败后再发起，或先到体检台看它的进度。"
+                    ),
+                )
+
         params = {
             "scene_name": body.query, "city": body.city, "address": body.address,
             "center": center, "study_radius_m": float(caliber.study_radius_m),
@@ -898,6 +923,18 @@ def life_circle_map_config():
     s = get_settings()
     style_id = s.baidu_map_style_id if s.baidu_allow_console_style else ""
     return {"ok": True, "browser_ak": s.baidu_browser_ak, "map_style_id": style_id}
+
+
+@app.get("/api/life-circle/usage")
+def life_circle_usage():
+    """用量的**诚实出口**（D6）：只报"今天已发起几次"，**不报任何"剩余"**。
+
+    为什么没有"剩余额度"这一位：日预算 `baidu_daily_quota` 默认 0 ＝不限制 ⇒ 剩余量无从算起，
+    报一个数就是编一个没有依据的数字（诚实条款要的是"宁可不给，也不给假数"）。
+    为什么这个数本身也只是一条**上界**：缓存命中那次一个接口都没发，但任务确实建了
+    ⇒ 文案里说的是"已发起次数"，不是"消耗了多少次调用"。
+    """
+    return {"launched_today": db.living_circle_launches_today(), "kind": "living_circle"}
 
 
 @app.get("/api/life-circle")

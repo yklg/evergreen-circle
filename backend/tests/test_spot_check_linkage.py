@@ -52,15 +52,24 @@ def _save(report_id: str, scenario: str | None = None) -> str:
     return report_id
 
 
-# ── G-10 / TC-14：compare 对场景无感 ─────────────────────────────
+# ── G-10 / TC-14：compare 对场景无感 —— **这是决定，不是缺口** ─────
 
 
-def test_compare_currently_pairs_any_two_reports():
-    """**现状记录（D10 的 P0-2）**：compare 只要两份报告存在就出差异表，跨场景不拦。
+def test_compare_pairs_any_two_reports_by_decision():
+    """**结案件（2026-10-11 拍板）**：compare 允许任意两份报告配对，**不做跨场景拒绝**。
 
-    第二条报告只是带上了 `scenario='visitor'` 这个今天无人读的字段 —— 说明
-    「地标体检入库」这一步本身不需要改 compare 就能发生，误配是**默认行为**而非边缘情况。
-    场景隔离落地后本用例转红，须改为断言 422。
+    原 D10 计划的"跨场景 422"**已关账**，理由是前提消失了：本仓**只有一把尺** ——
+    景点体检与社区体检都按居民生活圈标准算（景点体检只是"来源不同"，见
+    `test_scenario_cache_identity.py` 的文件头结案）。⇒ 任意两份报告的口径相同、**可比**，
+    拒绝它们反而是错的（用户会拿不到本该拿到的对照）。
+
+    原先担心的误配（社区配景点、比出一张"看起来像证据"的表）只在**两把尺并存**时才成立 ——
+    也就是原 D10 的前提。那条 xfail 因此永远不会通过，按"不会再长的东西不该继续挂着"删掉，
+    决定本身写在这里。
+
+    **重开条件**：若将来真的引入第二档口径（判据：`scenario` 进了 `CreateTaskBody`，
+    那条自检在 `test_scenario_cache_identity.py`），本用例须改回断言 422 ——
+    那一天"两份报告存在就出表"就从"决定"变回"事故面"。
     """
     a = _save("lc-link-home")
     b = _save("lc-link-spot", scenario="visitor")
@@ -72,23 +81,18 @@ def test_compare_currently_pairs_any_two_reports():
 
 
 def test_list_endpoint_does_not_expose_scenario():
-    """**现状记录**：列表短字段里没有 `scenario` ⇒ 归档无法区分社区体检 / 景点体检。"""
+    """**按决定为假？不——是为真且不该改**：列表短字段没有 `scenario`，**也不该有**。
+
+    原 D10 想让它透出来（好按场景过滤）；随着"不做游客档"的决定，这一位失去了用途：
+    库里所有报告是同一把尺，列表再标一个"哪一档"只会让人以为存在两档。
+    列表里该透的是**来源**（`origin`：从哪份攻略的哪个景点来的），那一位已经透了。
+    """
     _save("lc-link-list")
     rows = client.get("/api/life-circle").json()
     assert rows, "列表为空 ⇒ 本用例失去意义，先修落库路径"
     assert "scenario" not in rows[0], (
         f"列表已透出 scenario（keys={sorted(rows[0])}）⇒ 请补「按场景过滤」的前端契约用例"
     )
-
-
-@pytest.mark.xfail(strict=True, reason="D10：compare 必须对跨场景配对直接 422（不是静默过滤）")
-def test_compare_refuses_cross_scenario_pairing():
-    """社区 + 景点配对必须 422 并给出可读原因，而不是"选不动"或悄悄只比一份。"""
-    a = _save("lc-link-422-home")
-    b = _save("lc-link-422-spot", scenario="visitor")
-    resp = client.get(f"/api/life-circle/compare?ids={a},{b}")
-    assert resp.status_code == 422
-    assert "scenario" in json.dumps(resp.json(), ensure_ascii=False) or "场景" in resp.text
 
 
 # ── G-08 / TC-10：侧表与发起幂等 ─────────────────────────────────
@@ -186,14 +190,14 @@ def test_runner_terminal_state_writes_the_side_table():
 
 
 def test_tasks_endpoint_currently_accepts_repeated_spot_launches():
-    """**现状记录**：同一景点连发两次会得到两个任务（串行锁要堵的口子）。
+    """**社区体检连发两次仍然都建**（片 1b 之后依然如此 —— 这是**边界声明**，不是现状记录）。
 
-    这正是串行锁要堵的口子：`baidu_daily_quota` 保持 0 时日预算永不触发（D6），
-    账号级配额唯一的硬门就是"同一攻略内一次只允许一个在途地标体检"。
+    为什么它在串行锁落地后不许被"顺手"也堵上：闸要判"同一份攻略"，而社区体检**没有攻略**
+    —— 用户在输入框里敲一个地名就是一次独立意图，不该因为上一次还没跑完而被拒。
+    带来源的发起才进闸（见 `test_serial_lock_rejects_the_second_launch_without_creating_a_task`）。
 
     载荷只用**已声明键**：片 0b 之后 `CreateTaskBody` 开了 `extra="forbid"`，
-    带 `scenario`/`origin` 的载荷会先被 422 挡掉（见下一条），就不再是"两个任务"
-    这个事实的证人。
+    带 `scenario` 的载荷会先被 422 挡掉（见下一条），就不再是"两个任务"这个事实的证人。
     """
     payload = {
         "query": "甲秀楼", "type": "living_circle", "city": "贵阳",
@@ -202,9 +206,10 @@ def test_tasks_endpoint_currently_accepts_repeated_spot_launches():
     first = client.post("/api/tasks", json=payload)
     second = client.post("/api/tasks", json=payload)
     assert first.status_code == 200 and second.status_code == 200, (
-        "串行锁已生效 ⇒ 本用例改为正向断言（第二次被拒且**不创建任务**）"
+        "社区体检（无来源）被串行锁误伤了 —— 闸只该管「同一份攻略」。"
+        f"实得 {first.status_code} / {second.status_code}"
     )
-    assert first.json()["taskId"] != second.json()["taskId"], "两次请求必须今天确实产了两个任务（前提事实）"
+    assert first.json()["taskId"] != second.json()["taskId"], "两次请求必须确实产了两个任务（前提事实）"
 
 
 def test_spot_launch_keys_are_refused_until_the_backend_declares_them():
@@ -253,11 +258,12 @@ def test_origin_is_declared_and_accepted_with_a_forbidding_submodel():
     assert "extra_forbidden" in {e.get("type") for e in extra.json()["detail"]}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="片 1b：同攻略在途时第二次地标体检必须被拒，且不创建任务（不消耗配额）",
-)
 def test_serial_lock_rejects_the_second_launch_without_creating_a_task():
+    """片 1b 落地后转正：同一份攻略在途时，第二次带来源的发起被 **409 拒且不建任务**。
+
+    闸只认**带来源**的发起（`origin.host_report_id` 相同）——社区体检没有"攻略"可判，
+    连发两次仍应各自建任务（见上一条边界声明）。
+    """
     before = {
         r[0] for r in db._connect().execute("SELECT task_id FROM tasks").fetchall()
     }
@@ -276,11 +282,8 @@ def test_serial_lock_rejects_the_second_launch_without_creating_a_task():
     assert after == before | {first.json()["taskId"]}, "拒绝却仍然建了任务 ⇒ 白耗一次编排与配额"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="片 1b：/usage 必须存在，且 cap=0 时不得显示任何『剩余额度』（无根据的数字违反 D6 诚实条款）",
-)
 def test_usage_endpoint_reports_launch_count_without_remaining():
+    """片 1b 落地后转正：/usage 存在，**只报已发起次数、不报任何"剩余"**（D6 诚实条款）。"""
     resp = client.get("/api/life-circle/usage")
     assert resp.status_code == 200, f"额度出口不存在（{resp.status_code}）"
     body = resp.json()

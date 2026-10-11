@@ -45,8 +45,10 @@ const { api, nav } = vi.hoisted(() => {
   const fetchLifeCircleReports = vi.fn(async (): Promise<{ id: string }[]> => [])
   const fetchLifeCircleReport = vi.fn(async (_reportId?: string): Promise<unknown> => null)
   const openTaskStream = vi.fn(() => () => {})
+  // 片 1b：用量那一行（体检台挂载时读一次）——给个固定数字，断言用得上
+  const fetchLifeCircleUsage = vi.fn(async (): Promise<number | null> => 3)
   return {
-    api: { createLivingCircleTask, fetchLifeCircleReports, fetchLifeCircleReport, openTaskStream },
+    api: { createLivingCircleTask, fetchLifeCircleReports, fetchLifeCircleReport, openTaskStream, fetchLifeCircleUsage },
     nav: { to: '' },
   }
 })
@@ -56,6 +58,7 @@ vi.mock('../lib/api', () => ({
   fetchLifeCircleReports: api.fetchLifeCircleReports,
   fetchLifeCircleReport: api.fetchLifeCircleReport,
   openTaskStream: api.openTaskStream,
+  fetchLifeCircleUsage: api.fetchLifeCircleUsage,
 }))
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -246,6 +249,26 @@ describe('地标体检入站（state.spotCheck）', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认发起体检' })).toBeNull())
     expect(api.createLivingCircleTask).not.toHaveBeenCalled()
+  })
+
+  it('F-15（片 1b）：用量那一行显示"已发起 N 次"，且**不出现任何"剩余"字样**', async () => {
+    renderSpotIntake()
+    await screen.findByRole('dialog', { name: '确认发起体检' })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    const usage = await screen.findByText(/今日已发起/)
+    expect(usage.textContent).toContain('3')            // mock 固定返回 3
+    expect(usage.textContent, '屏上不许出现"剩余/额度还剩"这类没有依据的说法').not.toMatch(/剩余|还剩/)
+    // 口径限定句必须在场：那个数是**已发起**（上界），缓存命中那次一个接口都没发
+    expect(usage.textContent).toContain('缓存')
+  })
+
+  it('F-16（片 1b）：取不到用量 ⇒ 整行不出现（宁可不说，也不编一个 0）', async () => {
+    api.fetchLifeCircleUsage.mockResolvedValueOnce(null)
+    renderSpotIntake()
+    await screen.findByRole('dialog', { name: '确认发起体检' })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(document.querySelector('[data-lc-usage]')).toBeNull())
   })
 
   it('F-05：确认后载荷带 origin 三元组，且不带 city / force（默认走省配额路径）', async () => {

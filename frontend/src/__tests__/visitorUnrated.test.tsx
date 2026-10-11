@@ -45,6 +45,7 @@ vi.mock('../store/reportStore', () => ({
 
 vi.mock('../lib/api', () => ({
   refineSection: vi.fn(),
+  fetchLifeCircleUsage: vi.fn(async () => null),
   submitFeedback: vi.fn(),
   refineReportEvidence: vi.fn(),
   openTaskStream: vi.fn(() => () => {}),

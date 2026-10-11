@@ -256,6 +256,15 @@ export async function fetchSpotChecksForReport(reportId: string): Promise<SpotCh
   return r?.checks ?? []
 }
 
+/** 今日已发起的体检次数（片 1b 的用量出口）。
+ *
+ *  **取不到就返回 `null`**，页面据此整行不显示 —— 宁可不给，也不给一个编出来的 0
+ *  （D6 诚实条款：这个数只说"发起了几次"，从不说"还剩多少"——日预算默认不限制，剩余无从算起）。 */
+export async function fetchLifeCircleUsage(): Promise<number | null> {
+  const r = await safeJson<{ launched_today?: number } | null>('/api/life-circle/usage', undefined, null)
+  return typeof r?.launched_today === 'number' ? r.launched_today : null
+}
+
 /** 全国省市区三级区划（D1：无 AK 依赖的离线树，供地址联动选择）。 */
 export async function fetchLifeCircleRegions(): Promise<RegionProvince[]> {
   const r = await safeJson<{ ok: boolean; regions?: RegionProvince[] }>(

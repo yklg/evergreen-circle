@@ -29,7 +29,7 @@ import {
 } from '../mocks/livingCircleMock'
 import { LC_REPORT_ID } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream, LC_STAGES, stageLabel } from '../mocks/livingCircleStream'
-import { fetchLifeCircleReports, fetchLifeCircleReport } from '../lib/api'
+import { fetchLifeCircleReports, fetchLifeCircleReport, fetchLifeCircleUsage } from '../lib/api'
 import { launchLifeCircle, subscribeLifeCircleTask } from '../lib/lifeCircleFlow'
 import { readSpotCheckLaunch } from '../lib/spotCheckFlow'
 import { useDataModeStore } from '../store/dataModeStore'
@@ -287,6 +287,25 @@ export default function LifeCirclePage() {
      均由注册表派生（lifeCircleFlow 写入），不再维护并行的局部进度。 */
   const [runMsg, setRunMsg] = useState('')
   const [runTaskId, setRunTaskId] = useState('')
+
+  /* 片 1b：今日已发起的体检次数（诚实出口 —— 只有"已发起"，没有"剩余"；日预算默认不限制，
+     剩余量无从算起）。取不到就保持 null、整行不出现，绝不编一个 0 出来。
+     依赖 `runTaskId`：发起那一刻与落终态那一刻各重取一次，数字跟着走。 */
+  const [launchedToday, setLaunchedToday] = useState<number | null>(null)
+  useEffect(() => {
+    if (isFixture) return
+    let cancelled = false
+    void fetchLifeCircleUsage()
+      .then((n) => {
+        if (!cancelled) setLaunchedToday(n)
+      })
+      .catch(() => {
+        /* 取不到就不显示那一行；不影响任何发起路径 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isFixture, runTaskId])
   /* 片 5：取证回合的实时那一行（`round` 事件的 `text` 原样上屏，前端不重排句子）。
      只在「开始跟随一个新任务」那两处清 —— 不挂在 runMsg 的五个写点上：横幅本身只在
      `runActive` 时渲染，任务一落终态就整块卸载，散五处反而漏一处就把上一轮的账挂到下一轮。 */
@@ -588,6 +607,7 @@ export default function LifeCirclePage() {
           </div>
           {ctaErr && <div className="text-tag text-risk">创建失败：{ctaErr}</div>}
           {realLoading && <div className="text-tag text-ink-3">正在加载历史记录……</div>}
+          {usageNote()}
           {/* 空态同样要有确认框：从景点发起与"库里有没有历史记录"无关 */}
           {renderConfirmDialog()}
         </div>
@@ -734,6 +754,18 @@ export default function LifeCirclePage() {
     )
   }
 
+
+  /** 用量那一行（空态与有记录态两个 CTA 面共用）。
+   *  措辞只许说"已发起几次"，且必须带那句限定 —— 这个数是**上界**：缓存命中那次一个接口都没发，
+   *  但任务确实建了。数字取不到时整行不渲染（见上面那个 effect）。 */
+  function usageNote() {
+    if (isFixture || launchedToday === null) return null
+    return (
+      <div className="text-tag text-ink-3" data-lc-usage>
+        今日已发起 <b className="font-medium text-ink-2">{launchedToday}</b> 次体检 · 命中缓存不消耗百度额度
+      </div>
+    )
+  }
 
   /** A4：回放体检流水线事件流（演示用；M3 由真实任务流接管） */
   function startDemoFlow() {
@@ -901,6 +933,7 @@ export default function LifeCirclePage() {
               <Info size={14} /> {report.served_from === 'nearby_cache' ? '邻近既有体检结果 · 原中心距此 ≤500m（未消耗百度额度）' : report.served_from === 'cache' ? '历史实时结果 · 离线可查' : report.data_origin === 'offline' ? '离线估算模式（未联网）' : report.data_origin === 'fixture_sample' ? '演示数据模式（fixture）' : '真实数据模式（live）'}
             </span>
           </div>
+          {usageNote()}
           {!isFixture && regionOpen && (
             <div className="mt-2">
               <RegionSelector

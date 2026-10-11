@@ -18,6 +18,7 @@ const { api, hands } = vi.hoisted(() => {
       createLivingCircleTask: vi.fn(async () => ({ taskId: 'lc-r1' })),
       fetchLifeCircleReports: vi.fn(async () => [{ id: 'lc-kaili' }]),
       fetchLifeCircleReport: vi.fn(async (_id?: string): Promise<unknown> => null),
+      fetchLifeCircleUsage: vi.fn(async (): Promise<number | null> => null),
       openTaskStream,
     },
     hands: { fire: (_t: string, _d: unknown) => {} },
@@ -29,6 +30,7 @@ vi.mock('../lib/api', () => ({
   createLivingCircleTask: api.createLivingCircleTask,
   fetchLifeCircleReports: api.fetchLifeCircleReports,
   fetchLifeCircleReport: api.fetchLifeCircleReport,
+  fetchLifeCircleUsage: api.fetchLifeCircleUsage,
   openTaskStream: api.openTaskStream,
 }))
 
