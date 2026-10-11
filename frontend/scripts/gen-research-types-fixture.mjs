@@ -7,7 +7,7 @@
  *
  * 产物：src/mocks/researchTypes.json —— 演示态/离线时首页类型卡（C1/C2）的
  * 回落数据。**不要手抄、不要手改**；改注册表后：
- *   1) 启动后端（./start.sh 或 backend/.venv/bin/python -m uvicorn ... :8010）
+ *   1) 启动后端（./restart.sh 或 backend/.venv/bin/python -m uvicorn ... :8010）
  *   2) node scripts/gen-research-types-fixture.mjs
  * 契约一致性由 src/__tests__/researchTypesClient.test.ts 的形状自测 +
  * 后端在线时的逐字段对比测试守卫。

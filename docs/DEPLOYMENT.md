@@ -47,20 +47,19 @@ npm run dev                     # http://localhost:3400
 ### 一键启停脚本（macOS / Linux）
 
 ```bash
-./start.sh       # 首次起
 ./restart.sh     # 清理旧进程 → 启动后端 → 等就绪 → 启动前端
 ./stop.sh        # 按端口精确关闭本项目前后端
 ```
 
-三个脚本都 source 同一个 `.dev-ports.env`，不要在其中写死端口。
+启停脚本都 source 同一个 `.dev-ports.env`，不要在其中写死端口。
 
 > 若系统 PATH 中找不到 `node`，可在项目根创建 `.node-path` 文件，写入本机 Node 的 `bin`
 > 目录绝对路径，`restart.sh` 会自动回退使用（含本机路径，已被 `.gitignore` 忽略）。
 
-⚠️ **10-07 现场**：`start.sh` 已从工作区移除（作者决定；脚本连同一键启停的写法留到项目结束统一重写），
-所以上面 `./start.sh # 首次起` **现在跑不通**，它的四个模式 `--check` / `--no-install` / `--force` / `--no-open`
-暂无后继入口（四个开关名回 `git show HEAD:start.sh` 的参数解析逐个字对过）。日常起停用还活着的
-`./restart.sh` / `./stop.sh`。
+⚠️ **10-07 现场 · 10-11 收尾**：`start.sh` 已从工作区与仓库移除（作者决定；脚本连同一键启停的写法
+留到项目结束统一重写）。它的四个模式 `--check` / `--no-install` / `--force` / `--no-open` 暂无后继入口
+（四个开关名曾对着参数解析逐个字核过）；脚本本体从 git 历史取（`git log --all --oneline -- start.sh`）。
+日常起停用还活着的 `./restart.sh` / `./stop.sh`。
 
 **新机器的"从零建环境"目前没有已验证路径** —— 那正是 `start.sh` 干的活（环境自检 → 按需建 venv →
 装依赖 → 拉起 → 开浏览器）。本节上面「后端」那段 `python3 -m venv .venv` **不要照抄就以为能起**，
@@ -119,7 +118,7 @@ npm run dev                     # http://localhost:3400
 ## 4. 端口约定
 
 **单一真值源：仓库根 `.dev-ports.env`**（`BACKEND_PORT=8010` / `FRONTEND_PORT=3400`）。
-`start.sh` / `restart.sh` / `stop.sh` 都 source 它；`vite.config.ts` 在不经脚本直接启动时
+`restart.sh` / `stop.sh` 都 source 它；`vite.config.ts` 在不经脚本直接启动时
 回落到同一组默认值，保证两条启动路径不分裂。
 
 | 场景 | 端口 | 真值位置 |

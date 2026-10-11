@@ -85,20 +85,11 @@ cd frontend && npm install && npm run dev
 
 ### 一键脚本（macOS/Linux）
 
-**从零到跑全自动**（推荐，首次/换机/依赖缺失时用）：
-
-> ⚠️ 10-07 起 `start.sh` 暂时不在工作区（作者决定，项目结束统一重写启停脚本），下面这几条**现在跑不通**，
-> 而"从零建环境"这段时间**没有已验证路径**（那正是这个脚本干的活）。日常起停用 `./restart.sh` / `./stop.sh`；
+> ⚠️ `start.sh` 已于 2026-10-11 从仓库移除（10-07 起就不在工作区；作者决定，「从零建环境」一键脚本留到项目结束统一重写）。
+> git 历史里可找回：`git log --all --oneline -- start.sh`；它原来的五个用法行（`--check` / `--no-install` / `--force` /
+> `--no-open` 四个模式）随之下线 —— 「从零建环境」目前**没有已验证路径**。日常起停用 `./restart.sh` / `./stop.sh`；
 > 别照 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) §1 那句 `python3 -m venv` 直接建环境就以为能起 —— 该节的「本机 Python 解释器约束」
 > 说明了为什么（细节只写在那一处，别在别处再抄）。
-
-```bash
-./start.sh            # 环境自检 → 按需自动建环境装依赖 → 启动前后端 → 自动打开浏览器
-./start.sh --check    # 只做自检，不启动不安装
-./start.sh --no-install  # 跳过依赖安装直接启动（依赖已就绪时更快）
-./start.sh --force    # 强制重装后端/前端依赖
-./start.sh --no-open  # 启动但不自动打开浏览器
-```
 
 日常启动/重启/关闭：
 

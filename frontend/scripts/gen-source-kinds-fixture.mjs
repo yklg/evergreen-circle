@@ -7,7 +7,7 @@
  *
  * 产物：src/mocks/sourceKinds.json —— 演示态/离线时信源标签的回落数据。
  * **不要手抄、不要手改**；改注册表后：
- *   1) 启动后端（./start.sh 或 backend/.venv/bin/python -m uvicorn ... :8010）
+ *   1) 启动后端（./restart.sh 或 backend/.venv/bin/python -m uvicorn ... :8010）
  *   2) node scripts/gen-source-kinds-fixture.mjs
  * 形状由 src/__tests__/sourceKindsClient.test.ts 自测；类别集合变化时本脚本会拒绝覆写
  * （需 --force），避免把"注册表少了/多了一类"当成一次无感的快照刷新。

@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// 端口真值源在仓库根 .dev-ports.env（start.sh/restart.sh source 后以环境变量传入）。
+// 端口真值源在仓库根 .dev-ports.env（restart.sh/stop.sh source 后以环境变量传入）。
 // 直接 `npx vite`（不经脚本）时回落同一组默认值，保证两条启动路径不分裂。
 const FRONTEND_PORT = Number(process.env.FRONTEND_PORT ?? 3400)
 const BACKEND_PORT = Number(process.env.BACKEND_PORT ?? 8010)
