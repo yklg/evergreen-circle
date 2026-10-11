@@ -115,7 +115,7 @@ graph TD
 |---|---|---|
 | 报告章节 → 署名席位 | `SECTION_SEAT` | `diagnosis_templates._section_author`、`scripts/normalize_report_signatures.py` |
 | 流水线阶段 → 负责席位 | `STAGE_SEAT` | `_progress()` 注入的 `progress.expert` ⇒ 前端横幅「当前席位」那一行 |
-| 证据产物 → 采集席位 | `ARTIFACT_SEAT` | SSE 的 `evidence.collected_by`（发 id）与报告载荷那侧（发派生**姓名**） |
+| 证据产物 → 采集席位 | `ARTIFACT_SEAT` | SSE 与报告载荷两侧的 `evidence.collected_by`（**都发席位 id**，`nar-5` 起两个空间收成一个；前端对它零消费者） |
 | 编排期保底队 / 装配期兜底名单 | `FALLBACK_TEAM`(10 席) / `TEAM_FALLBACK`(13 人) | `lc_team._fallback_team()` / `assemble_report` 的 `report.dispatch` |
 
 那两张保底名单**故意不是一张**（成员、数量、用途都不同）；合并会改 `report.dispatch` 的字节
@@ -131,10 +131,12 @@ graph TD
 2. 组队降级**必须可见**：`lc_team` 返回 `(ids, reasons, degraded)`，`degraded ∈
    ""|llm_error|team_too_small`，plan 阶段以 `message` 事件 `kind:'team'` 带 `members`/`degraded`
    发前端常驻显示。**不新增事件 type**（新增 type 若未进前端 union，传输层按 union 穷举会静默丢弃）。
-3. 证据的 `collected_by` 已**不再是硬编码常量**：两侧都改成按 `ARTIFACT_SEAT` 派生
-   （SSE 发席位 id，报告载荷发由 id 派生的姓名），并由 `test_seat_id_literals_live_only_in_the_registry`
-   钉住"席位字面量只能住在注册表"。**但两个空间仍并存**（id vs 姓名），且前端对 `collected_by`
-   依然**零消费者** —— 统一成 id 属下面的 A2，要付一次报告代次升级。
+3. 证据的 `collected_by` 已**不再是硬编码常量**，也**不再是两个空间**：`nar-5`（2026-10-11）把报告
+   载荷那侧由"派生姓名"改成直呼 `artifact_seat(...)`，与 SSE 同一形状，那个转姓名的派生 helper 随之
+   删除。判据 = `test_expert_signature_derivation.py::test_evidence_collected_by_is_a_seat_in_its_own_roster`
+   （同时问形状／归属／域，比原来只钉"必须是姓名"更紧），并由 `test_seat_id_literals_live_only_in_the_registry`
+   继续钉住"席位字面量只能住在注册表"。前端对 `collected_by` 依然**零消费者**（屏上零变化由此实测：
+   `grep collected_by|采集人 frontend/src/{pages,components}` 零命中）。
 4. **报告正文只有一个生产者**：`diagnosis_templates.assemble_report` 必须是**载荷的纯函数**。
    库里 `living_circle_reports.data` 那份 Report 是它在某个代次下的**产物**，角色是兜底与审计副本、
    **不作展示源**；展示走 `living_circle.refresh_report_for_display`，按 Report 顶层 `narrative_version`
@@ -144,6 +146,21 @@ graph TD
    判据 = `tests/test_narrative_assembly_golden.py`（逐面金标 + 配对闸：不升戳就红，只升戳不改产物也红）
    与 `tests/test_narrative_read_assembly.py` ⑧（库里那行必须仍是它自带载荷的产物）。
    派生链（精炼 / 一页纸 / 复跑）继续读 `db.get_report` 拿到的**冻结快照** —— 它们要可复现输入。
+   **同一条纪律还管着演示件**：`frontend/src/mocks/fixtures/livingCircleReports/*.report.json` 是
+   同一颗装配器在某个代次下烘出的**产物**（作者仍只有 `assemble_report`；演示态读它，不再由
+   TypeScript 另算一遍）。改装配器／名册／口径 ⇒ **同笔重烘**：
+   `cd backend && python3 scripts/bake_lc_demo_reports.py`（`--check` 只比对不写盘）。
+   判据 = `tests/test_lc_demo_report_mirror.py`（面级比较剔 `_captured_at`/`narrative_version`、
+   配对闸管戳、覆盖面闭合防样区漏烘或留死快照，另配"改一个字必红 / 只动时刻不红"的正对照）。
+   烘的时候按**文件名**点样区，因此不受 `FixtureDataSource._pick_key` 那条"变体副本不参与按中心点
+   兜底匹配"的平手规则影响 —— 带逐格台账的 `kaili-ev2` 只有这么烘才拿得到。
+   ⚠️ 演示件上那两句「来路」（概览章「数据口径：live；…」与结论章「提醒：本报告为真实接口取证…」）
+   由烘件脚本按 `DEMO_ORIGIN_REWRITES` 换成"内置快照"的说法 —— 载荷确实是历史真实跑批留档，
+   但**演示这一次一个接口都不发**，原话搬过去就是假话；真实态那两句一字未动（对刚跑出的行，live 是真的）。
+   **改了装配器那两句话 ⇒ 同笔把改写表跟上**，否则脚本抛错拒绝写盘
+   （判据 `tests/test_lc_demo_report_mirror.py::test_relabel_refuses_when_the_assembler_sentence_moves`；
+   改写越界由同文件 `test_relabel_moves_exactly_those_two_sentences` 拦 —— 它只动那两段，
+   证据的 `source_url=live://poi` 与 `methodology.note` 这类**机器溯源指针**刻意不洗）。
 5. **过程可见 ≠ 参与计算**：横幅那一行与报告里那张「报告署名席位（N）」卡都是**读数**，
    不改变任何计算 —— 别把它们读成"专家在跑"。归属的语义纪律是**缺席即不印**：
    被缓存跳过的五步后端**故意不发** `progress.expert`（判据 `test_cache_hit_frames_carry_no_owner`），
@@ -152,12 +169,14 @@ graph TD
 
 #### 挂账 A2（本批刻意没做，做之前先看清代价）
 
-1. **`collected_by` 统一成席位 id**。现在 SSE 那侧发 id、报告载荷那侧发由 id 派生的**姓名**，
-   两个空间并存。统一成 id 屏上零变化（前端对它仍零消费者），但要付一次
-   `NARRATIVE_VERSION` `nar-3 → nar-4` 升戳 + 三份金标重取（配方：改装配器 ⇒ 同笔升戳 ⇒
-   `tests/test_narrative_assembly_golden.py` 会指出哪个面变了 ⇒ 核对新面确实是有意的变化再重取）。
+1. ~~**`collected_by` 统一成席位 id**~~ 〔**已结案 2026-10-11 `nar-5`**：载荷三处改直呼 `artifact_seat(...)`，
+   那个转姓名的派生 helper 随之删除 ⇒ SSE 与报告载荷从此同一形状。屏上零变化得到实测支撑
+   （`grep collected_by|采集人 frontend/src/{pages,components}` 零命中）。判据随之**收紧**而不是放松：
+   `test_evidence_collected_by_is_a_seat_in_its_own_roster` 现在同时问形状（漂回姓名即红）、
+   归属（必须是这份报告自己的 `experts`）与域（必须在工作圈名册里）〕。
 2. **`CATEGORY_SEAT`（逐设施类别的署名）上屏**。本批刻意不建这张表：零消费者的抽象不进注册表。
-   它要等 A2 那次代次升级一起落。
+   它原先写"要等 A2 那次代次升级一起落"——那一次已经过去（`nar-5` 给了上一条）
+   ⇒ 这条现在要自己付一次 `nar-5 → nar-6` + 金标重取，别再搭旧账。
 3. **演示夹具与注册表对账**。`frontend/src/mocks/livingCircle/eventFlow.json` 里每个 stage 的
    `expert` 是注册表文件头列出的**第 9 份抄本**，实测与 `STAGE_SEAT` 不符（夹具 measure→L2-005 /
    collect→L2-004 / diagnose→L3-002，注册表是 L1-027 / L1-030 / L1-032）。
