@@ -7,7 +7,7 @@ import { createPersister } from '../lib/persist'
 
 修复前本 store 把 localStorage 当作**唯一**真相源，而 localStorage 按 origin 隔离、
 可被浏览器/宿主随时清空、不跨设备 —— 于是出现「重启就重置」（见
-《用户设置持久化架构修复计划》根因 K1/K2/K4）。
+预览与计划/用户设置持久化架构修复计划.md 的根因 K1/K2/K4）。
 
 修复后走 `lib/persist.ts` 统一适配层：
 - 同步读 localStorage → 首屏无闪屏、离线可用（`initial`）；
@@ -16,7 +16,7 @@ import { createPersister } from '../lib/persist'
   （存量本地资料迁移到服务端，不丢）；
 - 每次 mutation：本地即时落盘 + debounce 上推 `PUT /api/prefs`。
 
-## 消费方（改动本文件须一并回归，见修复计划 §5）
+## 消费方（改动本文件须一并回归，见 预览与计划/用户设置持久化架构修复计划.md §5）
 - `layout/VSidebar.tsx`：左下角资料卡（昵称/公司/首字头像）+ 编辑弹窗
 - `pages/HomePage.tsx`：首页问候语 + 右上角头像
 */

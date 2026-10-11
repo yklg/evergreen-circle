@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * 以及**本轮新增**的「服务端为真相源」水合契约。
  *
  * 为什么新增后两项：本 store 的持久化已从「localStorage 是唯一真相源」改为
- * 「localStorage 秒开缓存 + /api/prefs 为真相源」（见《用户设置持久化架构修复计划》）。
+ * 「localStorage 秒开缓存 + /api/prefs 为真相源」（见 预览与计划/用户设置持久化架构修复计划.md）。
  * 若不把水合契约钉住，将来有人删掉 register() 调用，测试仍会全绿但线上会静默复发。
  *
  * 每条用例用 vi.resetModules() + 动态 import 保证 store 单例按「当时 localStorage」

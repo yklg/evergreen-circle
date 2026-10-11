@@ -16,7 +16,7 @@
  *
  * 本替身只回答「订阅装上了吗、回调进来后代码做了什么」。
  * 它答不了「浏览器到底会不会以这个尺寸回调、SDK 重算后中心是否仍对」——
- * 那只有真浏览器一层能答（见 生活圈-布局改动测试覆盖评估-v1.md 的 TC-21/TC-22）。
+ * 那只有真浏览器一层能答（见 预览与计划/生活圈-布局改动测试覆盖评估-v1.md 的 TC-21/TC-22）。
  */
 
 type ResizeObserverEntryish = { target: Element; contentRect: DOMRectReadOnly }

@@ -4,7 +4,7 @@
  * ## 为什么存在（根因）
  * 修复前：每个 store 各自手写一份 `load()` / `save()`，把 localStorage 当作
  * **唯一真相源**。而 localStorage 按 origin 隔离、可被浏览器/宿主随时清空、
- * 不跨设备 —— 于是出现「重启就重置」（见《用户设置持久化架构修复计划》K1/K2/K4）。
+ * 不跨设备 —— 于是出现「重启就重置」（见 预览与计划/用户设置持久化架构修复计划.md 的 K1/K2/K4）。
  *
  * 修复后：**localStorage 降级为秒开缓存，服务端 `/api/prefs` 是真相源**。
  * 同一份偏好可在任意 origin / 任意浏览器 / 任意设备取回。
@@ -31,7 +31,7 @@
  *
  * ## 冲突策略
  * 单用户场景采用「远端为准，除非本地有未成功推送的改动」。跨设备同时编辑为
- * 后写覆盖（last-write-wins），不做合并 —— 见修复计划 §8 边界说明。
+ * 后写覆盖（last-write-wins），不做合并 —— 见 预览与计划/用户设置持久化架构修复计划.md §8 边界说明。
  */
 import { fetchPrefs, savePrefs, getPrefsApiCapability, PrefsUnsupportedError } from './api'
 import type { PrefValue } from '../types'

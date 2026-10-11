@@ -22,7 +22,7 @@ import { assertStageGeometry, legend, openStage } from './stageChecks'
  * 结论（数字由 STRESS 日志现打）：地图格与右栏两条余量极大（≥34.4pt / 598–874px），六档全绿
  * ⇒ 换 OS 换不动它们；**唯一脆的是图例浮层** —— 它没有高度上限，720 档基线余量 20.2px，
  * 字宽 +5% 就只剩 4.8px。⇒ 2.10 从"推断不会碎"变成"知道会红在哪一条、为什么红"；
- * 修复候选见台账 2.11 与 `skip/preview-lc-legend-fit.html`。任一档红了都按**真缺陷**处理：
+ * 修复候选见台账 2.11 与 `skip/预览与计划/preview-lc-legend-fit.html`。任一档红了都按**真缺陷**处理：
  * 改的是判据写法（换成对同源量的相对关系），不是放松阈值。
  */
 

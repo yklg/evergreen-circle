@@ -2,7 +2,7 @@
 """从 frontend/public/favicon.svg 单一源生成两样东西（避免手工复制漂移）：
 
 1. frontend/public/apple-touch-icon.png —— 180x180 iOS 触屏图标（无头 Chrome 截图）；
-2. preview-brand-icon.html —— 肉眼验收页（多尺寸 / 明暗底 / 浏览器标签模拟 / 与旧图标对比）。
+2. 预览与计划/preview-brand-icon.html —— 肉眼验收页（多尺寸 / 明暗底 / 浏览器标签模拟 / 与旧图标对比）。
 
 内联 SVG 而非 <img src>：file:// 下 Chrome 对子资源 SVG 加载不可靠，
 内联可保证预览与导出的渲染结果确定一致。
@@ -126,8 +126,10 @@ def main() -> int:
 </body>
 </html>
 """
-    (ROOT / "preview-brand-icon.html").write_text(html, encoding="utf-8")
-    print("已生成 preview-brand-icon.html")
+    preview_dir = ROOT / "预览与计划"
+    preview_dir.mkdir(exist_ok=True)
+    (preview_dir / "preview-brand-icon.html").write_text(html, encoding="utf-8")
+    print("已生成 预览与计划/preview-brand-icon.html")
 
     # 180x180 PNG：单独一页只放图，保证截图尺寸精确、无滚动条
     out = ROOT / "frontend" / "public" / "apple-touch-icon.png"
