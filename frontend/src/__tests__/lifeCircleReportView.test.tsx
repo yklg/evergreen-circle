@@ -13,7 +13,7 @@
  *    已由 livingCircleContract.test.ts（ChartSpec.option 存在）守护。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ReportPage from '../pages/ReportPage'
 import { getLivingCircleReportMock } from '../mocks/livingCircleReports'
@@ -41,6 +41,17 @@ vi.mock('../store/reportStore', () => ({
 vi.mock('../lib/api', () => ({
   // 片 2：ReportPage 挂载时会回读"这份攻略里哪些景点已体检过"（空数组 = 都没体检过）
   fetchSpotChecksForReport: vi.fn(async () => []),
+  // 三要素署名要它：席位 id → 人名走本页既有的 resolveExpert（读生活圈名册）。
+  // 只给三要素用得着的三位（够断言用，不搬整本 48 人名册进测试）。
+  fetchExperts: vi.fn(async (domain: string) =>
+    domain === 'living_circle'
+      ? [
+          { id: 'L2-001', name: '姜白露', role_title: '基层医疗顾问 / Primary Care Advisor' },
+          { id: 'L2-002', name: '费墨', role_title: '教育设施顾问 / Education Advisor' },
+          { id: 'L2-004', name: '卫子衿', role_title: '菜市与购物顾问 / Market Advisor' },
+        ]
+      : [],
+  ),
   refineSection: vi.fn(),
   submitFeedback: vi.fn(),
   refineReportEvidence: vi.fn(),
@@ -117,6 +128,31 @@ describe('ReportPage · 渲染适配器（A1）', () => {
     expect(screen.getByText(new RegExp(`盲区 ${kaili.blindspots.length} 处`))).toBeTruthy()
     // 真实数据标注（M5 内置快照）
     expect(screen.getByText(/真实百度路网测时数据/)).toBeTruthy()
+  })
+
+  it('R1b — 三要素**逐类署名**：座位 id 与注册表一致，人名来自名册，查不到就不印', async () => {
+    const report = getLivingCircleReportMock('lc-kaili')!
+    const { container } = renderPage(report as unknown as Record<string, unknown>)
+
+    // 名册异步到位后才会出现署名尾 ⇒ 用 findBy 等它，别用同步断言赌时序
+    const seats = await waitFor(() => {
+      const els = Array.from(container.querySelectorAll('[data-category-seat]')) as HTMLElement[]
+      expect(els).toHaveLength(3)
+      return els
+    })
+    // 座位 id 逐条对齐镜像常量（权威在后端注册表；跨端一致性由后端镜像守卫钉）
+    expect(seats.map((el) => el.getAttribute('data-category-seat'))).toEqual(['L2-004', 'L2-001', 'L2-002'])
+    // 人名必须真的来自名册（印裸 id 会让人以为那是个人名）
+    expect(seats.map((el) => el.textContent).join(' | ')).toContain('卫子衿')
+    expect(seats.map((el) => el.textContent).join(' | ')).not.toContain('L2-')
+
+    // 反态：名册里没有这三位 ⇒ 一枚署名都不许出现（宁可不印，也不印一个裸 id）
+    const { useExpertStore } = await import('../store/expertStore')
+    useExpertStore.setState({ expertsByDomain: {} })
+    cleanup()
+    const empty = renderPage(report as unknown as Record<string, unknown>)
+    await waitFor(() => expect(empty.container.querySelector('.report-hero') ?? empty.container).toBeTruthy())
+    expect(empty.container.querySelectorAll('[data-category-seat]')).toHaveLength(0)
   })
 
   it('R1 — 下层完整章节报告：概览 + 各章标题渲染，原页边栏不出现', () => {

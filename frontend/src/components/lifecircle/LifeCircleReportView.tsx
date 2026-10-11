@@ -89,6 +89,7 @@ import {
   coarseBlindFootprint,
   maskGridForShare,
   TRIAD_CHIP_CLASS,
+  CATEGORY_SEAT_BY_LABEL,
   triadChipText,
   triadChipTone,
   freshnessNote,
@@ -892,6 +893,12 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                 <div className="flex flex-wrap gap-2 py-2">
                   {lc.scores.triads.map((t) => {
                     const tone = TRIAD_CHIP_CLASS[triadChipTone(t)]
+                    // 署名座位：类别 → 席位（镜像常量，权威在后端注册表）→ 人名（走本页既有的
+                    // `resolveExpert`，不另开第二条 id→人名路径）。查不到就**不印**——
+                    // 印一个裸 id 会让人以为那是个人名。
+                    const seatId = CATEGORY_SEAT_BY_LABEL[t.facility]
+                    const seat = seatId ? resolveExpert(seatId) : undefined
+                    const seatRole = (seat?.role_title ?? '').split(' / ')[0]
                     return (
                       <span
                         key={t.facility}
@@ -899,6 +906,15 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                       >
                         <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
                         {t.facility} · {triadChipText(t)}
+                        {seat && (
+                          <span
+                            className="ml-1 font-normal text-ink-3"
+                            data-category-seat={seatId}
+                            title={`这一类由 ${seat.name}${seatRole ? ` · ${seatRole}` : ''}（${seatId}）署名`}
+                          >
+                            署名 {seat.name}
+                          </span>
+                        )}
                       </span>
                     )
                   })}

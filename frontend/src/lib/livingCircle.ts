@@ -1906,6 +1906,23 @@ export function triadChipText(t: TriadFacility | null | undefined): string {
 export type TriadChipTone = 'ok' | 'gap' | 'unknown'
 
 /** 三要素 chip 的配色档：`unknown` 走中性，不许借用警告色（那等于替它下"没有"的结论）。 */
+/** 三要素类别的**署名席位**（镜像。权威＝`backend/app/living_circle/seat_registry.py` 的
+ *  `CATEGORY_SEAT`：那里的 `CATEGORY_SECTION` 把每个类别归到它"归口章节"，再经 `SECTION_SEAT`
+ *  派生出席位 —— 所以这里也不写"谁负责什么"的理由，只抄结果）。
+ *
+ *  跨语言导不了常量 ⇒ 两端各留一份，由 `backend/tests/test_fixture_mirror.py` 的镜像守卫
+ *  逐条钉相等（经 `scope.TRIAD_LABEL` 翻译后比对）+ 消费者计数（常量在、没人读 = 假同源）。
+ *
+ *  为什么只镜像三要素这三条、而权威那边有 10 条：**零消费者的抽象不进表** ——
+ *  屏上今天只有三要素卡在逐类别地署名；8 类里其余那些没有独立的卡片面。
+ *  键用**中文 label**（卡片拿到的就是 label，载荷里没有 key）—— label↔key 的对应关系
+ *  由镜像守卫负责翻，别在这里再抄一份。 */
+export const CATEGORY_SEAT_BY_LABEL: Record<string, string> = {
+  菜市场: 'L2-004',
+  药店: 'L2-001',
+  小学: 'L2-002',
+}
+
 export function triadChipTone(t: TriadFacility | null | undefined): TriadChipTone {
   const s = triadState(t)
   if (s === 'reachable') return 'ok'

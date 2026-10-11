@@ -15,6 +15,8 @@ import pytest
 from app.data import load_experts
 from app.living_circle.seat_registry import (
     ARTIFACT_SEAT,
+    CATEGORY_SEAT,
+    CATEGORY_SECTION,
     FALLBACK_TEAM,
     SECTION_SEAT,
     STAGE_SEAT,
@@ -29,12 +31,13 @@ def _cn_role(seat_id: str) -> str:
 
 
 def _all_registered_seats() -> dict[str, str]:
-    """五张表里出现过的全部席位 → 它出现在哪张表（报错时能指到轴）。"""
+    """六张表里出现过的全部席位 → 它出现在哪张表（报错时能指到轴）。"""
     where: dict[str, list[str]] = {}
     for s in FALLBACK_TEAM:
         where.setdefault(s.seat_id, []).append("FALLBACK_TEAM")
     for axis, table in (("STAGE_SEAT", STAGE_SEAT), ("SECTION_SEAT", SECTION_SEAT),
-                        ("ARTIFACT_SEAT", ARTIFACT_SEAT), ("TEAM_FALLBACK", None)):
+                        ("ARTIFACT_SEAT", ARTIFACT_SEAT), ("CATEGORY_SEAT", CATEGORY_SEAT),
+                        ("TEAM_FALLBACK", None)):
         if table is None:
             for seat_id in TEAM_FALLBACK:
                 where.setdefault(seat_id, []).append(axis)
@@ -89,3 +92,40 @@ def test_fallback_duties_are_present_and_distinct():
     assert all(d.strip() for d in duties), f"有席位的 duty 是空的：{[s.seat_id for s in FALLBACK_TEAM if not s.duty.strip()]}"
     dupes = {d for d in duties if duties.count(d) > 1}
     assert not dupes, f"多位席位共用同一句职责文案：{sorted(dupes)}"
+
+
+# ── 第四条轴：设施类别 → 署名席位（2026-10-11 加）──────────────────────
+
+
+def test_every_category_has_a_seat():
+    """**完整性**：类别表里每一类都必须能说到"归谁"（8 类民生 + 两类只出现在三要素里的）。
+
+    孤儿类别不是"少一条映射"，而是**屏上少一次署名**：加了一类设施却忘了归口，
+    报告里那一类就永远没人对它的读数负责，而且没有任何东西会红。
+    """
+    from app.living_circle.category_rule import CATEGORY_RULES
+    from app.living_circle.scope import TRIAD_KEYS
+
+    expected = set(CATEGORY_RULES) | set(TRIAD_KEYS)
+    missing = sorted(expected - set(CATEGORY_SECTION))
+    assert not missing, f"这些类别没有归口章节（屏上会少署名）：{missing}"
+    # 反向也要挡：映射表里出现了类别表里没有的键 = 打错的键名会永远静默不生效
+    orphans = sorted(set(CATEGORY_SECTION) - expected)
+    assert not orphans, f"CATEGORY_SECTION 里有类别表里不存在的键（疑似打错）：{orphans}"
+
+
+def test_category_seats_are_derived_from_section_seats():
+    """**派生性**：类别的席位只能来自 `SECTION_SEAT`，且引用的章必须是真章。
+
+    这张表若被写成一份独立的席位名单，就等于在注册表里又开了一份"谁负责什么"的手抄 ——
+    本文件存在的理由正是消灭那种手抄。所以：① 每个值必须等于某章的席位；
+    ② 每个 `CATEGORY_SECTION` 的目标章必须在 `SECTION_SEAT` 里。
+    """
+    assert set(CATEGORY_SEAT.values()) <= set(SECTION_SEAT.values()), (
+        f"类别的席位里出现了不在 SECTION_SEAT 里的："
+        f"{sorted(set(CATEGORY_SEAT.values()) - set(SECTION_SEAT.values()))}"
+    )
+    bad = sorted({sec for sec in CATEGORY_SECTION.values() if sec not in SECTION_SEAT})
+    assert not bad, f"归口到不存在的章：{bad}"
+    for cat, sec in CATEGORY_SECTION.items():
+        assert CATEGORY_SEAT[cat] == SECTION_SEAT[sec], f"{cat} → {sec} 的派生出错"

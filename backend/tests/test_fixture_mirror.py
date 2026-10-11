@@ -413,3 +413,48 @@ def test_every_render_core_key_blocks_drift(key: str) -> None:
     assert any(key in x for x in hits), (
         f"『{key}』在必须一致集里，却挡不住单侧漂移（违规清单：{hits}）"
         " ⇒ 这条守卫对它是摆设；要么修判据，要么把它从 REQUIRED_TOP 明确移出并说明理由")
+
+
+def test_category_seat_mirror_is_one_map_on_both_ends():
+    """**类别署名席位的跨端镜像**（2026-10-11 加）：前端只镜像三要素那三条，值必须与后端一致。
+
+    跨语言导不了常量 ⇒ 两端各留一份，那就要有东西钉住它们相等（与
+    `test_shape_caliber_constants_are_one_value_on_both_ends` 同一手法、同一份理由）。
+    对应关系经 `scope.TRIAD_LABEL` 翻译（前端键是**中文 label** —— 卡片拿到的是 label，
+    载荷里没有 key），翻译表本身是单一真相源，不在这里抄第二份。
+
+    两处刻意的不对称都要钉住：
+    * 前端**只**有三条（8 类里其余那些没有独立的卡片面）⇒ 断言"前端 ⊆ 后端"且"三要素必须齐"；
+    * 前端不许出现后端没有的键/值（那是手抄漂移）。
+    """
+    import re
+
+    from app.living_circle.scope import TRIAD_KEYS, TRIAD_LABEL
+
+    ts_path = PROJECT / "frontend" / "src" / "lib" / "livingCircle.ts"
+    ts_src = ts_path.read_text(encoding="utf-8")
+    m = re.search(r"const CATEGORY_SEAT_BY_LABEL: Record<string, string> = \{(.*?)\}", ts_src, re.S)
+    assert m, "前端 CATEGORY_SEAT_BY_LABEL 块扫不到（改了写法？本条会静默少比，必须红）"
+    ts_side = dict(re.findall(r"([\u4e00-\u9fa5]+):\s*'([^']+)'", m.group(1)))
+    assert ts_side, "前端镜像一条都没解析出来 ⇒ 本条恒真"
+
+    from app.living_circle.seat_registry import CATEGORY_SEAT
+
+    for key in TRIAD_KEYS:
+        label = TRIAD_LABEL[key]
+        assert label in ts_side, f"三要素「{label}」在前端镜像里缺席 ⇒ 那一类屏上不署名"
+        assert ts_side[label] == CATEGORY_SEAT[key], (
+            f"「{label}」两端不一致：前端 {ts_side[label]} vs 后端 {CATEGORY_SEAT[key]}"
+        )
+    extra = sorted(set(ts_side) - {TRIAD_LABEL[k] for k in TRIAD_KEYS})
+    assert not extra, f"前端镜像里有后端三要素之外的键（手抄漂移？）：{extra}"
+
+    # 消费者计数：常量在、没人读 = 假同源（本仓既有那条纪律，照它办）
+    view_src = (PROJECT / "frontend" / "src" / "components" / "lifecircle" / "LifeCircleReportView.tsx").read_text(encoding="utf-8")
+    assert "CATEGORY_SEAT_BY_LABEL" in view_src, (
+        "前端常量没有任何渲染面在读 ⇒ 它只是一份装饰：要么接上屏，要么删掉"
+    )
+    consistency_src = (BACKEND_DIR / "tests" / "test_lc_seat_registry_consistency.py").read_text(encoding="utf-8")
+    assert "CATEGORY_SEAT" in consistency_src, (
+        "后端这张表没有任何判据在读 ⇒ 假同源（本文件就是它的读者之一，别只在导入里出现）"
+    )

@@ -108,6 +108,33 @@ SECTION_SEAT: Dict[str, str] = {
     "conclusion": "L3-001",
 }
 
+# ── 设施类别 → 署名席位（第四条轴：**纯派生**，2026-10-11）────────────
+# ⚠️ 它与文件头提到的那张**已被删掉**的「类别→顾问」映射表**不是一回事**，别读成复活：
+# 被删的那张服务**编排期组队**，而组队排在 POI 采集之前（`facility_categories` 那时必定为空）
+# ⇒ 那条分支线上永远走不到、只有测试在跑。这里服务的是**装配之后的署名上屏**：报告里每个类别
+# 的读数归谁。类别在报告里是确定的，不存在"算的时候还不知道"的时序问题。
+#
+# 规则一句话：**类别的席位 = 它归口章节的署名席位**。⇒ 全部由 `SECTION_SEAT` 派生，
+# 不新增第二份"谁负责什么"的手抄（那正是本文件存在的理由）。
+CATEGORY_SECTION: Dict[str, str] = {
+    # 8 类民生设施（键取自 `category_rule.CATEGORY_RULES`）
+    "market": "market",
+    "medical": "medical",
+    "education": "education",
+    "elderly": "elderly",
+    "shopping": "market",      # 购物与菜市同章（`SECTION_SEAT["market"]` 的章名就是"菜市与购物"）
+    # 三要素里的另外两类（`market` 已在上面）：按**设施归属**进章，不按名字里的字猜
+    "pharmacy": "medical",     # 药店：它的 POI 规则就挂在医疗章的必查项里（`category_rule` 那份表）
+    "primary": "education",
+    # 没有专章的三类：报告里唯一逐条说出它们的地方是盲区与逐格台账
+    # ⇒ 归写那一段的人（`blindspot`），而不是硬塞给结论章
+    "finance": "blindspot",
+    "recreation": "blindspot",
+    "service": "blindspot",
+}
+
+CATEGORY_SEAT: Dict[str, str] = {c: SECTION_SEAT[s] for c, s in CATEGORY_SECTION.items()}
+
 # ── 证据产物 → 采集席位 ──────────────────────────────────────────────
 # 两个消费空间**已收成一个**（2026-10-11 挂账 A2 结案，`nar-5`）：SSE 与报告载荷的
 # `collected_by` 现在都发这里的席位 id，`diagnosis_templates.py` 那个把 id 转成姓名的派生
