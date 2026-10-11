@@ -35,33 +35,31 @@
 ## 🏗️ 架构
 
 ```
-前端（React 19 + Vite —— 数据模式运行时可切：live / fixture；路径均相对 frontend/src/）
- ├─ pages/              # 路由页：工作台（/workspace/:taskId，SSE 思维流）、生活圈体检台、报告 / 对比 / 简报、历史·报告中心、专家、设置…
- ├─ components/         # 组件：lifecircle/（等时圈地图 + 彩色 POI + 盲区灰区 + 右侧体检单）＋ 报告零件（V*：体检单 / 雷达 / 证据流…）
- ├─ lib/                # api / bmap（BMapGL 唯一加载器；无 AK/离线降级 SVG）/ livingCircle（口径渲染器单一出口）/ geo / lsKeys…
- ├─ store/              # zustand 全局态：dataMode（live / fixture）/ taskRegistry（任务流）/ annotation（划词批注）…
- ├─ mocks/              # 内置演示数据：fixtures/（凯里老街 / 北京劲松 / 上海五角场 / 凯里下司等 5 样例）+ eventFlow（SSE 事件契约样本）
- └─ main.tsx + App.tsx  # 入口与路由注册（其余目录 hooks/ layout/ dev/ 从略）
-
-后端（FastAPI —— 路径均相对 backend/app/）
- ├─ living_circle/                  # 生活圈域（独立子域，A1）
- │   ├─ isochrone.py                # 渔网采样 + 批量算路 + IDW 等值线（自实现，不引 scipy/shapely）
- │   ├─ poi.py                      # 8 类 POI 采集清洗 + 类别统计
- │   ├─ blindspot.py                # 1km 盲区扫描 + 灰区聚合
- │   ├─ scoring.py                  # 四维加权评分（覆盖/可达/多样/均衡）+ 盲区扣分（0–100）
- │   ├─ data_source.py              # 三级数据源：Live(百度 AK+配额) / Offline(全国区划+距离模型) / fixture(内置演示)
- │   │                              #   + CachingDataSource 横切缓存（30 天落盘，无 AK 离线可查历史实时结果）
- │   ├─ repository.py               # SqliteCache 落盘缓存（lc_cache.db，WAL + busy_timeout）
- │   ├─ geo_index/                  # 全国省市区三级区划 + 区县中心坐标（离线地名定位，随仓库提交）
- │   └─ baidu_client.py + request_guard.py  # 真实 API 调用 + 限流/退避（韧性）
- ├─ core/                           # 两域共享能力与 Trace/证据底座（其余模块从略）
- │   ├─ runner.py                   # 后台常驻任务调度（按 kind 分发，断连续跑，重连补帧）
- │   ├─ db.py                       # SQLite（含 living_circle_reports 独立文档）
- │   └─ pipeline/
- │       ├─ living_circle.py        # 体检流水线（A2 独立编排，SSE 事件契约对齐 A4）
- │       ├─ diagnosis_templates.py  # D4 专家诊断规则模板（数据驱动，无散乱 if-else）
- │       └─ research/               # 目的地调研域（攻略/评估流水线，见 docs/ARCHITECTURE.md §3）
- └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/regions、/api/life-circle/{id}/share、/api/life-circle/{id}/spot-checks…）
+.
+├─ frontend/                        # React 19 + Vite 前端（数据模式运行时可切：live / fixture）
+│   ├─ src/
+│   │   ├─ pages/                   # 路由页：工作台（/workspace/:taskId，SSE 思维流）/ 生活圈体检台 / 报告 / 对比 / 简报 / 专家…
+│   │   ├─ components/              # 组件：lifecircle/（等时圈地图 + 彩色 POI + 盲区灰区 + 右侧体检单）＋ 报告零件（V*）
+│   │   ├─ lib/                     # api / bmap（BMapGL 唯一加载器；无 AK 降级 SVG）/ livingCircle（口径渲染器单一出口）/ geo
+│   │   ├─ store/                   # zustand：dataMode（live / fixture）/ taskRegistry（任务流）/ annotation（划词批注）
+│   │   ├─ mocks/                   # 内置演示数据：fixtures/（凯里老街 / 北京劲松 / 上海五角场 / 凯里下司等 5 样例）+ eventFlow
+│   │   ├─ hooks/                   # useTaskStream（SSE 订阅）等通用 hooks
+│   │   └─ layout/                  # AppLayout / VSidebar 全局框架
+│   └─ tailwind.config.js           # 设计 token 主题映射
+├─ backend/                         # FastAPI + 多 Agent 编排后端
+│   ├─ app/
+│   │   ├─ living_circle/           # 生活圈域（独立子域，A1）：isochrone（渔网采样+批量算路+IDW）/ poi / blindspot / scoring（四维加权+盲区扣分）/ data_source（Live/Offline/fixture 三级）/ baidu_client / geo_index…
+│   │   ├─ core/                    # 两域共享底座：runner（任务调度）/ db / LLM / Trace / pipeline/（living_circle.py、diagnosis_templates.py、research/＝目的地调研域）
+│   │   └─ main.py                  # FastAPI 入口（REST + SSE：/api/tasks、/api/life-circle…）
+│   ├─ tests/                       # pytest 套件（含结构与契约守卫）
+│   └─ requirements.txt
+├─ docs/                            # 架构 / Agent 协议 / 部署 / 算法设计文档
+├─ deploy/                          # 自管云部署（docker-compose + nginx + systemd）
+├─ scripts/                         # CI 守卫与体检脚本（check_app_mirror / lc_healthcheck）
+├─ start.sh / restart.sh / stop.sh  # 一键启动（新设备自动建环境）/ 重启 / 停止 —— 端口真值源 .dev-ports.env
+├─ Dockerfile + docker-compose.yml  # 本地一键预览（前端 3400 / 后端 8010）
+├─ railway.json / render.yaml / vercel.json   # 云端部署清单（见 docs/DEPLOYMENT.md）
+└─ LICENSE (AGPL-3.0) / NOTICE / CONTRIBUTING.md
 ```
 
 > **三级数据源 + 离线兜底（T1-T6）**：有百度 AK/配额 → Live 真实路网测时 + 真实 POI（主链路，赛题 40% 实时性）；无 AK/预算耗尽 → 先查历史实时缓存（`served_from=cache`，30 天内离线可查），未命中走 **Offline 离线估算**（内置全国区划定位 + 复用等时圈引擎的「直线距离 × 绕行系数」距离模型，`data_origin=offline`，诚实标注不产出可比评分/盲区）；`fixture` 仅作演示/对比样例。前端按 `data_origin`+`served_from` 四态徽标标注（离线估算 / 历史实时 / 真实数据 / 演示数据），离线报告显示「评分待实时体检」占位，绝不冒充真实路网测时。
