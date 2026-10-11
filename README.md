@@ -23,7 +23,7 @@
 | 🗺️ 等时圈计算 | 渔网采样 + 百度批量算路（routematrix walking）+ IDW 反距离加权插值，产出 5/10/15/20 分钟可达圈 |
 | 🏪 民生设施体检 | 8 类 POI（医疗/教育/菜市/养老/购物/金融/文体/政务）+ 三要素（菜市场/药店/小学）1km 覆盖判定 |
 | 🚨 服务盲区识别 | 1km 网格扫描，聚合相邻盲点到灰区，标注缺失设施与最近可及点 |
-| 📋 综合评分 | 类别覆盖 × 三要素 × 盲区三因子打分（0–100），附差异归因 |
+| 📋 综合评分 | 覆盖 / 可达 / 多样 / 均衡四维加权（0.40 / 0.25 / 0.20 / 0.15）+ 盲区扣分（封顶 12 分），附差异归因 |
 | 👥 专家队诊断 | 从 48 位名册中按需组队（建议 8–13 人：空间定位师/网格规划师/各域顾问），按 GB50180 生活圈标准出具章节化报告，证据溯源可查 |
 | ⚡ 智能体流水线 | `intake → plan → measure → collect → diagnose → report → audit`，SSE 实时流式展示（`useTaskStream`） |
 | 📊 双社区对比 | 指标差异表 + 双雷达图，同一口径下量化设施覆盖差距 |
@@ -35,22 +35,22 @@
 ## 🏗️ 架构
 
 ```
-前端（React 19 + Vite —— VITE_USE_MOCK 开关）
+前端（React 19 + Vite —— 数据模式运行时可切：live / fixture）
  ├─ 工作台：输入社区名/坐标 → 发起体检 → /workspace/:taskId（SSE 思维流）
- ├─ 生活圈地图：等时圈族 + 彩色 POI + 盲区灰区 + 右侧体检单（SVG 画布，零 AK 零依赖）
+ ├─ 生活圈地图：等时圈族 + 彩色 POI + 盲区灰区 + 右侧体检单（live 走百度 BMapGL；无 AK/离线降级为内置 SVG 画布，零 AK 零依赖）
  ├─ 报告双层：指标速览（雷达/评分/盲区清单）+ 章节化诊断报告
  ├─ 双样例对比：指标差异表 + 双雷达
  └─ 历史 / 报告中心：/api/life-circle 真实记录归档
 
 后端（FastAPI）
  ├─ living_circle 域（独立子域，A1）
- │   ├─ pipeline/living_circle.py   # 体检流水线（A2 独立编排，SSE 事件契约对齐 A4）
- │   ├─ pipeline/diagnosis_templates.py # D4 专家诊断规则模板（数据驱动，无散乱 if-else）
+ │   ├─ core/pipeline/living_circle.py   # 体检流水线（A2 独立编排，SSE 事件契约对齐 A4）
+ │   ├─ core/pipeline/diagnosis_templates.py # D4 专家诊断规则模板（数据驱动，无散乱 if-else）
  │   ├─ living_circle/isochrone.py  # 渔网采样 + 批量算路 + IDW 等值线（自实现，不引 scipy/shapely）
  │   ├─ living_circle/poi.py        # 8 类 POI 采集清洗 + 类别统计
  │   ├─ living_circle/blindspot.py  # 1km 盲区扫描 + 灰区聚合
- │   ├─ living_circle/scoring.py    # 三因子评分
- │   ├─ living_circle/data_source.py# 三级数据源：Live(百度 AK+配额) / Offline(全国区划+距离模型) / fixture(内置演示)
+ │   ├─ living_circle/scoring.py    # 四维加权评分（覆盖/可达/多样/均衡）+ 盲区扣分（0–100）
+ │   ├─ living_circle/data_source.py # 三级数据源：Live(百度 AK+配额) / Offline(全国区划+距离模型) / fixture(内置演示)
  │   │                              #   + CachingDataSource 横切缓存（30 天落盘，无 AK 离线可查历史实时结果）
  │   ├─ living_circle/repository.py # SqliteCache 落盘缓存（lc_cache.db，WAL + busy_timeout）
  │   ├─ living_circle/geo_index/    # 全国省市区三级区划 + 区县中心坐标（离线地名定位，随仓库提交）
@@ -166,7 +166,7 @@ cp backend/.env.example backend/.env
   **实测过的"动态"边界**（2026-10-06 真实调用核实，见 [docs/地图API调用策略与等时圈算法设计.md](./docs/地图API调用策略与等时圈算法设计.md) §1.5）：百度步行测时是**确定性几何函数** —— 同参数连跑两次、以及与 6 天前落库的同一批点对照，40/40 点逐位相同（含"当地午夜 vs 工作日上午"这组对照）。⇒ 上面这套流程可复现，但也**拿不到时刻/路况这根轴**：红绿灯、过街天桥、施工围挡不做直接建模，而是以「残差耗时 / 受阻代理」披露（`sampling.detour`，只按分钟、不指认因果、未乘进总分）。
 - **POI 清洗**：多关键词检索 → 去重/过滤 → 类别统计 + IDW 耗时回填最近设施。
 - **盲区**：1km 网格扫描（三要素任一缺失判盲）→ 相邻聚合灰区 → 输出缺失清单与最近可及设施。
-- **评分**：类别覆盖 / 三要素 / 盲区三因子加权（0–100），透明公式可解释。
+- **评分**：覆盖 / 可达 / 多样 / 均衡四维加权（0.40 / 0.25 / 0.20 / 0.15）+ 盲区扣分（封顶 12），透明公式可解释。
 - 详见 [docs/地图API调用策略与等时圈算法设计.md]、[docs/多源POI数据清洗与服务盲区识别算法.md]、[docs/真实社区对比测试报告.md]（M5 交付）。
 
 ---
