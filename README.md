@@ -90,18 +90,20 @@ cd frontend && npm install && npm run dev
 
 ### 一键脚本（macOS/Linux）
 
-> ⚠️ `start.sh` 已于 2026-10-11 从仓库移除（10-07 起就不在工作区；作者决定，「从零建环境」一键脚本留到项目结束统一重写）。
-> git 历史里可找回：`git log --all --oneline -- start.sh`；它原来的五个用法行（`--check` / `--no-install` / `--force` /
-> `--no-open` 四个模式）随之下线 —— 「从零建环境」目前**没有已验证路径**。日常起停用 `./restart.sh` / `./stop.sh`；
-> 别照 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) §1 那句 `python3 -m venv` 直接建环境就以为能起 —— 该节的「本机 Python 解释器约束」
-> 说明了为什么（细节只写在那一处，别在别处再抄）。
-
-日常启动/重启/关闭：
-
 ```bash
-./restart.sh   # 清理旧进程 → 后端(:8010) → 前端(:3400)
-./stop.sh
+./start.sh       # 一键：自检 → 按需建 venv/装依赖 → 启动前后端 → 自动打开浏览器（新设备/首次用这个）
+./start.sh --check       # 只做依赖自检与版本核查（不安装/不启动/不开浏览器）
+./start.sh --no-install  # 跳过依赖安装直接启动
+./start.sh --no-open     # 启动但不打开浏览器
+./start.sh --force       # 强制重装后端/前端依赖
+./restart.sh     # 日常纯重启（不查依赖、不开浏览器，更快）
+./stop.sh        # 关闭服务
 ```
+
+> 新设备从零：只跑 `./start.sh` 一条命令 —— 缺 venv / 缺 node_modules / 缺 `backend/.env`
+> 都会自动补齐（pip 连不上默认源时自动改走清华镜像重试），依赖按内容指纹缓存、第二次起秒级跳过。
+> ⚠️ 手动建环境前先读 [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) §1：「本机 Python 解释器约束」
+> 说明了为什么别照抄 `python3 -m venv` 那句就以为能起（细节只写在那一处，别在别处再抄）。
 
 ---
 

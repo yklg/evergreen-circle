@@ -107,7 +107,7 @@ docker compose up -d
 ## 5. 路径③ 本地（已完成，仅文档）
 
 - 本地端口以仓库根 `.dev-ports.env` 为单一真值源（当前后端 `:8010` / 前端 `:3400`），
-  由 `restart.sh` / `stop.sh` source（`start.sh` 已于 2026-10-11 从仓库移除），别在脚本或文档里写死。
+  由 `start.sh` / `restart.sh` / `stop.sh` source，别在脚本或文档里写死。
 - 前端 `VITE_API_BASE` 留空 → 走 `vite.config.ts` 代理 `/api` → `127.0.0.1:8010`。
 - 本地 SQLite 默认 `backend/app/data/evergreen.db`（已 WAL）。
 

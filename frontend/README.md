@@ -14,7 +14,7 @@ npm run dev      # http://localhost:3400
 ```
 
 端口真值源在仓库根的 `.dev-ports.env`（`BACKEND_PORT=8010` / `FRONTEND_PORT=3400`）：
-`restart.sh` / `stop.sh` source 它，直接 `npx vite` 时
+`start.sh` / `restart.sh` / `stop.sh` source 它，直接 `npx vite` 时
 [vite.config.ts](./vite.config.ts) 回落到同一组默认值，保证两条启动路径不分裂。
 
 开发服务器通过 Vite 代理把 `/api` 转发到后端 `http://127.0.0.1:8010`。

@@ -47,28 +47,46 @@ npm run dev                     # http://localhost:3400
 ### 一键启停脚本（macOS / Linux）
 
 ```bash
-./restart.sh     # 清理旧进程 → 启动后端 → 等就绪 → 启动前端
-./stop.sh        # 按端口精确关闭本项目前后端
+./start.sh                # 一键：环境自检 → 按需建 venv / 装依赖 → 拉起前后端 → 自动打开浏览器
+./start.sh --check        # 只做依赖自检与版本核查（不安装、不启动、不 open）
+./start.sh --no-install   # 跳过依赖安装直接启动
+./start.sh --no-open      # 启动但不自动打开浏览器
+./start.sh --force        # 强制重新安装后端/前端依赖
+./restart.sh              # 日常纯重启：清理旧进程 → 后端 → 等就绪 → 前端（不查依赖、不开浏览器）
+./stop.sh                 # 按端口精确关闭本项目前后端
 ```
 
-启停脚本都 source 同一个 `.dev-ports.env`，不要在其中写死端口。
+职责划分：`start.sh` 管环境与配置准备（以及开浏览器），进程管理仍委托 `restart.sh`（不重复实现）；
+三者都 source 同一个 `.dev-ports.env`，不要在其中写死端口。
 
 > 若系统 PATH 中找不到 `node`，可在项目根创建 `.node-path` 文件，写入本机 Node 的 `bin`
-> 目录绝对路径，`restart.sh` 会自动回退使用（含本机路径，已被 `.gitignore` 忽略）。
+> 目录绝对路径，脚本会自动回退使用（含本机路径，已被 `.gitignore` 忽略）。
 
-⚠️ **10-07 现场 · 10-11 收尾**：`start.sh` 已从工作区与仓库移除（作者决定；脚本连同一键启停的写法
-留到项目结束统一重写）。它的四个模式 `--check` / `--no-install` / `--force` / `--no-open` 暂无后继入口
-（四个开关名曾对着参数解析逐个字核过）；脚本本体从 git 历史取（`git log --all --oneline -- start.sh`）。
-日常起停用还活着的 `./restart.sh` / `./stop.sh`。
+**新设备 / 首次运行**：直接 `./start.sh`。`backend/.venv` 缺失或不可用时会从零建（候选解释器
+python3.12 → 3.13 → 3.11 → 3.10 → python3 逐个试、装成为止；3.12 排最前是因为它是 CI 钉的版本、
+预编译轮子覆盖最稳）；`node_modules` 缺失会自动 `npm install`；`backend/.env` 缺失会从模板生成
+（不覆盖已有文件）。两个依赖方向都按**内容指纹缓存**幂等（后端 `backend/.venv/.requirements-ok`、
+前端 `node_modules/.package-lock-ok`），第二次起秒级跳过；`--force` 绕过缓存强装。
+pip 连不上默认索引时会**自动改走清华镜像重试一次**（本机网络实测：Python 直连 pypi.org 全断、
+清华可用）；npm 的 tarball 地址已固定进 `package-lock.json`（npmmirror），无需额外配置。
 
-**新机器的"从零建环境"目前没有已验证路径** —— 那正是 `start.sh` 干的活（环境自检 → 按需建 venv →
-装依赖 → 拉起 → 开浏览器）。本节上面「后端」那段 `python3 -m venv .venv` **不要照抄就以为能起**，
+⚠️ 本节上面「后端」那段 `python3 -m venv .venv` **不要照抄就以为能起**，
 原因见下面那条解释器约束：PATH 上的 `python3` 与本机跑得住的那套基座不是同一个东西。
 
-### 本机 Python 解释器约束（重写启停脚本时不许丢这段）
+> **历史与实测**：`start.sh` 曾于 10-07 下线、10-11 收尾删除（「留到项目结束统一重写」；本体可从
+> `git log --all --oneline -- start.sh` 找回，四个开关名逐字沿用旧版）。**10-11 已重写回归**，同日实测：
+> ① 本仓库全流程两跑 —— 首跑完成 pip 校验 + npm 刷新 + 拉起 + 开浏览器；二跑走指纹缓存两侧全跳过
+> （约 23s，耗时都在 `restart.sh` 的就绪等待与 typecheck）。② 「从零建环境」端到端 —— 在同机 `/tmp`
+> 克隆 + 端口隔离（`BACKEND_PORT=8011 FRONTEND_PORT=3401 ./start.sh`，`.dev-ports.env` 支持环境变量
+> 覆盖）跑通：建 venv → 全量装依赖（pypi 直连失败自动落清华）→ 生成 `backend/.env` → 拉起 → 双端口
+> 探活；`--force` / `--no-install` 同场补测通过。
+> 另实测：本机 3.13 / 3.14 的解释器在本机网络下 pip 拉不到索引（3.12 正常，原因未深究）——
+> 这是**本机网络环境**问题、不是依赖约束；新设备以 `./start.sh --check` 输出为准。
 
-这条理由原先**只写在 `start.sh` 第 40–43 行的注释里**，脚本要重写 ⇒ 先挪进本文，免得随脚本一起消失。
-下面每条都标了它现在的验证方式，不再以那段注释为证据：
+### 本机 Python 解释器约束（10-11 start.sh 重写已逐条落实）
+
+这条理由原先**只写在 `start.sh` 第 40–43 行的注释里**，重写脚本前先挪进本文、免得随脚本一起消失
+（10-11 重写已完成，约束仍以本文为单一出口）。下面每条都标了它现在的验证方式，不再以那段注释为证据：
 
 - 部分嵌入式 Python（本机是 TRAE 工具链那一类）会往环境里注入 `PYTHONPATH`（混入其它版本的
   site-packages）与 `PYTHONHOME`，导致解释器／venv 行为异常 ⇒ 拉起后端前必须
@@ -82,7 +100,7 @@ npm run dev                     # http://localhost:3400
   `~/.local/bin/python3.12`），别在重写脚本时把它抄回去；本节「环境要求」写的 `Python ≥ 3.9（CI 钉 3.12）`
   与本机的 3.10 基座是**三个不同的数**，别混成一个。
 - 依赖是否就绪靠指纹缓存 `backend/.venv/.requirements-ok` 判断（幂等、第二次起秒开），
-  要绕过它重装得显式 `--force`（该开关随脚本重写一起补回来）。
+  要绕过它重装得显式 `--force`（该开关 10-11 已随 `start.sh` 重写补回）。
 
 ---
 
