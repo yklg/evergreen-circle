@@ -56,8 +56,12 @@
 ├─ docs/                            # 架构 / Agent 协议 / 部署 / 算法设计文档
 ├─ deploy/                          # 自管云部署（docker-compose + nginx + systemd）
 ├─ scripts/                         # CI 守卫与体检脚本（check_app_mirror / lc_healthcheck）
+├─ cookie-export-helper/            # 浏览器扩展：Cookie 导出助手（抖音 / 小红书 / B站 → 模型配置·平台采集）
+├─ make_brand_icon.py               # 品牌图标生成脚本（favicon.svg 单一源 → apple-touch-icon + 验收页）
+├─ .github/                         # GitHub Actions CI：后端 / 前端 / 排版 e2e（＋ Docker 条件步）
 ├─ start.sh / restart.sh / stop.sh  # 一键启动（新设备自动建环境）/ 重启 / 停止 —— 端口真值源 .dev-ports.env
 ├─ Dockerfile + docker-compose.yml  # 本地一键预览（前端 3400 / 后端 8010）
+├─ package.json                     # Vercel 构建入口（npm run build → 前端构建）
 ├─ railway.json / render.yaml / vercel.json   # 云端部署清单（见 docs/DEPLOYMENT.md）
 └─ LICENSE (AGPL-3.0) / NOTICE / CONTRIBUTING.md
 ```
