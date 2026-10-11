@@ -29,6 +29,18 @@ LLM 有 Key 时仅替换解读文案，结构/数值不变（无 Key 也不阻�
 ② 条形图按类目逐条上色（色表在本文件，与前端 `LC_CAT_COLOR` 同名同值，由镜像判据钉住）
 ——因此 `focus=None` 那一支从"逐字节同形"改契约为"结构同形"：仍不产 opacity 分档与
 per-item label，但 `data` 项从纯数值变成 `{value, itemStyle:{color}}`。
+`nar-4`（2026-10-11 署名与名册同源）一处产物变化：`experts` 现在**保证覆盖全部署名席位**
+（载荷自带 team 时按 `signature_seats()` 补齐缺失席位，只追加不重排、不动 `reasons` 下标对齐），
+`dispatch` 相应多出一条带通用理由的席位。实测动因：两份内置样区的 `team.expert_ids` 都没有
+`L3-002`，而 `SECTION_SEAT["blindspot"]` 登记的正是它 ⇒ 报告把盲区章与那条盲区证据署给了
+一个不在自己名册里的人（真报告 `lc-91d1f091` 同样命中 2 处）。判据 =
+`test_expert_signature_derivation.py::test_report_signatures_never_escape_its_own_roster`。
+`nar-5`（2026-10-11 挂账 A2 结案）一处产物变化：`evidence[].collected_by` 由**姓名**改成**席位 id**
+（三处 `_artifact_name(...)` 直呼 `artifact_seat(...)`，那个派生_helper 随之删除）。这一位**屏上零消费者**
+（`grep collected_by|采集人 frontend/src/{pages,components}` 零命中，前端渲染读的是 claim 的姓名与
+`experts` 名单），所以升戳的读数收益是把两个并存空间收成一个：SSE 与报告载荷现在发同一形状，
+`test_evidence_collected_by_is_a_roster_name` 也随之升成更强的
+`test_evidence_collected_by_is_a_seat_in_its_own_roster`（id 必须属于**这份报告自己的** `experts`）。
 """
 from __future__ import annotations
 
@@ -42,6 +54,7 @@ from app.living_circle.seat_registry import (
     SECTION_SEAT,
     TEAM_FALLBACK,
     artifact_seat,
+    signature_seats,
 )
 
 
@@ -156,16 +169,6 @@ def _section_author(section_id: str) -> str:
     `tests/test_lc_seat_registry_single_source.py` 的行为判据保证凡带 claims 的章都在表里。
     """
     return _expert_name(SECTION_SEAT[section_id])
-
-
-def _artifact_name(artifact: str) -> str:
-    """证据的 `collected_by`（报告载荷侧）：由注册表席位派生，不再硬写姓名。
-
-    ⚠️ 这里发的是**姓名**，而 SSE 的 `collected_by` 发的是**席位 id** —— 两个空间并存
-    是已知债务，统一成 id 属 A2（要付一次报告代次升级 + 金标重取）。改派生不改值：
-    `_expert_name(ARTIFACT_SEAT["measure"]) == "路遥川"` 与今天的字面量逐字相同。
-    """
-    return _expert_name(artifact_seat(artifact))
 
 
 def _fmt_min(m) -> str:
@@ -1526,19 +1529,19 @@ def build_evidence(lc: dict) -> List[dict]:
         "source_url": "live://measure", "source_type": "api_measure",
         "title": f"采样点测时记录（{_n} 点）",
         "excerpt": f"批量算路返回 {_timed} 条耗时，其中圈内可达 {_in_reach} 条",
-        "credibility": 0.95, "collected_by": _artifact_name("measure"), "captured_at": lc.get("generated_at", ""), "domain": "walkability",
+        "credibility": 0.95, "collected_by": artifact_seat("measure"), "captured_at": lc.get("generated_at", ""), "domain": "walkability",
     }]
     for c in lc.get("poi", {}).get("categories", []):
         ev.append({
             "evidence_id": f"ev-lc-poi-{c['category']}", "source_url": "live://poi", "source_type": "poi_search",
             "title": f"{c['label']} POI 检索", "excerpt": f"命中 {c['total']} 处，圈内 {c['in_circle']} 处",
-            "credibility": 0.92, "collected_by": _artifact_name("collect"), "captured_at": lc.get("generated_at", ""), "domain": c["category"],
+            "credibility": 0.92, "collected_by": artifact_seat("collect"), "captured_at": lc.get("generated_at", ""), "domain": c["category"],
         })
     for b in lc.get("blindspots", []):
         ev.append({
             "evidence_id": f"ev-lc-bs-{b['id']}", "source_url": "live://blindspot", "source_type": "grid_scan",
             "title": f"盲区点位 {b['id']}", "excerpt": f"1km 内无 {'、'.join(b.get('missing_facilities', []))}",
-            "credibility": 0.98, "collected_by": _artifact_name("blindspot"), "captured_at": lc.get("generated_at", ""), "domain": "coverage",
+            "credibility": 0.98, "collected_by": artifact_seat("blindspot"), "captured_at": lc.get("generated_at", ""), "domain": "coverage",
         })
     return ev
 
@@ -1603,7 +1606,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
 #    它天然不可能移动复用门（不必再为它单立一条"不许进门"的判据）。
 # 换代规则：只有**载荷语义没变、而展示内容会变**时才升它（加正文/亮点/图件/改口径句）。
 # 载荷语义变了走的是那五把各自的代次，不是这一把。
-NARRATIVE_VERSION = "nar-3"
+NARRATIVE_VERSION = "nar-5"
 
 
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:
@@ -1636,6 +1639,18 @@ def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dic
         # 装配期兜底名单：见 seat_registry 的文件头 —— 它与编排期的 10 席保底队
         # **故意不同**（多出的是"每章至少有一位可署名的人"的覆盖需要），不要合并。
         experts = list(TEAM_FALLBACK)
+
+    # 载荷自带 team 时也要补到覆盖署名席位（兜底名单那条覆盖需要从此不再是"只看得到兜底时才有"）。
+    # 实测缺陷：`kaili-ev2.json` 与 `beijing-jinsong.json` 的 `team.expert_ids` 都没有 `L3-002`，
+    # 而 `SECTION_SEAT["blindspot"]` 登记的正是它 ⇒ 盲区章 claim 与那条盲区证据署给了
+    # 一个**不在本报告名册里**的人（真报告 `lc-91d1f091` 同样中 2 处，2026-10-11 实测）。
+    # 只**追加**缺的席位：既不动载荷里原有成员，也不破坏 `reasons[i]` 与 `expert_ids[i]` 的下标对齐；
+    # 追加位拿下面 dispatch 的通用理由模板，与今天 `TEAM_FALLBACK` 多出来的那几位走的是同一条路径。
+    # 成员清单不写在这里 —— 由 `signature_seats()` 从注册表派生（写第二份＝造第三张席位表）。
+    experts = list(experts)
+    for _seat in signature_seats():
+        if _seat not in experts:
+            experts.append(_seat)
     
     reasons = team_info.get("reasons", []) if isinstance(team_info, dict) else []
     dispatch = [

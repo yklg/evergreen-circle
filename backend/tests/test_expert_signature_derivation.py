@@ -8,11 +8,18 @@
     生活圈章节署成旅游人设（实测 7/7 章，如医疗章「苏明哲·行程策略专家」）。
 """
 import asyncio
+import json
+import re
+from pathlib import Path
 
 import pytest
 
 from app.core import db
-from app.core.pipeline.diagnosis_templates import _expert, _expert_name
+from app.core.pipeline.diagnosis_templates import (
+    _expert,
+    _expert_name,
+    assemble_report,
+)
 from app.core.pipeline.living_circle import (
     create_living_circle_task,
     living_circle_pipeline,
@@ -21,6 +28,7 @@ from app.data import load_experts
 from app.living_circle.seat_registry import (
     SECTION_SEAT as _SECTION_SEAT,
     TEAM_FALLBACK as _TEAM_FALLBACK,
+    signature_seats,
 )
 
 # Phase 6：诊断模板 fallback 保底团队（动态编排失败时使用）。
@@ -36,6 +44,11 @@ KAILI = {
     "mode": "standard",
     "data_mode": "fixture",
 }
+
+
+# 席位 id 的形状（`L1-025` / `L2-005` / `L3-002` 同一族）。旅行域用同一种形状，
+# 所以"形状对"不等于"域对"—— 域由 `_roster()` 那一格单独管。
+_SEAT_ID_RE = re.compile(r"^[A-Z]\d-\d{3}$")
 
 
 def _roster(domain: str = "living_circle"):
@@ -170,18 +183,98 @@ def test_every_section_author_equals_its_declared_seat(signed_report):
         )
 
 
-def test_evidence_collected_by_is_a_roster_name(signed_report):
-    """B9（报告载荷半边）：`evidence[].collected_by` 必须是名册**姓名**，不得漂回裸席位 id。
+def test_evidence_collected_by_is_a_seat_in_its_own_roster(signed_report):
+    """B9（报告载荷半边）：`evidence[].collected_by` 必须是**席位 id**，且属于**这份报告自己的** `experts`。
 
-    为什么分两处：SSE 那一侧发的是席位 id（由 `test_sse_evidence_collected_by_is_a_registered_seat`
-    钉），载荷这一侧发的是由 id 派生的姓名 —— 两个空间并存是已知债务，统一成 id 属 A2
-    （要付一次报告代次升级 + 金标重取）。B1 的 AST 扫描只认 `L\\d-\\d{3}` 形状，硬写一个**姓名**
-    它抓不到，所以这一侧由本条兜住。
-    变异：把 `diagnosis_templates` 的 `_artifact_name("measure")` 换成裸 `"L2-005"` ⇒ 本条红。
+    本条前身是 `test_evidence_collected_by_is_a_roster_name`（钉"必须是姓名"）。2026-10-11 挂账 A2
+    结案（`nar-5`）：载荷这一侧改发席位 id，于是它与 SSE 那一侧
+    （`test_sse_evidence_collected_by_is_a_registered_seat`）从此**同一形状**，两个并存的空间收成一个。
+    新形状不是把判据放松，而是同时收紧两处：
+      ① 形状闸 —— 漂回姓名（含非 `L\\d-\\d{3}` 的任何一个值）当场红；
+      ② 归属闸 —— 只认名册全集不够（那正是 12:05 那个缺陷漏掉的方式：署给的人也在 48 人全集里），
+         这里要求它出现在**这份报告自己的** `experts` 里。
+    B1 的 AST 扫描只认 `L\\d-\\d{3}` 形状 ⇒ 它抓不到硬写的**姓名**，这一侧由本条兜住。
+    变异：把 `diagnosis_templates` 的 `artifact_seat("measure")` 换回裸姓名 `"路遥川"` ⇒ 本条红。
     """
     rep = signed_report
-    names = {e["name"] for e in _roster().values()}
+    own = set(rep.get("experts") or [])
+    assert own, "signed_report 没有 experts ⇒ 本条会因空集而假绿"
+    roster = _roster()
     got = [ev.get("collected_by") for ev in (rep.get("evidence") or [])]
     assert got, "signed_report 里没有一条 evidence ⇒ 本条在空转"
-    bad = sorted({c for c in got if c not in names})
-    assert not bad, f"报告证据署名不在生活圈名册姓名里（漂回裸 id／取错域）：{bad}"
+    not_seat_shape = sorted({c for c in got if not _SEAT_ID_RE.match(str(c))})
+    assert not not_seat_shape, f"证据采集人漂回姓名/裸文本（A2 之后这一位必须是席位 id）：{not_seat_shape}"
+    outside = sorted({c for c in got if c not in own})
+    assert not outside, f"证据采集席位不在本报告自己的名册里：{outside}"
+    unknown = sorted({c for c in got if c not in roster})
+    assert not unknown, f"证据采集席位不在生活圈名册里（取错域）：{unknown}"
+
+
+# ── 署名必须落在**这份报告自己的名册**里（不是全 48 人名册）──────────────────
+#
+# 上面两条拿 `_roster()`（名册全集）做期望值 —— 章侧钉**姓名**（它上屏），证据侧自 `nar-5` 起钉
+# **席位 id**（它不上屏）⇒ 它们封得住"取错域 / 形状漂回"，
+# 封不住"署给一个没参与本次体检的人"：那种人**也在**名册全集里。
+# 实测漏网的正是这一档（2026-10-11）：`kaili-ev2.json` 与 `beijing-jinsong.json` 的
+# `team.expert_ids` 都没有 `L3-002`，而 `SECTION_SEAT["blindspot"]` 登记的就是它 ⇒
+# 盲区章 claim 与那条盲区证据署名为「许映川」，而该报告自己的 `experts` 里没有这个人
+# （`kaili-ev2` 2 处；真报告 `lc-91d1f091` 同样 2 处，两份 nar-3 存量行各命中）。
+# 修在装配期（`nar-4`）：名册按 `signature_seats()` 补齐 ⇒ 本条从"红"变"绿"。
+#
+# 变异实测（摘掉补齐那一段）：`test_report_signatures_never_escape_its_own_roster` **只红
+# `kaili-ev2` 一份** —— `beijing-jinsong` 有 0 处盲区 ⇒ 盲区章不产 claim、也没有盲区证据，
+# 那个席位根本没上屏，所以"逐份核"这一条**单靠自己会漏掉一份夹具**。
+# 正因如此另配 `test_roster_backfill_actually_happened`（它红在**两份**自带 team 的夹具上）：
+# 它不问"有没有署名跑出去"，只问"该补的补了没、原有成员与顺序动没动"，
+# 于是补齐逻辑被摘掉时不会因为某份夹具的数据形态而静默。
+
+_FIXTURE_DIR = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
+
+
+def _assemble_fixture(stem: str) -> tuple:
+    payload = json.loads((_FIXTURE_DIR / f"{stem}.json").read_text(encoding="utf-8"))
+    team_ids = (payload.get("team") or {}).get("expert_ids") or []
+    return assemble_report(payload, f"lc-{stem}", stem, ""), team_ids
+
+
+@pytest.mark.parametrize("stem", ["kaili", "kaili-ev2", "beijing-jinsong"])
+def test_report_signatures_never_escape_its_own_roster(stem):
+    """逐份核（禁抽样）：凡报告里署了名的地方，那个人必须在这份报告自己的 `experts` 里。
+
+    三份都跑，但要说清各自在测什么：`kaili` 无 team 走兜底名册（本来就覆盖署名席位）、
+    `beijing-jinsong` 0 盲区（那个席位根本不上屏）⇒ **本条实际只有 `kaili-ev2` 会红**，
+    覆盖面由下面那条正对照补上（见本块注释的变异实测）。
+    """
+    rep, team_ids = _assemble_fixture(stem)
+    own = set(rep["experts"])
+    assert own, f"{stem}: 报告没有 experts ⇒ 本条会因空集而假绿"
+    names = {_expert_name(i) for i in own}
+
+    escaped = []
+    for sec in rep.get("sections") or []:
+        for claim in sec.get("claims") or []:
+            if claim.get("author") and claim["author"] not in names:
+                escaped.append(f"{sec['id']} 章 claim 署「{claim['author']}」")
+    for ev in rep.get("evidence") or []:
+        # `nar-5` 起这一位是**席位 id**（不是姓名）：claim 侧仍发姓名（它上屏），证据侧发 id（它不上屏）。
+        if ev.get("collected_by") and ev["collected_by"] not in own:
+            escaped.append(f"证据 {ev['evidence_id']} 采集席位 {ev['collected_by']!r}")
+    assert not escaped, f"{stem}: 署名跑出本报告名册之外 ⇒ {escaped}"
+
+
+@pytest.mark.parametrize("stem", ["kaili-ev2", "beijing-jinsong"])
+def test_roster_backfill_actually_happened(stem):
+    """正对照（防恒真）：载荷缺席位时名册必须**变长**，否则上一条可能只是碰巧绿。
+
+    没有这一条，"补齐"整段被摘掉后上一条仍可能因数据形态（无盲区 ⇒ 不产 claim）而不红 ——
+    那正是本族原先漏掉这个缺陷的方式。
+    """
+    rep, team_ids = _assemble_fixture(stem)
+    assert team_ids, f"{stem} 应自带 team（否则本条失去意义，需重挑夹具）"
+    own = rep["experts"]
+    assert len(own) > len(team_ids), f"{stem}: 名册没补齐（载荷 {len(team_ids)} 人 → 报告 {len(own)} 人）"
+    missing = [s for s in signature_seats() if s not in team_ids]
+    assert missing, f"{stem}: 载荷名册本来就已覆盖全部署名席位 ⇒ 本条在空转，需重挑夹具"
+    assert all(s in own for s in missing), f"{stem}: 缺的席位 {missing} 没被补进名册"
+    # 追加只发生在末尾：原有成员与顺序逐字保留（否则 reasons[i] 与 expert_ids[i] 的下标对齐会断）
+    assert own[: len(team_ids)] == list(team_ids), f"{stem}: 补齐改写了原有成员或顺序"

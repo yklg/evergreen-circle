@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -135,7 +136,10 @@ def build_golden() -> Dict[str, Any]:
             "回归并回退代码。只升戳而产物没变同样红（配对闸），因为无实质变化的升戳会让所有存量行白付一次"
             "重装、把「同代次直通」的证据打掉。"),
         "schema": "evergreen.narrative-assembly-golden/v1",
-        "captured_at": "2026-10-08",
+        # 重取那天写当天：这里原来是硬写的 "2026-10-08"（首枚戳的日期），
+        # 于是 nar-4 / nar-5 两次重取之后文件仍在说"10-08 取的基线" —— 一个没人读的元数据
+        # 说谎也是说谎（没有任何判据消费 captured_at，所以它不会红，只会误导后来的人）。
+        "captured_at": datetime.date.today().isoformat(),
         "narrative_version": NARRATIVE_VERSION,
         "assembler_args": {"report_id": GOLDEN_ARGS[0], "scene_key": GOLDEN_ARGS[1], "title": GOLDEN_ARGS[2]},
         "digest_note": "sha256(canonical)[:16]；canonical = json.dumps(ensure_ascii=False, sort_keys=True, separators=(',',':'))",

@@ -6,7 +6,7 @@
 
 1. `pipeline/lc_team.py` 的 `_FALLBACK_SEATS`（10 席 + 理由文案）
 2. `pipeline/diagnosis_templates.py` 里 8 处内联席位 id（章节署名）
-3. 同文件 `build_evidence` 里 3 处 `collected_by` **姓名**字面量
+3. 同文件 `build_evidence` 里 3 处 `collected_by` **姓名**字面量（现已收成本表 `artifact_seat`，`nar-5` 起发 id）
 4. 同文件 `assemble_report` 里**另一份 13 人**保底名单（与 1 的 10 人不同）
 5. 同文件理由缺失时的兜底句子
 6. `pipeline/living_circle.py` 里 5 处 SSE `collected_by` 席位 id
@@ -106,14 +106,35 @@ SECTION_SEAT: Dict[str, str] = {
 }
 
 # ── 证据产物 → 采集席位 ──────────────────────────────────────────────
-# ⚠️ 目前**两个消费空间并存**：SSE 的 `collected_by` 发这里的**席位 id**，
-# 报告载荷的 `collected_by` 发由它派生的**姓名**。统一成 id 属 A2（要付一次
-# 报告代次升级 + 金标重取，屏上零变化），本批只把姓名改成派生、不再硬写。
+# 两个消费空间**已收成一个**（2026-10-11 挂账 A2 结案，`nar-5`）：SSE 与报告载荷的
+# `collected_by` 现在都发这里的席位 id，`diagnosis_templates.py` 那个把 id 转成姓名的派生
+# helper 已随之删除。这一位屏上零消费者（前端渲染读的是 claim 姓名与 `experts` 名单），
+# 所以统一形状不改变任何读数 —— 判据 =
+# `test_expert_signature_derivation.py::test_evidence_collected_by_is_a_seat_in_its_own_roster`。
 ARTIFACT_SEAT: Dict[str, str] = {
     "measure": "L2-005",     # 采样点测时
     "collect": "L2-004",     # 设施 POI 检索
     "blindspot": "L3-002",   # 盲区点位扫描
 }
+
+
+def signature_seats() -> Tuple[str, ...]:
+    """报告正文里**会被署名**的全部席位（章节 + 证据产物），按注册表声明序去重。
+
+    为什么要这一颗：`assemble_report` 原先只在载荷不带 team 时才用 `TEAM_FALLBACK`（13 人，
+    多出几位的目的正是"每章至少有一位可署名的人"）。载荷自带 team 时它照用不校验 ⇒
+    实测两份样区的 team 都没有 `L3-002`，而盲区章席位登记的恰是 `L3-002` ⇒ 报告把盲区章
+    与那条盲区证据署给了一个**不在自己名册里**的人（`kaili-ev2` 与真报告 `lc-91d1f091` 各 2 处）。
+    现在装配期按这张派生表补齐覆盖，判据 = `test_report_signatures_never_escape_its_own_roster`。
+
+    顺序即语义：先章节后证据产物，装配期按此序追加，**不许**在这里手写成员名单
+    （手写＝第三份席位表，正是本注册表要消灭的那族病）。
+    """
+    out: List[str] = []
+    for seat in (*SECTION_SEAT.values(), *ARTIFACT_SEAT.values()):
+        if seat not in out:
+            out.append(seat)
+    return tuple(out)
 
 
 def stage_owner(stage: str) -> Optional[str]:
