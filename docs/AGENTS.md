@@ -177,11 +177,11 @@ graph TD
 2. **`CATEGORY_SEAT`（逐设施类别的署名）上屏**。本批刻意不建这张表：零消费者的抽象不进注册表。
    它原先写"要等 A2 那次代次升级一起落"——那一次已经过去（`nar-5` 给了上一条）
    ⇒ 这条现在要自己付一次 `nar-5 → nar-6` + 金标重取，别再搭旧账。
-3. **演示夹具与注册表对账**。`frontend/src/mocks/livingCircle/eventFlow.json` 里每个 stage 的
-   `expert` 是注册表文件头列出的**第 9 份抄本**，实测与 `STAGE_SEAT` 不符（夹具 measure→L2-005 /
-   collect→L2-004 / diagnose→L3-002，注册表是 L1-027 / L1-030 / L1-032）。
-   重录夹具后应加一条"夹具 ↔ `STAGE_SEAT` 逐位相等"的比对判据 —— 现在不加，是因为夹具正在重录，
-   加了会把一笔未完成的 WIP 焊进闸门。
+3. ~~**演示夹具与注册表对账**。~~〔**已结案 2026-10-11**：实测比挂账记的更糟 —— **7 个 stage 里 5 个**
+   与 `STAGE_SEAT` 不符（intake / plan / measure / collect / diagnose；report / audit 恰好相同），
+   即那份夹具回放的是**生产永远不会发出**的流。修法是按注册表**现场派生**重写夹具里的 12 处席位，
+   并补上当初欠的那条判据：`test_lc_seat_registry_single_source.py::test_demo_event_flow_stage_owners_match_the_registry`
+   （逐位相等 + 覆盖面 + 反空转；刀：把 intake 改回旧值 ⇒ 判据红）。〕
 
 ---
 

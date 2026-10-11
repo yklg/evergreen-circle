@@ -176,3 +176,50 @@ def test_seat_id_literals_live_only_in_the_registry():
         "席位字面量泄漏到注册表之外（唯一出口是 app/living_circle/seat_registry.py）："
         f"{offenders}"
     )
+
+
+def test_demo_event_flow_stage_owners_match_the_registry():
+    """演示夹具 `eventFlow.json` 的每个 stage 席位必须**逐位等于** `STAGE_SEAT`（第 9 份抄本收编）。
+
+    为什么值得一条常驻判据：这份夹具是 `VITE_USE_MOCK=1` 时 `useTaskStream` 回放的**事件契约
+    样本**，串里每个 `data.expert` / `data.node.expert` 就是屏幕上"当前席位"那一行会念的人。
+    它诞生在注册表之前（注册表文件头把它列为第 9 份手抄），10-03 重录时只换了数字、没对席位 ——
+    2026-10-11 实测 **7 个 stage 里 5 个不一致**（intake L3-001≠L1-025、plan L3-002≠L3-001、
+    measure L2-005≠L1-027、collect L2-004≠L1-030、diagnose L3-002≠L1-032；report/audit 恰好相同）。
+    ⇒ 那份夹具回放的是**生产永远不会发出**的流。修法是按注册表现场派生重写夹具那 12 处，
+    并用本条把它钉死：日后再有人手改夹具，这里红。
+    """
+    import json
+
+    flow = BACKEND.parent / "frontend" / "src" / "mocks" / "livingCircle" / "eventFlow.json"
+    assert flow.exists(), f"演示夹具不在：{flow} ⇒ 本条失去对象（别静默跳过）"
+    doc = json.loads(flow.read_text(encoding="utf-8"))
+    stages: list = doc.get("stages") or []
+    assert stages, "夹具没有 stages 清单 ⇒ 覆盖面断言会空转"
+    unknown = sorted(set(stages) - set(STAGE_SEAT))
+    assert not unknown, f"夹具里的 stage 未在注册表登记：{unknown}（新阶段要同笔进注册表）"
+
+    seen: dict[str, set[str]] = {}
+    for ev in doc.get("events") or []:
+        d = ev.get("data") or {}
+        stage = d.get("stage")
+        if not stage:
+            continue
+        got = []
+        if isinstance(d.get("expert"), str):
+            got.append(d["expert"])
+        node = d.get("node") or {}
+        if isinstance(node.get("expert"), str):
+            got.append(node["expert"])
+        for who in got:
+            seen.setdefault(stage, set()).add(who)
+
+    missing = [s for s in stages if s not in seen]
+    assert not missing, f"这些 stage 在夹具里没有任何带席位的条目 ⇒ 本条对它们空转：{missing}"
+
+    bad = {s: sorted(v) for s, v in seen.items() if v != {STAGE_SEAT[s]}}
+    assert not bad, (
+        f"演示夹具的 stage 席位与注册表不一致：{bad}；"
+        f"期望逐位等于 STAGE_SEAT（{ {s: STAGE_SEAT[s] for s in bad} }）—— "
+        "改夹具或改注册表都要同笔改另一处，别让回放流念一个生产发不出的人"
+    )

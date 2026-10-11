@@ -12,7 +12,10 @@
 6. `pipeline/living_circle.py` 里 5 处 SSE `collected_by` 席位 id
 7. `scripts/normalize_report_signatures.py` 的 `SECTION_SEAT`
 8. `tests/test_expert_signature_derivation.py` 里同一张表的第二次抄写
-9. 前端演示夹具 `eventFlow.json` 里每个 stage 的席位
+9. 前端演示夹具 `eventFlow.json` 里每个 stage 的席位（2026-10-11 已收编：实测 7 个 stage 里
+   5 个与 `STAGE_SEAT` 不符 ⇒ 按本表现场派生重写了那 12 处，并由
+   `tests/test_lc_seat_registry_single_source.py::test_demo_event_flow_stage_owners_match_the_registry`
+   钉住逐位相等）
 
 ⇒ 只要没有唯一出口，"把归属补上"这件事就只能变成**第 10 份手抄**。所以本表先落地，
 再谈事件归属（`pipeline/living_circle.py` 的 `_progress`）与报告署名。
