@@ -10,7 +10,7 @@
     "*://*.bilibili.com/*"
   ],
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "popup-inline.html",
     "default_title": "常青圈 Cookie 助手"
   }
 }

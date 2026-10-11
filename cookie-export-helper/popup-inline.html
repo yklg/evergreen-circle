@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>常青圈 Cookie 助手</title>
+    <style>
+      :root {
+        --primary: #7c9885;
+        --primary-deep: #5e7a66;
+        --ink: #3a413c;
+        --ink-2: #6b746c;
+        --ink-3: #9aa39c;
+        --line: #e3e8e3;
+        --ok: #8ab58a;
+        --err: #b9863f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 16px;
+        font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', sans-serif;
+        color: var(--ink);
+        background: #fafbf9;
+      }
+      .title { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+      .sub { font-size: 11px; color: var(--ink-3); margin: 0 0 14px; line-height: 1.5; }
+      button {
+        width: 100%;
+        height: 40px;
+        border: 0;
+        border-radius: 12px;
+        background: var(--primary);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover { background: var(--primary-deep); }
+      button:active { transform: scale(0.98); }
+      #status {
+        margin-top: 12px;
+        font-size: 12px;
+        line-height: 1.6;
+        padding: 8px 10px;
+        border-radius: 10px;
+        display: none;
+      }
+      #status.ok { display: block; background: rgba(138,181,138,0.15); color: var(--ok); }
+      #status.err { display: block; background: rgba(224,183,117,0.15); color: var(--err); }
+      .hint { margin-top: 12px; font-size: 11px; color: var(--ink-3); line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <p class="title">常青圈 Cookie 助手</p>
+    <p class="sub">在已登录的抖音 / 小红书 / B站 页面打开本扩展，一键复制登录 Cookie。</p>
+
+    <button id="copy">复制当前站点 Cookie</button>
+    <div id="status"></div>
+    <p class="hint">复制后回到常青圈「模型配置 → 编辑配置 → 平台采集」，粘进对应框保存即可。</p>
+
+    <script>
+      // 内联脚本 - 立即执行
+      console.log('[Inline Script] Loaded')
+
+      const btn = document.getElementById('copy')
+      const status = document.getElementById('status')
+
+      console.log('[Inline Script] Button:', !!btn)
+      console.log('[Inline Script] Status:', !!status)
+
+      if (!btn) {
+        console.error('[Inline Script] Button not found!')
+        alert('错误:找不到按钮元素')
+      }
+
+      btn.addEventListener('click', async function() {
+        console.log('[Inline Script] Button clicked')
+
+        try {
+          // 获取当前标签页
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+          console.log('[Inline Script] Tab:', tab)
+
+          if (!tab || !tab.url) {
+            status.textContent = '无法读取当前标签页'
+            status.className = 'err'
+            return
+          }
+
+          // 获取 Cookie
+          const cookies = await chrome.cookies.getAll({ url: new URL(tab.url).origin })
+          console.log('[Inline Script] Cookies:', cookies.length)
+
+          if (cookies.length === 0) {
+            status.textContent = '未找到 Cookie，请先登录'
+            status.className = 'err'
+            return
+          }
+
+          // 转换为字符串
+          const cookieStr = cookies.map(c => c.name + '=' + c.value).join('; ')
+
+          // 复制到剪贴板
+          await navigator.clipboard.writeText(cookieStr)
+
+          status.textContent = '✓ 已复制 ' + cookies.length + ' 个 Cookie'
+          status.className = 'ok'
+
+        } catch (e) {
+          console.error('[Inline Script] Error:', e)
+          status.textContent = '错误: ' + e.message
+          status.className = 'err'
+        }
+      })
+
+      console.log('[Inline Script] Event listener attached')
+    </script>
+  </body>
+</html>
