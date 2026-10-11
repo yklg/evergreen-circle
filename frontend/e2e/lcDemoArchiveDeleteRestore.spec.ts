@@ -31,7 +31,7 @@ const STRIP = '[aria-label="本机已摘除的演示归档"]'
 
 async function openReportsInDemoMode(page: Page): Promise<string[]> {
   const deletes: string[] = []
-  // 只设数据模式；刻意**不清** `verda.demoArchive.v1` —— 新 context 本来就是空的，
+  // 只设数据模式；刻意**不清** `evergreen.demoArchive.v1` —— 新 context 本来就是空的，
   // 而 init script 每次导航（含 reload）都会跑，在那里清它等于自己把要测的持久化抹掉。
   await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [LS_DATA_MODE, 'fixture'])
   page.on('request', (req) => {

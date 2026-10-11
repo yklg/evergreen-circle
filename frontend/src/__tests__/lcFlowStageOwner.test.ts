@@ -29,7 +29,7 @@ vi.mock('../lib/api', () => api)
 import { subscribeLifeCircleTask } from '../lib/lifeCircleFlow'
 import { useTaskRegistry } from '../store/taskRegistry'
 
-const LS_KEY = 'verda.tasks.v1'
+const LS_KEY = 'evergreen.tasks.v1'
 let fire!: (t: string, d: unknown) => void
 
 const record = (taskId = 'lc-1') => useTaskRegistry.getState().tasks[taskId]

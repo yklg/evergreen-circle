@@ -8,7 +8,7 @@ import { expect, type Locator, type Page } from '@playwright/test'
  * 数字来由见主守卫文件头注释：2026-10-04 在 macOS Chromium 1.63 真实量测，不是拍的。
  */
 
-export const LS_DATA_MODE = 'verda.dataMode.v1'
+export const LS_DATA_MODE = 'evergreen.dataMode.v1'
 export const SCENE = '/life-circle/kaili-ev2'
 
 /** 1–2px 的滚动条与亚像素差异；地图格那一圈 1px 边框也计在这里 */

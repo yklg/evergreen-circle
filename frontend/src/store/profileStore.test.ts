@@ -20,7 +20,7 @@ vi.mock('../lib/api', () => ({
   PrefsUnsupportedError: class extends Error {},
 }))
 
-const LS_KEY = 'verda.profile.v1'
+const LS_KEY = 'evergreen.profile.v1'
 
 beforeEach(() => {
   localStorage.clear()

@@ -36,8 +36,8 @@ vi.mock('../lib/api', () => ({
   createSubscription: vi.fn(),
 }))
 
-const LS_ARCHIVE = 'verda.demoArchive.v1'
-const LS_MODE = 'verda.dataMode.v1'
+const LS_ARCHIVE = 'evergreen.demoArchive.v1'
+const LS_MODE = 'evergreen.dataMode.v1'
 
 /** 演示态内置列表里的真实行（id 取自 `getLifeCircleRecords`，不另造一套） */
 const LC_TARGET = 'lc-kaili-ev2'

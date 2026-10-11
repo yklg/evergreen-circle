@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { LS_KEYS } from '../lib/lsKeys'
 
 /* 飞书式标注 + 可溯源知识库（本地持久化，localhost / Vercel 均可用） */
 
@@ -52,8 +53,8 @@ interface AnnotationState {
   isInKB: (reportId: string, dedupeKey: string) => boolean
 }
 
-const LS_KEY = 'verda.annotations.v1'
-const LS_KB = 'verda.knowledge.v1'
+const LS_KEY = LS_KEYS.annotations
+const LS_KB = LS_KEYS.knowledge
 
 function load<T>(key: string, fallback: T): T {
   try {

@@ -15,8 +15,9 @@
  */
 import { create } from 'zustand'
 import type { RecordDomain, ReportRecord } from '../lib/recordIndex'
+import { LS_KEYS } from '../lib/lsKeys'
 
-const LS_KEY = 'verda.demoArchive.v1'
+const LS_KEY = LS_KEYS.demoArchive
 const SCHEMA = 'evergreen.demo-archive/v1'
 
 /** 存可点名的字段而不是只存 id：还原条要说清"还原的是哪几份"，而派生列表是顺序敏感的。 */

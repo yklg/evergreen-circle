@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { createPersister } from '../lib/persist'
 import { MAX_USER_SOURCE_URLS } from '../lib/userSourceStates'
+import { LS_KEYS } from '../lib/lsKeys'
 
 /* 用户指定信源的「默认清单」（计划 v3 §二 B7 · 决策 2/5）。
 
@@ -16,7 +17,7 @@ import { MAX_USER_SOURCE_URLS } from '../lib/userSourceStates'
 - `pages/reports/EvidenceAndTracking.tsx`：建订阅时带上同一份清单，复跑才不会静默少信源。
 */
 
-const LS_KEY = 'verda.sources.v1'
+const LS_KEY = LS_KEYS.sources
 
 export interface SourcePrefsData {
   defaultSources: string[]

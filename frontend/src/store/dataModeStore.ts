@@ -4,7 +4,7 @@
  * 背景：原 `VITE_USE_MOCK` / `VITE_LC_DATA_MODE` 是构建期环境变量，切换需改 .env 重启。
  * 本 store 把「数据模式」提升为运行时状态（与后端 `get_data_source(mode)` 的 data_mode 同轴命名）：
  *   - 侧边栏「数据模式」tab 点击即时切换全局生效；
- *   - localStorage 轻量持久化（`verda.dataMode.v1`），刷新后保持上次选择（真实成为常态）；
+ *   - localStorage 轻量持久化（`evergreen.dataMode.v1`），刷新后保持上次选择（真实成为常态）；
  *   - 命名与后端契约对齐：live=真实路网/离线估算链路，fixture=内置演示数据源。
  *
  * 持久化刻意**不引 lib/persist.ts**（那是用户偏好层，会上推 /api/prefs 并参与全局水合；
@@ -14,10 +14,11 @@
  *        api.ts 等非组件模块用 `isFixtureMode()` 取快照。
  */
 import { create } from 'zustand'
+import { LS_KEYS } from '../lib/lsKeys'
 
 export type DataMode = 'live' | 'fixture'
 
-const LS_KEY = 'verda.dataMode.v1'
+const LS_KEY = LS_KEYS.dataMode
 
 function readLocal(): DataMode | null {
   try {

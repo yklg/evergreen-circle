@@ -1,9 +1,10 @@
 import { create } from 'zustand'
+import { LS_KEYS } from '../lib/lsKeys'
 
 /* 进行中任务的一等实体注册表（前端侧）。
 
 把「运行中的任务」从 WorkspacePage 的局部状态提升为全局持久化实体：
-- localStorage 持久化（verda.tasks.v1），刷新/重开浏览器不丢；
+- localStorage 持久化（evergreen.tasks.v1），刷新/重开浏览器不丢；
 - 全局共享，悬浮条与侧栏入口都能读，不依赖 WorkspacePage 是否存在；
 - 后端常驻执行后，断连/返回都不影响任务本身，注册表只镜像其状态。
 */
@@ -51,7 +52,7 @@ interface TaskRegistryState {
   remove: (taskId: string) => void
 }
 
-const LS_KEY = 'verda.tasks.v1'
+const LS_KEY = LS_KEYS.tasks
 
 function load(): Record<string, TaskRecord> {
   try {

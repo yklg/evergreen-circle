@@ -180,11 +180,11 @@ describe('TC-09 · store 持久化（① 单元）', () => {
       useMapNotesStore.getState().set(true)
     })
     expect(useMapNotesStore.getState().on).toBe(true)
-    expect(localStorage.getItem('verda.mapNotes.v1')).toBe('1')
+    expect(localStorage.getItem('evergreen.mapNotes.v1')).toBe('1')
     act(() => {
       useMapNotesStore.getState().set(false)
     })
-    expect(localStorage.getItem('verda.mapNotes.v1')).toBe('0')
+    expect(localStorage.getItem('evergreen.mapNotes.v1')).toBe('0')
   })
 })
 
@@ -197,18 +197,18 @@ describe('TC-R10 · 旧持久化值兼容（MIG-01：既有用户的值路径）
   }
 
   it('预置 "1" → 重建初值即 on（老用户上次开着，刷新后不得莫名回关）', async () => {
-    localStorage.setItem('verda.mapNotes.v1', '1')
+    localStorage.setItem('evergreen.mapNotes.v1', '1')
     expect((await rebuilt()).getState().on).toBe(true)
   })
 
   it('预置 "0" → off；垃圾值（"2" / "true" / 空串 / 缺失）→ 安全落回默认 false，且不抛', async () => {
-    localStorage.setItem('verda.mapNotes.v1', '0')
+    localStorage.setItem('evergreen.mapNotes.v1', '0')
     expect((await rebuilt()).getState().on).toBe(false)
     for (const junk of ['2', 'true', 'on', '']) {
-      localStorage.setItem('verda.mapNotes.v1', junk)
+      localStorage.setItem('evergreen.mapNotes.v1', junk)
       expect((await rebuilt()).getState().on, `垃圾值 ${JSON.stringify(junk)} 不得被当成 on`).toBe(false)
     }
-    localStorage.removeItem('verda.mapNotes.v1')
+    localStorage.removeItem('evergreen.mapNotes.v1')
     expect((await rebuilt()).getState().on).toBe(false)
   })
 })

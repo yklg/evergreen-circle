@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { createPersister } from '../lib/persist'
+import { LS_KEYS } from '../lib/lsKeys'
 
 /* 界面偏好（当前只有「首页模型选择器」有实际消费方）。
 
@@ -19,7 +20,7 @@ import { createPersister } from '../lib/persist'
 本轮一并纳入持久化（零成本），但**不删除**——避免夹带与本次修复无关的改动。
 */
 
-const LS_KEY = 'verda.ui.v1'
+const LS_KEY = LS_KEYS.ui
 
 export const DEFAULT_MODEL = 'Auto'
 

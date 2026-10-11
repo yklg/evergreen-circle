@@ -35,6 +35,7 @@
  */
 import { fetchPrefs, savePrefs, getPrefsApiCapability, PrefsUnsupportedError } from './api'
 import type { PrefValue } from '../types'
+import { LS_KEYS } from './lsKeys'
 
 /** 可持久化的值类型：原子值 + **受控的字符串数组**（后端有真类型的清单键，如 `intel.defaultSources`）。
  *
@@ -88,7 +89,7 @@ function writeRaw(localKey: string, value: unknown): void {
 
 /* ── pending 账本（未成功推送到服务端的字段）──────────── */
 
-const PENDING_KEY = 'verda.prefs.pending.v1'
+const PENDING_KEY = LS_KEYS.prefsPending
 
 function readPending(): Record<string, PrefValue> {
   const v = readRaw(PENDING_KEY)

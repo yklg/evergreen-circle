@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { createPersister } from '../lib/persist'
+import { LS_KEYS } from '../lib/lsKeys'
 
 /* 当前用户展示资料（昵称 / 公司）。
 
@@ -21,7 +22,7 @@ import { createPersister } from '../lib/persist'
 - `pages/HomePage.tsx`：首页问候语 + 右上角头像
 */
 
-const LS_KEY = 'verda.profile.v1'
+const LS_KEY = LS_KEYS.profile
 
 export const DEFAULT_NAME = '林研究员'
 export const DEFAULT_COMPANY = '常青圈'

@@ -31,8 +31,8 @@ vi.mock('./api', () => io)
 import type { PrefsResp } from '../types'
 import { BRAND } from './brand'
 
-const PENDING_KEY = 'verda.prefs.pending.v1'
-const LS_KEY = 'verda.test.prefs.v1'
+const PENDING_KEY = 'evergreen.prefs.pending.v1'
+const LS_KEY = 'evergreen.test.prefs.v1'
 
 type Spec = { name: string; collapsed: boolean }
 

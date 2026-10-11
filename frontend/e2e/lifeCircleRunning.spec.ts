@@ -36,7 +36,7 @@ const metrics = (p: import('@playwright/test').Locator) =>
 async function startRun(page: import('@playwright/test').Page, rounds: number) {
   const set = await page.request.get(`${MOCK}/api/e2e/rounds?n=${rounds}`)
   expect(set.ok(), 'mock 后端没起来（webServer 没拉起 8799？）').toBe(true)
-  await page.addInitScript(() => localStorage.setItem('verda.dataMode.v1', 'live'))
+  await page.addInitScript(() => localStorage.setItem('evergreen.dataMode.v1', 'live'))
   await page.goto('/life-circle/custom')
   const cta = page.getByRole('button', { name: /开始体检/ })
   await expect(cta, '真实模式的「开始体检」入口没出现（页面结构变了？）').toBeVisible()
@@ -182,7 +182,7 @@ test.afterEach(async ({ request }) => {
 async function openLiveCta(page: import('@playwright/test').Page, records: boolean) {
   const set = await page.request.get(`${MOCK}/api/e2e/records?on=${records ? 1 : 0}`)
   expect(set.ok(), 'mock 后端没起来（webServer 没拉起 8799？）').toBe(true)
-  await page.addInitScript(() => localStorage.setItem('verda.dataMode.v1', 'live'))
+  await page.addInitScript(() => localStorage.setItem('evergreen.dataMode.v1', 'live'))
   await page.goto('/life-circle/custom')
   const cta = page.getByRole('button', { name: /开始体检/ })
   await expect(cta, '真实模式的「开始体检」入口没出现').toBeVisible()
