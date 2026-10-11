@@ -3,7 +3,7 @@
   "name": "常青圈 Cookie 助手",
   "version": "2.1.0",
   "description": "在已登录的抖音 / 小红书 / B站 页面一键复制登录 Cookie，供常青圈平台采集使用。",
-  "permissions": ["cookies", "clipboardWrite", "activeTab"],
+  "permissions": ["cookies", "clipboardWrite", "activeTab", "tabs"],
   "host_permissions": [
     "*://*.douyin.com/*",
     "*://*.xiaohongshu.com/*",

@@ -79,7 +79,17 @@
       btn.addEventListener('click', async function() {
         console.log('[Inline Script] Button clicked')
 
+        // 立即反馈
+        status.textContent = '正在读取...'
+        status.className = ''
+        status.style.display = 'block'
+
         try {
+          // 检查 chrome.tabs API 可用性
+          if (!chrome.tabs || !chrome.tabs.query) {
+            throw new Error('缺少 tabs 权限,请在 manifest.json 中添加 "tabs" 权限')
+          }
+
           // 获取当前标签页
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
           console.log('[Inline Script] Tab:', tab)
@@ -95,7 +105,7 @@
           console.log('[Inline Script] Cookies:', cookies.length)
 
           if (cookies.length === 0) {
-            status.textContent = '未找到 Cookie，请先登录'
+            status.textContent = '未找到 Cookie,请先登录'
             status.className = 'err'
             return
           }
@@ -103,8 +113,21 @@
           // 转换为字符串
           const cookieStr = cookies.map(c => c.name + '=' + c.value).join('; ')
 
-          // 复制到剪贴板
-          await navigator.clipboard.writeText(cookieStr)
+          // 复制到剪贴板(带降级方案)
+          try {
+            await navigator.clipboard.writeText(cookieStr)
+          } catch (clipboardError) {
+            console.warn('[Inline Script] Clipboard API failed, using fallback:', clipboardError)
+            // Fallback to execCommand
+            const textarea = document.createElement('textarea')
+            textarea.value = cookieStr
+            textarea.style.position = 'fixed'
+            textarea.style.opacity = '0'
+            document.body.appendChild(textarea)
+            textarea.select()
+            document.execCommand('copy')
+            document.body.removeChild(textarea)
+          }
 
           status.textContent = '✓ 已复制 ' + cookies.length + ' 个 Cookie'
           status.className = 'ok'
