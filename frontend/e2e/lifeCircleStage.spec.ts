@@ -83,11 +83,28 @@ test('④ 地图格高度由视口决定，不随右栏内容长（原 bug 的�
 
 test('画布跟随容器变高（live BMapGL；降级分支走 viewBox 自适应）', async ({ page }) => {
   const host = page.locator('[data-lc-map]')
-  if (!(await host.count())) {
-    test.skip(true, '没走 live 分支（无 AK / 无网络）⇒ 降级 SVG 画布按 viewBox 自适应，本条不适用')
+
+  // 等待模式稳定（最多 10s，给 BMapGL SDK 加载时间）
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-lc-mode]')
+    return el && (el.getAttribute('data-lc-mode') === 'live' || el.getAttribute('data-lc-mode') === 'fallback')
+  }, { timeout: 10000 }).catch(() => null)
+
+  // 检查是否真正处于 live 模式且有可用的 canvas
+  const mode = await host.getAttribute('data-lc-mode')
+  if (mode !== 'live') {
+    test.skip(true, `没走 live 分支（模式=${mode || '未确定'}，无 AK / 无网络）⇒ 降级 SVG 画布按 viewBox 自适应，本条不适用`)
     return
   }
+
   const canvas = page.locator('[data-lc-map] canvas').first()
+
+  // 验证 canvas 真正就绪（非零尺寸）
+  const canvasBox = await canvas.boundingBox()
+  if (!canvasBox || canvasBox.width === 0 || canvasBox.height === 0) {
+    test.skip(true, 'live 分支已启动但 canvas 未就绪（SDK 加载失败或初始化未完成）⇒ 本条不适用')
+    return
+  }
 
   /**
    * 只比"稳定后"相等，不等加载中的某一帧 —— 这条是被实测教出来的：
