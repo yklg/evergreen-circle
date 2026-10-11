@@ -27,6 +27,11 @@ export default function ReportsPage() {
   const [pendingDelete, setPendingDelete] = useState<ReportRecord | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  /**
+   * "请求成功了但没删掉"与"请求本身失败"是两种可观察结果，必须分开发话。
+   * 后端算好这个区别已经很久（`deleted:false`），此前前端把它连同返回值一起丢掉了。
+   */
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
 
   const setDomain = (value: string) => {
@@ -37,6 +42,7 @@ export default function ReportsPage() {
 
   const askDelete = (record: ReportRecord) => {
     setDeleteError(null)
+    setDeleteNotice(null)
     setPendingDelete(record)
   }
 
@@ -44,9 +50,16 @@ export default function ReportsPage() {
     if (!pendingDelete) return
     setDeleting(true)
     setDeleteError(null)
+    setDeleteNotice(null)
     try {
       // 删除后让这一屏自己重取：不在本地伪造"已移除"的列表状态
-      await DOMAIN_VIEWS[pendingDelete.domain].remove(pendingDelete.id)
+      const outcome = await DOMAIN_VIEWS[pendingDelete.domain].remove(pendingDelete)
+      if (!outcome.removed) {
+        // 没删掉 ⇒ 不关确认框、不自增 refreshToken（否则下一轮重取又把那行拍回屏幕，
+        // 用户读到的就是"删了但没删"），把成因说出来
+        setDeleteNotice(outcome.whyNot ?? '后端没确认删除，这一行仍在归档里')
+        return
+      }
       setPendingDelete(null)
       setRefreshToken((n) => n + 1)
     } catch (e) {
@@ -109,6 +122,14 @@ export default function ReportsPage() {
             <div className="mt-3 flex items-start gap-2 rounded-card border border-warn/40 bg-risk/10 px-3 py-2 text-tag text-ink-2">
               <TriangleAlert size={14} className="mt-0.5 shrink-0 text-risk" />
               <span>删除失败：{deleteError}（记录仍在归档里，可重试）</span>
+            </div>
+          )}
+          {deleteNotice && (
+            <div
+              role="status"
+              className="mt-3 flex items-start gap-2 rounded-card border border-line bg-bg px-3 py-2 text-tag text-ink-2"
+            >
+              <span>{deleteNotice}</span>
             </div>
           )}
           <div className="mt-auto flex justify-end gap-3">

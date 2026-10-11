@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Inbox, Layers } from 'lucide-react'
 import RecordRow from '../../components/RecordRow'
 import RecordStatsStrip from '../../components/RecordStatsStrip'
+import DemoArchiveStrip from '../../components/reports/DemoArchiveStrip'
 import { useLivingCircleRecords } from '../../hooks/useLivingCircleRecords'
 import { fmtRecordTime, groupBySample, recordStats } from '../../lib/recordIndex'
 import type { DomainViewProps } from '../../lib/domainViews'
@@ -116,9 +117,12 @@ export default function LivingCircleView({ onDelete, refreshToken }: DomainViewP
       </div>
 
       {isFixture && (
-        <p className="mt-5 text-tag text-ink-3">
-          内置快照：两样区真实百度实跑数据，离线一键复现；真实体检任务自动归档同源。
-        </p>
+        <>
+          <p className="mt-5 text-tag text-ink-3">
+            内置快照：两样区真实百度实跑数据，离线一键复现；真实体检任务自动归档同源。
+          </p>
+          <DemoArchiveStrip domain="living_circle" />
+        </>
       )}
     </>
   )

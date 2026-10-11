@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import LivingCircleView from '../pages/reports/LivingCircleView'
 import ResearchIntelView from '../pages/reports/ResearchIntelView'
 import { deleteLifeCircleReport, deleteReport } from './api'
+import { archiveDeleteWarning, deleteArchiveRecord, type DeleteOutcome } from './demoArchive'
 import type { RecordDomain, ReportRecord } from './recordIndex'
 
 export interface DomainViewProps {
@@ -14,8 +15,11 @@ export interface DomainViewProps {
 export interface DomainViewSpec {
   /** 这一域的屏长什么样：列表折叠 / 情报仪表盘，外壳不知道也不需要知道 */
   View: ComponentType<DomainViewProps>
-  /** 删除走哪条端点。派生表清单按域不同，所以差异登记在这里，而不是散进外壳的 if/switch */
-  remove: (id: string) => Promise<unknown>
+  /**
+   * 删除走哪个介质 —— 登记表只交"这一域的真实态端点语义"，
+   * 演示态/真实态的分叉收在 `demoArchive.deleteArchiveRecord` 一处，外壳不判模式。
+   */
+  remove: (record: ReportRecord) => Promise<DeleteOutcome> | DeleteOutcome
   /** 删除确认文案：会连带清掉什么，只有这一域自己说得准 */
   deleteWarning: (record: ReportRecord) => string
 }
@@ -33,14 +37,32 @@ export interface DomainViewSpec {
 export const DOMAIN_VIEWS: Record<RecordDomain, DomainViewSpec> = {
   living_circle: {
     View: LivingCircleView,
-    remove: deleteLifeCircleReport,
+    // 真实态：后端已经算好 `deleted`（库里本就没有时报 false），这里把它翻成统一契约的"没删掉"
+    remove: (r) =>
+      deleteArchiveRecord(r, async (id) => {
+        const res = await deleteLifeCircleReport(id)
+        return res.deleted
+          ? { removed: true }
+          : { removed: false, whyNot: '这条本来就不在归档里（可能已在别处删除）' }
+      }),
     deleteWarning: (r) =>
-      `确定要删除《${r.title}》吗？该操作不可撤销，重新体检会再次消耗百度配额。`,
+      archiveDeleteWarning(
+        r,
+        `确定要删除《${r.title}》吗？该操作不可撤销，重新体检会再次消耗百度配额。`,
+      ),
   },
   travel: {
     View: ResearchIntelView,
-    remove: deleteReport,
+    remove: (r) =>
+      deleteArchiveRecord(r, async (id) => {
+        const res = await deleteReport(id)
+        // 调研端点只回 `{ok}`，没有"库里本就没有"这一档 —— 不替它造一个
+        return res.ok ? { removed: true } : { removed: false, whyNot: '后端未确认删除，记录仍在归档里' }
+      }),
     deleteWarning: (r) =>
-      `确定要删除《${r.title}》吗？该操作不可撤销，关联的 ${r.evidence_count ?? 0} 条证据、决策链路与反馈也将一并清除。`,
+      archiveDeleteWarning(
+        r,
+        `确定要删除《${r.title}》吗？该操作不可撤销，关联的 ${r.evidence_count ?? 0} 条证据、决策链路与反馈也将一并清除。`,
+      ),
   },
 }
