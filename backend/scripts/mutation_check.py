@@ -636,6 +636,58 @@ MUTATIONS: list[Mutation] = [
         test="tests/test_shape_caliber.py::test_offline_report_carries_no_shape_keys",
     ),
 
+    # ── 地标体检 · 侧表性质（片 1，六把刀对应 T-02 / T-03 / T-04 / T-05 / T-10 与终态钩子）──
+    Mutation(
+        label="T-02：唯一索引退成普通索引（重复写入不再被挡）",
+        rel="app/core/db.py",
+        old="        CREATE UNIQUE INDEX IF NOT EXISTS ux_report_spot_checks_origin",
+        new="        CREATE INDEX IF NOT EXISTS ux_report_spot_checks_origin",
+        test="tests/test_spot_check_linkage.py::test_side_table_has_a_unique_index_over_the_idempotency_key",
+    ),
+    Mutation(
+        label="T-03：真 upsert 退成 DO NOTHING（重跑静默保留旧行，最新证据上不了屏）",
+        rel="app/core/db.py",
+        old='            " ON CONFLICT(host_kind,host_report_id,spot_id,scenario) DO UPDATE SET"\n'
+            '            " lc_report_id=excluded.lc_report_id, snapshot=excluded.snapshot,"\n'
+            '            " captured_at=excluded.captured_at",',
+        new='            " ON CONFLICT(host_kind,host_report_id,spot_id,scenario) DO NOTHING",',
+        test="tests/test_spot_check_linkage.py::test_side_table_writer_is_a_real_upsert",
+    ),
+    Mutation(
+        label="T-04：侧表写入口摘掉 `with _LOCK:`（并发写不再有临界区）",
+        rel="app/core/db.py",
+        old='    with _LOCK:\n'
+            "        c = _connect()\n"
+            "        c.execute(\n"
+            '            "INSERT INTO report_spot_checks"',
+        new="    if True:\n"
+            "        c = _connect()\n"
+            "        c.execute(\n"
+            '            "INSERT INTO report_spot_checks"',
+        test="tests/test_spot_check_linkage.py::test_concurrent_attach_keeps_exactly_one_row",
+    ),
+    Mutation(
+        label="T-05：生产入口不再校验宿主报告存在（客户端可造永久孤儿行）",
+        rel="app/core/db.py",
+        old="    if host is None:",
+        new="    if False:",
+        test="tests/test_spot_check_linkage.py::test_maybe_attach_refuses_an_unknown_host_report",
+    ),
+    Mutation(
+        label="T-10：删攻略不再断关联（留下点得进去的孤儿入口）",
+        rel="app/core/db.py",
+        old='    c.execute("DELETE FROM report_spot_checks WHERE host_report_id=?", (report_id,))',
+        new="    pass  # 变异：删宿主报告时不再断关联",
+        test="tests/test_spot_check_linkage.py::test_deleting_either_side_clears_the_association_only",
+    ),
+    Mutation(
+        label="终态钩子丢掉 kind 条件（refine/brief 等非体检任务也会被卷进侧表）",
+        rel="app/core/runner.py",
+        old='                    if kind == "living_circle" and origin:',
+        new="                    if origin:",
+        test="tests/test_spot_check_linkage.py::test_runner_terminal_state_writes_the_side_table",
+    ),
+
 ]
 
 

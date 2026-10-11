@@ -60,15 +60,18 @@ REQUIRED_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/subscriptions"),
     ("DELETE", "/api/subscriptions/{sub_id}"),
     ("GET", "/api/search"),
-    # ── life-circle 域 7 端点（skip 独有，选边事故最高发区；以 main.py 实际路由为准）──
+    # ── life-circle 域 8 端点（skip 独有，选边事故最高发区；以 main.py 实际路由为准）──
     # 第 7 条是报告中心「唯一归档 + 删除」补的 DELETE：删除能力要收进归档面，
     # 就不能让生活圈侧只有读端点而没有删端点（调研报告侧早有 DELETE /api/reports/{id}）。
+    # 第 8 条是地标体检（片 1）的回读端点：攻略页要知道"这个景点体检过没有"，
+    # 只能按**体检报告 id** 反查关联（`/spot-checks`）。
     ("GET", "/api/life-circle/regions"),
     ("GET", "/api/life-circle/map-config"),
     ("GET", "/api/life-circle"),
     ("GET", "/api/life-circle/compare"),
     ("GET", "/api/life-circle/{report_id}"),
     ("GET", "/api/life-circle/{report_id}/share"),
+    ("GET", "/api/life-circle/{report_id}/spot-checks"),
     ("DELETE", "/api/life-circle/{report_id}"),
 }
 
@@ -98,7 +101,7 @@ def test_life_circle_surface_complete():
     """life-circle 端点单独再钉一道，避免从并集增删时被连带放松。"""
     actual = _actual_routes()
     lc = {r for r in REQUIRED_ROUTES if r[1].startswith("/api/life-circle")}
-    assert len(lc) == 7, f"防护清单本身被改动：期望 7 个 LC 路由，实际 {len(lc)}"
+    assert len(lc) == 8, f"防护清单本身被改动：期望 8 个 LC 路由，实际 {len(lc)}"
     missing = sorted(lc - actual)
     assert not missing, f"life-circle 端点丢失：{missing}"
 

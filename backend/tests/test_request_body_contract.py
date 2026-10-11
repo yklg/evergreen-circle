@@ -160,7 +160,10 @@ def test_declared_fields_have_no_undocumented_senders():
         assert key in src, f"发送方清单里的 {key} 在 api.ts 里已找不到 ⇒ 清单漂移，判据在空转"
 
     unsent = set(CreateTaskBody.model_fields) - launched
-    assert unsent == {"purpose"}, (
+    # 片 1 落地后：`origin` 已由 `CreateTaskBody` 声明，而前端还没开始发（片 2 才发）——
+    # 这条清单正是"后端先声明、前端才开始发"这个顺序的编码：片 2 一旦开始发 `origin`，
+    # 就把它挪进 `lc_launched` 并把它从这里删掉，本判据会盯着这次挪动。
+    assert unsent == {"purpose", "origin"}, (
         f"`CreateTaskBody` 的无发送方字段清单变了，须回计划 §0 登记：{sorted(unsent)}"
     )
     for field in sorted(unsent):

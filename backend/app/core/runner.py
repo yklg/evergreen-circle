@@ -165,6 +165,9 @@ async def _drive(task_id: str, r: _Run) -> None:
         # 按 tasks.kind 从封闭注册表分发（无 else 兜底：未登记即 fail-loud）
         full = db.get_task_full(task_id) or {}
         kind = (full.get("kind") or "research")
+        # 地标体检的来源（片 1）：终态钩子靠它判断"这条任务要不要写侧表"。
+        # 与 kind 一起在这里取出，终态那一行不再查一次库（`full` 已在作用域内）。
+        origin = (full.get("clarifications") or {}).get("origin")
         pipe = KIND_PIPELINES.get(kind)
         if pipe is None:
             msg = f"未知任务类型 {kind!r}，无法执行。"
@@ -203,6 +206,12 @@ async def _drive(task_id: str, r: _Run) -> None:
                 else:
                     r.status = "done"
                     db.mark_task_done(task_id, r.report_id or "")
+                    # 地标体检的关联（片 1）：终态**唯一**写点。挂在 runner 而不是管线里，
+                    # 因为生活圈管线自己调了三处 `mark_task_done`（复用既有结果 / 缓存命中 /
+                    # 实时重算），挂管线要抄三遍；这里按 kind+origin **双条件**过滤 ——
+                    # kind 把 refine / brief / 调研任务挡在外面，origin 才决定"这确实是一次地标体检"。
+                    if kind == "living_circle" and origin:
+                        db.maybe_attach_spot_check(task_id, r.report_id or "")
         if not terminal_seen:
             # 协议违例守卫：生成器耗尽却无终态 → 合成 error 帧 + failed（防僵尸 running）
             msg = "任务异常结束（未落终态）"

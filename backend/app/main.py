@@ -334,6 +334,25 @@ def get_expert(eid: str, domain: str = "travel"):
 
 
 # ── 任务 / 澄清 ─────────────────────────────────────────
+class SpotOrigin(BaseModel):
+    """地标体检的来源：这次体检是「从哪份攻略的哪个景点」发起的（片 1）。
+
+    与 `scenario`（口径档）**刻意分开**：本期流水线还不按档计算（assemble 无场景维、
+    缓存键无场景维），所以只记来源，不贴一个系统兑现不了的口径标签 —— 那正是片 0
+    修掉的 `sample_profile` 缺陷形状（字段被静默丢弃、所有档位按 standard 跑完且无提示）。
+
+    子模型同样 `extra="forbid"`：客户端多填一个键要拿到 422，而不是被静默丢掉。
+    刻意**不**声明 `snapshot`：快照由服务端按 `host_report_id` 自取（`db.maybe_attach_spot_check`），
+    收进来又不用等于摆一个可被填的假入口。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host_kind: str = "guide"
+    host_report_id: str
+    spot_id: str
+
+
 class CreateTaskBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -365,6 +384,10 @@ class CreateTaskBody(BaseModel):
     # 丢弃 —— 这是"键没声明"的响亮失败（`test_request_body_contract.py` 在守整体封闭性），
     # 但 422 也是坏体验，所以在这里写清：它是请求侧的**意图**，不参与缓存键。
     force: bool = False
+    # 地标体检来源（片 1）。**声明必须早于前端开始发**：本模型 `extra="forbid"`，
+    # 前端先发而这里没声明 ⇒ 用户点一下景点就拿到 422。这条顺序由
+    # `test_spot_check_linkage.py::test_spot_launch_keys_are_refused_until_the_backend_declares_them` 钉着。
+    origin: Optional[SpotOrigin] = None
 
     @field_validator("center", mode="before")
     @classmethod
@@ -436,7 +459,7 @@ async def post_task(body: CreateTaskBody):
         travel_mode = body.travel_mode if body.travel_mode in ("walking", "riding", "driving") else "walking"
         caliber = get_caliber(travel_mode)
         center = await _to_bd09(body.center, body.coord_sys) if body.center else None
-        task_id = create_living_circle_task({
+        params = {
             "scene_name": body.query, "city": body.city, "address": body.address,
             "center": center, "study_radius_m": float(caliber.study_radius_m),
             "sample_profile": _lc_sample_profile(body),
@@ -444,7 +467,13 @@ async def post_task(body: CreateTaskBody):
             # 4b：用户点名重测 ⇒ 一路传到 `CheckParams.force` ⇒ `CachingDataSource.peek` 早退。
             # 缺省 False ⇒ 今天的全部复用行为逐字不变（U22/U23/U39 那四条零新增调用的不变式照旧）。
             "force": bool(body.force),
-        })
+        }
+        # 地标体检来源（片 1）：**只在显式带了来源时**写进载荷 —— 社区体检若多一个
+        # `origin: None`，"这次是不是从景点发起的"就成了三态（缺键 / None / 对象），
+        # 而下游 `db.maybe_attach_spot_check` 只该回答一个二值问题。
+        if body.origin:
+            params["origin"] = body.origin.model_dump()
+        task_id = create_living_circle_task(params)
         return {"taskId": task_id}
 
     # 旅游调研：攻略/评估。归一优先级——显式合法 type > 旧客户端 purpose 别名 > 默认 guide。
@@ -905,6 +934,17 @@ def compare_life_circle(ids: str = ""):
     if len(reps) == 3:
         out["reference"] = reps[2].get("living_circle")
     return out
+
+
+@app.get("/api/life-circle/{report_id}/spot-checks")
+def list_spot_checks_for_report(report_id: str):
+    """这份体检报告是从哪份攻略的哪些景点发起的（片 2 · 报告页回读）。
+
+    返回**数组**：一份体检可能被同一攻略的多个景点关联（同中心复用 ⇒ 一次体检、
+    多个景点入口），所以不是一对一。空数组是常态（社区体检、或还没关联上），
+    不是错误 —— 不 404、也不因为报告不存在而抛异常。
+    """
+    return {"checks": db.list_spot_checks(lc_report_id=report_id)}
 
 
 @app.get("/api/life-circle/{report_id}/share")

@@ -224,6 +224,25 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ux_user_sources_task_url
             ON user_sources(task_id, url_canonical);
+        CREATE TABLE IF NOT EXISTS report_spot_checks (
+            host_kind TEXT NOT NULL,
+            host_report_id TEXT NOT NULL,
+            spot_id TEXT NOT NULL,
+            scenario TEXT NOT NULL DEFAULT 'residential',
+            lc_report_id TEXT NOT NULL,
+            snapshot TEXT NOT NULL DEFAULT '{}',
+            captured_at TEXT NOT NULL
+        );
+        -- 幂等键：同一 (宿主类型, 宿主报告, 景点, 口径档) 只留一行，重跑覆盖到最新一份。
+        -- `scenario` 本期不参与计算（流水线还不读它），但必须先占位进键：SQLite 事后给唯一索引
+        -- 扩列要重建表，而"同一景点在两种口径下各留一条"是 D1/D2 落地时的既定形状。
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_report_spot_checks_origin
+            ON report_spot_checks(host_kind, host_report_id, spot_id, scenario);
+        -- 两个方向都要能反查：删体检报告按 lc_report_id 清，删攻略按 host_report_id 清。
+        CREATE INDEX IF NOT EXISTS ix_report_spot_checks_lc
+            ON report_spot_checks(lc_report_id);
+        CREATE INDEX IF NOT EXISTS ix_report_spot_checks_host
+            ON report_spot_checks(host_report_id);
         """
     )
     conn.commit()
@@ -1037,6 +1056,13 @@ def _delete_report_scoped_rows(c, report_id: str) -> None:
         c.execute("DELETE FROM user_sources WHERE task_id=?", (tid,))
     for table in _REPORT_SCOPED_TABLES:
         c.execute(f"DELETE FROM {table} WHERE report_id=?", (report_id,))
+    # 地标体检的关联（片 1）**不进** `_REPORT_SCOPED_TABLES`：那张清单的列名固定是 `report_id`
+    # （上一行就是按它拼的），而这条关联跨两张主表、列名是 lc_report_id / host_report_id
+    # ⇒ 塞进清单只会在删除时抛 `no such column: report_id`。
+    # 两个方向都要清（删攻略断关联、删体检报告也断关联），但**不**连带删另一侧：
+    # 删攻略不该带走体检报告，反之亦然 —— 只清一侧会留下永远点得进去的孤儿入口。
+    c.execute("DELETE FROM report_spot_checks WHERE lc_report_id=?", (report_id,))
+    c.execute("DELETE FROM report_spot_checks WHERE host_report_id=?", (report_id,))
 
 
 def delete_report(report_id: str) -> bool:
@@ -1611,6 +1637,143 @@ def get_living_circle_report(report_id: str) -> Optional[Dict[str, Any]]:
     return data
 
 
+def attach_spot_check(
+    *,
+    lc_report_id: str,
+    host_report_id: str,
+    host_kind: str = "guide",
+    spot_id: str,
+    scenario: str = "residential",
+    snapshot: Any = None,
+    captured_at: str = "",
+) -> None:
+    """**裸写入口**：把「某份宿主报告的某个景点」与一份体检报告关联起来（幂等）。
+
+    ## 为什么必须是 `ON CONFLICT DO UPDATE` 而不是仓里更常见的 `INSERT OR REPLACE`
+
+    SQLite 的 `INSERT OR REPLACE` 是**先删后插**：语句里没给出的列会退回默认值（本表会被
+    退成空 snapshot / 空 captured_at）。而 `DO NOTHING` 会让「重跑」静默保留旧行 ⇒ 最新
+    那份的证据永远上不了屏。两种都算假 upsert，判据见 `test_side_table_writer_is_a_real_upsert`。
+
+    ## 为什么存在性校验不在这里
+
+    这里是给测试/运维用的直接写口（既有幂等用例就用它写一个并不存在的宿主报告），
+    来源校验落在**生产入口** `maybe_attach_spot_check` 上 —— 见那条的 docstring。
+
+    写口一律进 `_LOCK`：两个任务同点位并发落终态时，无临界区的 upsert 会互相覆盖成半截账。
+    """
+    with _LOCK:
+        c = _connect()
+        c.execute(
+            "INSERT INTO report_spot_checks"
+            "(host_kind,host_report_id,spot_id,scenario,lc_report_id,snapshot,captured_at)"
+            " VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(host_kind,host_report_id,spot_id,scenario) DO UPDATE SET"
+            " lc_report_id=excluded.lc_report_id, snapshot=excluded.snapshot,"
+            " captured_at=excluded.captured_at",
+            (
+                host_kind, host_report_id, spot_id, scenario, lc_report_id,
+                json.dumps(snapshot or {}, ensure_ascii=False), captured_at or _now(),
+            ),
+        )
+        c.commit()
+
+
+def list_spot_checks(
+    host_kind: Optional[str] = None,
+    host_report_id: Optional[str] = None,
+    spot_id: Optional[str] = None,
+    scenario: Optional[str] = None,
+    lc_report_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """按任选键筛出关联行（全不传 = 全表）。返回顺序按写入次序，`snapshot` 解回 dict。
+
+    `lc_report_id` 是给报告页回读用的第五个筛键（它不在幂等四键里）：一次体检可能被
+    同一攻略的多个景点关联，所以这个方向返回的是**数组**。
+    """
+    where, args = [], []
+    for col, val in (
+        ("host_kind", host_kind), ("host_report_id", host_report_id),
+        ("spot_id", spot_id), ("scenario", scenario), ("lc_report_id", lc_report_id),
+    ):
+        if val is not None:
+            where.append(f"{col}=?")
+            args.append(val)
+    sql = "SELECT * FROM report_spot_checks"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY rowid"
+    out = []
+    for r in _connect().execute(sql, tuple(args)).fetchall():
+        d = dict(r)
+        try:
+            d["snapshot"] = json.loads(d.get("snapshot") or "{}")
+        except (TypeError, ValueError):
+            d["snapshot"] = {}
+        out.append(d)
+    return out
+
+
+def maybe_attach_spot_check(task_id: str, lc_report_id: str) -> None:
+    """**生产入口**：从任务的 `clarifications.origin` 读来源，校验通过才落关联。
+
+    为什么校验在这一层而不是裸写入口：`origin` 是**客户端可填**的（`SpotOrigin`），
+    填一个不存在的 `host_report_id` 会让删攻略时的级联清不掉它 —— 那份报告从未存在，
+    按 host_report_id 清永远命中不到，那行孤儿就永久留在库里，还在攻略页上留一个
+    点得进去的入口。裸写入口留给测试与运维直接写（既有幂等用例的宿主报告就不存在）。
+
+    `snapshot` 由**服务端**决定（宿主报告的标题），不接受客户端喂 —— 收进来又不用，
+    等于摆一个可被填的假入口。客户端在 `SpotOrigin` 上多发一个键会被 422 挡掉。
+    """
+    full = get_task_full(task_id) or {}
+    origin = (full.get("clarifications") or {}).get("origin") or {}
+    host_report_id = str(origin.get("host_report_id") or "").strip()
+    spot_id = str(origin.get("spot_id") or "").strip()
+    host_kind = str(origin.get("host_kind") or "guide").strip() or "guide"
+    if not (host_report_id and spot_id and lc_report_id):
+        return
+    host = get_report(host_report_id)
+    if host is None:
+        logging.getLogger(__name__).warning(
+            "地标体检的来源报告不存在，关联未落库（任务 %s → %s / %s）：这一行留不下就清不掉",
+            task_id, host_report_id, spot_id,
+        )
+        return
+    attach_spot_check(
+        lc_report_id=lc_report_id,
+        host_kind=host_kind,
+        host_report_id=host_report_id,
+        spot_id=spot_id,
+        snapshot={"host_title": host.get("title") or ""},
+        captured_at=_now(),
+    )
+
+
+def _spot_check_origins_for(lc_report_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """批量取「这份体检报告是从哪来的」（列表用）。**最早**那条胜出。
+
+    为什么不用 JOIN 而用第二次查询：一份体检报告可能被同一攻略的多个景点关联
+    （同中心复用 ⇒ 一次体检、多个景点入口），JOIN 会让它在列表里出现多次。
+    """
+    if not lc_report_ids:
+        return {}
+    placeholders = ",".join("?" * len(lc_report_ids))
+    rows = _connect().execute(
+        "SELECT lc_report_id, host_kind, host_report_id, spot_id FROM report_spot_checks"
+        f" WHERE lc_report_id IN ({placeholders}) ORDER BY rowid",
+        tuple(lc_report_ids),
+    ).fetchall()
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        d = dict(r)
+        out.setdefault(d["lc_report_id"], {
+            "host_kind": d["host_kind"],
+            "host_report_id": d["host_report_id"],
+            "spot_id": d["spot_id"],
+        })
+    return out
+
+
 def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False) -> List[Dict[str, Any]]:
     """历史体检记录列表（短字段，对齐前端 LifeCircleRecord）。
 
@@ -1641,6 +1804,7 @@ def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False
         " FROM living_circle_reports ORDER BY created_at DESC, rowid DESC LIMIT ?",
         (limit,),
     ).fetchall()
+    origins = _spot_check_origins_for([dict(r)["report_id"] for r in rows])
     out = []
     hidden: List[str] = []
     for r in rows:
@@ -1668,6 +1832,10 @@ def list_living_circle_reports(limit: int = 50, include_incomplete: bool = False
             # 「本来就没联网」和「配额被掐断」，用户在找旧报告的地方反而看不到成因。
             # 整节点透传（前端用 `degradeDetailLabel()` 取标签，不在消费点自己 switch）。
             "degraded": lc.get("degraded") or None,
+            # 地标体检的来源（片 1）：这份体检是从哪份攻略的哪个景点发起的；社区体检为 None。
+            # 只透 `origin`、**不透** `scenario` —— 口径档还没进计算，透出去就是一句
+            # 系统兑现不了的话；那条边界由 `test_list_endpoint_does_not_expose_scenario` 守着。
+            "origin": origins.get(d["report_id"]),
         })
     if hidden:
         # 不静默：隐藏了哪些、为什么，逐条留痕（数据仍在库中，可用 include_incomplete=True 取回）
