@@ -16,6 +16,7 @@ report_ready/done 同时携带 `reportId`（runner 传统字段）与 `report_id
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import logging
 import uuid
 from functools import lru_cache
@@ -693,6 +694,14 @@ def _finalize_living_report(report_data, scene_key, replace_scene: bool = False,
     # 判成不可展示、在这里早退，不落库 —— 若把读数挂在落库之后，"新闸第一批就拦住了东西"
     # 这件事恰恰只在被拦下的那批里成立，事后无处可看（新闸最坏的失效形态是静默，不是红）。
     observe_shape_gate(report_id, report_data)
+    # 跨语言契约自检（2026-10-11 加）：载荷最终要被**浏览器**读，而 `NaN`/`Infinity` 在 Python
+    # 里是合法字面量、在标准 JSON 里非法 —— 实测一次真跑就把 `"nearest_m": Infinity` 落了库，
+    # 前端（Vite/浏览器 JSON.parse）直接 `expected value at line …`。验收放在这一收口：
+    # 非法载荷当场拒绝落库，而不是进了 DB 再让前端解析失败（那时症状离病因很远）。
+    try:
+        json.dumps(report_data, ensure_ascii=False, allow_nan=False)
+    except ValueError as e:
+        raise ValueError(f"{scene_key}: 载荷含非标准 JSON 数值（NaN/Infinity）⇒ 拒绝落库：{e}") from e
     issues = assess_geometry(report_data)
     if not issues.ok:
         return report_id, issues.reason, report

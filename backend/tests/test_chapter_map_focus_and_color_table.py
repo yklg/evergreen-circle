@@ -48,6 +48,10 @@ EXPECTED_EMITTED = {
     "beijing-jinsong.json": 5,
     "kaili-ev2.json": 6,
     "kaili.json": 5,
+    # 2026-10-11 新增两份真跑样区：上海 0 盲区 ⇒ 盲区章缺席态（5）；下司 1 盲区 ⇒ 在场态（6）。
+    # 都是**实测**读数（`len(_emitted(_report(lc)))`），不是照抄邻行。
+    "shanghai-wujiaochang.json": 5,
+    "kaili-xiasi.json": 6,
 }
 
 

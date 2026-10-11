@@ -13,6 +13,7 @@ M 阶段 LLM 仅做解读文案；本模块为无 Key 时的确定性分数来�
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.living_circle.caliber import get_caliber
@@ -222,9 +223,12 @@ def triad_from_points(
             "in_reach": in_reach,
             "covered": in_reach,
             "nearest_name": best.get("name") if best else None,
-            "nearest_minutes": round(best_m, 1) if best_m is not None else None,
+            # 非有限值一律落 None：`inf` 表示"这一类一个设施都没有"，它不是距离读数，
+            # 而 `round(inf, 1)` 在 Python 里读得回、在标准 JSON / 浏览器里是**非法值**
+            # （2026-10-11 实测：凯里下司那份载荷因此被 Vite 拒收，`expected value at line …`）。
+            "nearest_minutes": round(best_m, 1) if best_m is not None and math.isfinite(best_m) else None,
             "within_blind_radius": within,
-            "nearest_m": None if nearest_m < 0 else round(nearest_m, 1),
+            "nearest_m": None if not math.isfinite(nearest_m) or nearest_m < 0 else round(nearest_m, 1),
             "blocked_by_geometry": None if within is None else bool(within and not in_reach),
         })
     return out

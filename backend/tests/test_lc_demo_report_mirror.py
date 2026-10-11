@@ -131,9 +131,18 @@ def test_snapshot_carries_the_ledger_payload_back(stem: str):
     assert "living_circle" in raw, f"{stem}: 装配器不发 living_circle ⇒ 读路径的拼回假设失效"
     assert raw["living_circle"] == payload, f"{stem}: build() 交出的载荷与装配器那份不同源"
     assert payload.get("scene", {}).get("name"), f"{stem}: 载荷没有 scene.name，读路径拼不回可读报告"
-    has_ledger = "cells_ledger" in (payload.get("caliber") or {})
-    assert has_ledger == stem.endswith("-ev2"), (
-        f"{stem}: 台账在场性与点名不符（cells_ledger={has_ledger}）⇒ 两份凯里件内容互串了"
+    # 台账在场性：载荷带台账 ⇒ 盲区章正文里必须有那条逐格台账段（`_ledger_sentence` 的产物），
+    # 载荷不带 ⇒ 一个字都不许出现。这是**同源**判据，不是"按后缀猜"。
+    # 原先这里写的是 `has_ledger == stem.endswith("-ev2")` —— 2026-10-11 作废：`cells_ledger`
+    # 现在每次真跑都渲染（`assemble.py:339` 无条件走），新跑的两份样区（上海五角场/凯里下司）
+    # 天然带它，那条后缀规则会误杀；"两份夹具互串"改由 `bake._assert_samples_are_distinct()`
+    # （`build()` 会调）在全集层面用指纹拦。
+    payload_has_ledger = "cells_ledger" in (payload.get("caliber") or {})
+    blind = next((s for s in on_disk.get("sections") or [] if s.get("id") == "blindspot"), None)
+    prose_has_ledger = "判定格" in "".join((blind or {}).get("paragraphs") or [])
+    assert prose_has_ledger == payload_has_ledger, (
+        f"{stem}: 载荷台账={payload_has_ledger}，而正文里的台账段={prose_has_ledger}"
+        " ⇒ 装配器在这一位上做了增删（或快照落的是另一份载荷）"
     )
 
 
@@ -143,6 +152,21 @@ def test_snapshot_satisfies_report_contract(stem: str):
     on_disk = _read_snapshot(stem)
     missing = [k for k in REQUIRED_REPORT_KEYS if k not in on_disk]
     assert not missing, f"{stem}: 快照缺 Report 必填键 {missing}"
+
+
+@pytest.mark.parametrize("stem", DEMO_STEMS)
+def test_demo_fixture_is_strict_json(stem: str):
+    """载荷必须是**标准 JSON**：`NaN`/`Infinity` 在 Python 里合法、在浏览器里非法。
+
+    2026-10-11 实发：一份真跑载荷里落了 `"nearest_m": Infinity`（某类设施一个都没有时，
+    `scoring` 只挡了负数没挡 `inf`）⇒ 镜像闸、金标全绿，而 Vite/浏览器 `JSON.parse` 直接
+    `expected value at line 10973`。`parse_constant` 会被标准库里"遇到非标准字面量"时回调，
+    拿它当探测器：一旦命中就点名到具体字面量，而不是等前端报一句解析错。
+    """
+    with open(FIXTURES_DIR / f"{stem}.json", encoding="utf-8") as fh:
+        json.load(fh, parse_constant=lambda c: pytest.fail(f"{stem}: 载荷含非标准 JSON 字面量 {c!r}"))
+    snap = _read_snapshot(stem)
+    json.dumps(snap, ensure_ascii=False, allow_nan=False)
 
 
 def test_ledger_sample_ships_the_charts_the_demo_needs():

@@ -123,6 +123,12 @@ def test_living_circle_fixtures_mirror_frontend():
          FRONTEND_FIXTURES / "kaili.json"),
         (BACKEND_DIR / "app" / "living_circle" / "fixtures" / "beijing-jinsong.json",
          FRONTEND_FIXTURES / "beijing-jinsong.json"),
+        # 2026-10-11 真跑新增两份：这两行不补，新夹具就**没被镜像闸看守**（红了才想起它，
+        # 正是"没盖到"而不是"盖住了"）—— 增样区时同笔补这对路径。
+        (BACKEND_DIR / "app" / "living_circle" / "fixtures" / "shanghai-wujiaochang.json",
+         FRONTEND_FIXTURES / "shanghai-wujiaochang.json"),
+        (BACKEND_DIR / "app" / "living_circle" / "fixtures" / "kaili-xiasi.json",
+         FRONTEND_FIXTURES / "kaili-xiasi.json"),
     ]
     failures = []
     for backend_f, front_f in pairs:

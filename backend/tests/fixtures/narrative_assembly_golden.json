@@ -47,6 +47,24 @@
         "report": "53066c2fe00293a1"
       }
     },
+    "kaili-xiasi.json": {
+      "counts": {
+        "sections": 8,
+        "highlights": 11,
+        "charts": 9
+      },
+      "faces": {
+        "sections": "a17ad777f63b1e31",
+        "toc": "d1f90d57b6433847",
+        "charts": "00209ec3591146ae",
+        "claims": "678c1a70c8dd2cbd",
+        "evidence": "5d83ce786a6d2930",
+        "subtitle": "55916ec19b51681e",
+        "dispatch": "803ec2dd9f22f1e9",
+        "glossary": "e13d91946b1384fb",
+        "report": "731c966cfee73ef9"
+      }
+    },
     "kaili.json": {
       "counts": {
         "sections": 8,
@@ -63,6 +81,24 @@
         "dispatch": "7be4114e74050989",
         "glossary": "e13d91946b1384fb",
         "report": "0fcd42857c85a8ba"
+      }
+    },
+    "shanghai-wujiaochang.json": {
+      "counts": {
+        "sections": 8,
+        "highlights": 7,
+        "charts": 8
+      },
+      "faces": {
+        "sections": "8aee172e4b5d420b",
+        "toc": "d1f90d57b6433847",
+        "charts": "8c1cac7f26fbb6fa",
+        "claims": "65207d0b24bfe401",
+        "evidence": "595b8489fe0071ee",
+        "subtitle": "3a357873e18ea57f",
+        "dispatch": "8c79e5e4bda04bf9",
+        "glossary": "e13d91946b1384fb",
+        "report": "eb519e23864dea30"
       }
     }
   }

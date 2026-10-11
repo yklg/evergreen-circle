@@ -19,6 +19,7 @@ import pytest
 from app.core import db
 from app.core.pipeline.living_circle import (
     STAGES,
+    _finalize_living_report,
     _scene_key,
     create_living_circle_task,
     living_circle_pipeline,
@@ -898,3 +899,24 @@ def test_unregistered_stage_omits_owner_and_warns(caplog):
         frame = _progress("teleport", percent=50, seq=8, evidence_count=0)
     assert "expert" not in frame["data"], "未登记阶段不该发归属"
     assert any("teleport" in r.getMessage() for r in caplog.records), "静默不发 ⇒ 漂移无人知"
+
+
+def test_finalize_refuses_non_standard_json_payload():
+    """载荷里落进 `NaN`/`Infinity` ⇒ 写路径**当场拒绝**（浏览器只认标准 JSON）。
+
+    2026-10-11 实发：一次真跑把 `"nearest_m": Infinity` 落了库（某类设施一个都没有时，
+    `scoring` 只挡了负数没挡非有限值）—— 镜像闸、金标全绿，而 Vite/浏览器 `JSON.parse`
+    报 `expected value at line 10973`。修法两层：生产者出有限值（`scoring.py` 的 isfinite
+    守卫）＋ 这一收口的自检（非法载荷不进库、不给前端）。
+    变异：摘掉 `_finalize_living_report` 里那句 `json.dumps(report_data, allow_nan=False)`
+    ⇒ 本条红（载荷会一路走到落库）。
+    """
+    import copy
+    import json as _json
+    from app.living_circle import __file__ as lc_pkg
+
+    fixtures = Path(lc_pkg).parent / "fixtures"
+    lc = copy.deepcopy(_json.loads((fixtures / "kaili.json").read_text(encoding="utf-8")))
+    lc["scores"]["triads"][0]["nearest_m"] = float("inf")
+    with pytest.raises(ValueError, match="非标准 JSON"):
+        _finalize_living_report(lc, "strict-json-probe", data_mode="fixture")

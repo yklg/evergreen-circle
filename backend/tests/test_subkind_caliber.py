@@ -836,6 +836,16 @@ def test_name_roster_golden_on_in_repo_fixtures():
       ③ 下面 6 颗锚点全部仍在名册里且判类不变。
     ⚠️ `market` / `elderly` 重钉后**仍计 0** ⇒ 这份新样区没给那两类增加任何覆盖，别把样本变大读成覆盖面变大。
 
+    10-11 重钉（样本面 356 → 495）：新增两份**真跑**样区 `fixtures/shanghai-wujiaochang.json` 与
+    `fixtures/kaili-xiasi.json`（合计 139 颗）。同两条前置再测一遍：
+      ② 新读数减旧读数的逐类差值 == 新样区自身归类（逐类核对：market 4 / medical 2 / education 10 /
+         shopping 34 / finance 16 / recreation 2 / service 3 / other 68，elderly 0）⇒ 无连带位移；
+      ③ 6 颗锚点仍在且判类不变。
+    ⚠️ 与 10-03 那条相反：**`market` 这次不再是 0**（4 颗，全部来自上海的 `菜市场` 形状
+    —— 与 ① 的结论同源：`菜市场` 是 shopping 的 reject ⇒ 单命中 market）；`elderly` 仍 0。
+    涉及计数下钉的那几条判据见本文件其余 `market`/`elderly` 说明，它们今天说的"零覆盖"只对 10-03
+    那份样本面成立。
+
     为什么值得留：拍板 ①（名称级 reject 进共用实现）落地那天，本条**必须变红并被重指**，
     它就是"其余 6 类有没有被误伤"的漂移检测网。今天它绿，是给那次红留的基线。
 
@@ -855,15 +865,15 @@ def test_name_roster_golden_on_in_repo_fixtures():
     """
     cr = __import__("app.living_circle.category_rule", fromlist=["CATEGORY_RULES"])
     pts = _fixture_points()
-    assert len(pts) == 356, (
-        f"夹具名册读到 {len(pts)} 颗，不是 356 ⇒ 样本面变了（夹具被增删或键路径改了），"
+    assert len(pts) == 495, (
+        f"夹具名册读到 {len(pts)} 颗，不是 495 ⇒ 样本面变了（夹具被增删或键路径改了），"
         "下面的逐类计数全部失去基线，本条须先重指样本面再重取读数")
     tally: Dict[str, int] = {k: 0 for k in list(cr.CATEGORY_RULES) + ["other"]}
     for it in pts:
         tally[cr.evaluate_category(it)[0]] += 1
-    assert tally == {"medical": 37, "education": 45, "shopping": 69, "finance": 39,
-                     "recreation": 13, "service": 14, "other": 139,
-                     "market": 0, "elderly": 0}, (
+    assert tally == {"medical": 39, "education": 55, "shopping": 103, "finance": 55,
+                     "recreation": 15, "service": 17, "other": 207,
+                     "market": 4, "elderly": 0}, (
         f"逐类命中计数变为 {tally} ⇒ 判类实现相对基线漂移。"
         "若这是判类改动造成的：按计划 §二 逐颗核对漂掉的点位，重指本条并把差值写进交付说明")
     anchors = {"万博新时代诊所": "medical", "凯里市第十三小学": "education",

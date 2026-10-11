@@ -17,7 +17,7 @@
 所以"跑一次 fixture 档体检"永远拿不到台账那一份 —— 本脚本直接按 stem 取载荷，绕开那条匹配。
 
 产出：`frontend/src/mocks/fixtures/livingCircleReports/{stem}.report.json`
-  - **剥掉 `living_circle` 载荷**：那三份夹具每张约 250KB，整份烘进 bundle 会翻倍。
+  - **剥掉 `living_circle` 载荷**：那些夹具每张约 60–250KB，整份烘进 bundle 会翻倍。
     读路径把 `living_circle` 从 `livingCircleMock.ts` 已在 import 的同一份载荷拼回，
     所以字节内容不变，只是不再有两个作者。
   - `_` 前缀的键是生成元数据，不属于 Report 契约。
@@ -48,9 +48,18 @@ from app.core.pipeline.diagnosis_templates import (  # noqa: E402
 FIXTURES_DIR = BACKEND_DIR / "app" / "living_circle" / "fixtures"
 OUT_DIR = BACKEND_DIR.parent / "frontend" / "src" / "mocks" / "fixtures" / "livingCircleReports"
 
-# 演示三件套 = 后端夹具目录里的三份载荷，按 stem 点名。
+# 演示件 = 后端夹具目录里点名的这几份载荷，按 stem 点名（哪几份见 `DEMO_STEMS`）。
 # 逐格台账只在 kaili-ev2 上（判盲 8 格 + 1 处盲区）；另两份是台账上线前冻结的件。
-DEMO_STEMS: Tuple[str, ...] = ("kaili", "kaili-ev2", "beijing-jinsong")
+DEMO_STEMS: Tuple[str, ...] = (
+    "kaili",
+    "kaili-ev2",
+    "beijing-jinsong",
+    # 2026-10-11 真跑新增两份（`scripts/snapshot_live.py` 点名只跑这两份）。
+    # 上海五角场：市区高覆盖（89.2 分 / 0 盲区 / POI 211）；凯里下司：小镇口径
+    # （52.3 分 / 1 盲区 / POI 24）—— 一高一低，演示里正好当对照。
+    "shanghai-wujiaochang",
+    "kaili-xiasi",
+)
 
 # 读路径必须能拼回载荷 ⇒ 报告 id 沿用前端今天的 `LC_REPORT_ID(sceneId)` = `lc-{stem}`，
 # 别名页（lc-kaili-r1 等）也继续解析到基础那份，演示态的路由与 e2e 锚点因此不受影响。
@@ -98,11 +107,13 @@ def _assert_is_this_sample(stem: str, lc: Dict[str, Any], report: Dict[str, Any]
 
     与 `snapshot_live.py::_assert_snapshot_is_this_scene` 同一意图：这条脚本的产物会被
     直接当演示事实源，一旦把别的东西烘进去，前后端两侧同时坏而测试仍绿（两侧同源）。
-    三条各自拦一种复发：
+    两条各自拦一种复发：
       - 场景名/中心点：拿错文件（`kaili` 与 `kaili-ev2` 是同一社区的两轮口径，名字相同、
-        中心点逐字相同 ⇒ 只有 stem 与"有没有台账"能区分它们，所以第三条才是关键）。
-      - 台账在场性：`kaili-ev2` 的意义就是逐格台账。烘丢它等于演示态没有台账卡，
-        而这正是这份件存在的唯一理由（见 livingCircleReports.ts 里"不列它就等于假交付"那条）。
+        中心点逐字相同 ⇒ 这两者之间只有"台账在场性"能区分，所以下面第二条对那一对仍是关键）。
+      - 台账在场性**同源**：报告里的 `cells_ledger` 必须与载荷里的同在一处 —— 原先写的是
+        "只有 `-ev2` 才许带台账"，2026-10-11 作废：`cells_ledger` 现在是**每次真跑都渲染**的
+        （`assemble.py:339` 无条件走），新跑的两份样区天然带它，那条后缀规则会误杀。
+        "两份凯里互串"另由 `_assert_samples_are_distinct()` 在全集层面拦（更准，且不依赖后缀）。
     """
     scene = lc.get("scene") or {}
     problems: List[str] = []
@@ -113,11 +124,13 @@ def _assert_is_this_sample(stem: str, lc: Dict[str, Any], report: Dict[str, Any]
     if not scene.get("name"):
         problems.append("载荷缺 scene.name")
 
-    has_ledger = "cells_ledger" in (lc.get("caliber") or {})
-    if stem.endswith("-ev2") and not has_ledger:
-        problems.append("点名的是台账变体，但载荷里没有 caliber.cells_ledger ⇒ 要么拿错文件，要么夹具被重做过")
-    if not stem.endswith("-ev2") and has_ledger:
-        problems.append(f"{stem}  unexpectedly 带 cells_ledger ⇒ 两份凯里件的内容互串了")
+    payload_has_ledger = "cells_ledger" in (lc.get("caliber") or {})
+    report_has_ledger = "cells_ledger" in ((report.get("living_circle") or {}).get("caliber") or {})
+    if payload_has_ledger != report_has_ledger:
+        problems.append(
+            f"台账在场性与载荷不同源（载荷={payload_has_ledger} 报告={report_has_ledger}）"
+            " ⇒ 装配器在这一位上做了增删"
+        )
 
     if report.get("narrative_version") != NARRATIVE_VERSION:
         problems.append(f"产物代次 {report.get('narrative_version')!r} ≠ 代码常量 {NARRATIVE_VERSION!r}")
@@ -130,15 +143,42 @@ def _assert_is_this_sample(stem: str, lc: Dict[str, Any], report: Dict[str, Any]
         raise RuntimeError(f"{stem}: 拒绝烘进演示态 ——\n  - " + "\n  - ".join(problems))
 
 
+def _assert_samples_are_distinct() -> None:
+    """全集层面拦"两份夹具内容互串"：任意两份的 (场景名, 中心, 盲区数, POI 数, 生成时间) 必须互不相同。
+
+    为什么需要它：`kaili` 与 `kaili-ev2` 是**同一社区的两轮口径**，场景名与中心点逐字相同，
+    按文件名读进来也看不出互串 —— 老办法是拿"只有 ev2 带台账"当判别器，而 `cells_ledger`
+    现在每次真跑都渲染（新样区也带）⇒ 那个判别器失效了。改成"整份的指纹不得重复"：
+    谁把一份夹具覆写成另一份，指纹当场撞上（这条与"按文件名读"正交，谁也替不了谁）。
+    """
+    seen: Dict[tuple, str] = {}
+    clash: List[str] = []
+    for stem in DEMO_STEMS:
+        lc = _load_fixture(stem)
+        scene = lc.get("scene") or {}
+        fp = (
+            scene.get("name"),
+            tuple(scene.get("center") or []),
+            len(lc.get("blindspots") or []),
+            (lc.get("poi") or {}).get("total"),
+            lc.get("generated_at"),
+        )
+        if fp in seen:
+            clash.append(f"{stem} 与 {seen[fp]} 的指纹逐字相同 {fp} ⇒ 两份夹具内容互串了")
+        seen[fp] = stem
+    if clash:
+        raise RuntimeError("拒绝烘进演示态 ——\n  - " + "\n  - ".join(clash))
+
+
 # ── 演示件专用的「来路改写」────────────────────────────────────────
-# 为什么必须有：烘出来的这三份是**仓库里躺着的历史真实跑批件**，而装配器写的两句正文都在
+# 为什么必须有：烘出来的这些是**仓库里躺着的真实跑批件**（历史件 + 10-11 新跑两份），而装配器写的两句正文都在
 # 说"这份报告是刚跑的"（概览章「数据口径：live；…」、结论章「提醒：本报告为真实接口取证
 # （data_origin=live）…」。真实态那一行走同一颗装配器、同一个 `data_origin=live`，那句话
 # 对它是**成立的**；搬到演示态就成了一句假话 —— 演示一次采集都不发。
 #
 # 为什么住在烘件脚本而不是装配器：装配器只看得到载荷里的 `data_origin`，它**不知道**这份载荷
 # 是三分钟前刚跑的还是仓里烘的；把"烘的"这件事塞进载荷身份会撞跨语言镜像闸
-# （`test_fixture_mirror.py` 钉三份夹具两侧字节相同），把这句改写塞进前端又等于让前端重新写
+# （`test_fixture_mirror.py` 钉每一对夹具两侧字节相同），把这句改写塞进前端又等于让前端重新写
 # 正文（本轮刚拆掉的那个病灶）。所以由"烘"这个动作自己承认它带来的语义差。
 #
 # 为什么不用豁免名单：镜像闸（`test_lc_demo_report_mirror.py`）直接调用这颗函数，它的期望值
@@ -244,6 +284,7 @@ def main(argv: List[str]) -> int:
         OUT_DIR.mkdir(parents=True)
 
     drift: List[str] = []
+    _assert_samples_are_distinct()
     for stem in DEMO_STEMS:
         snapshot, lc = build(stem)
         out = OUT_DIR / f"{stem}.report.json"
@@ -263,7 +304,10 @@ def main(argv: List[str]) -> int:
             continue
 
         with open(out, "w", encoding="utf-8") as fh:
-            json.dump(snapshot, fh, ensure_ascii=False, indent=2, sort_keys=False)
+            # `allow_nan=False`：快照会被**浏览器**读，`NaN`/`Infinity` 在 Python 里合法、
+            # 在标准 JSON 里非法（2026-10-11 实测过一次：载荷里的 `Infinity` 让 Vite 500）。
+            # 宁可在这里抛，也不写出一份前端解析不了的 JSON。
+            json.dump(snapshot, fh, ensure_ascii=False, indent=2, sort_keys=False, allow_nan=False)
             fh.write("\n")
         print(f"[烘出] {_stats(snapshot, lc)}  → {out.relative_to(OUT_DIR.parent.parent.parent)}")
 

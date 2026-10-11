@@ -1,6 +1,7 @@
 """M5 · 真实百度 AK 双社区实跑，生成真实 fixture 快照（覆写 F0 手绘 fixture）。
 
 用法：cd backend && .venv/bin/python -m scripts.snapshot_live  （或 .venv/bin/python scripts/snapshot_live.py）
+     只跑点名的那几份：… -m scripts.snapshot_live <key> [<key>…]（不点名的样区一个字都不会被改）
 
 流程：以 data_mode='live' 驱动 living_circle_pipeline（真实批量算路 + POI 采集），
 捕获完整 Report 的 living_circle 载荷，写入：
@@ -27,6 +28,11 @@ SCENES = [
     # key, scene_name, center [lng, lat] BD-09, city, address
     ("kaili", "凯里老街", [107.9758, 26.5734], "贵州·凯里", "凯里市西门街道老街片区（大阁山脚下）"),
     ("beijing-jinsong", "北京劲松", [116.4637, 39.8832], "北京·朝阳", "朝阳区劲松街道劲松小区（劲松地铁站西侧）"),
+    # ── 2026-10-11 新增两份（坐标由百度 geocode 取，BD-09）──────────────
+    # 为什么换片区而不是原地重跑：同中心 30 天内会**直接复用**既有结果（`living_circle.py:325`，
+    # 不消耗额度）⇒ 原地"重跑"跑出来还是旧载荷。五角场距人民广场那份约 10km、下司距老街约 20km。
+    ("shanghai-wujiaochang", "上海五角场", [121.522151, 31.305645], "上海市", "杨浦区淞沪路77号五角场万达广场周边"),
+    ("kaili-xiasi", "凯里下司", [107.806743, 26.518453], "贵州·凯里", "凯里市下司镇古镇景区周边"),
 ]
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent / "app" / "living_circle" / "fixtures"
@@ -106,8 +112,18 @@ async def _run_one(key: str, name: str, center, city: str, address: str) -> dict
 
 
 async def main() -> None:
+    # 只跑点名的那几份：`python -m scripts.snapshot_live shanghai-wujiaochang`
+    # 为什么不加不行：`SCENES` 是全集循环，而每个 `_run_one` 都会**覆写**它那份两侧夹具 ——
+    # 想加一个新样区时会顺手把凯里/劲松按今天的数据重新冻结（并再烧一遍额度）。
+    wanted = {a for a in sys.argv[1:] if not a.startswith("-")}
+    known = {s[0] for s in SCENES}
+    if wanted - known:
+        raise SystemExit(f"未知样区键：{sorted(wanted - known)}；可用：{sorted(known)}")
+    scenes = [s for s in SCENES if not wanted or s[0] in wanted]
+    print(f"本次将跑：{[s[0] for s in scenes]}（不点名的不会被触碰）")
+
     results = {}
-    for key, name, center, city, address in SCENES:
+    for key, name, center, city, address in scenes:
         lc = await _run_one(key, name, center, city, address)
         results[key] = lc
         for d in (BACKEND_DIR, FRONTEND_DIR):

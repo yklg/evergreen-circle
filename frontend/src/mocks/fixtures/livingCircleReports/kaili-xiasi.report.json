@@ -1,0 +1,2958 @@
+{
+  "_generated_by": "backend/scripts/bake_lc_demo_reports.py",
+  "_source_fixture": "backend/app/living_circle/fixtures/kaili-xiasi.json",
+  "_narrative_version": "nar-5",
+  "_captured_at": "2026-10-11T10:08:31.517Z",
+  "_note": "演示态报告正文快照。作者只有后端装配器（diagnosis_templates.py::assemble_report）；改了装配器必须同笔重跑本脚本，否则 test_lc_demo_report_mirror.py 红。`living_circle` 载荷不在这里，由 livingCircleMock.ts 现成的那份 import 在读时拼回。",
+  "id": "lc-kaili-xiasi",
+  "report_type": "living_circle",
+  "narrative_version": "nar-5",
+  "title": "凯里下司 · 生活圈体检报告",
+  "subtitle": "贵州·凯里 · 凯里市下司镇古镇景区周边｜综合 52.3 分（差）· 1 处服务盲区 · 共 22 处设施（可达区内）",
+  "query": "凯里下司",
+  "mode": "standard",
+  "created_at": "2026-09-19T12:00:00.000Z",
+  "experts": [
+    "L3-001",
+    "L3-002",
+    "L3-003",
+    "L2-001",
+    "L2-002",
+    "L2-004",
+    "L2-003",
+    "L2-005",
+    "L2-008",
+    "L1-027",
+    "L1-030",
+    "L1-032",
+    "L1-036"
+  ],
+  "dispatch": [
+    {
+      "id": "L3-001",
+      "reason": "作为社区体检总检，负责统筹凯里下司15分钟生活圈体检全流程、统一8类设施指标口径并终审签发报告。"
+    },
+    {
+      "id": "L3-002",
+      "reason": "作为首席规划分析师，负责裁决覆盖率、可达性与评分模型结论，确保8类设施体检结果科学可信。"
+    },
+    {
+      "id": "L3-003",
+      "reason": "作为质检总监，负责POI溯源、采样点可达率与盲区复核，对步行出行口径下的体检数据进行返工闭环管理。"
+    },
+    {
+      "id": "L2-001",
+      "reason": "作为基层医疗配置顾问，负责医疗类设施（社区医院、诊所、药店）的就医可达性评估与配置合理性判断。"
+    },
+    {
+      "id": "L2-002",
+      "reason": "作为基础教育设施规划师，负责教育类设施（中小学、幼儿园）的学位供给与就近入学可达性评估。"
+    },
+    {
+      "id": "L2-004",
+      "reason": "作为菜市与商业配套分析师，负责菜市场与购物类设施（菜市场、超市、便利店）的覆盖与菜篮子保障评估。"
+    },
+    {
+      "id": "L2-003",
+      "reason": "作为养老托育关怀顾问，负责养老类设施（养老院、日间照料、社区食堂）的服务覆盖与关怀体系评估。"
+    },
+    {
+      "id": "L2-005",
+      "reason": "作为慢行可达性分析师，负责步行出行方式下的慢行路网、过街设施与步行友好度评估，支撑8类设施可达性判定。"
+    },
+    {
+      "id": "L2-008",
+      "reason": "作为生活圈标准专家，负责将GB50180与生活圈导则的配建标准应用于凯里下司8类设施体检的合规性判定。"
+    },
+    {
+      "id": "L1-027",
+      "reason": "作为可达性测算师，负责步行测时、方向API批量算路与耗时场构建，为15分钟生活圈体检提供核心可达性数据。"
+    },
+    {
+      "id": "L1-030",
+      "reason": "作为POI核验官，负责8类设施POI检索、关键词匹配、去重与可信度核验，确保体检底数准确。"
+    },
+    {
+      "id": "L1-032",
+      "reason": "作为评分建模师，负责综合评分、覆盖度、可达性指数与均衡性建模，输出8类设施体检量化结果。"
+    },
+    {
+      "id": "L1-036",
+      "reason": "作为报告主笔，负责将凯里下司15分钟生活圈体检结果整理为分章报告，确保图文结构与溯源清晰。"
+    }
+  ],
+  "toc": [
+    {
+      "id": "overview",
+      "title": "体检概览",
+      "level": 2
+    },
+    {
+      "id": "medical",
+      "title": "医疗配置",
+      "level": 2
+    },
+    {
+      "id": "education",
+      "title": "教育设施",
+      "level": 2
+    },
+    {
+      "id": "market",
+      "title": "菜市与购物",
+      "level": 2
+    },
+    {
+      "id": "elderly",
+      "title": "养老配置",
+      "level": 2
+    },
+    {
+      "id": "isochrone",
+      "title": "可达性与等时圈",
+      "level": 2
+    },
+    {
+      "id": "blindspot",
+      "title": "服务盲区诊断",
+      "level": 2
+    },
+    {
+      "id": "conclusion",
+      "title": "体检结论与整改建议",
+      "level": 2
+    }
+  ],
+  "sections": [
+    {
+      "id": "overview",
+      "title": "体检概览",
+      "level": 2,
+      "key_takeaway": "本样区综合评分 52.3（差），15 分钟步行可达圈约 1.22 km²，97/1049 个采样点圈内可达（已测时 1049）；设施 采集 24 · 圈内 22 · 已展示 22。三要素：「菜市场」中心 1km 内没有，共识别 1 处服务盲区。",
+      "paragraphs": [
+        "本次体检由常青圈规划专家队按「intake→plan→measure→collect→diagnose→report→audit」流水线完成，中心点「凯里下司」（贵州·凯里 · 凯里市下司镇古镇景区周边）。",
+        "数据口径：内置快照（历史真实跑批留档，本次演示未联网）；采样 1049 点、已测时 1049、圈内可达 97；分级等时圈由idw 推导（M 阶段为 IDW 插值）。",
+        "设施全景（逐类交代取数）：菜市场检索 3 处、圈内 3 处（覆盖度 100%，本类另有专项章细谈）；医疗检索 1 处、圈内 1 处（覆盖度 0%，本类另有专项章细谈）；教育检索 4 处、圈内 4 处（覆盖度 33%，本类另有专项章细谈）；购物检索 11 处、圈内 9 处（覆盖度 100%，本类另有专项章细谈）；养老检索 0 处、圈内 0 处（覆盖度 0%，本类另有专项章细谈）；金融检索 2 处、圈内 2 处（覆盖度 100%，最近「中国邮政储蓄银行(下司邮政支局储蓄所)」步行约 13.0min）；文体检索 3 处、圈内 3 处（覆盖度 100%，最近「碰碰台球」步行约 0.0min）；政务检索 0 处、圈内 0 处（覆盖度 0%，圈内无可达点）。其中「养老、政务」圈内一颗未得，是本样区唯一无可达设施的类别。",
+        "评分构成与口径：确定性评分：覆盖 54.2 / 可达 62.4 / 多样 75.0 / 均衡 0.0；2 类圈内无可达设施（养老、政务）不计入可达维度 ⇒ 可达维度偏高",
+        "影响面：三要素里最费脚程的是「小学」（15.1min），其次 药店 7.2min、菜市场 —；已展示的 22 个设施点里，实测步行超过 15 分钟的有 5 处 —— 这些点在圈内可达判定中落选，不是采漏了，是走得到但超时；盲区合计受估 5935 人（按规划基准折算，非真实人口数据）。",
+        "建议取向：得分最低的是「医疗」（0）。按满分线口径这一类需要圈内 3 处才计满，实际圈内 1 处 ⇒ 差 2 处。补给顺序上先判能否用移动点/改道把这 2 处的就近可达补上，补不平再谈新建设施 —— 新建的周期与成本量级都高得多，而居民感知的是走不走得到，不是有没有那一栋建筑。"
+      ],
+      "highlights": [
+        "最长板与短板差 100 分：「菜市场」100 对「医疗」0",
+        "一处 1km 服务空洞压着受估 5935 人 —— 缺的是菜市场",
+        "三要素都判可达，但「小学」要走 15.1min —— 可达不等于方便"
+      ],
+      "charts": [
+        {
+          "chart_id": "chart-overview-radar",
+          "type": "radar",
+          "title": "生活圈维度评分雷达",
+          "option": {
+            "tooltip": {},
+            "radar": {
+              "indicator": [
+                {
+                  "name": "菜市场",
+                  "max": 100
+                },
+                {
+                  "name": "医疗",
+                  "max": 100
+                },
+                {
+                  "name": "教育",
+                  "max": 100
+                },
+                {
+                  "name": "购物",
+                  "max": 100
+                },
+                {
+                  "name": "养老",
+                  "max": 100
+                },
+                {
+                  "name": "金融",
+                  "max": 100
+                },
+                {
+                  "name": "文体",
+                  "max": 100
+                },
+                {
+                  "name": "政务",
+                  "max": 100
+                }
+              ],
+              "radius": "62%"
+            },
+            "series": [
+              {
+                "type": "radar",
+                "data": [
+                  {
+                    "name": "评分",
+                    "value": [
+                      88.9,
+                      14.1,
+                      41.2,
+                      91.0,
+                      0.0,
+                      80.5,
+                      100.0,
+                      0.0
+                    ],
+                    "areaStyle": {
+                      "opacity": 0.25,
+                      "color": "#5F7B69"
+                    },
+                    "lineStyle": {
+                      "color": "#5F7B69"
+                    },
+                    "itemStyle": {
+                      "color": "#5F7B69"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "chart_id": "chart-overview-coverage",
+          "type": "bar",
+          "title": "各设施类别覆盖度（%）",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 34,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "max": 100,
+              "name": "%"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "政务",
+                "文体",
+                "金融",
+                "养老",
+                "购物",
+                "教育",
+                "医疗",
+                "菜市场"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "data": [
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#7C6670",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#2FA09A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#5F8A6A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#C09A2E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#8A6BD1",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 33,
+                    "itemStyle": {
+                      "color": "#2F7FBF",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#E0483F",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#C2642E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  }
+                ],
+                "itemStyle": {
+                  "color": "#5F7B69",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "barWidth": "58%",
+                "markLine": {
+                  "silent": true,
+                  "symbol": "none",
+                  "data": [
+                    {
+                      "xAxis": 75,
+                      "label": {
+                        "formatter": "达标线 75%",
+                        "color": "#9AA39C"
+                      },
+                      "lineStyle": {
+                        "color": "#9AA39C",
+                        "type": "dashed"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "map_focus": null,
+      "source_evidence_ids": [
+        "ev-lc-measure"
+      ]
+    },
+    {
+      "id": "medical",
+      "title": "医疗配置",
+      "level": 2,
+      "key_takeaway": "圈内医疗设施 1/1 处，最近 10.6min；药店三要素可达区内有（最近 7.2min）",
+      "paragraphs": [
+        "医疗类 POI 检索 1 处，可达区内 1 处；其中计入覆盖度分子的是基层医疗门槛项 0 处（社区卫生服务中心 / 社区卫生服务站 / 药店），另有 1 处不计入分子（含诊所等不计分形状与判不准的存疑项）。覆盖度 0% ⇒ 本节写「存在缺口」—— 这只指基层医疗门槛项不足 3 家（覆盖度 <75%），不表示圈内没有医疗设施（圈内仍有 1 处）。另需交代：这一类的扩词在到达标线之前因额度见底中断（扩过词，不是查够了） ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。",
+        "医疗类最近点是「下司朱氏美牙」（步行约 10.6min）；该点形状标签未取到，不推断它计不计入分子（分子只取 社区卫生服务中心、社区卫生服务站、药店）。"
+      ],
+      "highlights": [
+        "「医疗」最近点步行 10.6min，在取到最近点的 6 类里排第 5 快（最快是文体 0.0min）"
+      ],
+      "charts": [
+        {
+          "chart_id": "chart-medical-coverage",
+          "type": "bar",
+          "title": "医疗在 8 类设施中的覆盖度位置",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 34,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "max": 100,
+              "name": "%"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "政务",
+                "文体",
+                "金融",
+                "养老",
+                "购物",
+                "教育",
+                "医疗",
+                "菜市场"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "data": [
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#7C6670",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#2FA09A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#5F8A6A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#C09A2E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#8A6BD1",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 33,
+                    "itemStyle": {
+                      "color": "#2F7FBF",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#E0483F",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 1.0
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#C2642E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  }
+                ],
+                "itemStyle": {
+                  "color": "#5F7B69",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "barWidth": "58%",
+                "markLine": {
+                  "silent": true,
+                  "symbol": "none",
+                  "data": [
+                    {
+                      "xAxis": 75,
+                      "label": {
+                        "formatter": "达标线 75%",
+                        "color": "#9AA39C"
+                      },
+                      "lineStyle": {
+                        "color": "#9AA39C",
+                        "type": "dashed"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "evidence_ids": [
+            "ev-lc-poi-medical"
+          ]
+        }
+      ],
+      "map_focus": {
+        "kind": "categories",
+        "categories": [
+          "medical"
+        ],
+        "title": "本章地图：只把「医疗」的设施点保持原色，其余 7 类压到近透明（各类点位一个都没删，也没有放大到本类）"
+      },
+      "claims": [
+        {
+          "claim_id": "c-lc-medical-1",
+          "text": "医疗配置存在缺口：圈内 1 处中基层医疗门槛项 0 处 ⇒ 覆盖度 0%",
+          "field": "coverage",
+          "evidence_ids": [
+            "ev-lc-poi-medical"
+          ],
+          "confidence": "medium",
+          "cross_validated": true,
+          "author": "谷穗安"
+        }
+      ],
+      "source_evidence_ids": [
+        "ev-lc-poi-medical"
+      ]
+    },
+    {
+      "id": "education",
+      "title": "教育设施",
+      "level": 2,
+      "key_takeaway": "教育类圈内 4/4 处；小学三要素可达区内有（最近 15.1min）",
+      "paragraphs": [
+        "小学/中学/幼儿园共检索 4 处，圈内 4 处（三类都在这一类的检索范围内）；但覆盖度的分子只取「小学」 1 处 ÷ 满分线 3 ⇒ 33% —— 「圈内 4 处」与「覆盖度 33%」是两个口径各自的数，不是同一个数的两次说法。另需交代：本轮没有额度为这一类扩词（一次都没扩成） ⇒ 这一类证据面不完整，上面那个覆盖度的分子里含我们没查过或没查全的部分。",
+        "教育类最近点是「精灵幼儿园」（步行约 8.1min）；该点形状标签未取到，不推断它计不计入分子（分子只取 小学）。",
+        "就学通勤视角：小学接送是生活圈体检的高频痛点，本样区最近小学步行 15.1min，处于可接受范围。"
+      ],
+      "highlights": [
+        "「教育」覆盖度 33 分，在 8 类序列里高于 3 类、低于 4 类",
+        "「教育」最近点步行 8.1min，在取到最近点的 6 类里排第 4 快（最快是文体 0.0min）"
+      ],
+      "charts": [
+        {
+          "chart_id": "chart-education-coverage",
+          "type": "bar",
+          "title": "教育在 8 类设施中的覆盖度位置",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 34,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "max": 100,
+              "name": "%"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "政务",
+                "文体",
+                "金融",
+                "养老",
+                "购物",
+                "教育",
+                "医疗",
+                "菜市场"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "data": [
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#7C6670",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#2FA09A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#5F8A6A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#C09A2E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#8A6BD1",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 33,
+                    "itemStyle": {
+                      "color": "#2F7FBF",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 1.0
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#E0483F",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#C2642E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  }
+                ],
+                "itemStyle": {
+                  "color": "#5F7B69",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "barWidth": "58%",
+                "markLine": {
+                  "silent": true,
+                  "symbol": "none",
+                  "data": [
+                    {
+                      "xAxis": 75,
+                      "label": {
+                        "formatter": "达标线 75%",
+                        "color": "#9AA39C"
+                      },
+                      "lineStyle": {
+                        "color": "#9AA39C",
+                        "type": "dashed"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "evidence_ids": [
+            "ev-lc-poi-education"
+          ]
+        }
+      ],
+      "map_focus": {
+        "kind": "categories",
+        "categories": [
+          "education"
+        ],
+        "title": "本章地图：只把「教育」的设施点保持原色，其余 7 类压到近透明（各类点位一个都没删，也没有放大到本类）"
+      },
+      "claims": [
+        {
+          "claim_id": "c-lc-education-1",
+          "text": "教育设施覆盖达标（可达区内有）（这一句判的是小学三要素）；覆盖度 33%（分子取门槛项 1 处） ⇒ 置信度 medium（判据是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）",
+          "field": "coverage",
+          "evidence_ids": [
+            "ev-lc-poi-education"
+          ],
+          "confidence": "medium",
+          "cross_validated": true,
+          "author": "郑启才"
+        }
+      ],
+      "source_evidence_ids": [
+        "ev-lc-poi-education"
+      ]
+    },
+    {
+      "id": "market",
+      "title": "菜市与购物",
+      "level": 2,
+      "key_takeaway": "菜市场圈内 3/3 处，购物 9/11 处；菜市场三要素中心 1km 内没有",
+      "paragraphs": [
+        "以菜市场/生鲜与超市/便利店/商场两组关键词独立检索并去重：",
+        "菜市场 3 处（圈内 3，覆盖 100%）；购物 11 处（圈内 9，覆盖 100%）。",
+        "菜市场类最近点是「土鸡土鸭专卖店」（步行约 7.4min）。",
+        "购物类最近点是「佳门口便利店」（步行约 6.0min）。"
+      ],
+      "highlights": [
+        "日常买菜要多走 1.4 分钟：菜市场最近 7.4min，购物最近 6.0min"
+      ],
+      "charts": [
+        {
+          "chart_id": "chart-market-coverage",
+          "type": "bar",
+          "title": "菜市场在 8 类设施中的覆盖度位置",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 34,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "max": 100,
+              "name": "%"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "政务",
+                "文体",
+                "金融",
+                "养老",
+                "购物",
+                "教育",
+                "医疗",
+                "菜市场"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "data": [
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#7C6670",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#2FA09A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#5F8A6A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#C09A2E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#8A6BD1",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 1.0
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 33,
+                    "itemStyle": {
+                      "color": "#2F7FBF",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#E0483F",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#C2642E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 1.0
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "color": "#6B746C"
+                    }
+                  }
+                ],
+                "itemStyle": {
+                  "color": "#5F7B69",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "barWidth": "58%",
+                "markLine": {
+                  "silent": true,
+                  "symbol": "none",
+                  "data": [
+                    {
+                      "xAxis": 75,
+                      "label": {
+                        "formatter": "达标线 75%",
+                        "color": "#9AA39C"
+                      },
+                      "lineStyle": {
+                        "color": "#9AA39C",
+                        "type": "dashed"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "evidence_ids": [
+            "ev-lc-poi-market",
+            "ev-lc-poi-shopping"
+          ]
+        }
+      ],
+      "map_focus": {
+        "kind": "categories",
+        "categories": [
+          "market",
+          "shopping"
+        ],
+        "title": "本章地图：只把「菜市场、购物」的设施点保持原色，其余 6 类压到近透明（各类点位一个都没删，也没有放大到本类）"
+      },
+      "claims": [
+        {
+          "claim_id": "c-lc-market-1",
+          "text": "菜市场三要素覆盖缺位（中心 1km 内没有）；购物覆盖 100%",
+          "field": "coverage",
+          "evidence_ids": [
+            "ev-lc-poi-market"
+          ],
+          "confidence": "high",
+          "cross_validated": true,
+          "author": "苏堤春"
+        }
+      ],
+      "source_evidence_ids": [
+        "ev-lc-poi-market"
+      ]
+    },
+    {
+      "id": "elderly",
+      "title": "养老配置",
+      "level": 2,
+      "key_takeaway": "养老(含社区级命名)圈内 0/0 处，现役检索词表未检出（读作“未检出”，不等于“不存在”）",
+      "paragraphs": [
+        "养老托育类设施共 0 处，可达区内 0 处，覆盖度 0%。",
+        "这一维的 0 出在检索面而非资源面：现役名称词表已含机构级与社区级两类命名，圈内仍零命中只能说明“按这张词表没查到”。若本地设施的命名形状与词表不同形，漏的就仍在检索面 —— 所以本维读作“未检出”，下一步是先按本地命名复核词表、再谈补建。"
+      ],
+      "highlights": [],
+      "charts": [
+        {
+          "chart_id": "chart-elderly-coverage",
+          "type": "bar",
+          "title": "养老在 8 类设施中的覆盖度位置",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 34,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "max": 100,
+              "name": "%"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "政务",
+                "文体",
+                "金融",
+                "养老",
+                "购物",
+                "教育",
+                "医疗",
+                "菜市场"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "data": [
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#7C6670",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#2FA09A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#5F8A6A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#C09A2E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 1.0
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#8A6BD1",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 33,
+                    "itemStyle": {
+                      "color": "#2F7FBF",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 0,
+                    "itemStyle": {
+                      "color": "#E0483F",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  },
+                  {
+                    "value": 100,
+                    "itemStyle": {
+                      "color": "#C2642E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ],
+                      "opacity": 0.35
+                    }
+                  }
+                ],
+                "itemStyle": {
+                  "color": "#5F7B69",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "barWidth": "58%",
+                "markLine": {
+                  "silent": true,
+                  "symbol": "none",
+                  "data": [
+                    {
+                      "xAxis": 75,
+                      "label": {
+                        "formatter": "达标线 75%",
+                        "color": "#9AA39C"
+                      },
+                      "lineStyle": {
+                        "color": "#9AA39C",
+                        "type": "dashed"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "evidence_ids": [
+            "ev-lc-poi-elderly"
+          ]
+        }
+      ],
+      "map_focus": {
+        "kind": "categories",
+        "categories": [
+          "elderly"
+        ],
+        "title": "本章地图：只把「养老」的设施点保持原色，其余 7 类压到近透明（各类点位一个都没删，也没有放大到本类）"
+      },
+      "claims": [
+        {
+          "claim_id": "c-lc-elderly-1",
+          "text": "养老配置未检出（圈内 0 处，按现役名称词表检索无命中）",
+          "field": "coverage",
+          "evidence_ids": [
+            "ev-lc-poi-elderly"
+          ],
+          "confidence": "high",
+          "cross_validated": false,
+          "author": "叶知暖"
+        }
+      ],
+      "source_evidence_ids": [
+        "ev-lc-poi-elderly"
+      ]
+    },
+    {
+      "id": "isochrone",
+      "title": "可达性与等时圈",
+      "level": 2,
+      "key_takeaway": "5/10/15/20 分钟等时圈面积 0.04 / 0.53 / 1.22 / 1.95 km²；采样 1049 点，圈内可达 97（已测时 1049）；方式：idw",
+      "paragraphs": [
+        "以中心点为原点按 400m 粗网格 + 15min 边界带 150m 加密采样（1049 点），步行测时后对耗时场做IDW 反距离加权插值，提取 5/10/15/20 分钟等值线族。",
+        "「不取底层路网、仅基于分布点位测时推导连通区域」是赛题鼓励的 30% 评分项：本流程全程未获取路网数据。采用散点扇形/双阶段采样，"
+      ],
+      "highlights": [
+        "15 分钟圈 1.22km² 是 5 分钟圈（0.04km²）的 29.1 倍 ⇒ 面积增益几乎全在外圈",
+        "8 类里最近点最远的是「金融」，步行 13 分钟 ⇒ 名义上有，不是走到跟前的那种有"
+      ],
+      "map_focus": {
+        "kind": "all",
+        "categories": [],
+        "title": "本章地图：等时圈族与全部 8 类设施点同主图，不聚焦单一类——局部性来自各档等时圈本身，不来自缩放"
+      },
+      "claims": [
+        {
+          "claim_id": "c-lc-isochrone-1",
+          "text": "15 分钟步行可达圈约 1.22 km²，1 处盲区均位于圈内覆盖空洞",
+          "field": "reachability",
+          "evidence_ids": [
+            "ev-lc-measure"
+          ],
+          "confidence": "high",
+          "cross_validated": true,
+          "author": "路遥川"
+        }
+      ],
+      "charts": [
+        {
+          "chart_id": "chart-isochrone-area",
+          "type": "bar",
+          "title": "分级步行等时圈面积（km²）",
+          "option": {
+            "tooltip": {},
+            "xAxis": {
+              "type": "category",
+              "data": [
+                "5min",
+                "10min",
+                "15min",
+                "20min"
+              ]
+            },
+            "yAxis": {
+              "type": "value",
+              "name": "km²"
+            },
+            "series": [
+              {
+                "type": "bar",
+                "data": [
+                  0.042,
+                  0.528,
+                  1.221,
+                  1.947
+                ],
+                "itemStyle": {
+                  "color": "#8a9c8f"
+                },
+                "barWidth": "48%"
+              }
+            ]
+          }
+        },
+        {
+          "chart_id": "chart-isochrone-minutes",
+          "type": "bar",
+          "title": "各类别最近可达耗时（分钟）",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 44,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "name": "分钟"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "金融",
+                "医疗",
+                "教育",
+                "菜市场",
+                "购物",
+                "文体"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "barWidth": "52%",
+                "data": [
+                  {
+                    "value": 13.0,
+                    "itemStyle": {
+                      "color": "#5F8A6A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 10.6,
+                    "itemStyle": {
+                      "color": "#E0483F",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 8.1,
+                    "itemStyle": {
+                      "color": "#2F7FBF",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 7.4,
+                    "itemStyle": {
+                      "color": "#C2642E",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 6.0,
+                    "itemStyle": {
+                      "color": "#8A6BD1",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  },
+                  {
+                    "value": 0.0,
+                    "itemStyle": {
+                      "color": "#2FA09A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    }
+                  }
+                ],
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "source_evidence_ids": [
+        "ev-lc-measure"
+      ]
+    },
+    {
+      "id": "blindspot",
+      "title": "服务盲区诊断",
+      "level": 2,
+      "key_takeaway": "识别 1 处 1km 服务盲区（重度 1／中度 0／轻度 0）",
+      "paragraphs": [
+        "按赛题口径（1km 内无菜市场/药店/小学即判盲）识别。下表为各盲区的缺失要素、严重度分级与补点建议（供整改优先级参考）。",
+        "判定格阵 15×15（格距 172m、判定尺半径 1000m）：65 格落在可达区内、其中 65 格出到结论（判盲 65 格、确认不盲 0 格）；余下 0 格未定（有类别没查全，属我们的取证缺口）、0 格判不动（接口能力封顶）—— 后两档与「不盲」不是一回事，既不算进「出到结论」，也不合并成一句「没结论」。",
+        "盲区 bs-凯里下司-1 判为重度级（缺口指数 0.6）；涉及判定格 65 格；约 1.93 km²；1km 内缺失「菜市场」；该范围内最近的可用点是「广和堂大药房(康润分店)」，直线 118m、方位西南；范围内布有采样点 91 处，受估 2283 户、5935 人（按 1200 户/km² 规划基准估算，仅供整改优先级参考，非真实人口数据）；到该可用点的实测步行耗时约 6.6 分钟；处方：菜市场 · 补建站点 · 优先级 P1。"
+      ],
+      "highlights": [
+        "一处 1km 服务空洞压着受估 5935 人 —— 缺的是菜市场"
+      ],
+      "map_focus": {
+        "kind": "blindspot",
+        "categories": [],
+        "blind_id": "bs-凯里下司-1",
+        "title": "本章地图：盲区图层只强调「盲区 凯里下司-1」；等时圈与设施点同主图"
+      },
+      "charts": [],
+      "claims": [
+        {
+          "claim_id": "c-lc-bs-bs-凯里下司-1",
+          "text": "bs-凯里下司-1（菜市场）重度级：最近「广和堂大药房(康润分店)」118m（西南）；建议 菜市场·补建站点·P1",
+          "field": "blindspot",
+          "evidence_ids": [
+            "ev-lc-bs-bs-凯里下司-1"
+          ],
+          "confidence": "high",
+          "cross_validated": true,
+          "author": "许映川"
+        }
+      ],
+      "data_grid": {
+        "columns": [
+          "盲区编号·严重度",
+          "缺失设施",
+          "最近设施",
+          "补点建议"
+        ],
+        "rows": [
+          {
+            "name": "bs-凯里下司-1 · 重度",
+            "value": "最近 广和堂大药房(康润分店) 118m · 菜市场·补建站点·P1",
+            "metric": "菜市场",
+            "source": "107.8045, 26.5209 · 西南 · gap 0.6",
+            "source_url": ""
+          }
+        ]
+      },
+      "source_evidence_ids": [
+        "ev-lc-bs-bs-凯里下司-1"
+      ]
+    },
+    {
+      "id": "conclusion",
+      "title": "体检结论与整改建议",
+      "level": 2,
+      "key_takeaway": "综合 52.3 分（差）；共 1 处服务盲区，整改优先级见下",
+      "paragraphs": [
+        "本样区存在多处服务盲区，整改优先级如下：",
+        "· 盲区缺位「菜市场」：建议蔬菜便民车/移动菜市点位。",
+        "· 养老配置未检出（覆盖 0%）：先按本地实际命名复核检索词表，复核后仍零命中再提补建日间照料中心/助老驿站，优先级 P0。",
+        "提醒：本报告为内置快照（data_origin=live · 历史真实跑批留档，本次演示未发起采集），分级等时圈由采样点测时经 idw 插值推导（幂次 2、每格取 8 个最近实测点）；正式结论以 M5 阶段实地测时为准。"
+      ],
+      "charts": [
+        {
+          "chart_id": "chart-fix-priority",
+          "type": "bar",
+          "title": "整改处方优先级（按可服务采样点）",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 132,
+              "right": 40,
+              "top": 18,
+              "bottom": 30
+            },
+            "xAxis": {
+              "type": "value",
+              "name": "可服务采样点"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "菜市场·补建站点·P1"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "barWidth": "52%",
+                "data": [
+                  61
+                ],
+                "itemStyle": {
+                  "color": "#1f9e63",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              }
+            ]
+          },
+          "evidence_ids": [
+            "ev-lc-bs-bs-凯里下司-1"
+          ]
+        }
+      ],
+      "claims": [
+        {
+          "claim_id": "c-lc-conclusion-1",
+          "text": "样区综合 52.3 分（差），首要整改方向：盲区缺位「菜市场」：建议蔬菜便民车/移动菜市点位。",
+          "field": "conclusion",
+          "evidence_ids": [
+            "ev-lc-bs-bs-凯里下司-1"
+          ],
+          "confidence": "high",
+          "cross_validated": true,
+          "author": "温叙白"
+        }
+      ],
+      "highlights": [
+        "最长板与短板差 100 分：「菜市场」100 对「医疗」0"
+      ],
+      "map_focus": null,
+      "source_evidence_ids": [
+        "ev-lc-bs-bs-凯里下司-1"
+      ]
+    }
+  ],
+  "charts": [
+    {
+      "chart_id": "chart-overview-radar",
+      "type": "radar",
+      "title": "生活圈维度评分雷达",
+      "option": {
+        "tooltip": {},
+        "radar": {
+          "indicator": [
+            {
+              "name": "菜市场",
+              "max": 100
+            },
+            {
+              "name": "医疗",
+              "max": 100
+            },
+            {
+              "name": "教育",
+              "max": 100
+            },
+            {
+              "name": "购物",
+              "max": 100
+            },
+            {
+              "name": "养老",
+              "max": 100
+            },
+            {
+              "name": "金融",
+              "max": 100
+            },
+            {
+              "name": "文体",
+              "max": 100
+            },
+            {
+              "name": "政务",
+              "max": 100
+            }
+          ],
+          "radius": "62%"
+        },
+        "series": [
+          {
+            "type": "radar",
+            "data": [
+              {
+                "name": "评分",
+                "value": [
+                  88.9,
+                  14.1,
+                  41.2,
+                  91.0,
+                  0.0,
+                  80.5,
+                  100.0,
+                  0.0
+                ],
+                "areaStyle": {
+                  "opacity": 0.25,
+                  "color": "#5F7B69"
+                },
+                "lineStyle": {
+                  "color": "#5F7B69"
+                },
+                "itemStyle": {
+                  "color": "#5F7B69"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "chart_id": "chart-overview-coverage",
+      "type": "bar",
+      "title": "各设施类别覆盖度（%）",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 34,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "max": 100,
+          "name": "%"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "政务",
+            "文体",
+            "金融",
+            "养老",
+            "购物",
+            "教育",
+            "医疗",
+            "菜市场"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "data": [
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#7C6670",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#2FA09A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#5F8A6A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#C09A2E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#8A6BD1",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 33,
+                "itemStyle": {
+                  "color": "#2F7FBF",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#E0483F",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#C2642E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              }
+            ],
+            "itemStyle": {
+              "color": "#5F7B69",
+              "borderRadius": [
+                0,
+                2,
+                2,
+                0
+              ]
+            },
+            "barWidth": "58%",
+            "markLine": {
+              "silent": true,
+              "symbol": "none",
+              "data": [
+                {
+                  "xAxis": 75,
+                  "label": {
+                    "formatter": "达标线 75%",
+                    "color": "#9AA39C"
+                  },
+                  "lineStyle": {
+                    "color": "#9AA39C",
+                    "type": "dashed"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "chart_id": "chart-medical-coverage",
+      "type": "bar",
+      "title": "医疗在 8 类设施中的覆盖度位置",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 34,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "max": 100,
+          "name": "%"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "政务",
+            "文体",
+            "金融",
+            "养老",
+            "购物",
+            "教育",
+            "医疗",
+            "菜市场"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "data": [
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#7C6670",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#2FA09A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#5F8A6A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#C09A2E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#8A6BD1",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 33,
+                "itemStyle": {
+                  "color": "#2F7FBF",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#E0483F",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 1.0
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#C2642E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              }
+            ],
+            "itemStyle": {
+              "color": "#5F7B69",
+              "borderRadius": [
+                0,
+                2,
+                2,
+                0
+              ]
+            },
+            "barWidth": "58%",
+            "markLine": {
+              "silent": true,
+              "symbol": "none",
+              "data": [
+                {
+                  "xAxis": 75,
+                  "label": {
+                    "formatter": "达标线 75%",
+                    "color": "#9AA39C"
+                  },
+                  "lineStyle": {
+                    "color": "#9AA39C",
+                    "type": "dashed"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "evidence_ids": [
+        "ev-lc-poi-medical"
+      ]
+    },
+    {
+      "chart_id": "chart-education-coverage",
+      "type": "bar",
+      "title": "教育在 8 类设施中的覆盖度位置",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 34,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "max": 100,
+          "name": "%"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "政务",
+            "文体",
+            "金融",
+            "养老",
+            "购物",
+            "教育",
+            "医疗",
+            "菜市场"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "data": [
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#7C6670",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#2FA09A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#5F8A6A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#C09A2E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#8A6BD1",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 33,
+                "itemStyle": {
+                  "color": "#2F7FBF",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 1.0
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#E0483F",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#C2642E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              }
+            ],
+            "itemStyle": {
+              "color": "#5F7B69",
+              "borderRadius": [
+                0,
+                2,
+                2,
+                0
+              ]
+            },
+            "barWidth": "58%",
+            "markLine": {
+              "silent": true,
+              "symbol": "none",
+              "data": [
+                {
+                  "xAxis": 75,
+                  "label": {
+                    "formatter": "达标线 75%",
+                    "color": "#9AA39C"
+                  },
+                  "lineStyle": {
+                    "color": "#9AA39C",
+                    "type": "dashed"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "evidence_ids": [
+        "ev-lc-poi-education"
+      ]
+    },
+    {
+      "chart_id": "chart-market-coverage",
+      "type": "bar",
+      "title": "菜市场在 8 类设施中的覆盖度位置",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 34,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "max": 100,
+          "name": "%"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "政务",
+            "文体",
+            "金融",
+            "养老",
+            "购物",
+            "教育",
+            "医疗",
+            "菜市场"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "data": [
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#7C6670",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#2FA09A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#5F8A6A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#C09A2E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#8A6BD1",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 1.0
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 33,
+                "itemStyle": {
+                  "color": "#2F7FBF",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#E0483F",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#C2642E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 1.0
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              }
+            ],
+            "itemStyle": {
+              "color": "#5F7B69",
+              "borderRadius": [
+                0,
+                2,
+                2,
+                0
+              ]
+            },
+            "barWidth": "58%",
+            "markLine": {
+              "silent": true,
+              "symbol": "none",
+              "data": [
+                {
+                  "xAxis": 75,
+                  "label": {
+                    "formatter": "达标线 75%",
+                    "color": "#9AA39C"
+                  },
+                  "lineStyle": {
+                    "color": "#9AA39C",
+                    "type": "dashed"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "evidence_ids": [
+        "ev-lc-poi-market",
+        "ev-lc-poi-shopping"
+      ]
+    },
+    {
+      "chart_id": "chart-elderly-coverage",
+      "type": "bar",
+      "title": "养老在 8 类设施中的覆盖度位置",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 34,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "max": 100,
+          "name": "%"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "政务",
+            "文体",
+            "金融",
+            "养老",
+            "购物",
+            "教育",
+            "医疗",
+            "菜市场"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "data": [
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#7C6670",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#2FA09A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#5F8A6A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#C09A2E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 1.0
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#8A6BD1",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 33,
+                "itemStyle": {
+                  "color": "#2F7FBF",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 0,
+                "itemStyle": {
+                  "color": "#E0483F",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              },
+              {
+                "value": 100,
+                "itemStyle": {
+                  "color": "#C2642E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ],
+                  "opacity": 0.35
+                }
+              }
+            ],
+            "itemStyle": {
+              "color": "#5F7B69",
+              "borderRadius": [
+                0,
+                2,
+                2,
+                0
+              ]
+            },
+            "barWidth": "58%",
+            "markLine": {
+              "silent": true,
+              "symbol": "none",
+              "data": [
+                {
+                  "xAxis": 75,
+                  "label": {
+                    "formatter": "达标线 75%",
+                    "color": "#9AA39C"
+                  },
+                  "lineStyle": {
+                    "color": "#9AA39C",
+                    "type": "dashed"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "evidence_ids": [
+        "ev-lc-poi-elderly"
+      ]
+    },
+    {
+      "chart_id": "chart-isochrone-area",
+      "type": "bar",
+      "title": "分级步行等时圈面积（km²）",
+      "option": {
+        "tooltip": {},
+        "xAxis": {
+          "type": "category",
+          "data": [
+            "5min",
+            "10min",
+            "15min",
+            "20min"
+          ]
+        },
+        "yAxis": {
+          "type": "value",
+          "name": "km²"
+        },
+        "series": [
+          {
+            "type": "bar",
+            "data": [
+              0.042,
+              0.528,
+              1.221,
+              1.947
+            ],
+            "itemStyle": {
+              "color": "#8a9c8f"
+            },
+            "barWidth": "48%"
+          }
+        ]
+      }
+    },
+    {
+      "chart_id": "chart-isochrone-minutes",
+      "type": "bar",
+      "title": "各类别最近可达耗时（分钟）",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 44,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "name": "分钟"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "金融",
+            "医疗",
+            "教育",
+            "菜市场",
+            "购物",
+            "文体"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "barWidth": "52%",
+            "data": [
+              {
+                "value": 13.0,
+                "itemStyle": {
+                  "color": "#5F8A6A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 10.6,
+                "itemStyle": {
+                  "color": "#E0483F",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 8.1,
+                "itemStyle": {
+                  "color": "#2F7FBF",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 7.4,
+                "itemStyle": {
+                  "color": "#C2642E",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 6.0,
+                "itemStyle": {
+                  "color": "#8A6BD1",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              },
+              {
+                "value": 0.0,
+                "itemStyle": {
+                  "color": "#2FA09A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                }
+              }
+            ],
+            "label": {
+              "show": true,
+              "position": "right",
+              "color": "#6B746C"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "chart_id": "chart-fix-priority",
+      "type": "bar",
+      "title": "整改处方优先级（按可服务采样点）",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 132,
+          "right": 40,
+          "top": 18,
+          "bottom": 30
+        },
+        "xAxis": {
+          "type": "value",
+          "name": "可服务采样点"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "菜市场·补建站点·P1"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "barWidth": "52%",
+            "data": [
+              61
+            ],
+            "itemStyle": {
+              "color": "#1f9e63",
+              "borderRadius": [
+                0,
+                2,
+                2,
+                0
+              ]
+            },
+            "label": {
+              "show": true,
+              "position": "right",
+              "color": "#6B746C"
+            }
+          }
+        ]
+      },
+      "evidence_ids": [
+        "ev-lc-bs-bs-凯里下司-1"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "ev-lc-measure",
+      "source_url": "live://measure",
+      "source_type": "api_measure",
+      "title": "采样点测时记录（1049 点）",
+      "excerpt": "批量算路返回 1049 条耗时，其中圈内可达 97 条",
+      "credibility": 0.95,
+      "collected_by": "L2-005",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "walkability"
+    },
+    {
+      "evidence_id": "ev-lc-poi-market",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "菜市场 POI 检索",
+      "excerpt": "命中 3 处，圈内 3 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "market"
+    },
+    {
+      "evidence_id": "ev-lc-poi-medical",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "医疗 POI 检索",
+      "excerpt": "命中 1 处，圈内 1 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "medical"
+    },
+    {
+      "evidence_id": "ev-lc-poi-education",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "教育 POI 检索",
+      "excerpt": "命中 4 处，圈内 4 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "education"
+    },
+    {
+      "evidence_id": "ev-lc-poi-shopping",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "购物 POI 检索",
+      "excerpt": "命中 11 处，圈内 9 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "shopping"
+    },
+    {
+      "evidence_id": "ev-lc-poi-elderly",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "养老 POI 检索",
+      "excerpt": "命中 0 处，圈内 0 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "elderly"
+    },
+    {
+      "evidence_id": "ev-lc-poi-finance",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "金融 POI 检索",
+      "excerpt": "命中 2 处，圈内 2 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "finance"
+    },
+    {
+      "evidence_id": "ev-lc-poi-recreation",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "文体 POI 检索",
+      "excerpt": "命中 3 处，圈内 3 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "recreation"
+    },
+    {
+      "evidence_id": "ev-lc-poi-service",
+      "source_url": "live://poi",
+      "source_type": "poi_search",
+      "title": "政务 POI 检索",
+      "excerpt": "命中 0 处，圈内 0 处",
+      "credibility": 0.92,
+      "collected_by": "L2-004",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "service"
+    },
+    {
+      "evidence_id": "ev-lc-bs-bs-凯里下司-1",
+      "source_url": "live://blindspot",
+      "source_type": "grid_scan",
+      "title": "盲区点位 bs-凯里下司-1",
+      "excerpt": "1km 内无 菜市场",
+      "credibility": 0.98,
+      "collected_by": "L3-002",
+      "captured_at": "2026-09-19T12:00:00.000Z",
+      "domain": "coverage"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "c-lc-medical-1",
+      "text": "医疗配置存在缺口：圈内 1 处中基层医疗门槛项 0 处 ⇒ 覆盖度 0%",
+      "field": "coverage",
+      "evidence_ids": [
+        "ev-lc-poi-medical"
+      ],
+      "confidence": "medium",
+      "cross_validated": true,
+      "author": "谷穗安"
+    },
+    {
+      "claim_id": "c-lc-education-1",
+      "text": "教育设施覆盖达标（可达区内有）（这一句判的是小学三要素）；覆盖度 33%（分子取门槛项 1 处） ⇒ 置信度 medium（判据是那个覆盖度是否 ≥75%，与上面那句不是同一把尺）",
+      "field": "coverage",
+      "evidence_ids": [
+        "ev-lc-poi-education"
+      ],
+      "confidence": "medium",
+      "cross_validated": true,
+      "author": "郑启才"
+    },
+    {
+      "claim_id": "c-lc-market-1",
+      "text": "菜市场三要素覆盖缺位（中心 1km 内没有）；购物覆盖 100%",
+      "field": "coverage",
+      "evidence_ids": [
+        "ev-lc-poi-market"
+      ],
+      "confidence": "high",
+      "cross_validated": true,
+      "author": "苏堤春"
+    },
+    {
+      "claim_id": "c-lc-elderly-1",
+      "text": "养老配置未检出（圈内 0 处，按现役名称词表检索无命中）",
+      "field": "coverage",
+      "evidence_ids": [
+        "ev-lc-poi-elderly"
+      ],
+      "confidence": "high",
+      "cross_validated": false,
+      "author": "叶知暖"
+    },
+    {
+      "claim_id": "c-lc-isochrone-1",
+      "text": "15 分钟步行可达圈约 1.22 km²，1 处盲区均位于圈内覆盖空洞",
+      "field": "reachability",
+      "evidence_ids": [
+        "ev-lc-measure"
+      ],
+      "confidence": "high",
+      "cross_validated": true,
+      "author": "路遥川"
+    },
+    {
+      "claim_id": "c-lc-bs-bs-凯里下司-1",
+      "text": "bs-凯里下司-1（菜市场）重度级：最近「广和堂大药房(康润分店)」118m（西南）；建议 菜市场·补建站点·P1",
+      "field": "blindspot",
+      "evidence_ids": [
+        "ev-lc-bs-bs-凯里下司-1"
+      ],
+      "confidence": "high",
+      "cross_validated": true,
+      "author": "许映川"
+    },
+    {
+      "claim_id": "c-lc-conclusion-1",
+      "text": "样区综合 52.3 分（差），首要整改方向：盲区缺位「菜市场」：建议蔬菜便民车/移动菜市点位。",
+      "field": "conclusion",
+      "evidence_ids": [
+        "ev-lc-bs-bs-凯里下司-1"
+      ],
+      "confidence": "high",
+      "cross_validated": true,
+      "author": "温叙白"
+    }
+  ],
+  "glossary": [
+    {
+      "term": "等时圈",
+      "definition": "以中心点为原点、步行耗时相同的等值线族（5/10/15/20 min）"
+    },
+    {
+      "term": "服务盲区",
+      "definition": "1km 范围内缺少菜市场/药店/小学任一必备设施的区域"
+    },
+    {
+      "term": "IDW 插值",
+      "definition": "反距离加权：以采样点耗时推演连续耗时场，不依赖底层路网"
+    },
+    {
+      "term": "BD-09",
+      "definition": "百度坐标系，本项目地图全域统一使用"
+    }
+  ],
+  "methodology": {
+    "window": "单次体检",
+    "note": "data_origin=live · interpolation=idw · scene_key=kaili-xiasi"
+  }
+}

@@ -73,6 +73,20 @@ async function openReport(page: Page): Promise<Locator> {
   return c
 }
 
+/**
+ * 等某个槽里的**表画真的落地**（canvas 或 svg 出现）。
+ *
+ * 为什么单独立这一条：表画是懒挂载的，`boot` 不是稳定态，而默认的 5s 断言窗口在
+ * **首屏变重**之后会偶红 —— 2026-10-11 演示样区从 3 份加到 5 份（载荷 +约 400KB）后，
+ * 本文件在两次全量里各红一条、且每次红的不是同一条（243 与 289 轮着红）⇒ 判据没坏，
+ * 是"碰运气等 5s"这件事坏了。给它一个**确定的前置**，而不是逐个把超时调大。
+ */
+async function expectSurface(slotLocator: Locator): Promise<void> {
+  await expect(slotLocator.locator('canvas, svg'), '表画没落地（懒挂载没等到，或容器塌了）').not.toHaveCount(0, {
+    timeout: 20_000,
+  })
+}
+
 test('首屏不预挂第二张：地图槽里只有占位，没有画布/SVG', async ({ page }) => {
   const c = await openReport(page)
   await scrollToTop(c)
@@ -86,7 +100,7 @@ test('滚到卡片 ⇒ 第二张真挂载（画布或 SVG 落地），占位撤�
   const c = await openReport(page)
   await c.scrollIntoViewIfNeeded()
   await expect(c.getByText(PLACEHOLDER)).toHaveCount(0)
-  await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
+  await expectSurface(slot(c))
   // 两个地图实例并排共存：主图 + 局部图，且横向不溢出。
   // ⚠️ 两条口径都改过，各留一次现场的账：
   //   ① 原来整页数 `[data-lc-map]` —— 那个属性只贴 live 那棵树，无 AK 的机器上数到 0（10-06 CI 红）。
@@ -262,6 +276,9 @@ test('主图铺满整行：宽屏跟着右栏长高并撞上下限，窄屏退�
       surfaceH: Math.round(cv ? (parseFloat(cv.style.height) || cv.height) : sv ? sv.getBoundingClientRect().height : 0),
     }
   })
+  // 先确定表画在（懒挂载），再谈它跟不跟容器长高：原来直接 `waitForTimeout(4000)` 是碰运气
+  // —— 首屏变重后会在这一步偶红（`svg 高度为 0`），而红的说辞像"降级画布坏了"，其实只是没等到。
+  await expectSurface(page.locator('section[aria-label="体检单"] [class*="h-[480px]"]'))
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.waitForTimeout(4000)
   const wide = await geo()
@@ -289,12 +306,12 @@ test('主图铺满整行：宽屏跟着右栏长高并撞上下限，窄屏退�
 test('进过一次视口就常驻：滚走再滚回不该重看一次骨架', async ({ page }) => {
   const c = await openReport(page)
   await c.scrollIntoViewIfNeeded()
-  await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
+  await expectSurface(slot(c))
   await scrollToTop(c)
   await page.waitForTimeout(500)
   await c.scrollIntoViewIfNeeded()
   await expect(c.getByText(PLACEHOLDER)).toHaveCount(0)
-  await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
+  await expectSurface(slot(c))
 })
 
 test('反向通道：点局部图 → 台账卡选中那一格', async ({ page }) => {
@@ -305,7 +322,7 @@ test('反向通道：点局部图 → 台账卡选中那一格', async ({ page }
   // 只断"选中了某一格"不断是哪一格：落点由视口尺寸与缩放决定，钉死坐标会漂。
   const c = await openReport(page)
   await c.scrollIntoViewIfNeeded()
-  await expect(slot(c).locator('canvas, svg')).not.toHaveCount(0)
+  await expectSurface(slot(c))
   // 10-07 R2 之后**两档都跑**（降级画布的点图分诊与 live 共用同一颗 `cellAt`，见 `LcMap` 的
   // `onCanvasClick`）⇒ 这条不再有 skip，也补上了当时那句老实话的反面：以前它只在"本机有 AK"那档
   // 生效，CI 恒不执行。历史两条教训留着，别改回去：

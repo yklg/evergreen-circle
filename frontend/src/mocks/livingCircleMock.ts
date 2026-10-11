@@ -9,6 +9,8 @@ import type { LivingCircleReport, LngLat } from '../types'
 import kailiEv2Json from './fixtures/livingCircle/kaili-ev2.json'
 import kailiJson from './fixtures/livingCircle/kaili.json'
 import jinsongJson from './fixtures/livingCircle/beijing-jinsong.json'
+import xiasiJson from './fixtures/livingCircle/kaili-xiasi.json'
+import wujiaochangJson from './fixtures/livingCircle/shanghai-wujiaochang.json'
 
 /** 内置样例社区（工作台示例卡 + 轮询入口共用同一数据源，保证一致） */
 export interface SampleCommunity {
@@ -43,6 +45,22 @@ export const SAMPLE_COMMUNITIES: SampleCommunity[] = [
     city: '北京·朝阳',
     blurb: '成熟城区样区 · 三要素齐备；99 格只判过 21 格 ⇒ 盲区 0 处不等于没有盲区',
     report: jinsongJson as unknown as LivingCircleReport,
+  },
+  {
+    // 2026-10-11 真跑新增：`scripts/snapshot_live.py` 点名只跑这两份（不点名的不动）。
+    // 两者刻意一高一低当对照：五角场是市区高覆盖，下司是小镇低 POI 口径。
+    id: 'shanghai-wujiaochang',
+    title: '上海五角场',
+    city: '上海市',
+    blurb: '10-11 真跑件（五角场商圈）· 89.2 分 · 0 处服务盲区 · 覆盖/多样/均衡满分，可达项 56.8',
+    report: wujiaochangJson as unknown as LivingCircleReport,
+  },
+  {
+    id: 'kaili-xiasi',
+    title: '凯里下司',
+    city: '贵州·凯里',
+    blurb: '10-11 真跑件（下司古镇）· 52.3 分 · 1 处服务盲区 · POI 仅 24 处的小镇口径',
+    report: xiasiJson as unknown as LivingCircleReport,
   },
 ]
 

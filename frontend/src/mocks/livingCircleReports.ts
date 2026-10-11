@@ -27,6 +27,8 @@ import { SAMPLE_COMMUNITIES } from './livingCircleMock'
 import kailiSnapshot from './fixtures/livingCircleReports/kaili.report.json'
 import kailiEv2Snapshot from './fixtures/livingCircleReports/kaili-ev2.report.json'
 import jinsongSnapshot from './fixtures/livingCircleReports/beijing-jinsong.report.json'
+import xiasiSnapshot from './fixtures/livingCircleReports/kaili-xiasi.report.json'
+import wujiaochangSnapshot from './fixtures/livingCircleReports/shanghai-wujiaochang.report.json'
 import {
   LC_CAT_COLOR,
   lcLocPrefix,
@@ -1008,6 +1010,8 @@ const DEMO_REPORT_SNAPSHOTS: Record<string, Record<string, unknown>> = {
   kaili: kailiSnapshot as unknown as Record<string, unknown>,
   'kaili-ev2': kailiEv2Snapshot as unknown as Record<string, unknown>,
   'beijing-jinsong': jinsongSnapshot as unknown as Record<string, unknown>,
+  'shanghai-wujiaochang': wujiaochangSnapshot as unknown as Record<string, unknown>,
+  'kaili-xiasi': xiasiSnapshot as unknown as Record<string, unknown>,
 }
 
 /** 历史页 / 报告中心共用：历次体检记录（首批 = 两样区实检 + 早期轮次快照） */
@@ -1015,7 +1019,7 @@ export function getLifeCircleRecords(): LifeCircleRecord[] {
   // `kaili-ev2` 排进来不是凑数：它是三份内置样区里**唯一带逐格台账**的那一份
   // （`caliber.cells_ledger`，判盲 8 格）。不列它，报告中心里台账卡与台账段永远取不到，
   // 演示态就会变成"功能做了但没人看得见"。
-  const two: LifeCircleRecord[] = (['kaili-ev2', 'kaili', 'beijing-jinsong']
+  const two: LifeCircleRecord[] = (['kaili-ev2', 'kaili', 'beijing-jinsong', 'shanghai-wujiaochang', 'kaili-xiasi']
     .map((sceneId): LifeCircleRecord | null => {
       const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
       if (!sample) return null
