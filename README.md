@@ -10,6 +10,10 @@
 
 2026 上海开源软件应用创新大赛 · 百度地图命题一《基于地图开放能力的"15 分钟生活圈"智能体检与规划助手》。
 
+> 仓库同时承载**两个产品域**（同一套 Agent 骨架，互不共享业务代码、只共享 `core/` 能力与 Trace/证据底座）：
+> 赛题主命题的**生活圈体检**（产品本体），与**目的地调研**（攻略/评估——报告页与工作台思维流走这条）。
+> 域边界见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) §2。
+
 ---
 
 ## ✨ 核心能力
@@ -23,6 +27,7 @@
 | 👥 专家队诊断 | 从 48 位名册中按需组队（建议 8–13 人：空间定位师/网格规划师/各域顾问），按 GB50180 生活圈标准出具章节化报告，证据溯源可查 |
 | ⚡ 智能体流水线 | `intake → plan → measure → collect → diagnose → report → audit`，SSE 实时流式展示（`useTaskStream`） |
 | 📊 双社区对比 | 指标差异表 + 双雷达图，同一口径下量化设施覆盖差距 |
+| 🧭 地标体检 | 在**攻略报告**里选一个景点就能以它为中心发起体检：来源（宿主类型/报告/景点）落进侧表 `report_spot_checks` 的 `origin` 三元组，体检台复用同一条确认流（未确认不建任务、不耗配额），攻略页回读显示该景点最近一次的体检 |
 | 🔍 全链路可观测 | 每个专家/阶段的 Prompt、产出、参数、Event 可回放（Trace） |
 
 ---
@@ -52,7 +57,7 @@
  │   └─ living_circle/baidu_client.py + request_guard.py  # 真实 API 调用 + 限流/退避（韧性）
  ├─ core/runner.py                  # 后台常驻任务调度（按 kind 分发，断连续跑，重连补帧）
  ├─ core/db.py                      # SQLite（含 living_circle_reports 独立文档）
- └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/regions、/api/life-circle/{id}/share…）
+ └─ main.py                         # REST + SSE 端点（/api/tasks、/api/life-circle、/api/life-circle/regions、/api/life-circle/{id}/share、/api/life-circle/{id}/spot-checks…）
 ```
 
 > **三级数据源 + 离线兜底（T1-T6）**：有百度 AK/配额 → Live 真实路网测时 + 真实 POI（主链路，赛题 40% 实时性）；无 AK/预算耗尽 → 先查历史实时缓存（`served_from=cache`，30 天内离线可查），未命中走 **Offline 离线估算**（内置全国区划定位 + 复用等时圈引擎的「直线距离 × 绕行系数」距离模型，`data_origin=offline`，诚实标注不产出可比评分/盲区）；`fixture` 仅作演示/对比样例。前端按 `data_origin`+`served_from` 四态徽标标注（离线估算 / 历史实时 / 真实数据 / 演示数据），离线报告显示「评分待实时体检」占位，绝不冒充真实路网测时。
@@ -132,7 +137,7 @@ cp backend/.env.example backend/.env
 
 - **2.2 条**只禁止"直接存取/技术抓取内部数据"，**未明确界定** API 响应结果能否缓存、落库或再分发。
   ⇒ 本项目的留存范围是**派生指标与实测快照**（报告载荷、出厂夹具、探针回执），标注探针日期并留
-  可重跑脚本，不保存厂商内部数据；`capability_manifest.json` 里那份等时圈探针回执即此纪律的样本。
+  可重跑脚本，不保存厂商内部数据；`backend/app/living_circle/capability_manifest.json` 里那份等时圈探针回执即此纪律的样本。
 - **2.10 条**规定次数/数据量/版本的限制**无须事先声明** ⇒ 运行时外部依赖比静态快照更脆弱。
   ⇒ 任何依赖厂商状态的能力都自带**可见的降级与时效标记**，不做静默回落：无 AK → 离线估算并标
   `data_origin=offline`（屏幕同时写明"圆形近似，非真实路网形状"）；命中复用 → 标 `served_from`

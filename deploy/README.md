@@ -45,7 +45,7 @@
 | `DOUYIN_COOKIE` / `XHS_COOKIE` / `BILIBILI_COOKIE` | | 空 | 平台采集（可选） |
 | `APP_HOST` | | `127.0.0.1` | **容器内必须 `0.0.0.0`**（config.py 默认仅本机） |
 | `APP_PORT` | | `8000` | 监听端口 |
-| `EVERGREEN_DB_PATH` | ✅ | `backend/app/data/evergreen.db` | **指向持久卷**，如 `/data/evergreen.db` |
+| `EVERGREEN_DB_PATH` | ✅ | `backend/app/data/evergreen.db` | **指向持久卷**，如 `/data/evergreen.db`（旧名 `VERDA_DB_PATH` **仍被读取** ⇒ 改名前的部署不必立刻改控制台；两个都设时新名优先） |
 | `ENABLE_DEMO_FALLBACK` | | `true` | 无 LLM 时降级演示 |
 
 > 密钥经 `backend/app/core/config.py` 读取；运行时改配置走 `/api/settings` 落 SQLite（同样落在卷里，持久）。

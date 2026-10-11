@@ -97,7 +97,8 @@ npm run dev                     # http://localhost:3400
 | 自管云主机 / 容器 | [deploy/README.md](../deploy/README.md)（`setup-vm.sh` + `docker-compose.yml` + nginx + systemd） | 自己挂盘 |
 
 三者共同的环境变量：`APP_HOST=0.0.0.0`、`APP_PORT=8000`（**容器内端口**，与宿主映射端口无关）、
-`EVERGREEN_DB_PATH=/data/evergreen.db`、`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL*`、`BOCHA_API_KEY`。
+`EVERGREEN_DB_PATH=/data/evergreen.db`（**旧名 `VERDA_DB_PATH` 仍被读取**，两个都设时新名优先 ⇒
+2026-10-11 改名前的部署不改控制台也能继续跑）、`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL*`、`BOCHA_API_KEY`。
 密钥一律走平台的环境变量面板，**不要把 `.env` 提交进仓库**。
 
 ---
