@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Printer } from 'lucide-react'
 import { fetchReport } from '../lib/api'
@@ -69,24 +69,36 @@ export default function SlidesPage() {
   const pages = useMemo(() => buildPages(report), [report])
   const total = pages.length
   const safeIdx = Math.min(idx, total - 1)
+  // 监听器只注册一次、每次都读**当下**的 total。原先闭包捕获注册那一拍的 total，而监听器
+  // 挂在报告到达之前（那时 `buildPages(null) = []` ⇒ total=0）：DOM 先更新、passive effect 后跑，
+  // 这中间落下来的键就用旧 total 算出 `setIdx(0 - 1)` ⇒ 页码显示 `0 / 5`、正文区空白
+  // （`pages[-1]` 是 undefined）。2026-10-11 在 155 文件全量里以 ~1/6 复现，失败现场的 DOM
+  // 就是 `翻页 · 0 / 5`。⇒ 读 ref + 下标钳制，两条路都不许越界。
+  // ref 的赋值放在 effect 里（渲染期写 ref 被 `react-hooks/refs` 拦，那是对的：
+  // 渲染必须是纯的；这个 effect 声明在监听器之前，每次 total 变都在同一 effect 相位里先同步）。
+  const totalRef = useRef(total)
+  useEffect(() => {
+    totalRef.current = total
+  }, [total])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const last = Math.max(0, totalRef.current - 1)
       if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
         e.preventDefault()
-        setIdx((i) => Math.min(i + 1, total - 1))
+        setIdx((i) => Math.min(i + 1, last))
       } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
         e.preventDefault()
         setIdx((i) => Math.max(i - 1, 0))
       } else if (e.key === 'Home') {
         setIdx(0)
       } else if (e.key === 'End') {
-        setIdx(total - 1)
+        setIdx(last)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [total])
+  }, [])
 
   if (loading) {
     return (
@@ -147,7 +159,7 @@ export default function SlidesPage() {
         </button>
         <button
           aria-label="下一张"
-          onClick={() => setIdx((i) => Math.min(i + 1, total - 1))}
+          onClick={() => setIdx((i) => Math.min(i + 1, Math.max(0, total - 1)))}
           disabled={safeIdx === total - 1}
           className="slides-nav absolute right-3 top-1/2 -translate-y-1/2 grid h-11 w-11 place-items-center rounded-full border border-white/15 bg-white/5 text-white backdrop-blur transition-colors hover:bg-white/15 disabled:opacity-30"
         >

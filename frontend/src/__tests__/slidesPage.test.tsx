@@ -183,6 +183,30 @@ describe('SlidesPage', () => {
     expect((nextBtn as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('加载完成前按键不许把页码压到范围外（实测曾出 0 / 5）', async () => {
+    // 2026-10-11 在 155 文件全量里偶红一条（1/6）：失败现场 DOM 的页码是 **`0 / 5`**。
+    // 根因是**陈旧闭包**而不是测试抖动：键盘监听器挂在 window 上，注册那一拍的 `total` 还是 0
+    // （报告未加载 ⇒ `buildPages(null) = []`），报告到达后 DOM 先更新、passive effect 后跑，
+    // 这中间按下的 `End` 落到旧监听器上算出 `setIdx(0 - 1)`，而这条路径当时没有任何下限钳制。
+    // 用户侧的表现是：页码变 `0 / 5`、正文区空白（`pages[-1]` 是 undefined）。
+    // 本条把"加载完成前按键"这个窗口直接造出来（不 await 报告到达），钉住钳制与"读当下 total"。
+    mockedFetchReport.mockResolvedValue(makeReport())
+    renderSlides('r1')
+    // 此刻仍在 loading：按下末页/下一页键都不许抛出范围
+    fireEvent.keyDown(window, { key: 'End' })
+    fireEvent.keyDown(window, { key: 'PageDown' })
+    // 等"页码那一行"出现（不按标题等 —— 下标一旦被压到 -1，封面根本不渲染，标题永远等不到，
+    // 那样红的是超时而不是本件要问的事）
+    const counter = await screen.findByText((t) => /翻页 · \d+ \/ 5/.test(t))
+    expect(counter.textContent!.replace(/\s+/g, ''), '加载完成前按 End/PageDown 把页码压成了范围外的值（陈旧 total 未钳制）')
+      .toContain('翻页·1/5')
+    // 上面那两个键落到的是**加载前注册**的那只监听器。它必须在报告到达后仍按**当下**的 total 工作 ——
+    // 若把它写成"空依赖 + 闭包捕获 total"，这里会永远停在 1/5（键被旧的 total=0 吞掉），
+    // 而那正是 155 文件全量里偶红那一条的机制。这条断言把那个回归钉死。
+    fireEvent.keyDown(window, { key: 'PageDown' })
+    expect(await screen.findByText(/2 \/ 5/), '报告到达后，加载前注册的监听器仍按旧 total 工作 ⇒ 按键被吞').toBeTruthy()
+  })
+
   it('加载失败：显示错误与「返回报告」（不空白崩溃）', async () => {
     mockedFetchReport.mockRejectedValue(new Error('network'))
     renderSlides('r1', true)
