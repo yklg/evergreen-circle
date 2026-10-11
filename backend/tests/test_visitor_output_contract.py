@@ -1,4 +1,7 @@
-"""游客档的输出契约：派生指标必须是显式「未评」（附录 G-07，第一片 D1 / D9 / U1，TC-08 后端半）。
+"""游客档输出契约的**结案**（原附录 G-07，第一片 D1 / D9 / U1，TC-08 后端半）。
+
+本文件今天只做两件事：① 记录"不做游客档"这个决定（见下方决定段）；② 保留两条**按决定为真**的
+绿条，说明今天确实产不出"未评"报告 —— 因为根本不存在需要"未评"的那一档。
 
 前端半（`types.ts` 的 `scores | null` 与消费点清单）在
 `frontend/src/__tests__/visitorUnrated.test.tsx`；这里守后端半：
@@ -10,9 +13,17 @@
   （`livingCircleContract.test.ts` F2 断言 `scores.total === 0`），列表层却存 NULL。
   ⇒ D9 选 `… | null`：值存在、语义是"本档未评"，两端都无法顺手当 0 用。
 
-本文件的 xfail 判据取自计划 D1 的声明形状（`ScenarioProfile.emits` = 输出契约）。
-若实施时换了别的字段名，必须**同时**改这条测试与计划 D1，写清为什么换 ——
-而不是把测试放宽成"随便什么都算声明过"。
+原判据取自计划 D1 的声明形状（`ScenarioProfile.emits` = 输出契约）；随决定一起撤除。
+若将来重开（见重开条件），那两条形状要求仍可作为起点，但**必须先回答"为什么要第二档"**。
+
+## 决定（2026-10-11 拍板）：本仓**不做**游客档
+
+原 D1/D9/U1 那三条红钉已按下述决定撤除，**不再是欠账**。完整结论、依据与重开条件写在
+`test_scenario_cache_identity.py` 的文件头（那是本条路线图的结案正本），这里只留与本文件相关的两句：
+
+* 上面那两条**绿条今天依然为真，而且从今往后是"按决定如此"**，不是"还没做"——
+  展示层永远不会拿到"未评"的游客档报告，因为不存在游客档。
+* 重开条件同正本：赛题/评审要求、真实误读事故、或 `scenario` 真的进了请求体（最后一条有自检钉着）。
 """
 from __future__ import annotations
 
@@ -29,11 +40,14 @@ MODULE = "app.living_circle.scenario"
 
 
 def test_no_way_to_produce_an_unscored_report_today():
-    """**现状记录（D9 的起点）**：组装与评分层都没有"本档不打分"的开关。"""
+    """**按决定为真**（不是"还没做"）：组装与评分层都没有"本档不打分"的开关 —— 因为没有第二档。
+
+    要把它读成缺口，先看文件头那条决定与它的重开条件。
+    """
     import importlib.util
 
     assert importlib.util.find_spec(MODULE) is None, (
-        f"{MODULE} 已存在 ⇒ 本用例改为正向断言，并删除配套 xfail"
+        f"{MODULE} 已存在 ⇒ 游客档被捡回来了：去 test_scenario_cache_identity.py 的结案处按重开条件办，不要只改这条"
     )
     import inspect
 
@@ -64,35 +78,3 @@ def test_visitor_report_currently_inherits_residential_scoring():
         "游客档报告已不再自动出分 ⇒ 本用例须改为断言 `scores is None`"
     )
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1/D9：游客档必须声明输出契约，派生指标（总分/盲区/三要素）显式为 null 而非缺席或 0",
-)
-def test_visitor_profile_declares_nullable_derived_metrics():
-    import importlib
-
-    scenario = importlib.import_module(MODULE)
-    visitor = scenario.VISITOR
-    emits = set(visitor.emits)
-    forbidden = {"scores", "blindspots", "triads", "coverage", "reachability"}
-    assert not (emits & forbidden), f"游客档仍声明要出派生指标：{sorted(emits & forbidden)}"
-    assert {"category_counts", "nearest_minutes", "isochrones"} <= emits, (
-        f"游客档应只声明可举证读数，实得 {sorted(emits)}"
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="D9/U1：游客档报告的 scores / blindspots 必须是 null（值存在、语义为未评）",
-)
-def test_visitor_report_serialises_scores_as_null():
-    import importlib
-
-    scenario = importlib.import_module(MODULE)
-    lc = json.loads((FIXTURES / "kaili.json").read_text(encoding="utf-8"))
-    report = assemble_report(lc, "lc-visitor-null", "key:visitor-null", "游客档报告")
-    body = report["living_circle"]
-    assert body["scenario"] is scenario.VISITOR.key or body["scenario"] == "visitor"
-    assert body["scores"] is None, f"scores 必须是 null，实得 {type(body['scores']).__name__}"
-    assert body["blindspots"] is None, "盲区判定属居住需求，游客档必须显式未评"

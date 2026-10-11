@@ -8,13 +8,22 @@ sum(categories) == points.length`）」，并据此认为 POI 守恒不变量会
 `per_category` 派生，整类被裁时两边**同步变小**，自检照样 `ok=true`。
 见 `test_conservation_is_blind_to_dropping_whole_categories`。
 
-⇒ D1 依赖的这道保护并不存在。游客档若真要按场景裁类别，必须另有一道
-「落库类别集 == 判表全集」的完整性守卫，即 `test_single_outlet_...` 所登记的缺口。
+⇒ D1 依赖的这道保护并不存在。**随 D1 一同关账**（不做游客档 ⇒ 没有"按场景裁类别"这回事）；
+下面那条"整类被裁仍判健康"的实测记录**留作事实存档** —— 将来真要按档裁类别，它仍是第一条要补的守卫。
 本片验收标准 ⑤「POI 守恒在游客档下仍成立」**不足以**支撑放行，须同条补完整性。
 
 另一个方向的事实是**有利**的：判表唯一不是口号，`to_stats` 对表外类别键直接
 `KeyError`（见 `test_category_key_outside_the_global_table_is_refused`）
 ⇒ 新增游客类别只能进 `CATEGORY_RULES`，"另建一份游客判表" 走不到组装层。
+
+## 决定（2026-10-11 拍板）：本仓**不做**游客档
+
+原 D1/D9/U1 那三条红钉已按下述决定撤除，**不再是欠账**。完整结论、依据与重开条件写在
+`test_scenario_cache_identity.py` 的文件头（那是本条路线图的结案正本），这里只留与本文件相关的两句：
+
+* 上面那两条**绿条今天依然为真，而且从今往后是"按决定如此"**，不是"还没做"——
+  展示层永远不会拿到"未评"的游客档报告，因为不存在游客档。
+* 重开条件同正本：赛题/评审要求、真实误读事故、或 `scenario` 真的进了请求体（最后一条有自检钉着）。
 """
 from __future__ import annotations
 
@@ -81,25 +90,6 @@ def test_conservation_is_blind_to_dropping_whole_categories():
     assert len(block["categories"]) == 3 < len(CATEGORY_RULES)
     assert check_poi_conservation(block) is None, "守恒若已能抓整类被裁，须重指本用例"
     assert block["conservation"]["ok"] is True, "同上：degrade/strict 处置未变，勿在此放宽"
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="D1 需要的完整性守卫尚不存在：POI 出口不声明「应然类别全集」，整类被裁无从发现",
-)
-def test_single_outlet_declares_the_expected_category_set():
-    """POI 段唯一出口必须让「少了一类」在报告里机器可读，而不是只靠基线 fixture 兜。
-
-    要求的形状（这是规格，不是猜测既有 API）：
-    * ``categories_complete`` —— 落库类别集是否等于应然全集；
-    * ``missing_categories`` —— 缺了哪些类（按判表顺序）。
-
-    有这两格，「场景子集只作用于展示投影层」才可证伪；没有它们，游客档把类别
-    裁在组装层还是投影层，从产物上**看不出区别** —— 那正是计划点名的 P0-4 事故面。
-    """
-    block = _block({cat: _items(cat, [200.0]) for cat in ALL_CATS[:3]})
-    assert block["categories_complete"] is False
-    assert block["missing_categories"] == ALL_CATS[3:]
 
 
 def test_category_key_outside_the_global_table_is_refused():
