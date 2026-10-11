@@ -131,6 +131,67 @@ docs(readme): 补充 Vercel 部署说明
 > ⇒ 推上去 6 条 e2e 红 + 1 条 tailwind 悬空类棘轮红。事后逐条归属：都是**基线缺陷**
 > （那份 e2e 缺"按渲染模式分支"的判据；点名账上记着一个尚未跟踪的探针页），不是那批笔次引入的。
 
+## 复现实测结果（评审方指南）
+
+### 快速演示（无 Key 环境）
+
+```bash
+# 一键启动演示模式（使用内置 fixture 数据，零网络依赖）
+./scripts/run-demo.sh
+```
+
+演示模式特性：
+- 自动检测 Node.js / Python / 前后端依赖
+- 强制使用内置快照数据（凯里老街 / 北京劲松）
+- 禁用所有外部 API 调用（百度地图 / LLM）
+- 自动打开浏览器并打印推荐演示路径
+
+停止服务：`./stop.sh` | 查看日志：`tail -f .run-logs/backend-demo.log`
+
+### 真实 AK 实跑（可选）
+
+如需复现凯里/劲松的真实路网测时结果：
+
+```bash
+# 1. 配置百度 AK（backend/.env）
+#    BAIDU_SERVER_AK=<你的服务端AK>
+#    BAIDU_BROWSER_AK=<你的浏览器端AK>
+
+# 2. 运行健康检查脚本（验证 AK 有效性 + QPS 表现）
+cd backend && python3 scripts/probe_baidu.py
+
+# 3. 触发真实体检任务（前端输入中心点或选择样例社区）
+#    后端会自动调用百度 API 进行批量算路 + POI 采集 + 盲区识别
+
+# 4. 覆写 fixture 为真实快照（可选）
+python3 scripts/snapshot_live.py --community kaili-laojie
+python3 scripts/snapshot_live.py --community beijing-jinsong
+```
+
+真实跑批注意事项：
+- 个人免费额度 QPS ≈ 1–2，单次体检约 1–3 分钟
+- 凯里/劲松各需 ~500 采样点 × 8 类 POI，配额消耗较大
+- 建议先在测试社区小范围验证后再全量跑
+
+### 添加新社区样例
+
+```bash
+# 1. 准备中心点坐标（BD-09）
+#    例：上海五角场 (31.298, 121.516)
+
+# 2. 通过前端触发体检任务（输入坐标或地名搜索）
+
+# 3. 从数据库导出报告快照
+python3 scripts/export_fixture.py --report-id <UUID> --output frontend/src/mocks/fixtures/livingCircleReports/shanghai-wujiaochang.report.json
+
+# 4. 提交 PR 时附上：
+#    - 社区名称与中心点坐标
+#    - 体检时间戳
+#    - 关键指标摘要（总评分/盲区数/POI 总数）
+```
+
+---
+
 ## 关于 AI 协作
 
 本项目在开发中深度使用 [TRAE](https://www.trae.ai/) 等 AI 编程工具协作完成。欢迎在 PR 中说明你的 AI 协作过程（如设计决策、迭代方案），这有助于其他贡献者理解改动背景。完整的设计与演进方案见 [docs/系统升级实施方案.md](./docs/系统升级实施方案.md)。
