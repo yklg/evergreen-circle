@@ -30,8 +30,14 @@ services:
       - "3400:3400"
     depends_on:
       - backend
+    # 源码只读挂载；npm ci / vite build 的两个写入点各配可写命名卷
+    # （.:/app:ro 下 npm ci 会因只读文件系统 EROFS 直接退出——10-11 实跑坐实）。
     volumes:
       - .:/app:ro
+      - frontend_node_modules:/app/frontend/node_modules
+      - frontend_dist:/app/frontend/dist
 
 volumes:
   evergreen_data:
+  frontend_node_modules:
+  frontend_dist:
