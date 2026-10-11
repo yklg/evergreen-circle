@@ -84,6 +84,21 @@ function chip(text: string): HTMLElement {
   return el!.closest('.rounded-chip') as HTMLElement
 }
 
+/**
+ * 三要素那一排的文字范围 —— 下面两条"塌档"断言只在这**一排**里查禁用措辞。
+ *
+ * 为什么不是整页：报告正文的盲区段会如实写「1km 内缺失「小学」」——实测 kaili-ev2 那份
+ * 载荷里小学生最近点 1155m，确实超出 1km，那是**真缺席**而不是塌档。整页断言会把这句
+ * 实话判成违规（烘进后端正文之后当场红过一次，读的就是这个）。
+ * 本域要防的是 chip 与它的派生句把「1km 内有但步行到不了」说成缺失，作用范围就是体检单
+ * 那个 `<section aria-label="体检单">`（`LifeCircleReportView.tsx:809`，e2e 也按它做 scope）。
+ */
+function triadRowText(): string {
+  const row = document.querySelector('section[aria-label="体检单"]')
+  expect(row, '屏幕上没有体检单那一屏').toBeTruthy()
+  return row!.textContent ?? ''
+}
+
 afterEach(cleanup)
 
 describe('三要素 chip 的五态渲染档（报告体检单）', () => {
@@ -98,7 +113,13 @@ describe('三要素 chip 的五态渲染档（报告体检单）', () => {
   it('「1km 内有、步行到不了」不再被说成「1km 内缺失」', async () => {
     await renderTriads([BLOCKED])
     const c = chip('药店 · 1km 内有（950m）· 步行到不了')
-    expect(document.body.textContent).not.toContain('1km 内缺失')
+    const row = triadRowText()
+    // 正对照：先证明上面那个范围**取到了东西、且含这枚 chip** —— 没有这一条，
+    // 下面那句 not.toContain 会因为选择器取空而恒真（收窄范围最容易犯的就是这个）。
+    expect(row, '体检单那一屏没含这枚 chip ⇒ 范围取错了，禁用措辞那条会恒真').toContain(
+      '药店 · 1km 内有（950m）· 步行到不了',
+    )
+    expect(row).not.toContain('1km 内缺失')
     expect(c.className).toContain(TIER_GAP)
     expect(c.className).not.toContain(TIER_OK)
   })
@@ -109,8 +130,10 @@ describe('三要素 chip 的五态渲染档（报告体检单）', () => {
     expect(c.className).toContain(TIER_UNKNOWN)
     expect(c.className).not.toContain(TIER_GAP)
     expect(c.className).not.toContain(TIER_OK)
-    // 「没查过」不许被塌成「查过且没有」
-    expect(document.body.textContent).not.toContain('中心 1km 内没有')
+    // 「没查过」不许被塌成「查过且没有」（同上一条：范围收在体检单那一屏，理由见 triadRowText）
+    const row = triadRowText()
+    expect(row, '范围取空 ⇒ 这条会恒真').toContain('小学 · 1km 内有没有未查全')
+    expect(row).not.toContain('中心 1km 内没有')
   })
 
   it('真量过的「中心 1km 内没有」才用缺席措辞，并与未查全分档', async () => {

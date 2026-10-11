@@ -12,6 +12,7 @@ import {
   getLifeCircleRecords,
   LC_REPORT_ID,
 } from '../mocks/livingCircleReports'
+import { livingCircleRows } from '../lib/recordIndex'
 import { replayLivingCircleStream, LC_STAGES } from '../mocks/livingCircleStream'
 import { dataOriginBadge, heatSamplePoints, isInReachPoint, isTimedPoint, LC_CANVAS, LC_ISO_COLORS, lcCategoryCaliberNote, lcCoLocated, lcLocPrefix, lcMeters, lcPolyPts, lcSceneDistanceM, lcSnapshotPoiLayer, lcToPx, LC_CO_LOCATED_M, LC_REACH_FULL_MIN_FALLBACK, planComparisonOverlay, poiConservation, poiConservationNote, poiMetricLabel, poiRenderSet, POI_THIN_THRESHOLD, policyVersionOf, coverageCaliberVersionOf, COVERAGE_CALIBER_VERSION, staleCoverageCaliberNotice, samplingReach, samplingReachLabel, SCOPE_POLICY_VERSION, staleCaliberNotice } from '../lib/livingCircle'
 import { BD_LAT_ABS_MAX, BD_LNG_ABS_MAX, parseBdLngLat } from '../lib/geo'
@@ -799,6 +800,37 @@ describe('F3 · 完整体检 Report（living_circle 挂载 + 双层章节）', (
       expect(rec.total_score).toBeLessThanOrEqual(100)
       expect(rec.blindspot_count).toBeGreaterThanOrEqual(0)
       expect(rec.title).toBeTruthy()
+    }
+  })
+
+  it('没有正文的那几行必须打标，且指向的行要在同一列表里存在', () => {
+    // 症状：列表那行写「62 分／盲区 4」，点开是另一轮的正文（65.4 分／盲区 0）。
+    // 打标不藏这个事实，而是**把它说出来** —— 由 `livingCircleRows` 用目标行自己的字段算出那句话，
+    // 所以日后重烘快照、读数变了，那句话跟着变，不会再变成两套数。
+    const records = getLifeCircleRecords()
+    const ids = new Set(records.map((r) => r.id))
+    const aliased = records.filter((r) => r.body_alias_of)
+    // 覆盖面闭合（禁抽样）：今天恰好这两行没有自己的载荷。多一行"首轮快照"或删掉某行 ⇒ 这里红，
+    // 逼下一次改动重新声明"哪几行是指向别处的"。
+    expect(aliased.map((r) => r.id).sort()).toEqual(['lc-beijing-jinsong-r1', 'lc-kaili-r1'])
+
+    const rows = livingCircleRows(records)
+    for (const rec of aliased) {
+      expect(ids.has(rec.body_alias_of!), `${rec.id} 的 body_alias_of 指向不存在的行：${rec.body_alias_of}`).toBe(true)
+      const target = records.find((r) => r.id === rec.body_alias_of)!
+      expect(rec.id).not.toBe(rec.body_alias_of)
+      // 正对照：这两行确实与正文不同数 ⇒ "必须说出来"这条不是恒真
+      expect(rec.total_score).not.toBe(target!.total_score)
+
+      const row = rows.find((r) => r.id === rec.id)!
+      const trow = rows.find((r) => r.id === rec.body_alias_of)!
+      expect(row.body_alias_note).toContain(trow.title)
+      expect(row.body_alias_note).toContain(`${trow.total_score} 分`)
+      expect(row.body_alias_note).toContain(`盲区 ${trow.blindspot_count} 处`)
+    }
+    // 没有标的行不许长出这句话（否则列表里到处是"指向别处"，等于没说）
+    for (const row of rows.filter((r) => !r.body_alias_of)) {
+      expect(row.body_alias_note).toBeUndefined()
     }
   })
 })

@@ -33,7 +33,9 @@ export default function RecordRow({
   const degrade = record.degraded ? degradeBanner(record) : null
 
   return (
-    <div className="group flex items-center gap-4 rounded-card border border-line/60 bg-card p-4 shadow-card transition-all hover:border-primary-soft">
+    // `data-record` 是给真浏览器判据用的行身份（`e2e/lcDemoArchiveDeleteRestore.spec.ts`）：
+    // 一行里同时有标题按钮、来源徽标和删除按钮，靠数祖先层级或 class 去定位都会在下次改排版时断。
+    <div data-record={record.id} className="group flex items-center gap-4 rounded-card border border-line/60 bg-card p-4 shadow-card transition-all hover:border-primary-soft">
       {record.domain === 'living_circle' ? (
         <div
           className="grid h-14 w-14 shrink-0 place-items-center rounded-card font-serif text-[22px] font-semibold"
@@ -77,6 +79,13 @@ export default function RecordRow({
             {record.city ? ` · ${record.city}` : ''}
           </span>
           <span>{fmtRecordTime(record.checked_at)}</span>
+
+          {record.body_alias_note && (
+            // 这一行只有列表读数、正文取自另一轮 —— 不说出来，屏上就是"同一份报告两套数"
+            <span className="rounded-chip border border-line bg-bg px-1.5 py-0.5 text-ink-2">
+              {record.body_alias_note}
+            </span>
+          )}
 
           {origin && (
             <span className={`rounded-chip px-1.5 py-0.5 ${TONE_CLASS[origin.tone]}`} title={origin.detail}>

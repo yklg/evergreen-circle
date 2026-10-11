@@ -30,6 +30,10 @@ export interface ReportRecord {
   interpolation?: string | null
   /** 仅调研域有：删除确认里要点名会被一并清除的证据量 */
   evidence_count?: number
+  /** 这一行的正文取自另一行（见 `LifeCircleRecord.body_alias_of`）；缺席即它自己 */
+  body_alias_of?: string
+  /** `body_alias_of` 的人话说法，由**同一份列表**算出 ⇒ 里面那几个数不会和正文漂开 */
+  body_alias_note?: string
 }
 
 export interface RecordStats {
@@ -74,6 +78,7 @@ export function lcRecordToRow(r: LifeCircleRecord): ReportRecord {
     data_origin: r.data_origin,
     degraded: r.degraded ?? null,
     interpolation: r.interpolation,
+    body_alias_of: r.body_alias_of,
   }
 }
 
@@ -103,7 +108,21 @@ export function researchCardToRow(c: ReportCard): ReportRecord {
  * 不再和生活圈共用一份 records。
  */
 export function livingCircleRows(records: LifeCircleRecord[]): ReportRecord[] {
-  return [...records.map(lcRecordToRow)].sort(
+  const rows = records.map(lcRecordToRow)
+  // 「点开的是哪一份」这句话从**同一份列表**里取目标行自己的字段算 —— 文案里那几个数
+  // 因此永远是正文那边的读数。硬写一句"打开当代那一份"看似更简单，但它会把目标行的
+  // 分数/盲区数钉死在字符串里，下一次重烘快照就又成了两套数（本笔要修的正是这件事）。
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  for (const row of rows) {
+    if (!row.body_alias_of) continue
+    const target = byId.get(row.body_alias_of)
+    if (!target) continue // 悬空别名由判据拦（livingCircleContract：带标的行必须指得到人）
+    const reading = isComparableScore(target)
+      ? `${target.total_score} 分 · 盲区 ${target.blindspot_count ?? 0} 处`
+      : '不可比'
+    row.body_alias_note = `这一行只留有列表读数 · 点开的是「${target.title}」（${fmtRecordTime(target.checked_at)} · ${reading}）`
+  }
+  return rows.sort(
     (a, b) => sortKeyOf(b.checked_at) - sortKeyOf(a.checked_at),
   )
 }

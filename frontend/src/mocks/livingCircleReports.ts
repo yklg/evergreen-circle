@@ -20,6 +20,13 @@ import type {
   ReportSection,
 } from '../types'
 import { SAMPLE_COMMUNITIES } from './livingCircleMock'
+/* 演示态报告正文 = 后端装配器烘出的快照（`backend/scripts/bake_lc_demo_reports.py`）。
+   作者只有一个：`diagnosis_templates.py::assemble_report`。本文件下面那套 TS 现算从此
+   **不在产品读路径上**，只留给"换一份假想载荷再重装"的探针与测试夹具用 —— 曾经两处
+   各算一遍，后端升到 nar-3 加的图演示态一直看不见（改一边忘另一边不会红）。 */
+import kailiSnapshot from './fixtures/livingCircleReports/kaili.report.json'
+import kailiEv2Snapshot from './fixtures/livingCircleReports/kaili-ev2.report.json'
+import jinsongSnapshot from './fixtures/livingCircleReports/beijing-jinsong.report.json'
 import {
   LC_CAT_COLOR,
   lcLocPrefix,
@@ -977,7 +984,30 @@ export function getLivingCircleReportMock(id: string): Report | null {
   const base = LC_ALIAS[id] ?? id
   const prefix = 'lc-'
   if (!base.startsWith(prefix)) return null
-  return buildLivingCircleReport(base.slice(prefix.length))
+  return getBakedDemoReport(base.slice(prefix.length))
+}
+
+/**
+ * 演示态报告正文的唯一产品出口：读后端装配器烘出的快照，再把 `living_circle` 载荷
+ * 从 `livingCircleMock.ts` 那份**现成的 import** 拼回来（快照里刻意剥了载荷，否则 bundle 翻倍）。
+ *
+ * 为什么不在这里退回 `buildLivingCircleReport`：那等于让两个作者同时留在产品路径上，
+ * 换的作者出问题时演示态静默回到旧文案 —— 正是这条改动要消灭的东西（半迁移 = 0）。
+ * 烘漏了一份就是拿不到，让 `--check` 那条判据去红，不要在运行时兜住。
+ */
+export function getBakedDemoReport(sceneId: string): Report | null {
+  const sample = SAMPLE_COMMUNITIES.find((s) => s.id === sceneId)
+  const snapshot = DEMO_REPORT_SNAPSHOTS[sceneId]
+  if (!sample || !snapshot) return null
+  // `_` 前缀是生成元数据，不属于 Report 契约 ⇒ 读时剥掉，别让它渗进渲染层
+  const body = Object.fromEntries(Object.entries(snapshot).filter(([k]) => !k.startsWith('_')))
+  return { ...body, living_circle: sample.report } as Report
+}
+
+const DEMO_REPORT_SNAPSHOTS: Record<string, Record<string, unknown>> = {
+  kaili: kailiSnapshot as unknown as Record<string, unknown>,
+  'kaili-ev2': kailiEv2Snapshot as unknown as Record<string, unknown>,
+  'beijing-jinsong': jinsongSnapshot as unknown as Record<string, unknown>,
 }
 
 /** 历史页 / 报告中心共用：历次体检记录（首批 = 两样区实检 + 早期轮次快照） */
@@ -1019,6 +1049,9 @@ export function getLifeCircleRecords(): LifeCircleRecord[] {
       blindspot_count: 4,
       data_origin: 'fixture_sample',
       interpolation: 'circular_approx',
+      // 仓里没有 09-02 那一轮的载荷 ⇒ 点开落到当代那份，列表那行必须自己说出来
+      // （见 `LifeCircleRecord.body_alias_of`；上一轮这里什么都没说，屏上就是两套数）
+      body_alias_of: 'lc-kaili',
     },
     {
       id: 'lc-beijing-jinsong-r1',
@@ -1030,6 +1063,8 @@ export function getLifeCircleRecords(): LifeCircleRecord[] {
       blindspot_count: 2,
       data_origin: 'fixture_sample',
       interpolation: 'circular_approx',
+      // 同上：这一行也没有自己的载荷，点开落到当代那份劲松体检
+      body_alias_of: 'lc-beijing-jinsong',
     },
   ]
   return [...two, ...snapshots].sort((a, b) => (a.checked_at < b.checked_at ? 1 : -1))

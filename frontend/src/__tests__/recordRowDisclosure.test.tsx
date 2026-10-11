@@ -12,7 +12,8 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { ComponentType } from 'react'
 import RecordRow from '../components/RecordRow'
-import { lcRecordToRow, researchCardToRow } from '../lib/recordIndex'
+import { lcRecordToRow, livingCircleRows, researchCardToRow } from '../lib/recordIndex'
+import { getLifeCircleRecords } from '../mocks/livingCircleReports'
 import type { LifeCircleRecord, ReportCard } from '../types'
 
 const mocks = vi.hoisted(() => ({
@@ -89,6 +90,20 @@ describe('RecordRow · 来源举证（不可比 ≠ 0 分）', () => {
     expect(screen.getByText('配额降级 · 总量熔断')).toBeTruthy()
     expect(screen.getAllByText('离线估算').length).toBeGreaterThan(0)
     expectNoGradeShown()
+  })
+
+  it('首轮快照那行：屏上要说清「点开的是另一轮」，并报出那一轮自己的读数', () => {
+    // 走**生产路径**（`getLifeCircleRecords` → `livingCircleRows`）而不是手搓一行：
+    // 那句话里的 65.4／盲区 0 是目标行自己的字段，重烘快照后变了也必须跟着变。
+    const rows = livingCircleRows(getLifeCircleRecords())
+    const alias = rows.find((r) => r.id === 'lc-kaili-r1')
+    const target = rows.find((r) => r.id === 'lc-kaili')
+    expect(alias && target).toBeTruthy()
+    render(<RecordRow record={alias!} onOpen={() => {}} />)
+    const note = screen.getByText(/点开的是/)
+    expect(note.textContent).toContain(target!.title)
+    expect(note.textContent).toContain(`${target!.total_score} 分`)
+    expect(note.textContent).toContain(`盲区 ${target!.blindspot_count} 处`)
   })
 
   it('调研行：不伪造分数与盲区，域徽标走调研口径', () => {
