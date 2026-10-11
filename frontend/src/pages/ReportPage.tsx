@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -38,7 +38,8 @@ import { VDecisionReplay } from '../components/VDecisionReplay'
 import { VDataGrid } from '../components/VDataGrid'
 import { VStructuredBlock } from '../components/VStructured'
 import { ChapterContentMap } from '../components/ChapterContentMap'
-import { refineSection, submitFeedback, refineReportEvidence, openTaskStream } from '../lib/api'
+import { refineSection, submitFeedback, refineReportEvidence, openTaskStream, fetchSpotChecksForReport } from '../lib/api'
+import { toSpotLaunch, type SpotLaunchTarget } from '../lib/spotCheckFlow'
 import { VSkeleton } from '../components/ui'
 import MetricsStrip from '../components/MetricsStrip'
 import ReportBriefView from '../components/ReportBriefView'
@@ -166,6 +167,51 @@ export default function ReportPage() {
   useEffect(() => {
     if (reportId) load(reportId)
   }, [reportId, load])
+
+  // 地标体检（片 2）：把「这份攻略下哪些景点已体检过」读回来，喂给榜单里的发起口。
+  // 一次性全量拉取 + 本地建映射 —— 不做"每行一个请求"。
+  // 容错是双向的：侧表里有行而榜单里已无该 spot_id（攻略被 refine/重排过）⇒ 只让它留在
+  // 映射里没人引用，既不报错也不给孤儿行留入口；反过来的情形（有实体没行）走 disabled 那一支。
+  const [spotChecks, setSpotChecks] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!rid) return
+    let cancelled = false
+    fetchSpotChecksForReport(rid)
+      .then((rows) => {
+        if (cancelled) return
+        const m: Record<string, string> = {}
+        for (const r of rows) {
+          // 一份体检可能被同一攻略的多个景点关联（同中心复用）；同一景点只留最早那条。
+          if (r.spot_id && r.lc_report_id && !m[r.spot_id]) m[r.spot_id] = r.lc_report_id
+        }
+        setSpotChecks(m)
+      })
+      .catch(() => {
+        /* 回读失败 = 这一栏不出现，不影响报告本身阅读；不弹错、不阻塞 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [rid])
+
+  // 发起口（片 2）：唯一出口是 `lib/spotCheckFlow.toSpotLaunch`，组件里不手拼 state。
+  // 坐标非法时它**抛错**（写入口纪律）⇒ 这里兜住，退化成一个可读提示而不是白屏。
+  // 宿主标题先落成普通变量再进依赖表：写成 `current?.title` 会让 React Compiler
+  // 保不住这次手工记忆化（`preserve-manual-memoization`），而棘轮账本不许这个文件变大。
+  const hostTitle = current?.title ?? ''
+  const spotCheckCtx = useMemo(() => ({
+    onLaunch: (spot: SpotLaunchTarget) => {
+      try {
+        const st = toSpotLaunch(spot, rid, hostTitle)
+        if (st) navigate('/life-circle/custom', { state: st })
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[report] 该景点坐标不能采纳，未发起体检：', e)
+      }
+    },
+    onOpen: (lcReportId: string) => navigate(`/report/${lcReportId}`),
+    existing: spotChecks,
+  }), [navigate, rid, spotChecks, hostTitle])
 
   // C1 打印同步：details 闭合时浏览器经匿名 slot 隐藏内部内容，CSS 无法强制展开，
   // beforeprint 统一置 open、afterprint 还原打印前状态（index.css 另有 summary 留底规则）。
@@ -567,8 +613,9 @@ export default function ReportPage() {
               )}
 
               {/* 结构化调研知识（榜单/路线/住宿/花费 · 可达/配套/风险）
-                  ev 接缝：核查表等块内的证据引用按全局序号显示并可跳到右栏证据卡 */}
-              <VStructuredBlock block={sec.structured} ev={{ index: evIndex, onCite: jumpToEvidence }} />
+                  ev 接缝：核查表等块内的证据引用按全局序号显示并可跳到右栏证据卡
+                  spot 接缝：景点榜单卡里的「以该景点发起体检」（片 2），未注入则那一行不出现 */}
+              <VStructuredBlock block={sec.structured} ev={{ index: evIndex, onCite: jumpToEvidence }} spot={spotCheckCtx} />
 
               {/* 数据空间（CSV 表格）*/}
               {sec.data_grid && <VDataGrid grid={sec.data_grid} title={`${sec.title} · 数据空间`} />}

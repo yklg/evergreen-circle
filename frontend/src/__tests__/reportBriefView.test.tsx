@@ -30,6 +30,8 @@ vi.mock('react-router-dom', () => ({
 
 // ReportPage 渲染路径需要的 api 全集（与 reportRefine.test.tsx 对齐 + 新增 generateReportBrief）
 vi.mock('../lib/api', () => ({
+  // 片 2：ReportPage 挂载时会回读"这份攻略里哪些景点已体检过"（空数组 = 都没体检过）
+  fetchSpotChecksForReport: vi.fn(async () => []),
   refineReportEvidence: vi.fn(),
   openTaskStream: vi.fn(() => () => {}),
   fetchReport: vi.fn(),

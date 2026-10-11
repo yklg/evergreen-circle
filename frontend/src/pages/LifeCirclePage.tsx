@@ -31,6 +31,7 @@ import { LC_REPORT_ID } from '../mocks/livingCircleReports'
 import { replayLivingCircleStream, LC_STAGES, stageLabel } from '../mocks/livingCircleStream'
 import { fetchLifeCircleReports, fetchLifeCircleReport } from '../lib/api'
 import { launchLifeCircle, subscribeLifeCircleTask } from '../lib/lifeCircleFlow'
+import { readSpotCheckLaunch } from '../lib/spotCheckFlow'
 import { useDataModeStore } from '../store/dataModeStore'
 import { useExpertStore, EMPTY_ROSTER } from '../store/expertStore'
 import { useTaskRegistry } from '../store/taskRegistry'
@@ -46,6 +47,7 @@ import type {
   ForensicRoundRow,
   LngLat,
   LivingCircleReport,
+  SpotCheckOrigin,
   TravelMode,
 } from '../types'
 import {
@@ -89,6 +91,18 @@ import { CategoryCaliberNotes } from '../components/lifecircle/CategoryCaliberNo
 interface PendingCenter {
   lnglat: LngLat
   coordSys: CoordSys
+}
+
+/** 待确认的一次发起（定位到我 / 地标体检入站两个来源共用同一个确认框）。
+ *
+ * `origin` 只在**从报告页的景点**发起时带（片 2）：它一路透传到请求体，
+ * 让这份体检在库里知道自己是从哪份攻略的哪个景点来的（`SpotOrigin`）。
+ * 定位到我那条路不带 —— "用户自己站在某个点"与"用户读了攻略里的某个景点"是两件事。 */
+type PendingLocate = PendingCenter & {
+  name: string
+  origin?: SpotCheckOrigin
+  /** 宿主报告标题：**纯展示**（来自路由状态，服务端不采信；缺省时确认框退回报告 id）。 */
+  hostTitle?: string
 }
 
 /**
@@ -243,7 +257,12 @@ export default function LifeCirclePage() {
   const [locating, setLocating] = useState(false)
   const [locateErr, setLocateErr] = useState('')
   /** v5 A：真实模式「定位到我」后的待确认定位（确认弹窗数据源，确认才发起体检） */
-  const [pendingLocate, setPendingLocate] = useState<(PendingCenter & { name: string }) | null>(null)
+  const [pendingLocate, setPendingLocate] = useState<PendingLocate | null>(null)
+  /* 片 2：报告页点景点跳过来的发起意图（`state.spotCheck`）。
+     只消费一次 —— 用户取消之后，不该因为一次重渲染又把它弹回来
+     （与 `pendingTaskRef` 同一个"幂等消费"范式）。 */
+  const incomingSpot = useMemo(() => readSpotCheckLaunch(location.state), [location.state])
+  const spotIntakeRef = useRef('')
 
   /* A4 演示任务流（仅 mock 分支；M3 真实分支由工作台 SSE 接管） */
   const [playing, setPlaying] = useState(false)
@@ -332,6 +351,34 @@ export default function LifeCirclePage() {
     setCtaErr('')
     flowRef.current = subscribeLifeCircleTask(incomingTaskId, flowCallbacks)
   }, [incomingTaskId, isFixture])
+
+  /* 地标体检入站（片 2）：报告页点景点 → 带着坐标/名称/来源跳到这里。
+     与「定位到我」**共用同一个确认框**（同一个弹窗、同一份配额披露、同一个
+     `startRealCheck`）—— 不新造第二条发起通道，也不自动提交：
+     提交由用户在确认框上按一次，与 U21 的既定语义一致。
+
+     只消费一次（`spotIntakeRef`）：取消之后重渲染不该把它弹回来。
+     演示态（fixture）不消费：那里没有真实任务，坐标只用来就地标注（与「定位到我」同判定）。 */
+  useEffect(() => {
+    if (!incomingSpot || isFixture) return
+    const key = `${incomingSpot.origin.host_report_id}#${incomingSpot.origin.spot_id}`
+    if (spotIntakeRef.current === key) return
+    spotIntakeRef.current = key
+    setCustomCenter(incomingSpot.lnglat)
+    setCustomCoordSys(incomingSpot.coordSys)
+    setDragging(true)
+    // 输入框同步名称 —— **仅供人看**：请求里的名称走下面的显式参数，
+    // 不依赖这次 setState（setState 排队，同 tick 内读到的仍是旧值，即阶段 2 事故根因）。
+    setCtaText(incomingSpot.name)
+    setPendingLocate({
+      lnglat: incomingSpot.lnglat,
+      coordSys: incomingSpot.coordSys,
+      name: incomingSpot.name,
+      origin: incomingSpot.origin,
+      ...(incomingSpot.hostTitle ? { hostTitle: incomingSpot.hostTitle } : {}),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingSpot, isFixture])
 
   useEffect(() => {
     if (isFixture) return
@@ -438,7 +485,7 @@ export default function LifeCirclePage() {
    * `opts.force`（4b）＝**用户点名要重测**，只有一个调用点传它：图上那枚「重新体检」。
    * 「开始体检」与输入新目标都不传 —— 那里的默认行为（同口径 30 天内、中心 500m 内直接复用
    * 并如实标注来源）是省配额的既定设计，不该被一次普通点击悄悄换成全额重测。 */
-  async function startRealCheck(opts: { pending?: PendingCenter; nameOverride?: string; force?: boolean } = {}) {
+  async function startRealCheck(opts: { pending?: PendingCenter; nameOverride?: string; force?: boolean; origin?: SpotCheckOrigin } = {}) {
     if (ctaBusy || runActive) return
     setCtaErr('')
     setCtaBusy(true)
@@ -457,6 +504,9 @@ export default function LifeCirclePage() {
           // city 有意不传：由后端按中心点逆地理（见 buildTaskInput 注释）
           ...(travelMode ? { travel_mode: travelMode } : {}),
           ...(opts.force ? { force: true } : {}),
+          // 地标体检来源（片 2）：只在"从攻略景点发起"时带；定位到我与普通输入都不带
+          // （"用户站在某处"与"用户读了攻略里的某个景点"在下游是两件事）。
+          ...(opts.origin ? { origin: opts.origin } : {}),
         },
         flowCallbacks,
       )
@@ -587,6 +637,8 @@ export default function LifeCirclePage() {
     void startRealCheck({
       pending: { lnglat: pending.lnglat, coordSys: pending.coordSys },
       nameOverride: pending.name,
+      // 地标体检入站带来的来源（片 2）；「定位到我」那条路没有这一位
+      ...(pending.origin ? { origin: pending.origin } : {}),
     })
   }
 
@@ -1346,6 +1398,20 @@ export default function LifeCirclePage() {
                 <span className="text-ink-3">数据模式</span>
                 <span className="font-medium text-ink">真实联调</span>
               </div>
+              {/* 地标体检入站（片 2）：把"这不是你自己站的地方，而是攻略里的一个景点"摆在确认框上。
+                  报告标题是路由状态带来的**纯展示**文本（服务端不采信，快照按 id 自取），
+                  取不到就退回报告 id —— 那一串可核对，比编一个"某攻略"诚实。 */}
+              {pendingLocate.origin && (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-ink-3">来源</span>
+                  <span
+                    className="truncate font-medium text-ink"
+                    title={`宿主报告 ${pendingLocate.origin.host_report_id} · 景点 ${pendingLocate.origin.spot_id}`}
+                  >
+                    攻略「{pendingLocate.hostTitle || pendingLocate.origin.host_report_id}」· 景点
+                  </span>
+                </div>
+              )}
             </div>
             <p className="mt-4 flex items-start gap-1.5 rounded-btn border border-warn/40 bg-warn/10 px-3 py-2 text-tag text-ink-2">
               <Info size={13} className="mt-0.5 shrink-0 text-warn" />

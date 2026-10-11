@@ -1419,6 +1419,29 @@ export type LifeCircleMode = 'quick' | 'standard' | 'precise'
 /** 等时圈出行口径：与后端 `CreateTaskBody.travel_mode` 的合法值逐字一致。 */
 export type TravelMode = 'walking' | 'riding' | 'driving'
 
+/** 地标体检的来源（片 1 后端契约 `SpotOrigin`，逐字对齐）：
+ *  这次体检是「从哪份攻略的哪个景点」发起的。**不含 `snapshot`** —— 快照由服务端按
+ *  `host_report_id` 自取，客户端多填会被子模型的 `extra="forbid"` 挡成 422。 */
+export interface SpotCheckOrigin {
+  host_kind: string
+  host_report_id: string
+  spot_id: string
+}
+
+/** 地标体检关联行（片 1 侧表 `report_spot_checks` 的读形状，逐字对齐后端 `list_spot_checks`）。 */
+export interface SpotCheckRow {
+  host_kind: string
+  host_report_id: string
+  spot_id: string
+  /** 口径档。本期恒为 `residential` 且**不参与计算**，只占位（见后端 D-2）。 */
+  scenario: string
+  /** 这次体检的报告 id（`lc-xxx`） */
+  lc_report_id: string
+  /** 服务端按宿主报告自取的快照（客户端喂不进来） */
+  snapshot: Record<string, unknown>
+  captured_at: string
+}
+
 /** 历史体检记录（历史页 / 报告中心列表项；M 阶段由 living_circle_reports 列表接口返回） */
 export interface LifeCircleRecord {
   id: string
@@ -1442,6 +1465,10 @@ export interface LifeCircleRecord {
    * 后端从不发这一位 ⇒ 缺席即"这行就是它自己"。
    */
   body_alias_of?: string
+  /** 地标体检的来源（片 1）：社区体检为 null / 缺席。**必须可选** ——
+   *  `mocks/livingCircleReports.ts` 里有多处构造 `LifeCircleRecord` 字面量，
+   *  加成必填会把这些构造点直接弄成编译错误（加字段不许把既有构造点弄红）。 */
+  origin?: SpotCheckOrigin | null
 }
 
 /** 全国省市区三级区划（D1 联动选择器；后端 regions 端点仅返回名称树） */

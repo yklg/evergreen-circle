@@ -153,17 +153,20 @@ def test_declared_fields_have_no_undocumented_senders():
                    # "没表态"与"表态了取默认值"在这两条上都是要分辨的事，所以不发时是真的不发。
                    # `travel_mode` 原先被列在下面"无发送方"那一侧，是清单没跟上线上形状 ——
                    # 放在那里不影响安全性（两个键都非必填，下面的断言仍在守），但它是句假话。
-                   "travel_mode", "force"}
+                   "travel_mode", "force",
+                   # `origin`（片 2）：前端发**字面一行** `origin: input.origin ?? null`
+                   # （不是 spread —— spread 会逃过上面那个只认 6 空格缩进的正则）。
+                   # 它从"无发送方"搬到这里，就是片 1 声明 → 片 2 开始发这个顺序的证据。
+                   "origin"}
     research_launched = {"query", "mode", "model", "type", "source_urls"}
     launched = lc_launched | research_launched
     for key in launched:
         assert key in src, f"发送方清单里的 {key} 在 api.ts 里已找不到 ⇒ 清单漂移，判据在空转"
 
     unsent = set(CreateTaskBody.model_fields) - launched
-    # 片 1 落地后：`origin` 已由 `CreateTaskBody` 声明，而前端还没开始发（片 2 才发）——
-    # 这条清单正是"后端先声明、前端才开始发"这个顺序的编码：片 2 一旦开始发 `origin`，
-    # 就把它挪进 `lc_launched` 并把它从这里删掉，本判据会盯着这次挪动。
-    assert unsent == {"purpose", "origin"}, (
+    # 片 1 声明了 `origin`、片 2 开始发它 ⇒ 清单回到只剩 `purpose`。
+    # 这条断言盯的就是这个顺序：键只在"后端已声明"之后才允许出现在发送侧。
+    assert unsent == {"purpose"}, (
         f"`CreateTaskBody` 的无发送方字段清单变了，须回计划 §0 登记：{sorted(unsent)}"
     )
     for field in sorted(unsent):

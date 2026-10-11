@@ -18,6 +18,8 @@ import type {
   RegionProvince,
   Report,
   ReportCard,
+  SpotCheckOrigin,
+  SpotCheckRow,
   ReportSection,
   SaveSettingsResp,
   SSEEventType,
@@ -192,6 +194,11 @@ export async function createLivingCircleTask(input: {
    *  发了 `force:false` 与不发在载荷形状上是两件事，而默认那条路是"省配额"的既定行为。
    *  它只表达意图，不参与缓存键（后端 `CheckParams.force` 的 docstring 同一条）。 */
   force?: boolean
+  /** 地标体检的来源（片 1 后端契约 `SpotOrigin`）：只在**从景点发起**时带。
+   *  与 `travel_mode` / `force` 不同，这一位**无条件发**（无来源时发 `null`）：
+   *  后端 `CreateTaskBody.origin` 是可选子模型，`null` 是它明确的合法值，而"键在不在"
+   *  不承载额外语义 —— 少一分支就少一处能漂移的形状。 */
+  origin?: SpotCheckOrigin | null
 }): Promise<CreateTaskResp> {
   // 坐标契约：前端唯一写入口。非法坐标当场抛错，**绝不**送进库
   // （一旦落库，报告 scene.center 就是坏的，之后每次打开都复现）。
@@ -213,6 +220,10 @@ export async function createLivingCircleTask(input: {
       ...(input.travel_mode ? { travel_mode: input.travel_mode } : {}),
       // 只在"点名重测"时发这一位（见上面 `force?` 那条注释：false 不发，保持默认载荷形状）
       ...(input.force ? { force: true } : {}),
+      // 地标体检来源（片 1）：**字面一行**写在这里，不写成 spread ——
+      // `test_task_body_contract.py:42` 的正则只收 6 空格缩进的 `key:` / `key,`，
+      // spread 写法会逃过那道"前端发的每个键都必须被后端声明"的跨端守卫。
+      origin: input.origin ?? null,
     }),
   })
   const data = (await r.json().catch(() => ({}))) as { taskId?: string; detail?: string; message?: string }
@@ -232,6 +243,17 @@ export async function fetchLifeCircleReports(): Promise<LifeCircleRecord[]> {
 /** 完整体检报告（Report 挂载 living_circle，渲染适配器直接消费）。 */
 export async function fetchLifeCircleReport(reportId: string): Promise<Report | null> {
   return safeJson<Report | null>(`/api/life-circle/${reportId}`, undefined, null)
+}
+
+/** 这份体检是从哪份攻略的哪些景点发起的（片 1 回读端点，片 2 消费）。
+ *
+ *  返回**数组**：一次体检可能被同一攻略的多个景点关联（同中心复用 ⇒ 一次体检、多个入口）。
+ *  取不到时返回空数组 —— 社区体检、或报告还没关联上都是常态，不该让攻略页因此报错。 */
+export async function fetchSpotChecksForReport(reportId: string): Promise<SpotCheckRow[]> {
+  const r = await safeJson<{ checks?: SpotCheckRow[] }>(
+    `/api/life-circle/${reportId}/spot-checks`, undefined, { checks: [] },
+  )
+  return r?.checks ?? []
 }
 
 /** 全国省市区三级区划（D1：无 AK 依赖的离线树，供地址联动选择）。 */

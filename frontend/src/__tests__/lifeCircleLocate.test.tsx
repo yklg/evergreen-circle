@@ -211,3 +211,56 @@ describe('FE-32 · LifeCirclePage 接收首页透传的 state.query', () => {
     expect(input.value).toBe('')
   })
 })
+
+// ── 地标体检入站（片 2）：报告页点景点 → 本页**只弹确认框**，确认才发起 ────────
+// 与上面「定位到我」共用同一条确认通道（同一个弹窗、同一份配额披露、同一个启动函数），
+// 所以这一组的判据形状刻意与 U21 那两条逐条对齐：取消零建单、载荷带来源、不带 city/force。
+describe('地标体检入站（state.spotCheck）', () => {
+  const SPOT_STATE = {
+    spotCheck: {
+      name: '甲秀楼',
+      lnglat: [106.7123, 26.5786] as [number, number],
+      coordSys: 'bd09' as const,
+      origin: { host_kind: 'guide', host_report_id: 'r_9e9c35b2', spot_id: 'spot_甲秀楼' },
+    },
+  }
+
+  function renderSpotIntake() {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/life-circle/custom', state: SPOT_STATE }]}>
+        <Routes>
+          <Route path="/life-circle/:sceneId" element={<LifeCirclePage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('F-04：入站即弹确认框（名称/坐标/来源）、取消零建单', async () => {
+    renderSpotIntake()
+    const dialog = await screen.findByRole('dialog', { name: '确认发起体检' })
+    expect(dialog.textContent).toContain('甲秀楼')
+    expect(dialog.textContent).toContain('106.71230')
+    // 未确认前不得发起（与 U21 同一条纪律：确认框不发起）
+    expect(api.createLivingCircleTask).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认发起体检' })).toBeNull())
+    expect(api.createLivingCircleTask).not.toHaveBeenCalled()
+  })
+
+  it('F-05：确认后载荷带 origin 三元组，且不带 city / force（默认走省配额路径）', async () => {
+    renderSpotIntake()
+    await screen.findByRole('dialog', { name: '确认发起体检' })
+    fireEvent.click(screen.getByRole('button', { name: /确认体检/ }))
+
+    await waitFor(() => expect(api.createLivingCircleTask).toHaveBeenCalledTimes(1))
+    const arg = api.createLivingCircleTask.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.center).toEqual([106.7123, 26.5786])
+    expect(arg.coord_sys).toBe('bd09')
+    expect(arg.origin).toEqual({
+      host_kind: 'guide', host_report_id: 'r_9e9c35b2', spot_id: 'spot_甲秀楼',
+    })
+    expect(arg).not.toHaveProperty('city')
+    expect(arg).not.toHaveProperty('force')
+  })
+})

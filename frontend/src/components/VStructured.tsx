@@ -1,8 +1,9 @@
-import { Check, Minus, X } from 'lucide-react'
+import { Check, Crosshair, Minus, Radar, X } from 'lucide-react'
 import { useState, type ReactElement } from 'react'
 import { BMapBlock, type MapSpot } from './BMapBlock'
 import { useMapConfig } from '../hooks/useMapConfig'
 import { VSpotSketch } from './VSpotSketch'
+import type { SpotLaunchTarget } from '../lib/spotCheckFlow'
 import type { StructuredBlock, StructuredBlockType } from '../types'
 
 type Row = Record<string, unknown>
@@ -110,9 +111,31 @@ export function VSpotRanking({
   )
 }
 
+/** 地标体检发起口（片 2）：由 `ReportPage` 注入。**整块可选** —— 导出件、探针页、
+ *  以及任何没注入的调用点都逐字保持今天的样子（不出现按钮、不报错）。
+ *
+ *  参数用 `lib/spotCheckFlow` 的边界类型 `SpotLaunchTarget`，**刻意不借展示层的 `MapSpot`**：
+ *  后者归 `BMapBlock` 所有（含 score/area/matched 这些纯展示字段），拿它当跨模块边界类型，
+ *  等于让"发起体检"依赖一张地图卡的数据形状 —— 行程站点（只有 4 个字段）接这个口时只能伪造。 */
+export type SpotCheckCtx = {
+  onLaunch: (spot: SpotLaunchTarget) => void
+  /** 跳到某份体检报告（已体检过的那些景点的"查看"） */
+  onOpen: (lcReportId: string) => void
+  /** 已体检过的景点：`spot_id` → 该次体检的报告 id（回读自 `/api/life-circle/{rid}/spot-checks`）。
+   *  一次体检可能被同一攻略的多个景点关联（同中心复用），故这里是一对多。 */
+  existing?: Record<string, string>
+}
+
 /** 榜单 ↔ 地图组合位：selected spot_id 提升于此，两子件共享（唯一挂接键仍是冻结实体 spot_id）。
- * 条图（F2 本地 CSS）恒出，不依赖 LLM/后端 spec；坐标全缺时它兼任地图的降级替身。 */
-export function VSpotAtlas({ data }: { data: Row[] }) {
+ * 条图（F2 本地 CSS）恒出，不依赖 LLM/后端 spec；坐标全缺时它兼任地图的降级替身。
+ *
+ * 发起口（片 2）挂在这一层而不是地图卡里：地图 marker 的点击**只**负责选中（旧行为一字不动），
+ * 「以该景点发起体检」是选中之后的一步显式动作 —— 两段式。原因有二：
+ *  ① 地图气泡是 `BMapBlock` 用字符串 HTML 造的，往里塞按钮要开一条全局侧信道；
+ *  ② 榜单行是 hover 即选中（`VSpotRanking` 的 `onMouseEnter`），把"发起"绑在选中上，
+ *     鼠标扫过榜单就会反复触发。
+ * ⇒ 按钮**常驻**（未选中时 `disabled`），布局不随 hover 抖动；有坐标才可点。 */
+export function VSpotAtlas({ data, spot }: { data: Row[]; spot?: SpotCheckCtx }) {
   const [selected, setSelected] = useState<string | null>(null)
   if (!data?.length) return null
   const spots: MapSpot[] = data
@@ -130,10 +153,46 @@ export function VSpotAtlas({ data }: { data: Row[] }) {
   const mappable = spots.filter(
     (s) => s.matched !== false && typeof s.lat === 'number' && typeof s.lng === 'number',
   )
+  // 只有"可定位实体"才够格发起：未匹配实体与缺坐标实体在图上也点不到它们（`mappable` 同判据）。
+  const picked = spots.find((s) => s.spot_id === selected) ?? null
+  const launchable = mappable.find((s) => s.spot_id === selected) ?? null
+  const existingId = picked ? spot?.existing?.[picked.spot_id] : undefined
   return (
     <div className="mt-4 flex flex-col gap-3">
       {mappable.length > 0 && (
         <BMapBlock spots={spots} selectedId={selected} onSelect={setSelected} />
+      )}
+      {spot && (
+        <div className="flex flex-wrap items-center gap-2 rounded-card border border-line/60 bg-bg px-3 py-2" data-spot-launch>
+          <button
+            type="button"
+            disabled={!launchable}
+            title={launchable ? `以「${launchable.name}」为中心发起一次生活圈体检`
+              : '先在地图上点一个点位，或点一行榜单'}
+            onClick={() => {
+              if (!launchable) return
+              spot.onLaunch({
+                spot_id: launchable.spot_id,
+                name: launchable.name,
+                lnglat: [launchable.lng as number, launchable.lat as number],
+              })
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-btn bg-primary px-3 text-tag font-medium text-white shadow-card transition-colors hover:bg-primary-deep disabled:cursor-not-allowed disabled:bg-line disabled:text-ink-3 disabled:shadow-none"
+          >
+            <Crosshair size={13} />
+            {launchable ? `以「${launchable.name}」发起体检` : '以选中景点发起体检'}
+          </button>
+          {existingId && (
+            <button
+              type="button"
+              onClick={() => spot.onOpen(existingId)}
+              title="打开这份体检报告"
+              className="inline-flex h-8 items-center gap-1.5 rounded-btn border border-line px-3 text-tag font-medium text-ink-2 hover:bg-primary-tint"
+            >
+              <Radar size={13} /> 查看最近一次的体检
+            </button>
+          )}
+        </div>
       )}
       <VSpotRankBar data={data} />
       <VSpotRanking data={data} selectedId={selected} onSelect={setSelected} />
@@ -849,7 +908,7 @@ function VPerspPacking({ data }: { data: Row[] }) {
   )
 }
 
-const BLOCKS: Record<StructuredBlockType, (p: { data: Row[]; ev?: EvCtx }) => ReactElement | null> = {
+const BLOCKS: Record<StructuredBlockType, (p: { data: Row[]; ev?: EvCtx; spot?: SpotCheckCtx }) => ReactElement | null> = {
   spot_ranking: VSpotAtlas,
   spot_routes: VSpotRoutes,
   food_ranking: VFoodRanking,
@@ -892,10 +951,12 @@ function VUnknownBlock({ type }: { type: string }) {
 }
 
 /** 结构化块分发：已登记 → 渲染器；已退役 → 静默跳过；其余 → 可见降级。
- *  ev 为可选的证据溯源接缝（序号 + 跳转）；未传则 chip 退化为裸 id 文本、不可点。 */
-export function VStructuredBlock({ block, ev }: {
+ *  ev 为可选的证据溯源接缝（序号 + 跳转）；未传则 chip 退化为裸 id 文本、不可点。
+ *  spot 为可选的地标体检发起口（片 2）；未传则榜单卡里不出现那一行按钮。 */
+export function VStructuredBlock({ block, ev, spot }: {
   block?: StructuredBlock[] | StructuredBlock | null
   ev?: EvCtx
+  spot?: SpotCheckCtx
 }) {
   if (!block) return null
   // 复数挂块契约（rough-cliff-vole）：视角一章同挂核查表+铁律+清单；旧报告为单块 dict
@@ -905,7 +966,7 @@ export function VStructuredBlock({ block, ev }: {
       {blocks.map((b, i) => {
         const Renderer = BLOCKS[b.type]
         if (Renderer) {
-          return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} ev={ev} />
+          return <Renderer key={`${b.type}-${i}`} data={b.data as Row[]} ev={ev} spot={spot} />
         }
         // type 缺失/空串 = 载荷本身没有块身份，画「未知块」是噪声（与退役同一静默口径）；
         // 归一化判据留在分发处，不占 RETIRED_BLOCK_TYPES 的登记位（那张表须与后端逐值相等）

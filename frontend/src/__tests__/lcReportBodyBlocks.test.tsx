@@ -42,6 +42,9 @@ vi.mock('../store/reportStore', () => ({
 }))
 
 vi.mock('../lib/api', () => ({
+  // 片 2：ReportPage 挂载时会回读"这份攻略里哪些景点已体检过"。显式工厂必须列全被调到的面，
+  // 少一个就是 `No "x" export is defined on the mock` 整文件红（空数组 = 都没体检过）。
+  fetchSpotChecksForReport: vi.fn(async () => []),
   refineSection: vi.fn(),
   submitFeedback: vi.fn(),
   refineReportEvidence: vi.fn(),

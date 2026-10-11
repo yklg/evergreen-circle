@@ -17,7 +17,14 @@
 import { createLivingCircleTask, fetchLifeCircleReport, openTaskStream } from './api'
 import { useTaskRegistry } from '../store/taskRegistry'
 import type { CoordSys } from './geo'
-import type { ForensicRoundRow, LngLat, LifeCircleMode, LivingCircleReport, TravelMode } from '../types'
+import type {
+  ForensicRoundRow,
+  LngLat,
+  LifeCircleMode,
+  LivingCircleReport,
+  SpotCheckOrigin,
+  TravelMode,
+} from '../types'
 
 export interface LifeCircleLaunchInput {
   query: string
@@ -34,6 +41,9 @@ export interface LifeCircleLaunchInput {
    *  行为（同口径 30 天内、中心 500m 内直接复用并如实标注来源）是省配额的既定设计，
    *  不能被一次普通点击悄悄变成全额重测。 */
   force?: boolean
+  /** 地标体检来源（片 1）：从景点发起时带。与 `city`/`address` 同一条"按需赋值"纪律 ——
+   *  社区体检不写这一位，"这次是不是从景点来的"在 flow 层只有一个二值形状。 */
+  origin?: SpotCheckOrigin
 }
 
 export interface LifeCircleFlowCallbacks {
@@ -228,6 +238,7 @@ export async function launchLifeCircle(
     address?: string
     travel_mode?: TravelMode
     force?: boolean
+    origin?: SpotCheckOrigin
   } = {
     query: input.query,
     mode: input.mode ?? 'standard',
@@ -237,6 +248,8 @@ export async function launchLifeCircle(
   if (input.city) payload.city = input.city
   if (input.address) payload.address = input.address
   if (input.travel_mode) payload.travel_mode = input.travel_mode
+  // 地标体检来源（片 1）：同一条"按需赋值"纪律 —— 社区体检不发这一位。
+  if (input.origin) payload.origin = input.origin
   // 与 city/address 同一条形状纪律：**只在点名重测时才带这一位**，false/缺省一律不发。
   // 写成 `payload.force = input.force ?? false` 会让每次普通体检的载荷都多一个键，
   // 而"省配额的默认路径"与"用户要求重测"本来就该在请求上可分辨（后端守卫也只看有没有这一位）。
