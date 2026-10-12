@@ -55,7 +55,7 @@ skip
 │   └─ requirements.txt
 ├─ docs/                            # 架构 / Agent 协议 / 部署 / 算法设计文档
 ├─ deploy/                          # 自管云部署（docker-compose + nginx + systemd）
-├─ scripts/                         # CI 守卫与体检脚本（check_app_mirror / lc_healthcheck）
+├─ scripts/                         # CI 守卫与体检脚本（check_app_mirror / lc_healthcheck）＋ 一键演示 run-demo.sh
 ├─ cookie-export-helper/            # 浏览器扩展：Cookie 导出助手（抖音 / 小红书 / B站 → 模型配置·平台采集）
 ├─ make_brand_icon.py               # 品牌图标生成脚本（favicon.svg 单一源 → apple-touch-icon + 验收页）
 ├─ .github/                         # GitHub Actions CI：后端 / 前端 / 排版 e2e（＋ Docker 条件步）
