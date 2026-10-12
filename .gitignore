@@ -143,3 +143,6 @@ setup-github-sync.sh
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
+
+# ============== 参考文献原文（体积大，本地留存，著录清单见 README） ==============
+参考文献/
