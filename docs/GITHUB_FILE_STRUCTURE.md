@@ -107,7 +107,7 @@ backend/
 │   ├── test_blindspot.py            # 盲区识别测试
 │   ├── test_scoring.py              # 评分模型测试
 │   ├── test_living_circle_api.py    # 生活圈 API 测试
-│   └── ...                          # 其他测试(共 273 项)
+│   └── ...                          # 其他测试(共 2802 项)
 │
 ├── scripts/                         # 后端工具脚本
 │   ├── probe_baidu.py               # 百度 API 探针
@@ -237,10 +237,11 @@ docs/
 ```
 
 **CI 流程**:
-1. Backend: pytest (273 项测试)
-2. Frontend: lint → typecheck → vitest (228 项) → build
-3. API 镜像运行时校验
-4. Docker 构建(push-main 时触发)
+1. Backend: pytest (2802 项测试)
+2. Frontend: typecheck → vitest (1402 项) → build（lint 为非阻断诊断）
+3. 排版 e2e: Playwright (80 项，两档视口)
+4. API 镜像运行时校验（frontend job 内的 step）
+5. Docker 构建(push-main 时触发)
 
 ---
 
@@ -297,9 +298,9 @@ deploy/
 - **`docs/DEPLOYMENT.md`** - 部署指南(本地/云端/Python 解释器约束)
 
 ### 测试相关
-- **`backend/tests/`** - pytest 套件(273 项测试)
-- **`frontend/src/__tests__/`** - vitest 套件(228 项测试)
-- **`frontend/e2e/`** - Playwright E2E 测试(21 项断言)
+- **`backend/tests/`** - pytest 套件(2802 项测试)
+- **`frontend/src/__tests__/`** - vitest 套件(1402 项测试)
+- **`frontend/e2e/`** - Playwright E2E 测试(80 项，两档视口)
 
 ---
 
@@ -307,9 +308,9 @@ deploy/
 
 - **总文件数**(不含依赖/缓存): ~500 个
 - **代码行数**: ~50,000 行(后端 Python + 前端 TypeScript)
-- **测试用例**: 522 项(pytest 273 + vitest 228 + Playwright 21)
+- **测试用例**: 4284 项(pytest 2802 + vitest 1402 + Playwright e2e 80)
 - **文档数量**: 15+ 篇核心技术文档
-- **CI Job 数量**: 4 个(backend/frontend/api/docker)
+- **CI Job 数量**: 4 个(backend / frontend / e2e / docker)
 - **最新提交**: `7b35244` (2026-10-11)
 - **分支**: `merge/travel-upgrade` (与上游同步)
 
