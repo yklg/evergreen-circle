@@ -2,33 +2,47 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>常青圈 Cookie 助手</title>
     <style>
+      /* MV3 只禁内联「脚本」；内联 <style> 是允许的（check.sh 也只拦 script） */
       :root {
         --primary: #7c9885;
         --primary-deep: #5e7a66;
-        --primary-tint: #eaf1ea;
         --ink: #3a413c;
         --ink-2: #6b746c;
         --ink-3: #9aa39c;
-        --line: #e3e8e3;
-        --warn: #e0b775;
-        --ok: #8ab58a;
+        --ok: #5f8f5f;
+        --warn: #b9863f;
         --risk: #c67d72;
       }
       * { box-sizing: border-box; }
       body {
         width: 320px;
         margin: 0;
-        padding: 16px;
-        font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', sans-serif;
+        padding: 14px 16px 12px;
+        font-family: 'PingFang SC', 'Noto Sans SC', sans-serif;
         color: var(--ink);
         background: #fafbf9;
       }
-      .title { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
-      .sub { font-size: 11px; color: var(--ink-3); margin: 0 0 14px; line-height: 1.5; }
-      button {
+      h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+      .sub { font-size: 11px; color: var(--ink-3); margin: 0 0 10px; line-height: 1.5; }
+      #site {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        background: #f1f4f0;
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin-bottom: 10px;
+        color: var(--ink-2);
+      }
+      #site .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+      #site.ok .dot { background: var(--ok); }
+      #site.warn .dot { background: var(--warn); }
+      label.opt { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-3); margin-bottom: 8px; cursor: pointer; }
+      label.opt input { margin: 0; accent-color: var(--primary); }
+      button#copy {
         width: 100%;
         height: 40px;
         border: 0;
@@ -40,60 +54,45 @@
         cursor: pointer;
         transition: background 0.2s;
       }
-      button:hover { background: var(--primary-deep); }
-      button:active { transform: scale(0.98); }
-      button:disabled { opacity: 0.5; cursor: default; }
+      button#copy:hover { background: var(--primary-deep); }
+      button#copy:active { transform: scale(0.98); }
+      #status { display: none; margin-top: 10px; font-size: 12px; line-height: 1.6; padding: 8px 10px; border-radius: 10px; }
+      #status .meta { display: block; margin-top: 2px; font-size: 11px; opacity: 0.85; }
+      #status.info { display: block; background: rgba(124, 152, 133, 0.12); color: var(--ink-2); }
+      #status.ok { display: block; background: rgba(95, 143, 95, 0.14); color: var(--ok); }
+      #status.warn { display: block; background: rgba(185, 134, 63, 0.14); color: var(--warn); }
+      #status.risk { display: block; background: rgba(198, 125, 114, 0.15); color: var(--risk); }
+      .hint { font-size: 11px; color: var(--ink-3); line-height: 1.6; margin: 10px 0 0; }
+      #ver { font-size: 10px; color: var(--ink-3); text-align: center; margin: 10px 0 0; }
+      #ver.ok { color: var(--ok); }
       button.link {
-        width: auto;
-        height: auto;
-        margin-top: 8px;
-        padding: 0;
+        display: block;
+        width: 100%;
+        border: 0;
         background: none;
         color: var(--ink-2);
         font-size: 11px;
-        font-weight: 400;
         text-decoration: underline;
-      }
-      button.link:hover { background: none; color: var(--ink); }
-      button.link:active { transform: none; }
-      .opt {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 8px;
-        font-size: 11px;
-        color: var(--ink-3);
         cursor: pointer;
+        margin-top: 8px;
+        padding: 0;
       }
-      .opt input { margin: 0; accent-color: var(--primary); }
-      .divider { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
-      #status {
-        margin-top: 12px;
-        font-size: 12px;
-        line-height: 1.6;
-        padding: 8px 10px;
-        border-radius: 10px;
-        display: none;
-      }
-      #status.ok { display: block; background: rgba(138,181,138,0.15); color: var(--ok); }
-      #status.err { display: block; background: rgba(224,183,117,0.15); color: #b9863f; }
-      #status.risk { display: block; background: rgba(198,125,114,0.15); color: var(--risk); }
-      #status .meta { display: block; margin-top: 2px; font-size: 11px; opacity: 0.85; }
-      .hint { margin-top: 12px; font-size: 11px; color: var(--ink-3); line-height: 1.6; }
     </style>
   </head>
   <body>
-    <p class="title">常青圈 Cookie 助手</p>
+    <h1>常青圈 Cookie 助手</h1>
     <p class="sub">在已登录的抖音 / 小红书 / B站 页面打开本扩展，一键复制登录 Cookie。</p>
 
-    <label class="opt" for="onlyKey">
-      <input type="checkbox" id="onlyKey" />
-      仅保留关键字段（串更短，未登录时会拦截）
-    </label>
+    <div id="site"><span class="dot"></span><span id="siteText">正在读取当前站点…</span></div>
+
+    <label class="opt"><input type="checkbox" id="onlyKey" /> 仅保留关键字段（串更短，未登录时会拦截）</label>
     <button id="copy">复制当前站点 Cookie</button>
-    <div id="status"></div>
     <button id="force" class="link" hidden>仍要复制（不保证可用）</button>
+    <div id="status"></div>
+
     <p class="hint">复制后回到常青圈「模型配置 → 编辑配置 → 平台采集」，粘进对应框保存即可。</p>
-    <script src="popup-test.js"></script>
+    <p id="ver">⚠ 脚本未加载 —— 请到扩展管理页点「重新加载」</p>
+
+    <script src="popup.js" defer></script>
   </body>
 </html>
