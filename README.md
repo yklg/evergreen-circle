@@ -229,14 +229,18 @@ cp backend/.env.example backend/.env
 ```bash
 # 后端（living_circle 域 + research 回归；镜像守卫在 api/ 缺失时自我 SKIP）
 cd backend && .venv/bin/python -m pytest -q
-# 前端（lint/typecheck/vitest/build）
-cd frontend && npm run lint && npm run typecheck && npm run test && npm run build
+# 前端（typecheck/vitest/build）
+cd frontend && npm run typecheck && npm run test && npm run build
 ```
 
+> **lint 单独跑、别串进上面这条链**：`npm run lint` 目前存量约 111 个 error（CI 里也把它设成
+> `continue-on-error` 非阻断诊断，阻断权交给 vitest 的 lint 棘轮）。用 `&&` 串进来会让它在第一步就
+> 红掉、挡掉后面 typecheck/test/build 三步。想看清单就单跑 `cd frontend && npm run lint`。
+
 CI（全 mock，不注入任何真实 AK）：
-- GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端+前端+Docker 构建。
+- GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端 + 前端 + 排版 e2e（Playwright）+ Docker 构建（共 4 个 job）。
 - Gitee 侧：[.workflow/ci.yml](./.workflow/ci.yml) 是真源的**子集**（只有 backend + frontend 两个 job，
-  不含 api/ 校验 step 与 docker 构建 job）。改真源时若有意不跟过去，需在那份文件里记明差异。
+  不含 api/ 校验 step、e2e 排版回归与 docker 构建 job）。改真源时若有意不跟过去，需在那份文件里记明差异。
 
 ---
 
