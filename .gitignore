@@ -108,6 +108,7 @@ backend/*.db-wal
 deploy/.env
 frontend/.env
 frontend/.env.*
+!frontend/.env.example
 
 # ============== 云服务 / 平台特定文件 ==============
 .vercel
