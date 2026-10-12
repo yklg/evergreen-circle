@@ -82,21 +82,23 @@ test('④ 地图格高度由视口决定，不随右栏内容长（原 bug 的�
 })
 
 test('画布跟随容器变高（live BMapGL；降级分支走 viewBox 自适应）', async ({ page }) => {
-  const host = page.locator('[data-lc-map]')
-
-  // 等待模式稳定（最多 10s，给 BMapGL SDK 加载时间）
+  // 等模式稳定（最多 10s，给 BMapGL SDK 加载时间）
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-lc-mode]')
     return el && (el.getAttribute('data-lc-mode') === 'live' || el.getAttribute('data-lc-mode') === 'fallback')
   }, { timeout: 10000 }).catch(() => null)
 
-  // 检查是否真正处于 live 模式且有可用的 canvas
-  const mode = await host.getAttribute('data-lc-mode')
+  // 模式只从 [data-lc-mode] 读（组件申报通道）。⚠️ 不许从 [data-lc-map] 反读：那个名字在本仓
+  // ＝"BMapGL live 容器"（LcMap.tsx fallback 分支**故意不贴**它），降级档它根本不存在——
+  // 读它会把 skip 变成 30s 超时的假红（CI #44/#45 实发；本地把 /api 代理指向死端口可复现）。
+  const modeHost = page.locator('[data-lc-mode]').first()
+  const mode = (await modeHost.count()) ? await modeHost.getAttribute('data-lc-mode') : null
   if (mode !== 'live') {
     test.skip(true, `没走 live 分支（模式=${mode || '未确定'}，无 AK / 无网络）⇒ 降级 SVG 画布按 viewBox 自适应，本条不适用`)
     return
   }
 
+  const host = page.locator('[data-lc-map]')
   const canvas = page.locator('[data-lc-map] canvas').first()
 
   // 验证 canvas 真正就绪（非零尺寸）
