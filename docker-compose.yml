@@ -24,18 +24,22 @@ services:
 
   frontend:
     image: node:22-slim
-    working_dir: /app/frontend
-    command: sh -c "npm ci && npm run build && VITE_PROXY_TARGET=http://backend:8010 npx vite preview --port 3400 --host --strictPort"
+    working_dir: /work/frontend
+    command: sh -c "tar -C /app/frontend --exclude=./node_modules --exclude=./dist -cf - . | tar -C /work/frontend -xf - && npm ci && npm run build && VITE_PROXY_TARGET=http://backend:8010 npx vite preview --port 3400 --host --strictPort"
     ports:
       - "3400:3400"
     depends_on:
       - backend
-    # 源码只读挂载；npm ci / vite build 的两个写入点各配可写命名卷
-    # （.:/app:ro 下 npm ci 会因只读文件系统 EROFS 直接退出——10-11 实跑坐实）。
+    # 源码只读挂载；构建先落到容器内的可写目录 /work，两个可写卷挂在 /work 下。
+    # 为什么不能像早先那样直接把卷挂到 /app/frontend/node_modules 与 /app/frontend/dist：
+    # 那两处都是 gitignore 的构建产物，**全新 clone 里根本不存在**，而父挂载 `.:/app` 是只读的
+    # ⇒ Docker 造不出挂载点，容器在 init 阶段就报 "make mountpoint ... read-only file system"，
+    # 前端永远起不来。2026-10-13 实测（干净 worktree 复现 A/B：宿主预建 dist 目录则起得来）。
+    # 早先那次"只读挂载下 npm ci 必挂"的修复只覆盖了有 dist/node_modules 的工作树，漏了这个形态。
     volumes:
       - .:/app:ro
-      - frontend_node_modules:/app/frontend/node_modules
-      - frontend_dist:/app/frontend/dist
+      - frontend_node_modules:/work/frontend/node_modules
+      - frontend_dist:/work/frontend/dist
 
 volumes:
   evergreen_data:
