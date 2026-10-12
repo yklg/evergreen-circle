@@ -201,7 +201,7 @@ cp backend/.env.example backend/.env
 - **POI 清洗**：多关键词检索 → 去重/过滤 → 类别统计 + IDW 耗时回填最近设施。
 - **盲区**：1km 网格扫描（三要素任一缺失判盲）→ 相邻聚合灰区 → 输出缺失清单与最近可及设施。
 - **评分**：覆盖 / 可达 / 多样 / 均衡四维加权（0.40 / 0.25 / 0.20 / 0.15）+ 盲区扣分（封顶 12），透明公式可解释。
-- 详见 [docs/地图API调用策略与等时圈算法设计.md]、[docs/多源POI数据清洗与服务盲区识别算法.md]、[docs/真实社区对比测试报告.md]（M5 交付）。
+- 详见 [docs/地图API调用策略与等时圈算法设计.md](./docs/地图API调用策略与等时圈算法设计.md)、[docs/多源POI数据清洗与服务盲区识别算法.md](./docs/多源POI数据清洗与服务盲区识别算法.md)、[docs/真实社区对比测试报告.md](./docs/真实社区对比测试报告.md)（M5 交付）。
 
 ---
 
@@ -233,12 +233,12 @@ cd backend && .venv/bin/python -m pytest -q
 cd frontend && npm run typecheck && npm run test && npm run build
 ```
 
-> **lint 单独跑、别串进上面这条链**：`npm run lint` 目前存量约 111 个 error（CI 里也把它设成
+> **lint 单独跑、别串进上面这条链**：`npm run lint` 目前存量约 111 个 error（2026-10-12 实测 111 error / 5 warning，覆盖 333 个文件；CI 里也把它设成
 > `continue-on-error` 非阻断诊断，阻断权交给 vitest 的 lint 棘轮）。用 `&&` 串进来会让它在第一步就
 > 红掉、挡掉后面 typecheck/test/build 三步。想看清单就单跑 `cd frontend && npm run lint`。
 
 CI（全 mock，不注入任何真实 AK）：
-- GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端 + 前端 + 排版 e2e（Playwright）+ Docker 构建（共 4 个 job）。
+- GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端 + 前端 + 排版 e2e（Playwright）+ Docker 构建（共 4 个 job；其中 Docker 那个**只在 main/master 触发**，本分支跑不到它）。
 - Gitee 侧：[.workflow/ci.yml](./.workflow/ci.yml) 是真源的**子集**（只有 backend + frontend 两个 job，
   不含 api/ 校验 step、e2e 排版回归与 docker 构建 job）。改真源时若有意不跟过去，需在那份文件里记明差异。
 

@@ -1,8 +1,8 @@
 # GitHub 仓库文件架构
 
-> 最后更新：2026-10-11
+> 最后更新：2026-10-12
 > 分支：`merge/travel-upgrade`
-> 最新提交：`7b35244` - docs: 补充赛题交付物与一键演示脚本
+> 最新提交：截至本日 `9aec02c`。这一行天生会腐烂，核对一律以 `git log -1 --oneline` 现场为准
 
 ---
 
@@ -23,8 +23,7 @@ evergreen-circle/
 │
 ├── 🐳 Docker 配置
 │   ├── Dockerfile                   # 后端镜像构建
-│   ├── docker-compose.yml           # 本地一键预览
-│   └── docker-compose.test.yml      # 测试环境配置 🆕
+│   └── docker-compose.yml           # 本地一键预览
 │
 ├── ☁️ 云端部署清单
 │   ├── vercel.json                  # Vercel 部署配置
@@ -37,8 +36,10 @@ evergreen-circle/
 ├── 🛠️ 工具脚本
 │   ├── make_brand_icon.py           # 品牌图标生成脚本
 │   └── scripts/
-│       ├── run-demo.sh              # 一键演示脚本(零 Key 启动) 🆕⭐
-│       └── check_app_mirror.sh      # API 镜像一致性检查
+│       ├── run-demo.sh              # 一键演示脚本(零 Key 启动) ⭐
+│       ├── check_app_mirror.sh      # API 镜像一致性检查
+│       ├── lc_healthcheck.py        # 生活圈体检件健康巡检(口径/形状/证据面)
+│       └── lc_healthcheck_selftest.py # 上条判据的自证
 │
 ├── 📂 主要目录
 │   ├── backend/                     # FastAPI 后端
@@ -83,7 +84,7 @@ backend/
 │   │   ├── baidu_client.py          # 百度地图客户端
 │   │   ├── request_guard.py         # QPS 限流与退避
 │   │   ├── geo_utils.py             # 地理工具
-│   │   ├── geo_index.py             # 地理索引
+│   │   ├── geo_index/               # 地理索引(目录,含 china_regions.json 全国区划)
 │   │   ├── category_rule.py         # 类别规则
 │   │   ├── judgement.py             # 判定逻辑
 │   │   ├── scope.py                 # 作用域与载荷
@@ -96,7 +97,7 @@ backend/
 │   │   ├── experts.json             # 专家名册(目的地调研)
 │   │   └── experts_living_circle.json # 专家名册(生活圈)
 │   │
-│   ├── map/                         # 地图能力(旧,逐步迁移到 living_circle)
+│   ├── services/                    # 外部服务封装(baidu.py)
 │   │
 │   └── main.py                      # FastAPI 入口(REST + SSE)
 │
@@ -107,7 +108,7 @@ backend/
 │   ├── test_blindspot.py            # 盲区识别测试
 │   ├── test_scoring.py              # 评分模型测试
 │   ├── test_living_circle_api.py    # 生活圈 API 测试
-│   └── ...                          # 其他测试(共 2802 项)
+│   └── ...                          # 其他测试(收集 2829 项 / 2026-10-12 实测通过 2802 项)
 │
 ├── scripts/                         # 后端工具脚本
 │   ├── probe_baidu.py               # 百度 API 探针
@@ -133,21 +134,22 @@ frontend/
 │   │   ├── HomePage.tsx             # 工作台(体检入口)
 │   │   ├── LifeCirclePage.tsx       # 体检地图页 ⭐
 │   │   ├── ComparePage.tsx          # 对比页
-│   │   ├── ReportPage.tsx           # 报告页
-│   │   ├── DashboardPage.tsx        # 历史页
+│   │   ├── ReportPage.tsx           # 单份报告页(/report/:reportId)
+│   │   ├── ReportsPage.tsx          # 报告列表页(/reports)
 │   │   ├── ExpertsPage.tsx          # 专家团页
 │   │   └── ...
 │   │
 │   ├── components/                  # 组件
 │   │   ├── lifecircle/              # 生活圈专用组件 ⭐
-│   │   │   ├── IsochroneMap.tsx     # 等时圈地图
-│   │   │   ├── POIMarkers.tsx       # POI 标注
-│   │   │   ├── BlindspotOverlay.tsx # 盲区覆盖层
-│   │   │   ├── HealthCard.tsx       # 体检单卡片
+│   │   │   ├── LcStage.tsx          # 体检舞台分栏契约(地图/图例/右栏)
+│   │   │   ├── LcMap.tsx            # 真地图渲染层(BMapGL v3.0)
+│   │   │   ├── LcSvgCanvas.tsx      # 降级静态画布的图层装配
+│   │   │   ├── HeatFieldOverlay.ts  # 热力采样点 Canvas 覆盖层
+│   │   │   ├── CellsLedgerCard.tsx  # 逐格台账卡
+│   │   │   ├── LifeCircleReportView.tsx # 报告体检单视图
 │   │   │   └── ...
 │   │   ├── VChart.tsx               # 图表组件(ECharts)
 │   │   ├── VDataGrid.tsx            # 数据表格
-│   │   ├── VSidebar.tsx             # 侧边栏导航
 │   │   └── ...
 │   │
 │   ├── lib/                         # 工具库
@@ -180,19 +182,25 @@ frontend/
 │   │   └── VSidebar.tsx
 │   │
 │   ├── types.ts                     # TypeScript 类型定义 ⭐
-│   └── index.html                   # HTML 入口
+│   └── main.tsx                     # React 挂载入口(App + Router)
 │
 ├── public/                          # 静态资源
 │   ├── favicon.svg                  # 品牌图标
 │   └── apple-touch-icon.png         # iOS 图标
 │
-├── e2e/                             # Playwright E2E 测试
+├── index.html                       # HTML 入口(vite 根)
+├── e2e/                             # Playwright E2E 测试(8 个 spec × 3 个 project)
+├── scripts/                         # 代码生成脚本(演示夹具/类型)
+├── preview-*.html                   # 11 个 dev 探针入口页(改动前后同框对照,已入库)
 │
 ├── tailwind.config.js               # Tailwind CSS 配置
-├── vite.config.ts                   # Vite 构建配置
+├── vite.config.ts                   # Vite 构建配置(含 /api 代理目标)
+├── playwright.config.ts             # 排版 e2e 配置(3 个 project·自起 5199/5200)
+├── vitest.config.ts                 # jsdom 套件配置
+├── eslint.config.js                 # lint 规则(阻断权在 src/__tests__ 的棘轮账本)
 ├── tsconfig.json                    # TypeScript 配置
 ├── package.json                     # NPM 依赖
-├── .env.example                     # 前端环境变量模板
+├── .env.example                     # 前端环境变量模板(VITE_API_BASE)
 └── README.md                        # 前端说明
 ```
 
@@ -219,6 +227,7 @@ docs/
 │
 ├── 📄 对外介绍文档(两份并存,分工不同)
 │   ├── 常青圈_作品介绍.md               # 赛题要求的「作品介绍」正文:§2.1 十条能力表 + §9 完成度声明 ⭐
+│   ├── 常青圈_作品介绍.pdf              # 上一份的 PDF 产物(提交物料)
 │   ├── 常青圈_项目介绍.md               # 较短的项目介绍(12 KB,无 §9 完成度声明)
 │   ├── 常青圈_项目介绍.pdf              # 上一份的 PDF 产物
 │   └── 项目介绍.pdf                     # 早期 PDF 产物
@@ -243,11 +252,11 @@ docs/
 ```
 
 **CI 流程**:
-1. Backend: pytest (2802 项测试)
-2. Frontend: typecheck → vitest (1402 项) → build（lint 为非阻断诊断）
-3. 排版 e2e: Playwright (80 项，两档视口)
-4. API 镜像运行时校验（frontend job 内的 step）
-5. Docker 构建(push-main 时触发)
+1. Backend: γ 静态守卫 → pytest（收集 2829 项；2026-10-12 实测 2802 passed / 4 skipped / 23 xfailed）
+2. Frontend: typecheck → vitest（1403 项；实测 1402 passed / 1 todo）→ build（lint 为非阻断诊断）
+3. 排版 e2e: Playwright（80 项运行实例 ＝ 8 个 spec × 3 个 project：1440×900、1280×720、连真 mock 后端的 running 档）
+4. API 镜像运行时校验（frontend job 内的 step，`api/` 缺失时自我 SKIP）
+5. Docker 构建（**仅 main/master 触发** ⇒ 本分支从不跑它，不能算作本分支的防线）
 
 ---
 
@@ -256,10 +265,11 @@ docs/
 ```
 deploy/
 ├── docker-compose.yml                 # 生产环境 Docker Compose
+├── .env.worker.example                # worker 侧环境变量模板
 ├── nginx/
-│   └── default.conf                   # Nginx 配置
+│   └── evergreen.conf                 # Nginx 站点配置
 ├── systemd/
-│   └── evergreen.service              # Systemd 服务单元
+│   └── evergreen-worker.service       # Systemd 服务单元
 ├── setup-vm.sh                        # VM 初始化脚本
 └── README.md                          # 自管云部署说明
 ```
@@ -274,8 +284,9 @@ deploy/
 | `docs/赛题交付物检查清单.md` | 赛题交付物自查清单 | ⭐⭐ |
 | `docs/演示脚本验证报告.md` | 演示脚本完整验证记录 | ⭐⭐ |
 | `docs/赛题交付物补充总结.md` | 本次工作总结 | ⭐ |
-| `docker-compose.test.yml` | 测试环境配置 | ⭐ |
 | `docs/GITHUB_FILE_STRUCTURE.md` | 本文件(仓库架构说明) | ⭐ |
+
+〔勘误 2026-10-12〕本表原先还列过一行 `docker-compose.test.yml`「测试环境配置」—— 该文件从未入库、磁盘上也不存在，属虚构条目，已删。
 
 **修改的文件**:
 - `backend/.env.example` - 增强百度 AK 配置注释(Referer 白名单详细说明)
@@ -304,33 +315,33 @@ deploy/
 - **`docs/DEPLOYMENT.md`** - 部署指南(本地/云端/Python 解释器约束)
 
 ### 测试相关
-- **`backend/tests/`** - pytest 套件(2802 项测试)
-- **`frontend/src/__tests__/`** - vitest 套件(1402 项测试)
-- **`frontend/e2e/`** - Playwright E2E 测试(80 项，两档视口)
+- **`backend/tests/`** - pytest 套件(收集 2829 项;2026-10-12 实测 2802 passed / 4 skipped / 23 xfailed)
+- **`frontend/src/__tests__/`** - vitest 套件(1403 项;实测 1402 passed / 1 todo)
+- **`frontend/e2e/`** - Playwright E2E 测试(80 项运行实例 = 8 个 spec × 3 个 project)
 
 ---
 
 ## 📊 仓库统计
 
-- **总文件数**(不含依赖/缓存): ~500 个
-- **代码行数**: ~50,000 行(后端 Python + 前端 TypeScript)
-- **测试用例**: 4284 项(pytest 2802 + vitest 1402 + Playwright e2e 80)
-- **文档数量**: 15+ 篇核心技术文档
-- **CI Job 数量**: 4 个(backend / frontend / e2e / docker)
-- **最新提交**: `7b35244` (2026-10-11)
-- **分支**: `merge/travel-upgrade` (与上游同步)
+- **总文件数**(git 跟踪,不含依赖/缓存): 790 个
+- **代码行数**: 约 92,600 行(口径＝`backend/app/**/*.py` 30,589 ＋ `frontend/src/**/*.{ts,tsx}` 61,999;不含 tests/e2e/dev 探针)
+- **测试用例**: 收集口径 4312 项(pytest 2829 ＋ vitest 1403 ＋ Playwright e2e 80);通过口径 4284 项(2802 ＋ 1402 ＋ 80)
+- **文档数量**: `docs/` 下 16 份入库(14 份 Markdown ＋ 2 份 PDF)
+- **CI Job 数量**: 4 个(backend / frontend / e2e / docker;docker 仅 main/master 触发)
+- **最新提交**: 截至 2026-10-12 为 `9aec02c`(本行会腐烂,核对以 `git log -1 --oneline` 为准)
+- **分支**: `merge/travel-upgrade`(远端唯一分支,亦即默认分支;已包含 `upstream/main` 的全部提交)
 
 ---
 
 ## 🔗 相关链接
 
-- **GitHub 仓库**: https://github.com/yklg/evergreen-circle
-- **Gitee 镜像**: (待补充)
-- **在线 Demo**: (待部署)
+- **GitHub 仓库**: https://github.com/yklg/evergreen-circle （**截至 2026-10-12 该仓库为私有**，匿名 `git clone` 返回 404；转公开或发放访问方式之后，这一行才能当评审入口）
+- **Gitee 镜像**: 无。仓库当前没有 Gitee 远端，`.workflow/ci.yml` 实为惰性配置（该文件头部已记明）
+- **在线 Demo**: 尚未部署；零 Key 本地演示走 `./scripts/run-demo.sh`（自动开 http://127.0.0.1:3400）
 - **问题反馈**: https://github.com/yklg/evergreen-circle/issues
 
 ---
 
 **维护者**: Qoder AI Assistant + 开发团队
 **许可证**: AGPL-3.0
-**最后更新**: 2026-10-11 23:45
+**最后更新**: 2026-10-12（完结核查：逐条对 `git ls-files` 回源，修掉与云端不符的条目）
