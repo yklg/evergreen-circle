@@ -6,15 +6,17 @@
  * 渲染体是 `components/lifecircle/MiniRadar` 本体，几何是 `lib/radarLayout` 本体 —— 无镜像副本。
  *
  * 跑法：`npx vite-node src/dev/radarPortVerify.tsx`
- * 产物写到仓库外的 workspace：`预览-雷达图移植-2026-09-28/雷达图移植后复验.html`
+ * 产物写到仓库内被 gitignore 的过程件目录：`<仓库根>/预览与计划/雷达图移植后复验.html`
  */
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MiniRadar } from '../components/lifecircle/MiniRadar'
 import { getLivingCircleReportMock } from '../mocks/livingCircleReports'
 import type { LivingCircleReport } from '../types'
 
-const OUT = '/Users/yilukaige/便民15分钟/预览-雷达图移植-2026-09-28/雷达图移植后复验.html'
+const OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../预览与计划/雷达图移植后复验.html')
 
 const report = getLivingCircleReportMock('lc-kaili')?.living_circle as LivingCircleReport
 
@@ -146,6 +148,7 @@ ${rows}
 </body></html>
 `
 
+mkdirSync(dirname(OUT), { recursive: true })
 writeFileSync(OUT, html)
 console.log(OUT)
 console.log('量尺读数不在这里 —— 由页面内 getBBox 现量，见截图表格与 verdict 行')
