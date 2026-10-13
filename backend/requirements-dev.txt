@@ -1,2 +1,4 @@
 # 开发期测试依赖（不进入生产 requirements.txt）
 pytest>=8.0
+# 断网闸：让意外联网在 CI 里当场报错并点名用例（配置与豁免理由见 backend/pytest.ini）
+pytest-socket>=0.7
