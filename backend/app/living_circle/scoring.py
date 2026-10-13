@@ -18,7 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.living_circle.caliber import get_caliber
 
-WEIGHTS = {"coverage": 0.40, "reachability": 0.25, "diversity": 0.20, "balance": 0.15}
+WEIGHTS = {"coverage": 0.34, "reachability": 0.2125, "diversity": 0.17, "balance": 0.1275,
+           "traffic": 0.15}
+# 换代前那套四维权重（**原封不动的字面量**）。第五维缺源（`coverage="absent"`）时按这套算 ——
+# 这不是"两处真源"，是为了**逐位复现**：`0.34/(1−0.15)` 在浮点里不等于 `0.40`，用归一化去
+# 还原会在末位漂移，而"无源样区总分与换代前逐位相同"是本次换代的硬判据（TC-02）。
+# 两张表的关系由 `test_traffic_exposure.py::test_tc01b_two_weight_tables_keep_the_same_ratio` 钉住：
+# 四维在两表里的比例必须一致（容差 1e-9），所以它们不能各自漂。
+LEGACY_WEIGHTS = {"coverage": 0.40, "reachability": 0.25, "diversity": 0.20, "balance": 0.15}
 BLINDSPOT_PENALTY_CAP = 12.0  # 盲区扣分上限（赛题口径）
 BLINDSPOT_PENALTY_PER_EXTRA = 4.0  # 每多一处（外推）盲区扣 4 分，首处不扣
 
@@ -73,12 +80,16 @@ def compute_scores(
     *,
     judged_share: Optional[float] = None,
     evidence_complete: bool = True,
+    traffic: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """由类别统计 + 三要素结论计算评分（纯函数，单测直接喂构造数据）。
 
     ``judged_share`` 是本次判盲的**判定覆盖率**（``cells_judged / cells_inside``）。
     缺省 ``None`` = 调用方没提供覆盖率 ⇒ 按条数计扣、``confidence="limited"``；既有单测
     零改动通过，但活管线必须传（`assemble.py`）。
+
+    ``traffic``（第五维笔）= 载荷的 `sampling.traffic` 块；缺省 `None` 或 `coverage != "ok"`
+    ⇒ 第五维不进分、四维按原比例加权（**与换代前逐位相同**，判据 TC-02）。
     """
     n = len(categories) or 1
     coverage_terms = [min(1.0, c.get("coverage", 0.0)) for c in categories]
@@ -104,16 +115,34 @@ def compute_scores(
     worst_gap = max((1.0 - min(1.0, c.get("coverage", 0.0))) for c in categories) if categories else 1.0
     balance_dim = round((1.0 - worst_gap) * 100.0, 1)
 
-    total = round(
-        100.0
-        * (
+    # ── 第五维：区域交通时段暴露度（第五维笔 · `tv-1`）──────────────────────
+    # 输入是载荷里的 `sampling.traffic`（唯一生产者 `traffic.fetch_traffic_exposure`）。
+    # 取分用 `exposure_score`（0=最差、100=最畅，由倍数表线性映射而来，可复算）。
+    # ⚠️ `coverage != "ok"`（缺源/未提供）⇒ `traffic_dim = None` ⇒ 四维按**原比例**归一，
+    #    而且走的是 `LEGACY_WEIGHTS` 那套**原字面量**（逐位复现换代前总分，见其注释）。
+    #    **不许当 0 分** —— 那会把"这一片没量到"印成"这一片最堵"，是伪造负结论。
+    traffic_dim: Optional[float] = None
+    if isinstance(traffic, dict) and traffic.get("coverage") == "ok":
+        raw = traffic.get("exposure_score")
+        if isinstance(raw, (int, float)) and math.isfinite(float(raw)):
+            traffic_dim = round(float(raw), 1)
+
+    if traffic_dim is None:
+        weighted = (
+            LEGACY_WEIGHTS["coverage"] * (cov_dim / 100.0)
+            + LEGACY_WEIGHTS["reachability"] * (reach_dim / 100.0)
+            + LEGACY_WEIGHTS["diversity"] * (diversity_dim / 100.0)
+            + LEGACY_WEIGHTS["balance"] * (balance_dim / 100.0)
+        )
+    else:
+        weighted = (
             WEIGHTS["coverage"] * (cov_dim / 100.0)
             + WEIGHTS["reachability"] * (reach_dim / 100.0)
             + WEIGHTS["diversity"] * (diversity_dim / 100.0)
             + WEIGHTS["balance"] * (balance_dim / 100.0)
-        ),
-        1,
-    )
+            + WEIGHTS["traffic"] * (traffic_dim / 100.0)
+        )
+    total = round(100.0 * weighted, 1)
     # 盲区惩罚（赛题口径：盲区多则总分扣减，封顶 BLINDSPOT_PENALTY_CAP 分）。
     # 条数先按**判定覆盖率**外推 —— 判了 5% 的面报出 2 处，不等于整片只该扣 2 处的分。
     expected_blindspots, penalty = _blindspot_penalty(blindspot_count, judged_share)
@@ -144,6 +173,16 @@ def compute_scores(
             )
         else:
             note += f"；{blindspot_count} 处盲区扣分 {penalty:.1f}"
+
+    # 第五维的口径必须**写进正文这句话**（读数在 `sampling.traffic`，措辞纪律见 traffic.py）：
+    # 它是"中心点 R 米圆域"的时段暴露度，不是可达区的、也不指认任何路段或个体。
+    if traffic_dim is None:
+        note += "；区域交通时段暴露度：缺源，本项不计入总分（其余四维按原比例加权）"
+    else:
+        window = (traffic or {}).get("peak_window") or "未声明窗口"
+        table = (traffic or {}).get("multiplier_table_version") or "未声明表"
+        note += (f"；区域交通时段暴露度 {traffic_dim}（口径：中心点 R 米**圆域**、"
+                 f"窗口 {window}、按档位映射·表 {table}）")
 
     # 置信度：判定面不完整，或采集证据本身有缺口（截断/饿死/熔断）⇒ limited。
     limited = (

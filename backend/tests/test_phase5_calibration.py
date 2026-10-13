@@ -80,7 +80,9 @@ class TestRefResolution:
         result = _resolve_ref("scoring::WEIGHTS.coverage")
         assert result is not None
         assert hasattr(result, "value")
-        assert result.value == "0.4"
+        # 第五维笔（2026-10-13）：四维 0.40/0.25/0.20/0.15 → 五维 0.34/0.2125/0.17/0.1275/0.15
+        # （新增「区域交通时段暴露度」15%，四维按原比例缩到 85%；缺源样区走 LEGACY_WEIGHTS 原样）
+        assert result.value == "0.34"
 
     def test_resolve_poi_norm_name(self):
         """解析 poi::norm_name 应返回 callable 描述。"""

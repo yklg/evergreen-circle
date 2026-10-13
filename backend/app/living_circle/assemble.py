@@ -323,6 +323,10 @@ def assemble_living_circle(
         len(blindspots),
         judged_share=judged_share(blind_stats),
         evidence_complete=bool(scope.evidence_complete),
+        # 第五维的输入 = 载荷里那块 `sampling.traffic`（唯一生产者
+        # `traffic.fetch_traffic_exposure`，在唯一编排里取数）。缺源时它是
+        # `coverage="absent"` 的块 ⇒ `compute_scores` 让第五维不计入并走原四维权重。
+        traffic=(iso.get("sampling") or {}).get("traffic"),
     )
 
     # ── 口径举证（唯一实现；含本次实测的空间量，便于回答「盲区为什么只有这么大」）──
