@@ -152,8 +152,12 @@ class TestMaxMatrixOriginsAndCeiling:
         # 熔断防失控循环。34 不是拍脑袋：一轮按需扩容在步行 ±2500m 形状下实算需 32 次
         # （药店 20 锚点×1 词 + 市场 4 锚点×3 词），旧档 23 撑不满 ⇒ 大范围档恒带 dropped。
         assert quota.total_calls_hard_ceiling() == (
-            quota.total_budget() + quota.forensic_budget() + quota.INTAKE_MARGIN
-        ) == 79
+            quota.total_budget() + quota.forensic_budget() + quota.traffic_budget() + quota.INTAKE_MARGIN
+        ) == 80
+        # 第五维笔（2026-10-13）：路况走**独立额度格**（1 次 around 圆域查询），
+        # 不许摊进 total —— 摊进去会同时移动矩阵闸与首轮 poi 的基准，那正是上面那条断言的执法面。
+        assert quota.traffic_budget() == 1
+        assert quota.poi_budget_for(11) == 31, "路况格出现后首轮 POI 预算必须逐位不变"
         # 「新开一格」的代价必须只落在熔断上限这一处，不许回头把首轮喂胖：
         # 窗口 `BUDGET_WINDOW_S` 一动，矩阵闸/首轮 poi/驾车档会三处同漂（复审 R-P0-3）
         assert quota.FORENSIC_WINDOW_S == 16.0 and quota.BUDGET_WINDOW_S == 20.0

@@ -152,17 +152,33 @@ def forensic_budget() -> int:
     return round(_qps() * FORENSIC_WINDOW_S * LOAD_FACTOR)
 
 
+def traffic_budget() -> int:
+    """区域交通时段暴露度（第五维）的**独立额度格**（2026-10-13 出厂 = 1）。
+
+    与 `total_budget()` 不相加也不互斥于分区：首轮采集照旧只吃 `poi_budget_for(mat)`，
+    这一格专门付给「每份体检 1 次 around 圆域查询」（`/traffic/v1/around`）。
+    为什么单列而不是摊进 total：路况是**另一个服务**（与 routematrix/place 不同族），
+    摊进 total 会同时移动矩阵闸与首轮 poi 的基准 —— 那两处各有测试钉着
+    （`tests/test_quota.py::test_u15_*` 的"新开一格只该多一个数"那段），与 forensic_budget 同型。
+
+    档位 1 是**算出来的**：第五维是情景披露级读数，一次圆域查询即拿全聚合量（`traffic.py`
+    只聚合、不点名路段）。要按网格拆分拼接（bound 端点的小框）是另一档设计，先过口径再抬格。
+    """
+    return 1
+
+
 def total_calls_hard_ceiling() -> int:
-    """单次体检**全局调用熔断上限**（免费档 42+34+3=79）。
+    """单次体检**全局调用熔断上限**（免费档 42+34+1+3=80）。
 
     42 是矩阵+POI 的精度预算；intake 阶段（地理编码/逆地理/坐标转换）还需头寸；
     v5.4 起再加一格 `forensic_budget()`（扩容回合 34），否则回合第一轮就会被掐在 45 次上
-    （第 0 步实测 A 屏已吃 28 次 ⇒ 扩容 10~20 次贴线，北京侧必撞熔断、剩余锚点 `not_run`）。
+    （第 0 步实测 A 屏已吃 28 次 ⇒ 扩容 10~20 次贴线，北京侧必撞熔断、剩余锚点 `not_run`）；
+    2026-10-13 第五维笔再加一格 `traffic_budget()`（路况 1 次）。
     熔断定位是**防失控循环**（扩词/翻页空转），不是替代分区预算：分区照旧各管各的额度，
-    这里只兜住「总调用数失控」。`ceiling = total + forensic + INTAKE_MARGIN` 恒等式由
-    `tests/test_quota.py` 的 u15 钉住字面值 79。
+    这里只兜住「总调用数失控」。`ceiling = total + forensic + traffic + INTAKE_MARGIN` 恒等式由
+    `tests/test_quota.py` 的 u15 钉住字面值 80。
     """
-    return total_budget() + forensic_budget() + INTAKE_MARGIN
+    return total_budget() + forensic_budget() + traffic_budget() + INTAKE_MARGIN
 
 
 def poi_page_depth(n_terms: int, poi_budget: int) -> int:

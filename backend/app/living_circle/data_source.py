@@ -929,6 +929,22 @@ async def live_forensic_steps(
     yield ForensicStep(kind=STEP_COLLECT, iso=iso, scope=scope,
                        collected=collected, partial=partial)
 
+    # ── 第五维（第五维笔 · `tv-1`）：区域交通时段暴露度 ─────────────────
+    # ⚠️ 位置是纪律不是风格：这一调用必须落在这份**唯一编排**体内 —— 换到 `assemble.py`
+    #    或第四个入口就是第四份编排（G-9 原语集已把 `fetch_traffic_exposure` 登记为第 7 个，
+    #    见 `scripts/check_guard_construction.py` 与 `tests/test_degrade_chain.py` 的合成桩）。
+    # 半径取该档可达区的**外接半径**（圆域口径；bound 端点有面积上限，见 capability_manifest
+    # 的 `traffic_service`）；取不到一律 `coverage="absent"`，不阻断体检（降级口径见 traffic.py）。
+    # 它不需要 POI 产物，所以排在采集之后、取证回合之前 —— 顺序即事件顺序，不许重排。
+    from app.living_circle.traffic import fetch_traffic_exposure
+
+    iso.setdefault("sampling", {})["traffic"] = await fetch_traffic_exposure(
+        client,
+        center=center,
+        radius_m=scope.reach_circumradius_m,
+        caliber=get_caliber(check.travel_mode),
+    )
+
     # ── 取证回合（计划 v7.0 片 4）────────────────────────────
     # 首轮之后「按未判出的格补锚点、重判、再收」这一圈，接在**唯一编排**里 —— 接在别处
     # 就是第四份编排（片 0 收拢三份的全部理由）。三个消费方（pipeline 的 live 分支、

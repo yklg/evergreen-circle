@@ -144,6 +144,12 @@ FORENSIC_PRIMITIVES = (
     # 这条门改成给自家形状让路。它的唯一性由 `anchors.py` 的文件级主张
     # （「取证强度规划的唯一出口」）与 `test_forensic_rounds.py` 那条跨轮串联用例管。
     "collect_triad_evidence",
+    # 第五维笔（2026-10-13）追加：区域交通时段暴露度的取数原语（`/traffic/v1/around` 一次）。
+    # 同一条双向理由：多了 ⇒ 有人在编排外开第二条路况取数；掉了 ⇒ 生成器不再取路况，
+    # 第五维静默退化成"永远缺源"（`coverage="absent"`），而屏上只会少一块、不会报错。
+    # ⚠️ 加它时 `tests/test_degrade_chain.py` 的 `_G9_LEGAL_SOURCE` 合成桩必须同批跟上
+    #    （那份桩就是本条门的"合法必绿"对照，桩不跟 ⇒ 对照会替"新原语没人守"背书）。
+    "fetch_traffic_exposure",
 )
 FORENSIC_EXPECTED_CALLS_PER_PRIMITIVE = 1
 
