@@ -663,7 +663,10 @@ def list_reports():
 def get_report(report_id: str):
     rep = db.get_report(report_id)
     if not rep:
-        return {"ok": False, "message": "report not ready"}
+        # 404，不是 200 + `{"ok": false}`：后者会让只看 HTTP 状态的前端把错误信封当成一份报告
+        # （`lib/api.ts` 的 `safeJson` 就是这个行为），于是 `ReportPage.tsx` 在 `r.evidence.map`
+        # 上抛 TypeError、整页白屏。同族端点（`/brief`、`/refine`、`/feedback`）本来就返 404。
+        raise HTTPException(status_code=404, detail="report not ready")
     # 展示源 = 载荷 + 当前装配器；库里那份快照只是兜底与审计副本（角色声明见
     # `db.save_living_circle_report`，三态与"为什么只在这一路"见
     # `pipeline.living_circle.refresh_report_for_display`）。

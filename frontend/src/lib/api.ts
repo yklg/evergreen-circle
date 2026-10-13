@@ -305,7 +305,15 @@ export async function submitClarify(
 export async function fetchReport(reportId: string): Promise<Report | null> {
   // 演示态（fixture）：由内置快照构造完整 Report（report_type/living_circle 由渲染适配器消费）
   if (isFixtureMode()) return getLivingCircleReportMock(reportId)
-  return safeJson<Report | null>(`/api/reports/${reportId}`, undefined, null)
+  const r = await safeJson<Report | null>(`/api/reports/${reportId}`, undefined, null)
+  // 形状闸：`safeJson` 只看 HTTP 状态，而"200 + 错误信封"这个形状本仓真发出去过
+  // （旧版 `GET /api/reports/{id}` 对不存在的报告返 200 + `{ok:false,message:'report not ready'}`），
+  // 于是那枚信封被当成报告塞进 store —— `ReportPage` 的 `r.evidence.map` 当场抛 TypeError、
+  // 整页零字符。这里认出来就当"没有这份报告"，让 store 走"报告不存在"那一支。
+  if (!r || typeof r.id !== 'string' || !Array.isArray(r.evidence) || !Array.isArray(r.sections) || !Array.isArray(r.toc)) {
+    return null
+  }
+  return r
 }
 
 /* 报告决策链路 Trace（决策回放 / Trace 页签） */
