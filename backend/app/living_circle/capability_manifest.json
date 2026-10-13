@@ -2,8 +2,8 @@
   "generated_at": "2026-09-20T00:00:00Z",
   "ak_masked": "iB2****4ol",
   "probe_version": "0.3",
-  "updated_at": "2026-10-06T01:59:30Z",
-  "updated_by": "probe_version 0.3 新增 `isochrone_service`（D 笔·已实测权限边界）与 `time_axis`（4a 笔·时刻/路况能力核实 + 测时可重复性自证 + 未消费字段核实）。原有各块读数一律不动。",
+  "updated_at": "2026-10-13T08:50:00Z",
+  "updated_by": "2026-10-13 新增 `traffic_service`（第五维笔·实时路况查询的权限与字段实测：有权限、bound 端点有面积上限、around 为圆域且返回无几何）。原有各块读数一律不动。",
   
   "capacity": {
     "walking": {
@@ -132,6 +132,30 @@
     "notes": "【已作废·假阴性】旧 poi 组从未传 page_size ⇒ 看到的是百度默认每页 10 条。『All radius levels return 10 results consistently; no pagination truncation observed』实为『没给足发生截断的机会』，而生产代码请求 20 条/页。保留此块仅为记录该结论为何不可信。"
   },
   
+  "traffic_service": {
+    "probe_group": "一次性手工探针（2026-10-13，北京劲松 15min 环 bbox 与中心点；`scripts/probe_traffic_perm.py`）",
+    "endpoint": "GET /traffic/v1/bound?bounds=左下纬度,左下经度;右上纬度,右上经度&ak= ；GET /traffic/v1/around?center=纬度,经度&radius=米&ak=（另测过 /traffic/v1/road 的路径存在性，未展开）",
+    "measured": true,
+    "http_status": 200,
+    "status": 0,
+    "status_meaning": "status=0 成功 —— **与 `isochrone_service` 的 status=240「APP 服务被禁用」不同：这把 AK 对该服务有权限**",
+    "usable_with_current_ak": true,
+    "param_facts": {
+      "坐标顺序": "lat,lng。A/B 实测：反序（lng,lat）直接回 「bounds参数错误」",
+      "bound_面积上限": "1.81km 的框回「bounds范围过大」；0.45km 的框 status=0 ⇒ 该端点只吃小区域，做不了整环一次查询",
+      "around_半径上限": "500 / 1000 / 1500 / 2000 m 连续四个半径全部 status=0（未见上限迹象，未继续加大）"
+    },
+    "fields_returned": {
+      "evaluation": "{status:int, status_desc:'轻微拥堵'} —— 区域整体评价枚举",
+      "description": "自然语言：区域整体评价 + 逐条拥堵路段（如「东三环南路：北向南,从双井桥到分钟寺桥拥堵」）",
+      "road_traffic[].congestion_sections[]": "{road_type, congestion_distance(米·实测 3420), speed(实测 18.18), status(枚举), congestion_trend('SAME'), section_desc('北向南,从双井桥到分钟寺桥')}",
+      "road_traffic[].road_name": "路段名清单（实测 9 条，含占位 'UNKNOW'）"
+    },
+    "has": {"拥堵状态枚举": true, "量化字段_里程与速度": true, "路段几何_坐标": false},
+    "calls_spent": 8,
+    "notes": "三条对方案有直接影响的事实：① **有权限**（本 AK 无需像 isochrone_service 那样申请开通）；② **bound 端点有面积上限** ⇒ 计划里「每份 1 次多边形外呼」在 bound 上不成立；around 端点可用，但它是**圆域**（中心点 + 半径），且返回**不含几何** ⇒ 做不了「环内过滤」，第五维的尺只能是「中心点 R 米圆域内的路况暴露度」，须与可达尺并列披露（§7.1 两把尺纪律）；③ 返回含**路段名 + 方向 + 起止点**（无坐标）：这是路段级路况清单而非路网拓扑，「算不算取底层路网」属赛题口径问题，由项目方拍板 —— 本条目只落实测事实。"
+  },
+
   "performance": {
     "standard_mode_full_run_ms": 425,
     "estimated_requests_per_check": 12,
