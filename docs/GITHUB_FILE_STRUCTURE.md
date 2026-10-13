@@ -1,8 +1,8 @@
 # GitHub 仓库文件架构
 
-> 最后更新：2026-10-12
+> 最后更新：2026-10-14
 > 分支：`merge/travel-upgrade`
-> 最新提交：截至本日 `9aec02c`。这一行天生会腐烂，核对一律以 `git log -1 --oneline` 现场为准
+> 最新提交：截至本日 `68d2120`（2026-10-13）。这一行天生会腐烂，核对一律以 `git log -1 --oneline` 现场为准
 
 ---
 
@@ -109,7 +109,7 @@ backend/
 │   ├── test_blindspot.py            # 盲区识别测试
 │   ├── test_scoring.py              # 评分模型测试
 │   ├── test_living_circle_api.py    # 生活圈 API 测试
-│   └── ...                          # 其他测试(收集 2829 项 / 2026-10-12 实测通过 2802 项)
+│   └── ...                          # 其他测试(收集 2852 项 / 2026-10-14 实测通过 2825 项)
 │
 ├── scripts/                         # 后端工具脚本
 │   ├── probe_baidu.py               # 百度 API 探针
@@ -249,9 +249,9 @@ docs/
 ```
 
 **CI 流程**:
-1. Backend: γ 静态守卫 → pytest（收集 2829 项；2026-10-12 实测 2802 passed / 4 skipped / 23 xfailed）
-2. Frontend: typecheck → vitest（1403 项；实测 1402 passed / 1 todo）→ build（lint 为非阻断诊断）
-3. 排版 e2e: Playwright（80 项运行实例 ＝ 8 个 spec × 3 个 project：1440×900、1280×720、连真 mock 后端的 running 档）
+1. Backend: γ 静态守卫 → pytest（收集 2852 项；2026-10-14 实测 2825 passed / 4 skipped / 23 xfailed）
+2. Frontend: typecheck → vitest（1429 项；159 个测试文件，实测 1428 passed / 1 todo）→ build（lint 为非阻断诊断）
+3. 排版 e2e: Playwright（80 项运行实例 ＝ 8 个 spec × 3 个 project：1440×900、1280×720、连真 mock 后端的 running 档；2026-10-14 以 `npx playwright test --list` 静态枚举复核 `Total: 80 tests in 8 files`）
 4. API 镜像运行时校验（frontend job 内的 step，`api/` 缺失时自我 SKIP）
 5. Docker 构建（**仅 main/master 触发** ⇒ 本分支从不跑它，不能算作本分支的防线）
 
@@ -312,20 +312,20 @@ deploy/
 - **`docs/DEPLOYMENT.md`** - 部署指南(本地/云端/Python 解释器约束)
 
 ### 测试相关
-- **`backend/tests/`** - pytest 套件(收集 2829 项;2026-10-12 实测 2802 passed / 4 skipped / 23 xfailed)
-- **`frontend/src/__tests__/`** - vitest 套件(1403 项;实测 1402 passed / 1 todo)
+- **`backend/tests/`** - pytest 套件(收集 2852 项;2026-10-14 实测 2825 passed / 4 skipped / 23 xfailed)
+- **`frontend/src/__tests__/`** - vitest 套件(1429 项;159 个测试文件,实测 1428 passed / 1 todo)
 - **`frontend/e2e/`** - Playwright E2E 测试(80 项运行实例 = 8 个 spec × 3 个 project)
 
 ---
 
 ## 📊 仓库统计
 
-- **总文件数**(git 跟踪,不含依赖/缓存): 793 个（截至 2026-10-13；核对用 `git ls-files | wc -l`，本行会随提交漂移）
-- **代码行数**: 约 92,600 行(口径＝`backend/app/**/*.py` 30,589 ＋ `frontend/src/**/*.{ts,tsx}` 61,999;不含 tests/e2e/dev 探针)
-- **测试用例**: 收集口径 4312 项(pytest 2829 ＋ vitest 1403 ＋ Playwright e2e 80);通过口径 4284 项(2802 ＋ 1402 ＋ 80)
-- **文档数量**: `docs/` 下 16 份入库(14 份 Markdown ＋ 2 份 PDF)
+- **总文件数**(git 跟踪,不含依赖/缓存): 801 个（截至 2026-10-14；核对用 `git ls-files | wc -l`，本行会随提交漂移）
+- **代码行数**: `backend/app/**/*.py` **32,413 行 / 82 个文件** ＋ `frontend/src` 全部 `ts/tsx` **64,319 行 / 312 个文件**（含 `__tests__` 与 dev 探针）＝ **96,732 行**；只算应用代码（前端剥掉 `__tests__` 与 `src/dev/`）则 32,413 ＋ 32,004 ＝ **64,417 行**（2026-10-14 实测，与作品介绍 §1 同一命令口径；旧版这行写的"不含 tests"却按含的方式测，两半口径不一致，已按同一命令重取）
+- **测试用例**: 收集口径 4361 项(pytest 2852 ＋ vitest 1429 ＋ Playwright e2e 80);通过口径 4333 项(2825 ＋ 1428 ＋ 80;e2e 那 80 项今日只做了 `--list` 静态枚举核对项数，通过数以 CI #56 全绿读数为准)
+- **文档数量**: `docs/` 下 17 份 git 跟踪(14 份 Markdown ＋ 3 份 PDF,截至 2026-10-14)
 - **CI Job 数量**: 4 个(backend / frontend / e2e / docker;docker 仅 main/master 触发)
-- **最新提交**: 截至 2026-10-12 为 `9aec02c`(本行会腐烂,核对以 `git log -1 --oneline` 为准)
+- **最新提交**: 截至 2026-10-14 为 `68d2120`(本行会腐烂,核对以 `git log -1 --oneline` 为准)
 - **分支**: `merge/travel-upgrade`(远端唯一分支,亦即默认分支;已包含 `upstream/main` 的全部提交)
 
 ---
