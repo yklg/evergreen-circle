@@ -2,7 +2,7 @@
   "_generated_by": "backend/scripts/bake_lc_demo_reports.py",
   "_source_fixture": "backend/app/living_circle/fixtures/beijing-jinsong.json",
   "_narrative_version": "nar-6",
-  "_captured_at": "2026-10-13T10:34:02.208Z",
+  "_captured_at": "2026-10-13T11:11:56.688Z",
   "_note": "演示态报告正文快照。作者只有后端装配器（diagnosis_templates.py::assemble_report）；改了装配器必须同笔重跑本脚本，否则 test_lc_demo_report_mirror.py 红。`living_circle` 载荷不在这里，由 livingCircleMock.ts 现成的那份 import 在读时拼回。",
   "id": "lc-beijing-jinsong",
   "report_type": "living_circle",
@@ -125,6 +125,11 @@
     {
       "id": "conclusion",
       "title": "体检结论与整改建议",
+      "level": 2
+    },
+    {
+      "id": "traffic",
+      "title": "时段暴露与可达稳健性",
       "level": 2
     }
   ],
@@ -1527,6 +1532,22 @@
         "最长板与短板差 100 分：「菜市场」100 对「养老」0"
       ],
       "map_focus": null,
+      "source_evidence_ids": []
+    },
+    {
+      "id": "traffic",
+      "title": "时段暴露与可达稳健性",
+      "level": 2,
+      "key_takeaway": "区域交通时段暴露度 51.995/100（口径：中心点 R 米**圆域**、窗口 07:00-09:00；按档位映射 · 表 tm-1；倍数表为**声明值、未做双时刻标定**）",
+      "paragraphs": [
+        "以中心点为圆心的**圆域**（半径 1273.0 m，不是可达区本身）查询典型高峰（07:00-09:00）的路况聚合：拥堵里程合计 6660.0 m、涉及 5 个拥堵段。",
+        "该读数按档位映射为 0–100 的稳健性分（100 = 畅通），作为第五维计入总分（`scoring.WEIGHTS`）。本段只给聚合量，**不点名任何路段**，也不据此推断任何个体的步行能力。"
+      ],
+      "highlights": [
+        "典型高峰（07:00-09:00）区域交通暴露度 51.995/100，拥堵里程合计 6660.0 m（圆域口径，不点名路段）"
+      ],
+      "claims": [],
+      "charts": [],
       "source_evidence_ids": []
     }
   ],

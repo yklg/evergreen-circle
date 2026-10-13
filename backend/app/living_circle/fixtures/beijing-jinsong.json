@@ -57,7 +57,9 @@
     "cells_blind": 0,
     "sample_profile": "standard",
     "coverage_caliber_version": "cov-1",
-    "reach_caliber_version": "rc-1"
+    "reach_caliber_version": "rc-1",
+    "traffic_caliber_version": "tv-1",
+    "traffic_peak_window": "07:00-09:00"
   },
   "isochrones": [
     {
@@ -9963,6 +9965,35 @@
         "max": 23.1,
         "min": -9.4
       }
+    },
+    "traffic": {
+      "region": "circle",
+      "evaluation_status": 2,
+      "tier_share": {
+        "畅通": 0.0,
+        "缓行": 0.0,
+        "拥堵": 0.90991,
+        "严重拥堵": 0.09009
+      },
+      "congested_distance_m": 6660.0,
+      "sections_count": 5,
+      "unknown_tier_sections": 0,
+      "unknown_tier_codes": [],
+      "exposure_index": 1.672072,
+      "exposure_score": 51.995,
+      "coverage": "ok",
+      "peak_window": "07:00-09:00",
+      "radius_m": 1273.0,
+      "multiplier_table": {
+        "畅通": 1.0,
+        "缓行": 1.15,
+        "拥堵": 1.6,
+        "严重拥堵": 2.4
+      },
+      "multiplier_table_version": "tm-1",
+      "calibrated": false,
+      "basis": "倍数表为**声明值**（2026-10-13 出厂），未做双时刻实测标定：标定需同点位早高峰/平峰各跑一次routematrix。口径表如实标注这一点，屏上措辞只许说『按档位映射』，不许说『实测行程时间』。",
+      "fetched_at": "2026-10-13T11:11:11Z"
     }
   },
   "poi": {

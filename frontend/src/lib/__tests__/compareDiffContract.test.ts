@@ -34,6 +34,7 @@ import {
   SHAPE_GAP_ROW_KEYS,
   ALL_GAP_DESC,
   caliberGapDesc,
+  trafficCaliberGap,
   caliberPolicyGap,
   compareCaliberNotice,
   compareCaliberNotices,
@@ -115,8 +116,21 @@ interface Contract {
 }
 
 const C = contractJson as unknown as Contract
-const KAILI = kailiJson as unknown as LivingCircleReport
-const JINSONG = jinsongJson as unknown as LivingCircleReport
+const KAILI_RAW = kailiJson as unknown as LivingCircleReport
+const JINSONG_RAW = jinsongJson as unknown as LivingCircleReport
+
+/** 第五维笔（2026-10-13）：出厂两份里**只有劲松**带注入的真实 traffic 回执（凯里是缺源样区）。
+ *  凡"只差被测那一根轴"的合成对，都要先把 `tv` 抹平成同一个值 —— 否则第五根轴会多拼一句，
+ *  那些用例会从"只差 rc/cov/ev"变成"差两根"（后端 `test_living_circle_api` 同一手法）。
+ *  真数据那一面（两份出厂快照在 tv 上**确实**不同）由"出厂演示对"那条用 `*_RAW` 单独钉住。 */
+const alignTv = (lc: LivingCircleReport, v: string | null = 'tv-x'): LivingCircleReport => {
+  const cal = { ...((lc.caliber ?? {}) as Record<string, unknown>) }
+  if (v === null) delete cal.traffic_caliber_version
+  else cal.traffic_caliber_version = v
+  return { ...lc, caliber: cal } as LivingCircleReport
+}
+const KAILI = alignTv(KAILI_RAW)
+const JINSONG = alignTv(JINSONG_RAW)
 
 const DEF_OF = (key: string) => COMPARE_ROWS.find((d) => d.key === key)
 
@@ -389,6 +403,16 @@ describe('P0-3 · 判盲口径版本守卫', () => {
     // 无论哪条分支：数值行永远照常给结论（拦结论不拦数值）
     expect(rows['POI 采集'].desc).not.toBe(GAP.desc)
     expect(rows['圈内 POI'].desc).not.toBe(GAP.desc)
+
+    // ⑤ 真数据上的第五根轴（第五维笔 · 2026-10-13）：劲松带真实回执（tv-1），凯里是**缺源**样区
+    //    （无 tv）⇒ 演示对比页上这一对的「综合评分」行**必须**出现第五维那句。
+    //    这是产品决定（缺源判不可比分），不是缺陷：缺源样区的分数不参与跨样区比较。
+    const RAW_KAILI = KAILI_RAW, RAW_JI = JINSONG_RAW
+    expect(trafficCaliberGap(RAW_KAILI, RAW_JI), "出厂两份的 tv 关系变了？").toBe(true)
+    const rowsRaw = Object.fromEntries(
+      compareRows(RAW_KAILI, RAW_JI, 'A', 'B').map((r) => [r.metric, r]))
+    expect(rowsRaw['综合评分'].desc).toContain('区域交通时段暴露度口径已升级')
+    expect(rowsRaw['服务盲区'].desc).not.toContain('区域交通时段暴露度')
   })
 })
 

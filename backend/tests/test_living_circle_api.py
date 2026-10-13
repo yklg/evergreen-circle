@@ -403,6 +403,8 @@ def test_caliber_gap_blocks_only_the_verdict_rows():
     for legacy_b in ("ev-0-legacy", None):
         a, b = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
         a["caliber"]["scope_policy_version"] = SCOPE_POLICY_VERSION
+        # 第五维笔：tv 抹平（只有 jinsong 带注入的 traffic 回执）—— 本条要的变量只有 ev
+        a["caliber"]["traffic_caliber_version"] = b["caliber"].get("traffic_caliber_version", "tv-x")
         if legacy_b is None:
             b["caliber"].pop("scope_policy_version", None)
         else:
@@ -425,7 +427,11 @@ def test_caliber_gap_blocks_only_the_verdict_rows():
         assert rows[metric]["desc"] == CONTRACT["offline_backend_only"]["not_comparable_desc"], metric
 
     # ④ 真数据自检（不合成）：出厂两份快照现在的版本关系决定守卫该不该亮
-    shipped = by_metric(_lc_diff(copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)))
+    # 第五维笔：tv 抹平 —— 出厂两份里只有 jinsong 带注入的 traffic 回执（演示件要看得见第五维），
+    # 不抹它，这条"真链路只该亮 ev 一句"的判据会被第五根轴多出一句而假红。
+    _ka, _ji = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
+    _ka["caliber"]["traffic_caliber_version"] = _ji["caliber"]["traffic_caliber_version"] = "tv-x"
+    shipped = by_metric(_lc_diff(_ka, _ji))
     mismatched = (KAILI_FX["caliber"].get("scope_policy_version")
                   != JINSONG_FX["caliber"].get("scope_policy_version"))
     for metric in gap_rows:
@@ -472,6 +478,9 @@ def test_rc_axis_is_aligned_on_shipped_pair_and_blocks_no_row():
     for side in (a, b):
         side["caliber"]["scope_policy_version"] = "ev-x"
         side["caliber"]["coverage_caliber_version"] = "cov-x"
+        # 第五维笔（2026-10-13）：tv 也要抹平 —— 出厂两份里只有 jinsong 注入了真实的
+        # traffic 回执（演示件要看得见第五维），不抹它这对比就多出一根变量。
+        side["caliber"]["traffic_caliber_version"] = "tv-x"
 
     for metric, row in by_metric(_lc_diff(a, b)).items():
         assert "可达口径" not in row["desc"], f"{metric} 被 rc 误拦（真数据对上根本不同版本都没成立）"
@@ -677,10 +686,12 @@ def test_coverage_gap_blocks_only_the_verdict_rows():
     plain_rows = ("15min 等时圈面积 (km²)", "可达采样点数", "POI 采集", "圈内 POI")
     ALL_GAP_SENTENCES = (_DIFF_DESC_CALIBER_GAP, _DIFF_DESC_COVERAGE_GAP, _DIFF_DESC_BOTH_GAP)
 
-    def stamp(fx: dict, ev, cov) -> dict:
+    def stamp(fx: dict, ev, cov, tv="tv-x") -> dict:
         f = copy.deepcopy(fx)
         cal = f.setdefault("caliber", {})
-        for key, val in (("scope_policy_version", ev), ("coverage_caliber_version", cov)):
+        # 第五维笔：`tv` 走同一套盖章 —— 三根盖同一个值，"只差被测那一根"才成立。
+        for key, val in (("scope_policy_version", ev), ("coverage_caliber_version", cov),
+                         ("traffic_caliber_version", tv)):
             if val is None:
                 cal.pop(key, None)
             else:
@@ -734,7 +745,9 @@ def test_coverage_gap_blocks_only_the_verdict_rows():
         "两行又共用一句 ⇒ 行级按轴分派没生效（#83 的机器形态）")
 
     # ④ 真数据自检（不合成）：出厂两份快照的评分轴关系决定第二句该不该亮
-    shipped = by_metric(_lc_diff(copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)))
+    _ka, _ji = copy.deepcopy(KAILI_FX), copy.deepcopy(JINSONG_FX)
+    _ka["caliber"]["traffic_caliber_version"] = _ji["caliber"]["traffic_caliber_version"] = "tv-x"
+    shipped = by_metric(_lc_diff(_ka, _ji))          # tv 抹平 ⇒ 本段仍只问评分轴
     same_cov = (KAILI_FX["caliber"].get("coverage_caliber_version")
                 == JINSONG_FX["caliber"].get("coverage_caliber_version"))
     for metric in gap_rows:

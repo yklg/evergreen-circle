@@ -13,20 +13,20 @@
   "fixtures": {
     "beijing-jinsong.json": {
       "counts": {
-        "sections": 8,
-        "highlights": 10,
+        "sections": 9,
+        "highlights": 11,
         "charts": 8
       },
       "faces": {
-        "sections": "e2b6e6626a1cd2b1",
-        "toc": "d1f90d57b6433847",
+        "sections": "eafcfbbe716fc726",
+        "toc": "60e7072671aa930c",
         "charts": "63a837d8322a5965",
         "claims": "d36e6ed1ea169cc8",
         "evidence": "b489168e029028a8",
         "subtitle": "7f7a1eb533d282db",
         "dispatch": "e4b3462fa1a1ebc0",
         "glossary": "e13d91946b1384fb",
-        "report": "2bb031843b46e831"
+        "report": "5477607ef5f1c118"
       }
     },
     "kaili-ev2.json": {
