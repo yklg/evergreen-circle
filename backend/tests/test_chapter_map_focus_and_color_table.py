@@ -45,7 +45,10 @@ PYTEST_FIXTURES = sorted(p.name for p in FIXTURE_DIR.glob("*.json"))
 NOT_EMITTED = ("overview", "conclusion")
 # 实测读数（三份夹具各跑一次装配得到，禁凭本表记忆改写）：盲区 0/1/0 ⇒ 两份走缺席态。
 EXPECTED_EMITTED = {
-    "beijing-jinsong.json": 5,
+    # 2026-10-13 第五维可视化（nar-7）：劲松多一张 —— `traffic` 章发 `traffic_circle` 焦点。
+    # 仍是**实测**读数（下表逐份都由 `len(_emitted(_report(lc)))` 回数）：劲松 6 张里含圆域章、
+    # 不含盲区章（它 0 盲区走缺席态）；其余四份没有 coverage=ok 的路况读数 ⇒ 数量不变。
+    "beijing-jinsong.json": 6,
     "kaili-ev2.json": 6,
     "kaili.json": 5,
     # 2026-10-11 新增两份真跑样区：上海 0 盲区 ⇒ 盲区章缺席态（5）；下司 1 盲区 ⇒ 在场态（6）。
@@ -90,8 +93,14 @@ def test_2_chapters_that_emit_are_exactly_the_registryminus_absent(report):
     for sid in MAP_FOCUS_KINDS:
         if sid == "blindspot":
             assert sid not in got, "kaili 盲区 0 处 ⇒ 这一章应走缺席态，实在发就是没接住判据"
+        elif sid == "traffic":
+            assert sid not in got, "kaili 没有 coverage=ok 的路况读数 ⇒ 整章不发，焦点也不该发"
         else:
             assert sid in got, f"{sid} 章在登记表里却不发 ⇒ 加了一行登记而装配没消费（静默少一张）"
+    # 正面半边：登记表里那行 `traffic` 必须在**有源件**上真发得出来，否则上面那条"允许少发"
+    # 就成了永久豁免（登记了却没人消费，症状与漏登记一模一样）。
+    jin = json.loads((FIXTURE_DIR / "beijing-jinsong.json").read_text(encoding="utf-8"))
+    assert "traffic" in _emitted(_report(jin)), "劲松有 coverage=ok 的读数却不发圆域焦点 ⇒ 登记表那行是空挂"
 
 
 def test_2b_the_two_deliberately_unmapped_chapters_stay_empty(report):
@@ -126,7 +135,8 @@ def test_3_schema_of_every_emitted_focus():
         for sid in emitted:
             mf = _sections(rep)[sid]["map_focus"]
             assert set(mf) <= {"kind", "categories", "blind_id", "title"}, f"{name}/{sid} 键越界：{sorted(mf)}"
-            assert mf["kind"] in {"categories", "all", "blindspot"}, f"{name}/{sid} kind 不在闭集：{mf['kind']}"
+            assert mf["kind"] in {"categories", "all", "blindspot", "traffic_circle"}, (
+                f"{name}/{sid} kind 不在闭集：{mf['kind']}")
             assert isinstance(mf["categories"], list) and all(c in LC_CAT_COLOR for c in mf["categories"]), (
                 f"{name}/{sid} 的类目没全在色表里 ⇒ 前端取不到色只能静默不画")
             assert set(mf["categories"]) <= bars, f"{name}/{sid} 聚焦了序列里没有的类目：{mf['categories']}"
@@ -185,6 +195,10 @@ REQUIRED_DISCLAIMERS = {
     "categories": ("压到近透明", "没删", "没有放大到本类"),
     "blindspot": ("只强调", "同主图"),
     "all": ("不聚焦单一类", "不来自缩放"),
+    # 圆域那一圈的两条承重实话：它是**查询范围**（不是可达区），且它不灰化任何东西。
+    # 少了前一句，读者一定把圆读成"居民能走到的范围"；少了后一句，会把"这一章没做灰化"
+    # 读成"这一章把别的点删了"。
+    "traffic_circle": ("只叠一圈时段圆域", "不是可达区", "一个都没灰化"),
 }
 
 

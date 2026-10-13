@@ -40,6 +40,7 @@ import {
   LC_ISO_COLORS_B,
   LC_ISO_COMPARE_COLOR,
   LC_JUDGE_SCALE_COLOR,
+  LC_TRAFFIC_TIER_COLOR,
   cellAt,
   cellIndex,
   cellsLedgerOf,
@@ -72,6 +73,8 @@ import {
   poiThinNote,
   samplingReach,
   severityOf,
+  trafficExposureOf,
+  trafficExposureLabel,
 } from '../../lib/livingCircle'
 import type { BlindBoundaryView } from '../../lib/livingCircle'
 
@@ -127,6 +130,14 @@ export interface LcMapProps {
    * 载荷没发台账（出厂样区里两份就是没发）⇒ 整层不出现，页面那颗开关也不出现。
    */
   showCellsGrid?: boolean
+  /**
+   * 时段圆域图层（第五维 · 笔 D）：把"路况查询到底覆盖了哪一片"画成一圈 —— 中心点 + 载荷半径。
+   * 默认关，与判定尺/对照环/扇区/格阵同一条纪律：解释层不是主叙事层。
+   * ⚠️ 这一圈是**圆域**，不是可达区：环不规则、圆比环大。图注那句（`trafficExposureLabel`）
+   *    必须跟着上屏，否则读者一定把圆读成"居民能走到的范围"。
+   * 缺源样区（`coverage=absent`、换代前落库的旧件）⇒ 整层不出现，页面那颗勾选也不出现。
+   */
+  showTrafficExposure?: boolean
   /** C5：选中的判定格 `(行i, 列j)`，与逐格台账卡（C4）双向 —— 卡里点一格、或地图上点一块，
    *  都画同一枚方框 + 该格的判定圆。`null` ⇒ 不画。 */
   selectedCell?: [number, number] | null
@@ -403,7 +414,7 @@ function ShapeToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
-  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, showCellsGrid = false, selectedCell = null, onCellPick, showShapeSectors, shapeLayerDefault = false,
+  { report, customCenter, onCenterChange, draggableCenter = true, compareReport, onMapMode, onIsoHover, onBlindHover, showEvidenceDiscs = false, showJudgeScale = false, showIsoCompare = false, showCellsGrid = false, showTrafficExposure = false, selectedCell = null, onCellPick, showShapeSectors, shapeLayerDefault = false,
       selectedSector = null, onSectorPick, desensitize = false, focusBlindspotId },
   ref,
 ) {
@@ -419,6 +430,8 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
   const compareOverlaysRef = useRef<BMapMapOverlay[]>([])
   /** C5（选中格方框 + 该格判定圆）的覆盖物，单独记账 —— 同上一条理由。 */
   const cellOverlaysRef = useRef<BMapMapOverlay[]>([])
+  /** 时段圆域（第五维 · 笔 D）的覆盖物，单独记账 —— 勾一下解释层不许把相机复位。 */
+  const trafficOverlaysRef = useRef<BMapMapOverlay[]>([])
   /** 地图 click 监听器只注册一次（挂在主 effect 上），读不到后续 render 的 props ⇒
    *  这两个开关用 ref 转发。**不**把它们塞进主 effect 的 deps：那会让每次勾图例都
    *  重建整幅覆盖层并把相机复位回中心 15 级（`discOverlaysRef` 那条教训）。 */
@@ -466,7 +479,7 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
      笔 3c：同图叠加那一支不再"整批退场"，改由 `framePlanOf` 出**按侧的绘制清单**
      （两侧同值 ⇒ 合一枚；一侧没发 ⇒ 另一侧照画 + 记一条缺席）。清单是这里唯一的作者。 */
   const plan = framePlanOf(report, compareReport ?? null, {
-    showJudgeScale, showIsoCompare, shapeOn, showCellsGrid, selectedCell,
+    showJudgeScale, showIsoCompare, shapeOn, showCellsGrid, showTrafficExposure, selectedCell,
   }, desensitize)
   /** 每层该画的实例（一枚或多枚，各带归属与几何出处）。 */
   const sidesFor = (layer: LcLayer) => {
@@ -1318,6 +1331,47 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, report, compareReport, showJudgeScale, rosterStr])
 
+  /* 笔 D · 时段圆域（live 半边）。单独 effect、单独一组句柄，理由与判定尺同例。
+   * 三条纪律照抄判定尺：① `enableClicking: false`（解释层不吃点击）；② 只描边＋薄填充
+   * （0.08 才看得见"是这一片"，再深会把五级等时圈色阶压掉）；③ **不进 `fitPts`** ——
+   * 勾一下不该改变自动视野。半径与窗口只从 `trafficExposureOf` 取：在这儿写死一个米数，
+   * "圆域"就变成第二把尺（判定尺当年"写死 1000 却画了 800m"同族事故）。
+   * 圈色取**占多数那一档**的路况色（与第 9 章两张条形图同一组色）；四档全 0 时退回中性蓝，
+   * 不硬挑一档 —— 挑了就是给"没测到"编一个颜色。 */
+  useEffect(() => {
+    const map = mapRef.current
+    const bmap = bmapRef.current
+    if (mode !== 'live' || !map || !bmap) return
+    for (const o of trafficOverlaysRef.current) map.removeOverlay(o)
+    trafficOverlaysRef.current = []
+    const { inst, a, b } = sidesFor('traffic-exposure')
+    if (inst.length === 0 || typeof bmap.Circle !== 'function') {
+      declareLayer('traffic-exposure', false)
+      if (compareReport) declareLayerB('traffic-exposure', false)
+      return
+    }
+    for (const i of inst) {
+      const lc = lcOf(i.source)
+      const t = trafficExposureOf(lc)
+      if (t === null) continue
+      const color = t.dominantTier === null ? LC_JUDGE_SCALE_COLOR : LC_TRAFFIC_TIER_COLOR[t.dominantTier]
+      const circle = new bmap.Circle(new bmap.Point(lc.scene.center[0], lc.scene.center[1]), t.radiusM, {
+        strokeColor: color,
+        strokeWeight: 2,
+        strokeOpacity: 0.9,
+        strokeStyle: 'dashed',
+        fillColor: color,
+        fillOpacity: 0.08,
+        enableClicking: false,
+      })
+      map.addOverlay(circle)
+      trafficOverlaysRef.current.push(circle)
+    }
+    declareLayer('traffic-exposure', a)                   // R1：建出来了才申报
+    if (compareReport) declareLayerB('traffic-exposure', b)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, report, compareReport, showTrafficExposure, rosterStr])
+
   /* 笔 B · 口径对照环（live）。单独一个 effect、单独一组 overlay 句柄，理由与判定尺同例：
    * 解释层不该混进主色阶的绘制循环（那里按 `i % colors.length` 取色，多一条线就会串色）。
    * 三条纪律照抄判定尺：① `enableClicking: false`（不吃点击）；② 只描边不填充；
@@ -1564,6 +1618,13 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
             pts: lcPolyPts(center, lcRing(b.center, scaleRulerM)),
           }))
         : []
+    // 时段圆域（降级半边）：与 live 那枚 `bmap.Circle` 读**同一份** `trafficExposureOf`，
+    // 圈色也取同一个"占多数那一档"。环仍走 `lcRing` 逆投影成 polygon —— 画布横纵比例本就不同，
+    // SVG 正圆与 live 那枚地理圆不可比（与证据盘、判定尺同例，见 `lcRing` 那段注释）。
+    const traffic = wantsLayer('traffic-exposure') ? trafficExposureOf(report) : null
+    const trafficColor = traffic === null || traffic.dominantTier === null
+      ? LC_JUDGE_SCALE_COLOR
+      : LC_TRAFFIC_TIER_COLOR[traffic.dominantTier]
     // 选中格（降级半边）：几何出自 `CellLayer.cellLayerPlan` —— 与 live `:1280` 那对方框＋判定圆
     // **同一份数**，不是第二套算法。守卫照 live 同值：选中格在对照态白名单之外（`SECONDARY_LAYERS`
     // 不含它 ⇒ 对照态两侧都不画）、`!desensitize`（P0-5：分享链接不得画逐格地理边界）、拿不到台账 ⇒
@@ -1746,6 +1807,26 @@ const LcMap = forwardRef<LcMapHandle, LcMapProps>(function LcMap(
               <title>{judgeRulerLabel(report)}</title>
             </polygon>
           ))}
+
+          {/* 笔 D · 时段圆域（降级画布分支）。四条口径与 live 那枚圆逐条对齐：
+              ① 半径/窗口/分数只从 `trafficExposureOf` 取；② 图注只从 `trafficExposureLabel` 取
+                 （图例与画布不许各写一份数）；③ 薄填充 0.08 ＋虚线描边、不吃点击；
+              ④ 缺源 ⇒ `traffic` 为 null ⇒ 一枚都不画（不画 0 半径圈，也不印"路况很好"）。
+              `data-lc-layer` 是 R1「两档图层集合相等」的抓手。 */}
+          {traffic && (
+            <polygon
+              data-lc-layer="traffic-exposure"
+              points={lcPolyPts(center, lcRing(center, traffic.radiusM))}
+              fill={trafficColor}
+              fillOpacity={0.08}
+              stroke={trafficColor}
+              strokeWidth={2}
+              strokeOpacity={0.9}
+              strokeDasharray="9 6"
+            >
+              <title>{trafficExposureLabel(report)}</title>
+            </polygon>
+          )}
 
           {/* 选中格（R2 · 降级半边）：与 live `:1280` 那对方框＋判定圆读同一份 `cellLayerPlan`，
               线宽/透明度/虚线与 live 参数同值 —— 判定尺当年只补了 live 一半、口径对照环两档各写一遍，

@@ -41,8 +41,16 @@ per-item label，但 `data` 项从纯数值变成 `{value, itemStyle:{color}}`�
 `experts` 名单），所以升戳的读数收益是把两个并存空间收成一个：SSE 与报告载荷现在发同一形状，
 `test_evidence_collected_by_is_a_roster_name` 也随之升成更强的
 `test_evidence_collected_by_is_a_seat_in_its_own_roster`（id 必须属于**这份报告自己的** `experts`）。
+`nar-6`（2026-10-13 第五维上线）产物变化：`sections` 多一章 `traffic`「时段暴露与可达稳健性」
+（`coverage != "ok"` 时整章不发 ⇒ 缺源样区的产物逐字节不变），`SECTION_SEAT` 同步登记该章席位。
+`nar-7`（2026-10-13 第五维可视化）产物变化只在 `traffic` 这一章：`charts` 由空数组变两张
+（`chart-traffic-tiers` 四档占比、`chart-traffic-mapping` 档位→倍数＋本次指数线），正文里的
+markdown 强调星号去掉（本视图按纯文本渲染段落，`**…**` 会原样上屏）。四档色新起一组
+`TRAFFIC_TIER_COLOR`，与前端 `LC_TRAFFIC_TIER_COLOR` 同名同值、由镜像判据钉住，**不进** `LC_CAT_COLOR`。
 """
 from __future__ import annotations
+
+import math
 
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -912,6 +920,84 @@ def _sec_elderly(lc: dict) -> dict:
     }
 
 
+# 路况四档色 —— **不是类目色**：`LC_CAT_COLOR` 量的是"这是哪一类设施"，这组量的是"这条路有多堵"，
+# 两组语义互不相干，所以既不进那张色表、也不经 `_cat_color()`。取色只许经本表，不许在 option
+# 里手写第四份色值；与前端 `lib/livingCircle.ts` 的 `LC_TRAFFIC_TIER_COLOR` 是同一个名字、同一组值
+# （镜像判据见 `tests/test_traffic_exposure.py`）。最深档刻意压到 `#9E4A2A`：它与类目色
+# `market=#C2642E` 只差一点，同屏两种语义近色会被读成"菜市场堵了"。
+TRAFFIC_TIER_ORDER: Tuple[str, ...] = ("畅通", "缓行", "拥堵", "严重拥堵")
+TRAFFIC_TIER_COLOR: Dict[str, str] = {
+    "畅通": "#A8C5B4",
+    "缓行": "#E4CE9C",
+    "拥堵": "#DFA471",
+    "严重拥堵": "#9E4A2A",
+}
+# 本次暴露度落点那根线用判定尺那一族蓝，不与任何档位色相近（它标的不是某一档，而是算出来的值）
+TRAFFIC_INDEX_COLOR = "#2F7FBF"
+
+
+def _chart_traffic_tiers(tr: dict) -> dict:
+    """四档路况占比横条（按拥堵里程加权，轴 0–100%）。
+
+    四档**全发**，包括真实为 0 的那两档：少一行就破坏"占比之和为 1"的可对照性。空档读起来像
+    "图坏了"是样式问题不是语义问题 ⇒ 用 `showBackground` 画成淡底槽，而不是把行删掉。
+    这张图**不画 75% 达标线**：那是覆盖度的"够不够"语义，搬过来会被读成"路况达标线"。
+    """
+    share = tr.get("tier_share") or {}
+    rows = [(t, round(float(share.get(t, 0.0)) * 100, 3)) for t in TRAFFIC_TIER_ORDER]
+    return {
+        "tooltip": {},
+        "grid": {"left": 76, "right": 46, "top": 18, "bottom": 28},
+        "xAxis": {"type": "value", "max": 100, "name": "%"},
+        "yAxis": {"type": "category", "data": [t for t, _ in rows][::-1]},
+        "series": [{
+            "type": "bar", "barWidth": "58%",
+            "showBackground": True,
+            "backgroundStyle": {"color": "rgba(95, 123, 105, 0.07)"},
+            "data": [{"value": v,
+                      "itemStyle": {"color": TRAFFIC_TIER_COLOR[t], "borderRadius": [0, 2, 2, 0]},
+                      "label": {"show": True, "position": "right", "formatter": f"{v:.1f}%", "color": "#6B746C"}}
+                     for t, v in rows[::-1]],
+        }],
+    }
+
+
+def _chart_traffic_mapping(tr: dict) -> dict:
+    """档位→倍数映射 ＋ 本次 `exposure_index` 那根线：回答"四档占比怎么变成一个分数"。
+
+    这是可复算性的可视化（分数 = Σ占比×倍数），不是第二张占比图。
+    `grid.top` 比常规多 16px、label 显式 `rotate: 0`：ECharts 对竖线标签默认自动旋转成竖排，
+    会与条形和轴名挤在一起（预览抽帧实测）。
+    """
+    mult = tr.get("multiplier_table") or {}
+    rows = [(t, float(mult[t])) for t in TRAFFIC_TIER_ORDER if isinstance(mult.get(t), (int, float))]
+    idx = tr.get("exposure_index")
+    series: Dict[str, Any] = {
+        "type": "bar", "barWidth": "52%",
+        "data": [{"value": v,
+                  "itemStyle": {"color": TRAFFIC_TIER_COLOR[t], "borderRadius": [0, 2, 2, 0]},
+                  "label": {"show": True, "position": "right", "formatter": f"×{v:.2f}", "color": "#6B746C"}}
+                 for t, v in rows[::-1]],
+    }
+    if isinstance(idx, (int, float)) and math.isfinite(idx):
+        series["markLine"] = {
+            "silent": True, "symbol": "none",
+            "data": [{
+                "xAxis": idx,
+                "label": {"formatter": f"本次 {idx:.3f}", "color": TRAFFIC_INDEX_COLOR,
+                          "position": "end", "rotate": 0, "distance": 6},
+                "lineStyle": {"color": TRAFFIC_INDEX_COLOR, "type": "dashed"},
+            }],
+        }
+    return {
+        "tooltip": {},
+        "grid": {"left": 76, "right": 52, "top": 34, "bottom": 28},
+        "xAxis": {"type": "value", "min": 1, "max": 2.5, "name": "行程时间倍数"},
+        "yAxis": {"type": "category", "data": [t for t, _ in rows][::-1]},
+        "series": [series],
+    }
+
+
 def _sec_traffic(lc: dict) -> Optional[dict]:
     """时段暴露章（第五维笔 · `tv-1`）。**缺源整块不出现**：`coverage != "ok"` ⇒ 返回 None、调用方跳过。
 
@@ -924,21 +1010,29 @@ def _sec_traffic(lc: dict) -> Optional[dict]:
         return None
     win = tr.get("peak_window") or "未声明窗口"
     table_ver = tr.get("multiplier_table_version") or "未声明表"
-    calib = "；倍数表为**声明值、未做双时刻标定**" if not tr.get("calibrated") else ""
+    calib = "；倍数表为声明值、未做双时刻标定" if not tr.get("calibrated") else ""
     return {
         "id": "traffic", "title": "时段暴露与可达稳健性", "level": 2,
+        # ⚠️ 正文与亮点里**不许写 markdown 强调**（`**…**`）：本视图按纯文本渲染段落，
+        #    星号会原样上屏。要强调就靠句式承重。（判据见 tests/test_traffic_exposure.py）
         "key_takeaway": (f"区域交通时段暴露度 {tr.get('exposure_score')}/100"
-                         f"（口径：中心点 R 米**圆域**、窗口 {win}；按档位映射 · 表 {table_ver}{calib}）"),
+                         f"（口径：中心点 R 米圆域、窗口 {win}；按档位映射 · 表 {table_ver}{calib}）"),
         "paragraphs": [
-            (f"以中心点为圆心的**圆域**（半径 {tr.get('radius_m')} m，不是可达区本身）查询典型高峰"
+            (f"以中心点为圆心的圆域（半径 {tr.get('radius_m')} m，不是可达区本身）查询典型高峰"
              f"（{win}）的路况聚合：拥堵里程合计 {tr.get('congested_distance_m')} m、"
              f"涉及 {tr.get('sections_count')} 个拥堵段。"),
             (f"该读数按档位映射为 0–100 的稳健性分（100 = 畅通），作为第五维计入总分"
-             f"（`scoring.WEIGHTS`）。本段只给聚合量，**不点名任何路段**，也不据此推断任何个体的步行能力。"),
+             f"（`scoring.WEIGHTS`）。本段只给聚合量，不点名任何路段，也不据此推断任何个体的步行能力。"),
         ],
         "highlights": _section_highlights(lc, "traffic"),
+        "map_focus": _section_map_focus(lc, "traffic"),
         "claims": [],
-        "charts": [],
+        "charts": [
+            {"chart_id": "chart-traffic-tiers", "type": "bar",
+             "title": "四档路况占比（按拥堵里程加权，%）", "option": _chart_traffic_tiers(tr)},
+            {"chart_id": "chart-traffic-mapping", "type": "bar",
+             "title": "档位→倍数映射与本次暴露度指数", "option": _chart_traffic_mapping(tr)},
+        ],
         "source_evidence_ids": [],
     }
 
@@ -1354,6 +1448,7 @@ MAP_FOCUS_KINDS: Dict[str, str] = {
     "elderly": "categories",
     "isochrone": "all",
     "blindspot": "blindspot",
+    "traffic": "traffic_circle",
 }
 
 
@@ -1389,6 +1484,24 @@ def _section_map_focus(lc: dict, sid: str) -> Optional[dict]:
             "kind": "blindspot", "categories": [], "blind_id": first,
             "title": f"本章地图：盲区图层只强调「{first.replace('bs-', '盲区 ')}」{rest}；"
                      "等时圈与设施点同主图",
+        }
+
+    if kind == "traffic_circle":
+        # 缺源 ⇒ 不发（这一章本身也不会出现；这里再判一次，是因为 `_section_map_focus`
+        # 是独立入口，不许假设调用方已经门控过）。
+        tr = (lc.get("sampling") or {}).get("traffic") or {}
+        if tr.get("coverage") != "ok":
+            return None
+        radius = tr.get("radius_m")
+        if not isinstance(radius, (int, float)) or not math.isfinite(radius) or radius <= 0:
+            return None
+        win = tr.get("peak_window") or "未声明窗口"
+        return {
+            "kind": "traffic_circle", "categories": [],
+            # 焦点不是"某一类设施"，而是"这次高峰查了哪一片" ⇒ 一个点都不灰化、不删、不缩放。
+            # "不是可达区"那半句是口径的承重句：圆比环大，读者一定先按可达区读。
+            "title": f"本章地图：只叠一圈时段圆域（中心点 {round(radius)}m、窗口 {win}）；"
+                     "它是路况查询范围、不是可达区，设施点与等时圈一个都没灰化",
         }
 
     categories = [c for c, owner in CATEGORY_CHAPTER.items() if owner == sid and _cat(lc, c)]
@@ -1644,7 +1757,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
 #    它天然不可能移动复用门（不必再为它单立一条"不许进门"的判据）。
 # 换代规则：只有**载荷语义没变、而展示内容会变**时才升它（加正文/亮点/图件/改口径句）。
 # 载荷语义变了走的是那五把各自的代次，不是这一把。
-NARRATIVE_VERSION = "nar-6"
+NARRATIVE_VERSION = "nar-7"
 
 
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:

@@ -78,6 +78,8 @@ import {
   judgeRulerLabel,
   freshnessNote,
   residualCaliberNote,
+  trafficExposureOf,
+  trafficExposureLabel,
   TRIAD_CHIP_CLASS,
   triadChipText,
   triadChipTone,
@@ -240,6 +242,10 @@ export default function LifeCirclePage() {
    *  它回答的是"哪个方向走不出去"，与判定尺（判一格多大）、对照环（换那把尺还剩多大）、
    *  证据盘（查到哪儿）是四件事 ⇒ 不合并成同一个开关。 */
   const [shapeOn, setShapeOn] = useState(false)
+  /** 时段圆域图层开关（第五维 · 笔 D）。默认关，与判定尺/对照环/扇区同一条纪律：解释层不常驻。
+   *  它回答的是"这次高峰路况到底查了哪一片"，与那三层各是四件事 ⇒ 不合并。
+   *  缺源样区（`coverage=absent`）⇒ 这颗勾**不出现**，不是出现而点不动。 */
+  const [trafficOn, setTrafficOn] = useState(false)
   /** 笔 B 方案②：那一行**默认收起**，图例里只常驻一枚标题按钮。这不是审美选择，是量出来的：
    *  1280×720 档图例已被 `max-h` 夹住（可视 544px），常驻第三行会把内容推到 599 ⇒ 内滚 55px；
    *  只常驻标题时内容 551 ⇒ 内滚 7px。判读控件在吸底块（`LC_LEGEND_JUDGE`）里，
@@ -1022,6 +1028,7 @@ export default function LifeCirclePage() {
             showJudgeScale={judgeScaleOn}
             showIsoCompare={isoCompareOn}
             showShapeSectors={shapeOn}
+            showTrafficExposure={trafficOn}
             selectedCell={selectedCell}
             onCellPick={setSelectedCell}
             selectedSector={shapeSector}
@@ -1142,6 +1149,26 @@ export default function LifeCirclePage() {
                     onChange={(e) => setShapeOn(e.target.checked)}
                   />
                   <span>方位形状（八方位最远可达）</span>
+                </label>
+              )}
+              {/* 时段圆域（第五维）。**没有路况读数就不出现**（同判定尺/证据盘那条纪律：
+                  摆一个勾不动的复选框等于摆假入口）。这一颗也**故意不带常驻副句** ——
+                  图例的内滚深度是量出来的（见上面 `compareOpen` 那段），半径/窗口那句归
+                  勾上后才出现的那一行，与报告页同一套做法。 */}
+              {trafficExposureOf(report) && (
+                <label className="flex cursor-pointer items-start gap-1.5 text-tag font-medium text-ink-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5"
+                    checked={trafficOn}
+                    onChange={(e) => setTrafficOn(e.target.checked)}
+                  />
+                  <span>
+                    时段圆域（高峰路况查询范围）
+                    {trafficOn && (
+                      <span className="mt-0.5 block font-normal text-ink-3">{trafficExposureLabel(report)}</span>
+                    )}
+                  </span>
                 </label>
               )}
               {/* 笔 B · 口径对照环。方案②：常驻的只有这枚标题（+1 行标题 ≈ 21px，实测内滚 7px），

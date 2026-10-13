@@ -141,3 +141,74 @@ describe('F5 · 生活圈源码里不得出现取 travel 名册的调用', () =>
     expect(offenders, `生活圈侧出现 travel 域取数（同 id 不同人，不会报错只会换人）：\n${offenders.join('\n')}`).toEqual([])
   })
 })
+
+/* ══ C5 · 章页脚「本章署名：」不得悬空，也不得留空边框条 ══
+ *
+ * 后端按"无证据不立论"产 claims ⇒ 没有可签名结论的章就是空数组。五份演示件逐章实读：
+ * 每份都有 2–3 章 claims 为空（含概览章与盲区章），而旧代码把标签**无条件**渲染，
+ * 于是屏上出现一行后面什么都没有的「本章署名：」。这里钉三层，缺一层就是半成品：
+ * ① 标签与 claims 同现；② chip 在标签之后；③ claims 与证据**皆空**时整个页脚容器不渲染
+ * —— 只门控标签会留下一条 `border-t pt-3` 的空横条（同一处页脚里还装着"证据 N 条"芯片）。
+ * 三分支刻意**改夹具现造**而不是赌演示件里的真实值：数据面一变，判据不该跟着变红。
+ */
+describe('章页脚署名与证据的同现门控（C5）', () => {
+  type Claim = { claim_id: string; author: string; text?: string; cross_validated?: boolean }
+  type Sec = { id: string; claims?: Claim[]; source_evidence_ids?: string[] }
+
+  function withFooter(claims: Claim[], evidence: string[]) {
+    const rep = structuredClone(getLivingCircleReportMock('lc-kaili')) as never as { sections: Sec[] }
+    const sec = rep.sections.find((s) => s.id === 'medical')
+    if (!sec) throw new Error('mock 报告缺 medical 章（夹具变了，判据要跟着改）')
+    sec.claims = claims
+    sec.source_evidence_ids = evidence
+    return rep as never
+  }
+
+  async function renderRep(rep: never) {
+    const { container } = render(
+      <MemoryRouter>
+        <LifeCircleReportView report={rep} />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(useExpertStore.getState().loadedDomains.living_circle).toBe(true))
+    return container
+  }
+
+  /** 只问 medical 那一处页脚：整页文本里有别的章的「本章署名：」，拿整页断言会因错误原因通过。 */
+  const footerOf = (c: HTMLElement, id: string) => c.querySelector<HTMLElement>(`[data-lc-chapter-footer="${id}"]`)
+
+  it('claims 空、有证据 ⇒ 页脚留（证据芯片在），但"本章署名："不许出现', async () => {
+    const f = footerOf(await renderRep(withFooter([], ['ev-1'])), 'medical')
+    expect(f, '有证据时页脚容器该在').not.toBeNull()
+    expect(f!.textContent).toContain('证据 1 条')
+    expect(f!.textContent, 'claims 为空却仍印标签 ⇒ 标签与结论脱钩').not.toContain('本章署名')
+  })
+
+  it('claims 与证据皆空 ⇒ 整个页脚容器不渲染（挡掉那条空边框横条）', async () => {
+    const c = await renderRep(withFooter([], []))
+    expect(footerOf(c, 'medical'), '两样都没有却留着容器 ⇒ border-t 会画成一条空横条').toBeNull()
+  })
+
+  it('有 claims ⇒ 标签与 chip 同时在场（前两半的对照，防"整块被误删"当成修好了）', async () => {
+    const c = await renderRep(withFooter([{ claim_id: 'c-x', author: '谷穗安', text: '一句结论' }], ['ev-1']))
+    const f = footerOf(c, 'medical')
+    expect(f).not.toBeNull()
+    expect(f!.textContent).toContain('本章署名：')
+    expect(f!.querySelectorAll('span.rounded-chip').length, '标签后必须有那枚署名 chip').toBeGreaterThan(0)
+  })
+
+  /* 整页不变式：标签出现 ⟺ 该章有 claims。
+   * 上面三条各钉一个分支，这条钉"没有漏网的章"—— 五份演示件里每份都有 2–3 章 claims 为空，
+   * 逐章手挑会有漏的一章；这条按渲染出来的页脚总数对账，数据面扩大也照样成立。 */
+  it('整页对账：带「本章署名：」的页脚数 == 有 claims 的章数，且不含 claims 的章一枚不剩', async () => {
+    const rep = structuredClone(getLivingCircleReportMock('lc-kaili')) as never as { sections: Sec[] }
+    const c = await renderRep(rep as never)
+    const footers = [...c.querySelectorAll<HTMLElement>('[data-lc-chapter-footer]')]
+    const claimsIds = new Set(rep.sections.filter((s) => (s.claims?.length ?? 0) > 0).map((s) => s.id))
+    const labeled = footers.filter((f) => f.textContent?.includes('本章署名')).map((f) => f.dataset.lcChapterFooter!)
+    expect(footers.length, '页脚容器数应等于「有 claims 或有证据」的章数').toBe(
+      rep.sections.filter((s) => (s.claims?.length ?? 0) > 0 || (s.source_evidence_ids?.length ?? 0) > 0).length,
+    )
+    expect(labeled.sort(), '标签集合必须与有 claims 的章集合一处不多、一处不少').toEqual([...claimsIds].sort())
+  })
+})

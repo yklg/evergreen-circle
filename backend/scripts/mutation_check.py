@@ -513,8 +513,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         label="sh 渗进差异表的行级归属（一把不改任何读数的尺去拦一行 ＝ #83 的反面）",
         rel="app/main.py",
-        old='    "综合评分": ("ev", "cov"),',
-        new='    "综合评分": ("ev", "cov", "sh"),  # mutation',
+        old='    "综合评分": ("ev", "cov", "tv"),',
+        new='    "综合评分": ("ev", "cov", "tv", "sh"),  # mutation',
         test="tests/test_shape_caliber.py::test_shape_axis_shows_in_the_banner_but_blocks_no_diff_row",
     ),
     Mutation(
@@ -527,8 +527,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         label="把形状代次挪进复用门（全部存量件与每次邻近复用集体 miss、重打距离矩阵）",
         rel="app/living_circle/report_contract.py",
-        old='    "cov": "coverage_caliber_version",\n}',
-        new='    "cov": "coverage_caliber_version",\n    "sh": "shape_caliber_version",  # mutation\n}',
+        old='    "tv": "traffic_caliber_version",\n}',
+        new='    "tv": "traffic_caliber_version",\n    "sh": "shape_caliber_version",  # mutation\n}',
         test="tests/test_shape_caliber.py::test_shape_caliber_is_registered_as_an_ungated_compare_axis",
     ),
     Mutation(
@@ -686,6 +686,45 @@ MUTATIONS: list[Mutation] = [
         old='                    if kind == "living_circle" and origin:',
         new="                    if origin:",
         test="tests/test_spot_check_linkage.py::test_runner_terminal_state_writes_the_side_table",
+    ),
+    # ── 2026-10-13 第五维可视化（`swift-hollow-carp.md` 笔 A/B/E）──────────────────
+    # 前端那几条判据（圆域图层两档相等、署名页脚两层门控、信封形状闸）**登记不进本台架**：
+    # 这里只跑 pytest，跑不了 vitest。它们的变异在 /tmp/mutate_d.py 与 /tmp/mutate_c5.py 里
+    # 当场注入并还原（sha256 双向校验），步骤留在台账 —— 这是效力上限，不是漏做。
+    Mutation(
+        label="报告端点退回「200 + 错误信封」（live 档白屏的成因形状）",
+        rel="app/main.py",
+        old='        raise HTTPException(status_code=404, detail="report not ready")',
+        new='        return {"ok": False, "message": "report not ready"}',
+        test="tests/test_report_fetch.py::test_missing_report_is_404_not_a_200_envelope",
+    ),
+    Mutation(
+        label="第 9 章的圆域焦点退回不发（登记表那行成了空挂）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old='    if kind == "traffic_circle":',
+        new='    if False:  # 变异：登记了却不消费',
+        test="tests/test_traffic_exposure.py::test_traffic_chapter_emits_a_circle_map_focus",
+    ),
+    Mutation(
+        label="最深档路况色撞回类目色 market（同屏两种语义近色）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old='    "严重拥堵": "#9E4A2A",',
+        new='    "严重拥堵": "#C2642E",',
+        test="tests/test_traffic_exposure.py::test_traffic_tier_colors_are_disjoint_from_category_colors",
+    ),
+    Mutation(
+        label="第 9 章的缺源门控摘掉（absent 也发正文与两张图）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old='    if not isinstance(tr, dict) or tr.get("coverage") != "ok":\n        return None',
+        new='    if not isinstance(tr, dict):\n        return None',
+        test="tests/test_traffic_exposure.py::test_traffic_charts_absent_entirely_when_source_missing",
+    ),
+    Mutation(
+        label="正文裸星号退回（`**圆域**` 原样上屏）",
+        rel="app/core/pipeline/diagnosis_templates.py",
+        old='f"（口径：中心点 R 米圆域、窗口 {win}；按档位映射 · 表 {table_ver}{calib}）"',
+        new='f"（口径：中心点 R 米**圆域**、窗口 {win}；按档位映射 · 表 {table_ver}{calib}）"',
+        test="tests/test_traffic_exposure.py::test_assembled_report_text_has_no_raw_markdown_bold",
     ),
 
 ]

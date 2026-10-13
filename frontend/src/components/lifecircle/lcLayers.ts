@@ -23,10 +23,10 @@
 import type { LngLat, LivingCircleReport, ShapeCaliber } from '../../types'
 import { cellLayerPlan, cellsGridPlan } from './CellLayer'
 import { shapeSectors } from './ShapeSectorOverlay'
-import { isoCompareOf, judgeRulerM, shapeOfZone } from '../../lib/livingCircle'
+import { isoCompareOf, judgeRulerM, shapeOfZone, trafficExposureOf } from '../../lib/livingCircle'
 
 /** 已入册的图层。加一层＝在这里加一个名字，并让**两档**的绘制点都消费 `layerRoster`。 */
-export const LC_LAYERS = ['judge-ruler', 'iso-compare', 'shape-sectors', 'selected-cell', 'cells-grid'] as const
+export const LC_LAYERS = ['judge-ruler', 'iso-compare', 'shape-sectors', 'selected-cell', 'cells-grid', 'traffic-exposure'] as const
 export type LcLayer = (typeof LC_LAYERS)[number]
 
 /** 名册的输入：三类信息各管各的 —— 开关（用户意图）、对照态/脱敏（闸）、数据在场性（有没有东西可画）。 */
@@ -40,12 +40,15 @@ export interface RosterInput {
   shapeOn: boolean
   /** 整幅格阵（笔3b）：把台账那一页的五档结论画到地图上。与"选中格"是两层，别混。 */
   showCellsGrid: boolean
-  /** 数据在场性，逐层一条（取不到尺 / 环未闭合 / 没形状键 / 没台账或越界 ⇒ false） */
+  /** 时段圆域（第五维）：中心点 + 查询半径那一圈。报告页与工作台各有一颗自己的勾选。 */
+  showTrafficExposure: boolean
+  /** 数据在场性，逐层一条（取不到尺 / 环未闭合 / 没形状键 / 没台账或越界 / 没路况读数 ⇒ false） */
   hasRuler: boolean
   hasCompareRing: boolean
   hasShape: boolean
   hasCell: boolean
   hasGrid: boolean
+  hasTraffic: boolean
 }
 
 /**
@@ -63,6 +66,9 @@ export function layerRoster(i: RosterInput): LcLayer[] {
   if (allow('selected-cell') && !i.desensitize && i.hasCell) out.push('selected-cell')
   // 格阵与选中格同一条脱敏闸：逐格地理边界在分享态一律不许上屏（P0-5）。
   if (allow('cells-grid') && !i.desensitize && i.showCellsGrid && i.hasGrid) out.push('cells-grid')
+  // 时段圆域：与判定尺同类（一个中心点 + 一个半径的"尺"型几何，不是逐格边界）⇒ 不吃脱敏闸。
+  // 缺源样区 `hasTraffic` 恒 false ⇒ 勾不会出现、层也不画（缺席即未发生，不画 0 半径圈）。
+  if (allow('traffic-exposure') && i.showTrafficExposure && i.hasTraffic) out.push('traffic-exposure')
   return out
 }
 
@@ -78,6 +84,9 @@ export function layerRoster(i: RosterInput): LcLayer[] {
  *  · `selected-cell` —— 它的格界是真实米制（P0-5 那条闸管的就是这个），且"点一格"在两张报告
  *    叠在一起的图上归属未定；选中格留在对照态之外。
  *  · 其余三层是"把已有的结论画在已有坐标上"，与 A/B 双色等时圈同性质。
+ *
+ * `traffic-exposure` 也留在白名单外，理由与判定尺同例：对照页没有第六颗勾，且两份件的**路况查询
+ * 时刻不同**（`fetched_at` 各一枚），把两个圆域叠在一张图上本质是口径问题，该由横幅那句人说。
  */
 export const SECONDARY_LAYERS: readonly LcLayer[] = ['iso-compare', 'shape-sectors', 'cells-grid']
 
@@ -105,6 +114,7 @@ export interface FrameSwitches {
   showIsoCompare: boolean
   shapeOn: boolean
   showCellsGrid: boolean
+  showTrafficExposure: boolean
   selectedCell: [number, number] | null
 }
 
@@ -158,6 +168,7 @@ export function framePlanOf(
       showIsoCompare: sw.showIsoCompare,
       shapeOn: sw.shapeOn,
       showCellsGrid: sw.showCellsGrid,
+      showTrafficExposure: sw.showTrafficExposure,
       ...rosterFactsOf(lc, shapeOfZone(lc, 15), sw.selectedCell, sw.showCellsGrid),
     })
   const ra = rosterOf(a, b !== null)
@@ -228,12 +239,14 @@ export function rosterFactsOf(
   shapeCal: ShapeCaliber | null,
   selectedCell: [number, number] | null,
   showCellsGrid = false,
-): Pick<RosterInput, 'hasRuler' | 'hasCompareRing' | 'hasShape' | 'hasCell' | 'hasGrid'> {
+): Pick<RosterInput, 'hasRuler' | 'hasCompareRing' | 'hasShape' | 'hasCell' | 'hasGrid' | 'hasTraffic'> {
   return {
     hasRuler: judgeRulerM(lc) !== null,
     hasCompareRing: compareRingPresent(lc),
     hasShape: shapeCal !== null,
     hasCell: cellLayerPlan(lc, selectedCell) !== null,
     hasGrid: showCellsGrid && cellsGridPlan(lc) !== null,
+    // 缺源样区（`coverage=absent`、换代前落库的旧件、没有这个键的历史件）⇒ false ⇒ 整层不出现
+    hasTraffic: trafficExposureOf(lc) !== null,
   }
 }

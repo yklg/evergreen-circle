@@ -61,8 +61,13 @@ import {
   gapScoreOf,
   judgeRulerM,
   LC_JUDGE_SCALE_COLOR,
+  LC_TRAFFIC_TIER_COLOR,
+  LC_TRAFFIC_TIER_ORDER,
   severityOf,
+  trafficExposureOf,
+  trafficExposureLabel,
   lcPolyPts,
+  lcRing,
   lcContentFrame,
   lcFrameAspectRatio,
   lcFrameViewBox,
@@ -256,6 +261,8 @@ function LcChapterMap({ lc, focus, secTitle, shared, frame }: {
 }) {
   const center: LngLat = lc.scene.center
   const poiSet = poiRenderSet(lc.poi.points)
+  /** 圆域那一圈的读数：只在这一章才取；拿不到 ⇒ null ⇒ 一圈都不画（不画 0 半径圈）。 */
+  const chapterTraffic = focus.kind === 'traffic_circle' ? trafficExposureOf(lc) : null
   // 画框收到内容包围盒 + `h-full` 填满槽：投影一字不动，只是不再让一小坨图漂在纸边中间，
   // 也不再让 SVG 按宽度自计算出 612px 高、溢出 340px 的槽去压住下面那句图注。
   // 槽的宽高比由调用方按同一个 `frame` 设 ⇒ 图吃满卡子，两侧不再各空出 124px。
@@ -276,6 +283,24 @@ function LcChapterMap({ lc, focus, secTitle, shared, frame }: {
         focusCategories={focus.kind === 'categories' ? focus.categories : undefined}
       />
       <LcSceneCenterMark center={center} name={lc.scene.name} />
+      {/* 时段圆域章（笔 E）：这一章的焦点不是"某一类设施"，而是"这次高峰查了哪一片" ⇒
+          上面那两层一律不灰化（kind 既不是 categories 也不是 blindspot，点位自然全原色），
+          只在这里叠一圈。半径与圈色取自主图同一批出口（`trafficExposureOf` / 四档色表），
+          投影走 `lcRing`→`lcPolyPts` 那条唯一逆运算 —— 与主图降级档同一把各向异性尺。 */}
+      {focus.kind === 'traffic_circle' && chapterTraffic && (
+        <polygon
+          data-lc-chapter-ring="traffic-exposure"
+          points={lcPolyPts(center, lcRing(center, chapterTraffic.radiusM))}
+          fill={chapterTraffic.dominantTier === null
+            ? LC_JUDGE_SCALE_COLOR : LC_TRAFFIC_TIER_COLOR[chapterTraffic.dominantTier]}
+          fillOpacity={0.08}
+          stroke={chapterTraffic.dominantTier === null
+            ? LC_JUDGE_SCALE_COLOR : LC_TRAFFIC_TIER_COLOR[chapterTraffic.dominantTier]}
+          strokeWidth={2}
+          strokeOpacity={0.9}
+          strokeDasharray="9 6"
+        />
+      )}
     </svg>
   )
 }
@@ -479,6 +504,9 @@ function caliberNote(lc: LivingCircleReport) {
 export default function LifeCircleReportView({ report }: { report: Report }) {
   const navigate = useNavigate()
   const [shareOpen, setShareOpen] = useState(false)
+  /** 时段圆域那一层在报告页的开关。**默认关** —— 与工作台同一条纪律（解释层不常驻），
+   *  而缺源样区连这颗勾都不会出现（`trafficExposureOf` 拿不到 ⇒ 不摆假入口）。 */
+  const [trafficOn, setTrafficOn] = useState(false)
   const loadExperts = useExpertStore((s) => s.load)
   // 署名必须查**生活圈**那本名册：两本名册共用同一套 48 个 id、人设互不通用，
   // 查错本不会报错，只会把「谷穗安·基层医疗配置顾问」显示成「苏明哲·行程策略专家」。
@@ -496,6 +524,9 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
     [livingRoster],
   )
   const lc = report.living_circle as LivingCircleReport
+  /** 时段圆域那层的数据在场性（唯一取值口）。null ⇒ 勾选与四档图例整块不出现 ——
+   *  缺源样区摆一颗勾不动的复选框等于摆假入口，留一组没有圈可配的色块等于给图例掺噪。 */
+  const trafficExposure = trafficExposureOf(lc)
   const grade = scoreGrade(lc.scores.total)
   // 报告 id 形如 lc-{sceneId}，反推样区路由参数（如 lc-kaili → kaili）
   const sceneKey = report.id.startsWith('lc-') ? report.id.slice(3) : 'kaili'
@@ -831,12 +862,17 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                  ③ 静态快照退居**打印替身**：GL canvas 在 `window.print()` 下通常不出图（P0-6）。 */}
             <div className="relative overflow-hidden rounded-card border border-line bg-card shadow-card lg:min-h-[640px]">
               <div className="h-[480px] lg:absolute lg:inset-0 lg:h-auto print:hidden">
-                <LcMap report={lc} desensitize={isShared} draggableCenter={false} />
+                <LcMap report={lc} desensitize={isShared} draggableCenter={false} showTrafficExposure={trafficOn} />
               </div>
               <div className="hidden print:block">
                 <IsochroneSnapshot lc={lc} shared={isShared} />
               </div>
-              <div className="absolute left-3 top-3 flex max-w-[150px] flex-col gap-1 rounded-btn border border-line bg-card/90 p-2.5 backdrop-blur">
+              {/* ⚠️ `z-10` 不是装饰，与工作台图例同一条实测纪律（`LifeCirclePage.tsx:1031`）：
+                  百度 GL 会往地图容器里注入 `.BMap_mask`（`position:absolute; z-index:9;
+                  pointer-events:auto`），面板原先是 `z-index:auto` ⇒ 同层按 DOM 序，后注入的 mask
+                  压在面板上。这一格以前只有色块和文字（看不见也点不着，无人察觉），放了**第一个
+                  可交互控件**（时段圆域勾选）之后就会"点了没反应" —— 真机点过一次才抓到。 */}
+              <div className="absolute left-3 top-3 z-10 flex max-w-[190px] flex-col gap-1 rounded-btn border border-line bg-card/90 p-2.5 backdrop-blur">
                 <span className="text-tag font-medium text-ink-2">图层</span>
                 {Object.entries(LC_CAT_COLOR).map(([k, v]) => (
                   <span key={k} className="flex items-center gap-1.5 text-tag text-ink-3">
@@ -844,6 +880,35 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                     {LC_CAT_LABEL_OF(k)}
                   </span>
                 ))}
+                {/* 时段圆域：勾选 + 四档路况色。四档色**不是类目色**（上面那 8 枚量"哪一类设施"，
+                    这 4 枚量"这条路多堵"），所以单列一组并写明是圆域圈色的来源。
+                    副句只调 `trafficExposureLabel` 这一颗：图例与画布不许各写一份半径。 */}
+                {trafficExposure && (
+                  <div className="mt-1.5 flex flex-col gap-1 border-t border-line/70 pt-1.5">
+                    <label className="flex cursor-pointer items-start gap-1.5 text-tag font-medium text-ink-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-3.5 w-3.5"
+                        checked={trafficOn}
+                        onChange={(e) => setTrafficOn(e.target.checked)}
+                      />
+                      <span>时段圆域（高峰路况查询范围）</span>
+                    </label>
+                    {trafficOn && (
+                      <>
+                        <span className="text-[11px] leading-snug text-ink-3">{trafficExposureLabel(lc)}</span>
+                        <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+                          {LC_TRAFFIC_TIER_ORDER.map((t) => (
+                            <span key={t} className="flex items-center gap-1 text-tag text-ink-3">
+                              <span className="h-2 w-2 rounded-full" style={{ background: LC_TRAFFIC_TIER_COLOR[t] }} />
+                              {t}
+                            </span>
+                          ))}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1198,26 +1263,35 @@ export default function LifeCircleReportView({ report }: { report: Report }) {
                   </div>
                 )}
 
-                {/* 章节溯源 + 专家署名 */}
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3">
-                  {sec.source_evidence_ids && sec.source_evidence_ids.length > 0 && (
-                    <span className="inline-flex items-center gap-1 text-tag text-ink-3" title={sec.source_evidence_ids.slice(0, 3).join(', ')}>
-                      <Database size={13} /> 证据 {sec.source_evidence_ids.length} 条
-                    </span>
-                  )}
-                  <span className="text-tag text-ink-3">本章署名：</span>
-                  {(sec.claims ?? []).slice(0, 1).map((c) => {
-                    // D4 报告里 author 存的是姓名（竞品域报告存 id），两侧都容错；
-                    // 名册固定生活圈 —— 本视图只渲染生活圈报告。
-                    const e = resolveExpert(c.author)
-                    const role = e ? e.role_title.split(' / ')[0] || '规划专家' : '规划专家'
-                    return (
-                      <span key={c.claim_id} className="rounded-chip bg-bg px-2 py-0.5 text-tag text-ink-2">
-                        {e?.name ?? c.author} · {role}
+                {/* 章节溯源 + 专家署名。两样都没有时整块不渲染：这一行的 `border-t pt-3`
+                    是页脚横条，只门控里面的标签会留一条空边框（实测 traffic 与盲区章 claims/证据皆空）。 */}
+                {((sec.claims?.length ?? 0) > 0 || (sec.source_evidence_ids?.length ?? 0) > 0) && (
+                  <div data-lc-chapter-footer={sec.id} className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3">
+                    {sec.source_evidence_ids && sec.source_evidence_ids.length > 0 && (
+                      <span className="inline-flex items-center gap-1 text-tag text-ink-3" title={sec.source_evidence_ids.slice(0, 3).join(', ')}>
+                        <Database size={13} /> 证据 {sec.source_evidence_ids.length} 条
                       </span>
-                    )
-                  })}
-                </div>
+                    )}
+                    {/* 标签与首条 claim 同现：后端按"无证据不立论"产 claims，没有可签名结论的章
+                        就是空数组 —— 那时连"本章署名："这四个字都不该印在屏上。 */}
+                    {(sec.claims?.length ?? 0) > 0 && (
+                      <>
+                        <span className="text-tag text-ink-3">本章署名：</span>
+                        {(sec.claims ?? []).slice(0, 1).map((c) => {
+                          // D4 报告里 author 存的是姓名（竞品域报告存 id），两侧都容错；
+                          // 名册固定生活圈 —— 本视图只渲染生活圈报告。
+                          const e = resolveExpert(c.author)
+                          const role = e ? e.role_title.split(' / ')[0] || '规划专家' : '规划专家'
+                          return (
+                            <span key={c.claim_id} className="rounded-chip bg-bg px-2 py-0.5 text-tag text-ink-2">
+                              {e?.name ?? c.author} · {role}
+                            </span>
+                          )
+                        })}
+                      </>
+                    )}
+                  </div>
+                )}
               </section>
             ))}
           </div>

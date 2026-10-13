@@ -206,3 +206,24 @@ describe('分享态（?share=1）· 图注不许声称画不出来的东西', ()
     }
   })
 })
+
+/* ══ 图例面板放了可交互控件 ⇒ 必须抬到 BMapGL mask 之上 ══
+ *
+ * 真机点过一次才抓到的缺陷（2026-10-13 第五维圆域勾选）：百度 GL 会往地图容器里注入
+ * `.BMap_mask`（实测 `position:absolute; z-index:9; pointer-events:auto`），而角落那块图例
+ * 原先只有色块和文字 —— 压住了也没人察觉。一旦往里放**第一个可交互控件**，症状立刻变成
+ * "勾了没反应"。工作台那一块早就为这事写过 `z-10`（`LifeCirclePage.tsx:1031` 那段注释），
+ * 报告页这块是第二次踩同一件事 ⇒ 钉成判据，而不是靠下一个人记得。
+ */
+describe('报告页图例里的可交互控件必须可点（不被 .BMap_mask 压住）', () => {
+  it('含勾选的那块浮层面板 ⇒ className 必须带 z-10', async () => {
+    await renderReport(mockReport('lc-beijing-jinsong'))
+    const boxes = [...document.querySelectorAll('input[type=checkbox]')]
+      .map((i) => i.closest('div[class*="absolute"]'))
+      .filter((el): el is HTMLElement => el !== null)
+    expect(boxes.length, '一个可交互浮层都没找到 ⇒ 本条会因空集合恒真，扫描面先要保证非空').toBeGreaterThan(0)
+    for (const el of new Set(boxes)) {
+      expect(el.className, '不抬层就会被 .BMap_mask（z-index:9）压住 ⇒ 点了没反应').toMatch(/\bz-10\b/)
+    }
+  })
+})

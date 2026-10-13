@@ -77,6 +77,25 @@ export const LC_JUDGE_SCALE_COLOR = '#8FA8C0'
 /** 口径对照环的线色（笔 B）：与四档色阶、判定尺蓝都拉开，且**只描边不填充** ——
  *  解释层填了就会把五级等时圈色阶压掉（与判定尺、证据盘同一条纪律）。 */
 export const LC_ISO_COMPARE_COLOR = '#B45309'
+
+/**
+ * 路况四档色（第五维 · 圆域图层与图例共用）—— **不是类目色**。
+ *
+ * `LC_CAT_COLOR` 量的是"这是哪一类设施"，这组量的是"这条路有多堵"，两组语义互不相干：
+ * 既不进那张色表、也不经 `_cat_color()` 那条取色口。与后端
+ * `app/core/pipeline/diagnosis_templates.py` 的 `TRAFFIC_TIER_COLOR` **同名同值**，
+ * 由镜像判据钉住（第 9 章两张条形图的条色与地图圈色必须是一组，否则图例与画布各说一遍）。
+ * 最深档 `#9E4A2A` 是刻意下调的：它与类目色 `market=#C2642E` 近似到同屏会读错。
+ */
+export const LC_TRAFFIC_TIER_ORDER = ['畅通', '缓行', '拥堵', '严重拥堵'] as const
+export const LC_TRAFFIC_TIER_COLOR: Record<string, string> = {
+  畅通: '#A8C5B4',
+  缓行: '#E4CE9C',
+  拥堵: '#DFA471',
+  严重拥堵: '#9E4A2A',
+}
+/** 本次暴露度指数那根线（第 9 章映射图）用的蓝：不与任何档位色相近，它标的不是某一档而是算出来的值。 */
+export const LC_TRAFFIC_INDEX_COLOR = '#2F7FBF'
 /** 固有尺寸（G5 定版）：SVG 串自带 18×18，图例等消费方用 CSS 缩放 —— 同源=串，尺寸归消费方 */
 export const LC_FIX_ICON_SIZE = 18
 
@@ -1513,6 +1532,62 @@ export function isoCompareOf(
   if (!(Number.isFinite(c.area_km2) && c.area_km2 > 0)) return null
   if (!c.geojson?.coordinates?.[0]?.length) return null
   return c
+}
+
+/**
+ * 第五维时段读数的**唯一取值口**（圆域图层与图例共用）。拿不到就返回 `null` ⇒ 那一层整块不出现。
+ *
+ * 与 `isoCompareOf` 同一条理由：后端契约 B18 会在签发时挡住"声明了 `tv-1` 却缺键"的载荷，
+ * 但那是**签发时**的闸；读侧（历史列表里的旧件、换代前落库的件、外部导入的镜像）可能绕过它。
+ * 这里再判一次，是因为"把没测到画成一个圆"会被读成"这个样区路况很好"—— 那是伪造负结论的反面，
+ * 伪造正结论。所以 `coverage !== 'ok'`、半径/分数/指数任一非有限值，一律 `null`，不回落 0。
+ */
+export function trafficExposureOf(
+  lc: Pick<LivingCircleReport, 'sampling'> | null | undefined,
+): {
+  radiusM: number
+  peakWindow: string
+  score: number
+  index: number
+  /** 圆域内占多数的路况档位（圈色取它）；四档全为 0 时 null ⇒ 圈按中性色画 */
+  dominantTier: string | null
+} | null {
+  const tr = lc?.sampling?.traffic
+  if (!tr || tr.coverage !== 'ok') return null
+  const radiusM = tr.radius_m
+  const score = tr.exposure_score
+  const index = tr.exposure_index
+  if (typeof radiusM !== 'number' || !Number.isFinite(radiusM) || radiusM <= 0) return null
+  if (typeof score !== 'number' || !Number.isFinite(score)) return null
+  if (typeof index !== 'number' || !Number.isFinite(index)) return null
+  const share = tr.tier_share ?? {}
+  let dominantTier: string | null = null
+  let best = 0
+  for (const t of LC_TRAFFIC_TIER_ORDER) {
+    const v = share[t]
+    if (typeof v === 'number' && Number.isFinite(v) && v > best) { best = v; dominantTier = t }
+  }
+  return {
+    radiusM,
+    peakWindow: typeof tr.peak_window === 'string' ? tr.peak_window : '',
+    score,
+    index,
+    dominantTier: best > 0 ? dominantTier : null,
+  }
+}
+
+/**
+ * 圆域那一圈的图注句（**渲染层只调这一颗**：勾选副句、圈上 `<title>`、图例说明共用同一份字）。
+ *
+ * 口径纪律写死在这里：主语是**圆域**，并且必须当场否认"这就是可达区"—— 圆比环大，
+ * 拿它读成"居民高峰能走到的范围"就是这句要防的误读。缺载荷 ⇒ `null`（整行不出现，不是"暂无"）。
+ */
+export function trafficExposureLabel(
+  lc: Pick<LivingCircleReport, 'sampling'> | null | undefined,
+): string | null {
+  const t = trafficExposureOf(lc)
+  if (!t) return null
+  return `圆域半径 ${Math.round(t.radiusM)}m（中心点为圆心的查询范围，不是可达区）· 窗口 ${t.peakWindow || '未声明'} · 时段暴露度 ${t.score}`
 }
 
 /**

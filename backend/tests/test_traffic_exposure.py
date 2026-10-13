@@ -213,3 +213,195 @@ def test_tc02_sourceless_total_is_bit_identical():
                                          "peak_window": "07:00-09:00",
                                          "multiplier_table_version": "tm-1"})
     assert ok["total"] >= absent["total"], "有源（满分档）不该低于缺源一侧"
+
+
+# ── 笔 B：第 9 章的两张图件（nar-7）────────────────────────────────────────
+#
+# 回溯：INV-04（缺源整块不发，延伸到图件）、EQ-01（四档等价类）、R7（既有"option 禁坐标/
+# 禁 gap"那把闸是按四章列举的，新增图默认逃出它 ⇒ 这里同形重钉）、OBS-02（措辞纪律）。
+
+JINSONG = json.loads((BACKEND / "app/living_circle/fixtures/beijing-jinsong.json").read_text(encoding="utf-8"))
+
+
+def _assembled(lc: dict) -> dict:
+    from app.core.pipeline.diagnosis_templates import assemble_report
+    return assemble_report(lc, "lc-traffic-charts", "key:lc-traffic-charts", "图件判据")
+
+
+def _traffic_section(rep: dict):
+    return next((s for s in rep["sections"] if s["id"] == "traffic"), None)
+
+
+def test_traffic_charts_have_two_bars_with_all_four_tiers():
+    """有源 ⇒ 恰好两张图、四键齐、四档全发（少一行就破坏"占比之和为 1"的可对照性）。"""
+    sec = _traffic_section(_assembled(JINSONG))
+    assert sec is not None, "有源样区必须出第 9 章"
+    charts = sec["charts"]
+    assert len(charts) == 2, f"第 9 章图数 {len(charts)} ≠ 2（每章 ≤2 图，两张都已拍板）"
+    for c in charts:
+        assert {"chart_id", "type", "title", "option"} <= set(c), f"图件缺字段：{sorted(set(c))}"
+        assert c["chart_id"].startswith("chart-traffic-"), f"chart_id 前缀不对：{c['chart_id']}"
+        assert c["type"] == "bar", f"生活圈报告只用 radar/bar/scatter，实得 {c['type']}"
+        assert "evidence_ids" not in c, "本章 source_evidence_ids 为空 ⇒ 图带 evidence_ids 会撞悬空判据"
+    tiers = ["畅通", "缓行", "拥堵", "严重拥堵"]
+    for c in charts:
+        assert c["option"]["yAxis"]["data"] == tiers[::-1], f"{c['chart_id']} 的档位轴缺档或乱序"
+        assert len(c["option"]["series"][0]["data"]) == 4, f"{c['chart_id']} 条数 ≠ 4"
+
+
+def test_traffic_tier_chart_matches_payload_share_and_sums_to_one():
+    """占比条的四个数值必须与 `tier_share` 逐档对得上，且四档之和为 100%。"""
+    sec = _traffic_section(_assembled(JINSONG))
+    tiers = ["畅通", "缓行", "拥堵", "严重拥堵"]
+    chart = next(c for c in sec["charts"] if c["chart_id"] == "chart-traffic-tiers")
+    by_tier = {d["itemStyle"]["color"]: d["value"] for d in chart["option"]["series"][0]["data"]}
+    share = JINSONG["sampling"]["traffic"]["tier_share"]
+    assert abs(sum(share.values()) - 1.0) < 1e-6, f"档位占比之和 {sum(share.values())} ≠ 1"
+    for t in tiers:
+        assert abs(round(share[t] * 100, 3) - by_tier[_tier_color(t)]) < 1e-6, f"{t} 的条值与载荷不符"
+
+
+def _tier_color(tier: str) -> str:
+    from app.core.pipeline.diagnosis_templates import TRAFFIC_TIER_COLOR
+    return TRAFFIC_TIER_COLOR[tier]
+
+
+def test_traffic_mapping_chart_marks_the_recomputed_index():
+    """映射图那根线标的必须是载荷里的 `exposure_index`，且四根条就是 `multiplier_table`。
+
+    这根线是"可复算性"的可视化（分数 = Σ占比×倍数），所以它必须与指数逐位同源，
+    并且 label 显式 `rotate: 0` —— ECharts 对竖线标签默认自动旋转，会与条形挤在一起。
+    """
+    tr = JINSONG["sampling"]["traffic"]
+    sec = _traffic_section(_assembled(JINSONG))
+    chart = next(c for c in sec["charts"] if c["chart_id"] == "chart-traffic-mapping")
+    data = {d["itemStyle"]["color"]: d["value"] for d in chart["option"]["series"][0]["data"]}
+    for t, m in tr["multiplier_table"].items():
+        assert data[_tier_color(t)] == m, f"{t} 的倍数条不是表里那个值"
+    ml = chart["option"]["series"][0]["markLine"]["data"][0]
+    assert ml["xAxis"] == tr["exposure_index"], "指数线必须逐位等于载荷读数"
+    assert ml["label"]["rotate"] == 0, "markLine 标签不许被自动旋转成竖排"
+    # 可复算正对照：Σ占比×倍数 必须落在这根线上
+    recomputed = sum(tr["tier_share"][t] * tr["multiplier_table"][t] for t in tr["multiplier_table"])
+    assert abs(recomputed - tr["exposure_index"]) < 1e-6, f"图上那根线复算不出来：{recomputed}"
+
+
+def test_traffic_chart_options_carry_no_geography_and_no_segment_name():
+    """分享态 P0-5 那把闸的**遍历口径**要覆盖新图：禁经纬度对、禁 `gap \\d`、禁路段名/方向。
+
+    ⚠️ 既有那条扫描（`test_chapter_coverage_position_charts.py` ⑭）是按四章列举的，
+    新增图默认不在它覆盖面里 —— 这条就是把同一把尺引到第 9 章，并加一层本章特有的
+    "只用聚合、不点名路段"禁令（载荷本就没有路段名，钉死防将来有人往 option 里塞）。
+    """
+    sec = _traffic_section(_assembled(JINSONG))
+    coord = re.compile(r"\d{2,3}\.\d{3,}\s*,\s*\d{1,3}\.\d{3,}")
+    gap = re.compile(r"gap\s+\d")
+    segment_words = ("路名", "路段名", "向南", "向北", "向东", "向西", "方向", "三环", "辅路", "匝道")
+    for c in sec["charts"]:
+        blob = json.dumps(c["option"], ensure_ascii=False)
+        assert not coord.search(blob), f"{c['chart_id']} 的 option 里出现经纬度对 ⇒ 分享态泄漏精确坐标"
+        assert not gap.search(blob), f"{c['chart_id']} 的 option 里出现 gap 读数 ⇒ 那是被脱敏的字段"
+        hit = [w for w in segment_words if w in blob]
+        assert not hit, f"{c['chart_id']} 的 option 点名了路段/方向：{hit}"
+
+
+def test_traffic_charts_absent_entirely_when_source_missing():
+    """缺源 ⇒ 整章不出现，图也一张不发（presence 门控延伸到图件，不许印成 0）。"""
+    import copy
+    lc = copy.deepcopy(JINSONG)
+    lc["sampling"]["traffic"] = {"coverage": "absent", "region": "circle"}
+    rep = _assembled(lc)
+    assert _traffic_section(rep) is None, "缺源却发了第 9 章 ⇒ 会把'没测到'印成结论"
+    ids = [c["chart_id"] for s in rep["sections"] for c in (s.get("charts") or [])]
+    assert not [i for i in ids if i.startswith("chart-traffic-")], f"缺源样区漏出了路况图件：{ids}"
+
+
+def test_traffic_tier_colors_are_disjoint_from_category_colors():
+    """四档路况色是一组独立语义色，与 8 类类目色**交集必须为空**。
+
+    最深档从 `#C06B3E` 下调到 `#9E4A2A` 的动因就是它与类目色 `market=#C2642E` 近似到
+    同屏会读错。这组色不进 `LC_CAT_COLOR`、不经 `_cat_color()`，键集必须与档位名册一致。
+    """
+    from app.core.pipeline.diagnosis_templates import LC_CAT_COLOR, TRAFFIC_TIER_COLOR
+    assert set(TRAFFIC_TIER_COLOR) == {"畅通", "缓行", "拥堵", "严重拥堵"}
+    both = set(TRAFFIC_TIER_COLOR.values()) & set(LC_CAT_COLOR.values())
+    assert not both, f"路况色与类目色撞值：{both}"
+    assert len(set(TRAFFIC_TIER_COLOR.values())) == 4, "四档色互异"
+    for v in TRAFFIC_TIER_COLOR.values():
+        assert re.fullmatch(r"#[0-9A-Fa-f]{6}", v), f"色值写法不合表内约定：{v}"
+
+
+def test_assembled_report_text_has_no_raw_markdown_bold():
+    """族守卫：装配产出的**正文**里不许出现裸 `**`（本视图按纯文本渲染，星号会原样上屏）。
+
+    成因是实测抓到的：第 9 章一度写了 `**圆域**`，屏上就是一串星号残渣。
+    扫描面只圈"会上屏的那几格"（key_takeaway / paragraphs / highlights 文本 / claims 文本），
+    不圈载荷里的 `basis` 那类纯溯源字段 —— 它按 markdown 写出处反而是给人读的。
+    """
+    offenders = []
+    for f in sorted((BACKEND / "app/living_circle/fixtures").glob("*.json")):
+        rep = _assembled(json.loads(f.read_text(encoding="utf-8")))
+        for s in rep["sections"]:
+            texts = [s.get("key_takeaway") or ""] + list(s.get("paragraphs") or [])
+            texts += [h.get("text", "") if isinstance(h, dict) else str(h) for h in (s.get("highlights") or [])]
+            texts += [c.get("text", "") for c in (s.get("claims") or [])]
+            offenders += [f"{f.name}/{s['id']}: {t[:50]}" for t in texts if "**" in t]
+    assert not offenders, "报告正文出现 markdown 强调（屏上会留裸星号）：\n" + "\n".join(offenders)
+
+
+def test_traffic_tier_colors_mirror_the_frontend_table():
+    """四档路况色跨端镜像：前端那张表与后端 `TRAFFIC_TIER_COLOR` **同名同值、键集相等**。
+
+    为什么值得钉：第 9 章两张条形图的条色出自后端产出的 option，地图上那圈的圈色与图例
+    出自前端那张表 —— 两处各写一份，早晚会一条说"拥堵是橙"、另一枚画成红。
+    形状照 `test_chapter_map_focus_and_color_table.py::test_7`（正则扫前端源码块，
+    扫不到就当场红，而不是静默少比）。
+    """
+    import re
+    from app.core.pipeline.diagnosis_templates import TRAFFIC_TIER_COLOR, TRAFFIC_TIER_ORDER
+
+    ts = (BACKEND.parent / "frontend/src/lib/livingCircle.ts").read_text(encoding="utf-8")
+    m = re.search(r"export const LC_TRAFFIC_TIER_COLOR: Record<string, string> = \{(.*?)\n\}", ts, re.S)
+    assert m, "前端那张表扫不到（改了写法？本条会静默少比，必须红）"
+    pairs = re.findall(r'^\s*"?([一-龥A-Za-z_]+)"?\s*:\s*(\'[^\']+\'|"[^"]+")', m.group(1), re.M)
+    ts_colors = {k: v.strip("'\"") for k, v in pairs}
+    assert ts_colors == TRAFFIC_TIER_COLOR, (
+        f"四档色分叉：只有前端有 {sorted(set(ts_colors) - set(TRAFFIC_TIER_COLOR))}、"
+        f"只有后端有 {sorted(set(TRAFFIC_TIER_COLOR) - set(ts_colors))}、"
+        f"同档不同值 {sorted(k for k in set(ts_colors) & set(TRAFFIC_TIER_COLOR) if ts_colors[k] != TRAFFIC_TIER_COLOR[k])}")
+    # 档位名册也要相等：前端那份 order 决定图例顺序与圈色取值
+    order = re.search(r"export const LC_TRAFFIC_TIER_ORDER = \[(.*?)\]", ts)
+    assert order and [x.strip(" '\t") for x in order.group(1).split(',')] == list(TRAFFIC_TIER_ORDER), \
+        "四档顺序两端不一致 ⇒ 图例与条形图会串档"
+
+
+def test_traffic_chapter_emits_a_circle_map_focus():
+    """笔 E：第 9 章发一种新焦点 `traffic_circle`（半径不进焦点、只留 kind＋图注）。
+
+    焦点里**不许带米数** —— 那是第二个事实源：前端画圈读 `sampling.traffic.radius_m`，
+    与主图那一枚同源。这里同时钉图注那三条实话（查询范围≠可达区、没灰化任何点）。
+    """
+    sec = _traffic_section(_assembled(JINSONG))
+    mf = sec["map_focus"]
+    assert mf["kind"] == "traffic_circle"
+    assert set(mf) <= {"kind", "categories", "blind_id", "title"}, f"焦点键越界：{sorted(mf)}"
+    assert mf["categories"] == [], "圆域章不聚焦任何设施类目 ⇒ 一个点都不该灰化"
+    assert "radius_m" not in mf and "radius" not in mf, "米数只许住在 sampling.traffic 一处"
+    for clause in ("只叠一圈时段圆域", "不是可达区", "一个都没灰化"):
+        assert clause in mf["title"], f"图注没交代「{clause}」：{mf['title']}"
+    for word in ("只留", "仅显示", "已删除"):
+        assert word not in mf["title"], f"图注出现肯定式裁剪声称「{word}」，而画布只叠一圈"
+
+
+def test_traffic_map_focus_absent_with_the_chapter():
+    """缺源 ⇒ 焦点也一张不发（`_section_map_focus` 是独立入口，不许假设调用方门控过）。"""
+    import copy
+    lc = copy.deepcopy(JINSONG)
+    lc["sampling"]["traffic"] = {"coverage": "absent", "region": "circle"}
+    rep = _assembled(lc)
+    assert _traffic_section(rep) is None
+    # 正面半边：把半径改坏（coverage 仍 ok）也不许发焦点 —— 半份声明不该画出一圈像样的东西
+    lc2 = copy.deepcopy(JINSONG)
+    lc2["sampling"]["traffic"] = {**JINSONG["sampling"]["traffic"], "radius_m": None}
+    sec2 = _traffic_section(_assembled(lc2))
+    assert sec2 is not None and sec2["map_focus"] is None, "半径坏了却仍发焦点 ⇒ 前端只能静默不画"

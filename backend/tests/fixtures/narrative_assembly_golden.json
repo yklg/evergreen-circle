@@ -2,7 +2,7 @@
   "$schema_note": "生活圈报告装配器（core/pipeline/diagnosis_templates.py::assemble_report）输出的黄金基线。期望值由当时装配器实测取基线固化，不得为了让实现通过而回填：改了装配器、专家名册或口径而产物变化 ⇒ 逐面金标红 ⇒ 要么同笔把 NARRATIVE_VERSION 升一代（读路径据此对存量行重装），要么承认这是回归并回退代码。只升戳而产物没变同样红（配对闸），因为无实质变化的升戳会让所有存量行白付一次重装、把「同代次直通」的证据打掉。",
   "schema": "evergreen.narrative-assembly-golden/v1",
   "captured_at": "2026-10-13",
-  "narrative_version": "nar-6",
+  "narrative_version": "nar-7",
   "assembler_args": {
     "report_id": "lc-golden",
     "scene_key": "golden-key",
@@ -15,18 +15,18 @@
       "counts": {
         "sections": 9,
         "highlights": 11,
-        "charts": 8
+        "charts": 10
       },
       "faces": {
-        "sections": "eafcfbbe716fc726",
+        "sections": "ac86d11ec7b7957f",
         "toc": "60e7072671aa930c",
-        "charts": "63a837d8322a5965",
+        "charts": "03f873b1208fbcfe",
         "claims": "d36e6ed1ea169cc8",
         "evidence": "b489168e029028a8",
         "subtitle": "7f7a1eb533d282db",
         "dispatch": "e4b3462fa1a1ebc0",
         "glossary": "e13d91946b1384fb",
-        "report": "5477607ef5f1c118"
+        "report": "289654dbf05c6c4f"
       }
     },
     "kaili-ev2.json": {

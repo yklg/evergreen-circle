@@ -481,7 +481,8 @@ export default function ComparePage() {
      页面只负责把结论说成人话，不另判一次"该不该画"。 */
   const framePlan = plan?.shareMap && cards.length >= 2
     ? framePlanOf(cards[0], cards[1], {
-        showJudgeScale: false, showIsoCompare: isoCompareOn, shapeOn, showCellsGrid: gridOn, selectedCell: null,
+        showJudgeScale: false, showIsoCompare: isoCompareOn, shapeOn, showCellsGrid: gridOn,
+        showTrafficExposure: false, selectedCell: null,
       }, false)
     : null
   const frameNote = (() => {

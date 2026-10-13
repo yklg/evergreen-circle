@@ -24,7 +24,7 @@ import type { LivingCircleReport } from '../types'
 
 const A = pair.a as unknown as LivingCircleReport
 const B = pair.b as unknown as LivingCircleReport
-const SW = { showJudgeScale: false, showIsoCompare: true, shapeOn: true, showCellsGrid: true, selectedCell: null }
+const SW = { showJudgeScale: false, showIsoCompare: true, shapeOn: true, showCellsGrid: true, showTrafficExposure: false, selectedCell: null }
 
 describe('真件对的前提（裁剪件必须还是那对真件，否则下面的判据全在自证）', () => {
   it('A 是代次前那份：没发对照环，三根戳一律 None', () => {

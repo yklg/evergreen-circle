@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import ev2 from '../mocks/fixtures/livingCircle/kaili-ev2.json'
 import kaili from '../mocks/fixtures/livingCircle/kaili.json'
+import jinsong from '../mocks/fixtures/livingCircle/beijing-jinsong.json'
 import type { LngLat, LivingCircleReport } from '../types'
 import { LC_ISO_COMPARE_COLOR, LC_JUDGE_SCALE_COLOR } from '../lib/livingCircle'
 import { LAYER_ATTR_BY_SIDE, LC_LAYERS, parseLayerAttr } from '../components/lifecircle/lcLayers'
@@ -50,7 +51,9 @@ const BARE = {
   isochrones: (kaili as unknown as LivingCircleReport).isochrones.map((z) => ({ ...z, shape: undefined })),
 } as unknown as LivingCircleReport
 
-const ALL_ON = { showJudgeScale: true, showIsoCompare: true, showShapeSectors: true, selectedCell: [1, 1], showCellsGrid: true }
+const ALL_ON = { showJudgeScale: true, showIsoCompare: true, showShapeSectors: true, selectedCell: [1, 1], showCellsGrid: true, showTrafficExposure: true }
+/** 带第五维读数的件（ev2 是凯里、缺源 ⇒ 它永远发不出 `traffic-exposure`，不能拿它当"全开"的唯一数据源）。 */
+const TRAFFIC = jinsong as unknown as LivingCircleReport
 
 type Poly = { opts: Record<string, unknown> }
 type Circle = { opts: Record<string, unknown>; radius: number }
@@ -131,7 +134,10 @@ describe('夹具前提（拿真件当锚，别用自造数据把判据变成自�
 describe('两档名册相等 · 全开', () => {
   it('四层全开 ⇒ 两档申报同一组层，且每一层都真的画了东西', async () => {
     const { live, fb, want } = await bothModes(FULL, ALL_ON)
-    expect(want.sort()).toEqual([...LC_LAYERS].sort())        // ② 名册里每个名字都得出现得齐
+    // ② 名册里每个名字都得出现得齐 —— **按两份件的并集问**：ev2 没有第五维读数（凯里缺源），
+    //    拿它当唯一数据源就会把"这一层在这件上没数据"读成"这一层两档都没接"。
+    const { want: wantTraffic } = await bothModes(TRAFFIC, ALL_ON)
+    expect([...new Set([...want, ...wantTraffic])].sort()).toEqual([...LC_LAYERS].sort())
     expect(declaredIn(live.container)).toEqual(want)
     // 降级侧：申报过的层，DOM 里必须真有对应图元（不许只在字符串上"画了"）
     for (const n of want) {

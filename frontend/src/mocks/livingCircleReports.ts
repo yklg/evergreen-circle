@@ -849,13 +849,14 @@ const chapterCategories = (sid: string): string[] =>
   Object.keys(CATEGORY_CHAPTER).filter((c) => CATEGORY_CHAPTER[c] === sid)
 
 /** 章 → 分章地图的焦点类型（镜像后端 `MAP_FOCUS_KINDS`；概览与结论章故意不发）。 */
-const MAP_FOCUS_KINDS: Record<string, 'categories' | 'all' | 'blindspot'> = {
+const MAP_FOCUS_KINDS: Record<string, 'categories' | 'all' | 'blindspot' | 'traffic_circle'> = {
   medical: 'categories',
   education: 'categories',
   market: 'categories',
   elderly: 'categories',
   isochrone: 'all',
   blindspot: 'blindspot',
+  traffic: 'traffic_circle',
 }
 
 /**
@@ -883,6 +884,20 @@ function mapFocus(r: LivingCircleReport, sid: string): ReportSection['map_focus'
     return {
       kind: 'blindspot', categories: [], blind_id: first,
       title: `本章地图：盲区图层只强调「${first.replace(/^bs-/, '盲区 ')}」${rest}；等时圈与设施点同主图`,
+    }
+  }
+  // 时段圆域章（笔 E）：与后端 `_section_map_focus` 的 traffic_circle 分支**同式同字**，
+  // 包括那三条缺席判据（没键 / coverage 不是 ok / 半径非有限）—— 少一条就是演示态能画、真件画不出。
+  if (kind === 'traffic_circle') {
+    const tr = r.sampling?.traffic
+    if (!tr || tr.coverage !== 'ok') return null
+    const radius = tr.radius_m
+    if (typeof radius !== 'number' || !Number.isFinite(radius) || radius <= 0) return null
+    const win = tr.peak_window || '未声明窗口'
+    return {
+      kind: 'traffic_circle', categories: [],
+      title: `本章地图：只叠一圈时段圆域（中心点 ${Math.round(radius)}m、窗口 ${win}）；`
+           + '它是路况查询范围、不是可达区，设施点与等时圈一个都没灰化',
     }
   }
   const present = chapterCategories(sid).filter((c) => r.poi.categories.some((x) => x.category === c))

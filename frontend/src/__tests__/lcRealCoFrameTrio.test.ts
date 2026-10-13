@@ -34,7 +34,7 @@ import { compareCaliberNotices, lcCoLocated } from '../lib/livingCircle'
 import type { LivingCircleReport } from '../types'
 
 const R = { a: trio.a, b: trio.b, c: trio.c } as unknown as Record<'a' | 'b' | 'c', LivingCircleReport>
-const SW = { showJudgeScale: false, showIsoCompare: true, shapeOn: true, showCellsGrid: true, selectedCell: null }
+const SW = { showJudgeScale: false, showIsoCompare: true, shapeOn: true, showCellsGrid: true, showTrafficExposure: false, selectedCell: null }
 const plan = (x: 'a' | 'b', y: 'a' | 'b' | 'c') => framePlanOf(R[x], R[y], SW, false)
 const inst = (x: 'a' | 'b', y: 'a' | 'b' | 'c') => plan(x, y).instances.map((i) => `${i.layer}:${i.sides.join('+')}`)
 const ledger = (k: 'a' | 'b' | 'c') => R[k].caliber!.cells_ledger as unknown as Record<string, string[]>

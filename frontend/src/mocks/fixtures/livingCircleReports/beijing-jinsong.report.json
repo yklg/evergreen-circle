@@ -1,12 +1,12 @@
 {
   "_generated_by": "backend/scripts/bake_lc_demo_reports.py",
   "_source_fixture": "backend/app/living_circle/fixtures/beijing-jinsong.json",
-  "_narrative_version": "nar-6",
-  "_captured_at": "2026-10-13T11:11:56.688Z",
+  "_narrative_version": "nar-7",
+  "_captured_at": "2026-10-13T13:27:18.989Z",
   "_note": "演示态报告正文快照。作者只有后端装配器（diagnosis_templates.py::assemble_report）；改了装配器必须同笔重跑本脚本，否则 test_lc_demo_report_mirror.py 红。`living_circle` 载荷不在这里，由 livingCircleMock.ts 现成的那份 import 在读时拼回。",
   "id": "lc-beijing-jinsong",
   "report_type": "living_circle",
-  "narrative_version": "nar-6",
+  "narrative_version": "nar-7",
   "title": "北京劲松 · 生活圈体检报告",
   "subtitle": "北京·朝阳 · 朝阳区劲松街道劲松小区（劲松地铁站西侧）｜综合 65.8 分（中）· 0 处服务盲区 · 共 150 处设施（可达区内）",
   "query": "北京劲松",
@@ -1538,16 +1538,263 @@
       "id": "traffic",
       "title": "时段暴露与可达稳健性",
       "level": 2,
-      "key_takeaway": "区域交通时段暴露度 51.995/100（口径：中心点 R 米**圆域**、窗口 07:00-09:00；按档位映射 · 表 tm-1；倍数表为**声明值、未做双时刻标定**）",
+      "key_takeaway": "区域交通时段暴露度 51.995/100（口径：中心点 R 米圆域、窗口 07:00-09:00；按档位映射 · 表 tm-1；倍数表为声明值、未做双时刻标定）",
       "paragraphs": [
-        "以中心点为圆心的**圆域**（半径 1273.0 m，不是可达区本身）查询典型高峰（07:00-09:00）的路况聚合：拥堵里程合计 6660.0 m、涉及 5 个拥堵段。",
-        "该读数按档位映射为 0–100 的稳健性分（100 = 畅通），作为第五维计入总分（`scoring.WEIGHTS`）。本段只给聚合量，**不点名任何路段**，也不据此推断任何个体的步行能力。"
+        "以中心点为圆心的圆域（半径 1273.0 m，不是可达区本身）查询典型高峰（07:00-09:00）的路况聚合：拥堵里程合计 6660.0 m、涉及 5 个拥堵段。",
+        "该读数按档位映射为 0–100 的稳健性分（100 = 畅通），作为第五维计入总分（`scoring.WEIGHTS`）。本段只给聚合量，不点名任何路段，也不据此推断任何个体的步行能力。"
       ],
       "highlights": [
         "典型高峰（07:00-09:00）区域交通暴露度 51.995/100，拥堵里程合计 6660.0 m（圆域口径，不点名路段）"
       ],
+      "map_focus": {
+        "kind": "traffic_circle",
+        "categories": [],
+        "title": "本章地图：只叠一圈时段圆域（中心点 1273m、窗口 07:00-09:00）；它是路况查询范围、不是可达区，设施点与等时圈一个都没灰化"
+      },
       "claims": [],
-      "charts": [],
+      "charts": [
+        {
+          "chart_id": "chart-traffic-tiers",
+          "type": "bar",
+          "title": "四档路况占比（按拥堵里程加权，%）",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 46,
+              "top": 18,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "max": 100,
+              "name": "%"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "严重拥堵",
+                "拥堵",
+                "缓行",
+                "畅通"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "barWidth": "58%",
+                "showBackground": true,
+                "backgroundStyle": {
+                  "color": "rgba(95, 123, 105, 0.07)"
+                },
+                "data": [
+                  {
+                    "value": 9.009,
+                    "itemStyle": {
+                      "color": "#9E4A2A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "9.0%",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 90.991,
+                    "itemStyle": {
+                      "color": "#DFA471",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "91.0%",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 0.0,
+                    "itemStyle": {
+                      "color": "#E4CE9C",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "0.0%",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 0.0,
+                    "itemStyle": {
+                      "color": "#A8C5B4",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "0.0%",
+                      "color": "#6B746C"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "chart_id": "chart-traffic-mapping",
+          "type": "bar",
+          "title": "档位→倍数映射与本次暴露度指数",
+          "option": {
+            "tooltip": {},
+            "grid": {
+              "left": 76,
+              "right": 52,
+              "top": 34,
+              "bottom": 28
+            },
+            "xAxis": {
+              "type": "value",
+              "min": 1,
+              "max": 2.5,
+              "name": "行程时间倍数"
+            },
+            "yAxis": {
+              "type": "category",
+              "data": [
+                "严重拥堵",
+                "拥堵",
+                "缓行",
+                "畅通"
+              ]
+            },
+            "series": [
+              {
+                "type": "bar",
+                "barWidth": "52%",
+                "data": [
+                  {
+                    "value": 2.4,
+                    "itemStyle": {
+                      "color": "#9E4A2A",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "×2.40",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 1.6,
+                    "itemStyle": {
+                      "color": "#DFA471",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "×1.60",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 1.15,
+                    "itemStyle": {
+                      "color": "#E4CE9C",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "×1.15",
+                      "color": "#6B746C"
+                    }
+                  },
+                  {
+                    "value": 1.0,
+                    "itemStyle": {
+                      "color": "#A8C5B4",
+                      "borderRadius": [
+                        0,
+                        2,
+                        2,
+                        0
+                      ]
+                    },
+                    "label": {
+                      "show": true,
+                      "position": "right",
+                      "formatter": "×1.00",
+                      "color": "#6B746C"
+                    }
+                  }
+                ],
+                "markLine": {
+                  "silent": true,
+                  "symbol": "none",
+                  "data": [
+                    {
+                      "xAxis": 1.672072,
+                      "label": {
+                        "formatter": "本次 1.672",
+                        "color": "#2F7FBF",
+                        "position": "end",
+                        "rotate": 0,
+                        "distance": 6
+                      },
+                      "lineStyle": {
+                        "color": "#2F7FBF",
+                        "type": "dashed"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
       "source_evidence_ids": []
     }
   ],
@@ -2678,6 +2925,247 @@
               "show": true,
               "position": "right",
               "color": "#6B746C"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "chart_id": "chart-traffic-tiers",
+      "type": "bar",
+      "title": "四档路况占比（按拥堵里程加权，%）",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 46,
+          "top": 18,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "max": 100,
+          "name": "%"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "严重拥堵",
+            "拥堵",
+            "缓行",
+            "畅通"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "barWidth": "58%",
+            "showBackground": true,
+            "backgroundStyle": {
+              "color": "rgba(95, 123, 105, 0.07)"
+            },
+            "data": [
+              {
+                "value": 9.009,
+                "itemStyle": {
+                  "color": "#9E4A2A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "9.0%",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 90.991,
+                "itemStyle": {
+                  "color": "#DFA471",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "91.0%",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 0.0,
+                "itemStyle": {
+                  "color": "#E4CE9C",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "0.0%",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 0.0,
+                "itemStyle": {
+                  "color": "#A8C5B4",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "0.0%",
+                  "color": "#6B746C"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "chart_id": "chart-traffic-mapping",
+      "type": "bar",
+      "title": "档位→倍数映射与本次暴露度指数",
+      "option": {
+        "tooltip": {},
+        "grid": {
+          "left": 76,
+          "right": 52,
+          "top": 34,
+          "bottom": 28
+        },
+        "xAxis": {
+          "type": "value",
+          "min": 1,
+          "max": 2.5,
+          "name": "行程时间倍数"
+        },
+        "yAxis": {
+          "type": "category",
+          "data": [
+            "严重拥堵",
+            "拥堵",
+            "缓行",
+            "畅通"
+          ]
+        },
+        "series": [
+          {
+            "type": "bar",
+            "barWidth": "52%",
+            "data": [
+              {
+                "value": 2.4,
+                "itemStyle": {
+                  "color": "#9E4A2A",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "×2.40",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 1.6,
+                "itemStyle": {
+                  "color": "#DFA471",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "×1.60",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 1.15,
+                "itemStyle": {
+                  "color": "#E4CE9C",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "×1.15",
+                  "color": "#6B746C"
+                }
+              },
+              {
+                "value": 1.0,
+                "itemStyle": {
+                  "color": "#A8C5B4",
+                  "borderRadius": [
+                    0,
+                    2,
+                    2,
+                    0
+                  ]
+                },
+                "label": {
+                  "show": true,
+                  "position": "right",
+                  "formatter": "×1.00",
+                  "color": "#6B746C"
+                }
+              }
+            ],
+            "markLine": {
+              "silent": true,
+              "symbol": "none",
+              "data": [
+                {
+                  "xAxis": 1.672072,
+                  "label": {
+                    "formatter": "本次 1.672",
+                    "color": "#2F7FBF",
+                    "position": "end",
+                    "rotate": 0,
+                    "distance": 6
+                  },
+                  "lineStyle": {
+                    "color": "#2F7FBF",
+                    "type": "dashed"
+                  }
+                }
+              ]
             }
           }
         ]

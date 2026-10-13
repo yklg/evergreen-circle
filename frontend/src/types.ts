@@ -361,10 +361,12 @@ export interface ReportSection {
   /**
    * 本章局部地图的焦点（nar-3）。**不是图件**：它不进 `charts`，前端据此画一张静态 SVG。
    * 语义是灰化 —— 非焦点类目/盲区只压淡，点位一个都不删、也不缩放视野。
-   * 哪些章有、哪些没有由后端那张八章全表登记（概览与结论章故意不发）。
+   * 例外是 `traffic_circle`：它不灰化任何东西，只在同一张投影上叠一圈时段圆域
+   *（半径只从 `sampling.traffic.radius_m` 取，与主图那一枚同源）。
+   * 哪些章有、哪些没有由后端那张全表登记（概览与结论章故意不发）。
    */
   map_focus?: {
-    kind: 'categories' | 'all' | 'blindspot'
+    kind: 'categories' | 'all' | 'blindspot' | 'traffic_circle'
     categories: string[]
     blind_id?: string
     title: string
