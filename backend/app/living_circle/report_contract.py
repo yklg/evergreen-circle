@@ -823,6 +823,18 @@ def _traffic_caliber_violations(lc: Dict[str, Any]) -> List[str]:
     win = tr.get("peak_window")
     if win is not None and not _is_hhmm_window(str(win)):
         return [f"peak_window={win!r} 不是 HH:MM-HH:MM —— 窗口是口径，不许是自由文本"]
+    # 读数在载荷里、总分却没进这一维 ⇒ 屏上自相矛盾：第 9 章印着暴露度读数，总分却是四维算的。
+    # 2026-10-13 演示件就是这么坏的（注入 `sampling.traffic` 时没同步重算 `scores`，
+    # 而读路径对同代次载荷直通 ⇒ 没有任何东西报警）。痕迹打在**总分构成那句话**上：
+    # 它是第五维唯一对用户自证的字段，由 `scoring.compute_scores` 必写，不由人手工补。
+    scores = lc.get("scores")
+    if isinstance(scores, dict):
+        note = str(scores.get("note") or "")
+        if "区域交通时段暴露度" not in note:
+            return ["coverage=ok 而 scores.note 没有第五维那句 ⇒ 这一维没进总分"
+                    "（载荷有读数、分数是四维算的；请重算 scores 再发，别只补那句话）"]
+        if "缺源" in note:
+            return ["coverage=ok 但 scores.note 写着「缺源」—— 读数与分数两半互相打脸"]
     return []
 
 

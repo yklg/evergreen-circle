@@ -69,8 +69,12 @@ BASELINE = {
         #    重刷快照才会归 None —— 在那之前由
         #    `test_report_invariants.py::test_g1_residual_in_shipped_jinsong_snapshot`
         #    以 xfail(strict) 记着，别把它当合法基线复制走。
+        # 2026-10-13 第五维（`tv-1`）：这份夹具的 `scores` 是注入路况回执**之前**算的 ——
+        #   载荷里 `coverage=ok`、总分却是四维口径（65.8），属"读数与分数不同源"，已由
+        #   B18 的新半边与夹具判据钉死；重算后 65.8 → **63.7**（四维分量一字未动，
+        #   差的 2.1 分＝0.15 权重 ×（暴露度 52.0 − 其余四维均值））。
         "totals": {"total": 206, "in_circle": 150, "points": 150},
-        "scores_total": 65.8,
+        "scores_total": 63.7,
         "blindspots": 0,
         "categories": {
             "market": (28, 7, 13.9),

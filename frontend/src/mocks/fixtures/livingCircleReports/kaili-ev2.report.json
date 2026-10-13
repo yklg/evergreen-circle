@@ -2,7 +2,7 @@
   "_generated_by": "backend/scripts/bake_lc_demo_reports.py",
   "_source_fixture": "backend/app/living_circle/fixtures/kaili-ev2.json",
   "_narrative_version": "nar-7",
-  "_captured_at": "2026-10-13T13:27:18.983Z",
+  "_captured_at": "2026-10-13T15:51:45.119Z",
   "_note": "演示态报告正文快照。作者只有后端装配器（diagnosis_templates.py::assemble_report）；改了装配器必须同笔重跑本脚本，否则 test_lc_demo_report_mirror.py 红。`living_circle` 载荷不在这里，由 livingCircleMock.ts 现成的那份 import 在读时拼回。",
   "id": "lc-kaili-ev2",
   "report_type": "living_circle",

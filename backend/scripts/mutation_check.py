@@ -720,6 +720,13 @@ MUTATIONS: list[Mutation] = [
         test="tests/test_traffic_exposure.py::test_traffic_charts_absent_entirely_when_source_missing",
     ),
     Mutation(
+        label="B18 丢掉「读数进了分数没有」这一半（载荷有路况、总分却是四维算的也照签）",
+        rel="app/living_circle/report_contract.py",
+        old='    scores = lc.get("scores")\n    if isinstance(scores, dict):',
+        new='    scores = lc.get("scores")\n    if False:',
+        test="tests/test_traffic_exposure.py::test_b18_rejects_a_reading_that_never_reached_the_score",
+    ),
+    Mutation(
         label="正文裸星号退回（`**圆域**` 原样上屏）",
         rel="app/core/pipeline/diagnosis_templates.py",
         old='f"（口径：中心点 R 米圆域、窗口 {win}；按档位映射 · 表 {table_ver}{calib}）"',

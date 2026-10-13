@@ -405,3 +405,46 @@ def test_traffic_map_focus_absent_with_the_chapter():
     lc2["sampling"]["traffic"] = {**JINSONG["sampling"]["traffic"], "radius_m": None}
     sec2 = _traffic_section(_assembled(lc2))
     assert sec2 is not None and sec2["map_focus"] is None, "半径坏了却仍发焦点 ⇒ 前端只能静默不画"
+
+
+# ── 2026-10-13 追加：读数与分数必须同源（演示件真坏过一次）───────────────────
+#
+# 症状：`sampling.traffic.coverage == "ok"`（第 9 章照常印暴露度 51.995），
+# 但 `scores.total` 是**不带第五维**算出来的（注入回执时只写了载荷、没重算分数），
+# 而读路径对同代次载荷**直通** ⇒ 全套件全绿、屏上却自相矛盾，评审按公式一复算就穿。
+
+def test_b18_rejects_a_reading_that_never_reached_the_score():
+    """契约闸：coverage=ok 而总分那句话里没有第五维 ⇒ 拒签。"""
+    from app.living_circle.report_contract import _traffic_caliber_violations
+    lc = json.loads((BACKEND / "app/living_circle/fixtures/beijing-jinsong.json").read_text(encoding="utf-8"))
+    hits = _traffic_caliber_violations(lc)
+    assert hits == [], f"当代夹具本应零违规，实得 {hits}"
+    stale = json.loads(json.dumps(lc))
+    stale["scores"]["note"] = "确定性评分：覆盖 87.5 / 可达 53.0 / 多样 87.5 / 均衡 0.0"
+    hits = _traffic_caliber_violations(stale)
+    assert any("没进总分" in h for h in hits), f"分数没进第五维却照签 ⇒ {hits}"
+    contradict = json.loads(json.dumps(lc))
+    contradict["scores"]["note"] = "确定性评分：…；区域交通时段暴露度：缺源，本项不计入总分"
+    assert any("互相打脸" in h for h in _traffic_caliber_violations(contradict)), "有读数却声明缺源，必须红"
+
+
+def test_every_traffic_ok_fixture_score_actually_includes_the_dimension():
+    """夹具面：凡 `coverage=ok` 的载荷，其总分必须能由自己的分量复算出来（含第五维）。
+
+    复算只在**无盲区**的夹具上做严格逐位比对 —— `judged_share` 不进载荷，有盲区时
+    盲区扣分无法从存盘字段还原（凯里 ev2 就是这么被误判成"不一致"的：存 68.4、
+    按 share=None 复算得 68.8，差异全在外推扣分那一步，与第五维无关）。
+    """
+    for f in sorted((BACKEND / "app/living_circle/fixtures").glob("*.json")):
+        lc = json.loads(f.read_text(encoding="utf-8"))
+        tr = (lc.get("sampling") or {}).get("traffic") or {}
+        if tr.get("coverage") != "ok":
+            continue
+        note = lc["scores"]["note"]
+        assert "区域交通时段暴露度" in note and "缺源" not in note, f"{f.name}: 读数没进总分 ⇒ {note[:80]}"
+        assert "缺源，本项不计入" not in note, f"{f.name}: 有读数却声明缺源"
+        if not (lc.get("blindspots") or []):
+            rec = scoring.compute_scores(lc["poi"]["categories"], lc["scores"].get("triads") or [],
+                                         0, judged_share=None, traffic=tr)
+            assert rec["total"] == lc["scores"]["total"], (
+                f"{f.name}: 存 {lc['scores']['total']} vs 复算 {rec['total']} ⇒ 分数与载荷不同代")

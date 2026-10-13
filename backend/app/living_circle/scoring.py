@@ -181,7 +181,7 @@ def compute_scores(
     else:
         window = (traffic or {}).get("peak_window") or "未声明窗口"
         table = (traffic or {}).get("multiplier_table_version") or "未声明表"
-        note += (f"；区域交通时段暴露度 {traffic_dim}（口径：中心点 R 米**圆域**、"
+        note += (f"；区域交通时段暴露度 {traffic_dim}（口径：中心点 R 米圆域、"
                  f"窗口 {window}、按档位映射·表 {table}）")
 
     # 置信度：判定面不完整，或采集证据本身有缺口（截断/饿死/熔断）⇒ limited。
