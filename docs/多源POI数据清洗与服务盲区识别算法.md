@@ -95,10 +95,12 @@ miss(i,j) = ¬(∃ market) ∨ ¬(∃ pharmacy) ∨ ¬(∃ primary)
 
 ## 4. 综合评分（`scoring.py`，透明公式）
 
-### 4.1 四维度加权
+### 4.1 五维度加权
 
 ```
-total = 0.40·coverage + 0.25·reachability + 0.20·diversity + 0.15·balance
+total = 0.34·coverage + 0.2125·reachability + 0.17·diversity + 0.1275·balance + 0.15·traffic
+        └─ `traffic` 拿不到（`coverage != "ok"`）⇒ 退回四维**原比例** 0.40/0.25/0.20/0.15
+           ⇒ 无源样区的总分与换代前**逐位相同**（判据 `test_tc02_sourceless_total_is_bit_identical`）
 ```
 
 | 维度 | 含义 | 计算 |
@@ -107,8 +109,9 @@ total = 0.40·coverage + 0.25·reachability + 0.20·diversity + 0.15·balance
 | `reachability` 可达 | 最近设施快不快 | 各类 `max(0, 1 − min_minutes/20)×100` 均值（20min 满分口径）。⚠️ `min_minutes` 为 `None` 的类别（圈内该类一个都没有）**整条不进平均** ⇒ 少掉的是 0 分项、这一维会被抬高，所以 `note` 必须说明，否则读起来像"修个 bug 把分修高了" |
 | `diversity` 多样 | 多少类在圈内有设施 | `圈内有设施的类数 / 8 ×100`（判据是 `in_circle > 0`） |
 | `balance` 均衡 | 最弱那一类有多弱 | `(1 − worst_gap) ×100`，而 `worst_gap = max(1 − min(1, coverage))` ⇒ 等价于**各类覆盖率里的最低值**。这里**不是标准差**：旧写法"100 − 标准差×100"与代码不符，而且它会把"一类极差、其余都好"和"八类都平庸"算成同一个数（`docs/真实社区对比测试报告.md` §4 那一行叫「短板（最弱类覆盖）」，与代码一致） |
+| `traffic` 区域交通时段暴露度 | 典型高峰窗口内，中心点**圆域**的路况有多堵（环境量，**不是**任何个体的步行能力） | 取 `sampling.traffic.tier_share`（四档拥堵里程占比）按倍数表 `tm-1`（1.00/1.15/1.60/2.40）加权成指数，再线性映射到 0–100（100 = 畅通）。口径 `tv-1`；倍数表是**声明值、未做双时刻标定**，与声明值/文献值并列披露 |
 
-单类别维度分 `_cat_score = 0.7×coverage + 0.3×reachability`（雷达/柱状图用）。
+单类别维度分 `_cat_score = 0.7×coverage + 0.3×reachability`（雷达/柱状图用）。⚠️ 它**不含** `traffic` —— 雷达的轴数等于**设施类别数**（8 轴），与 `WEIGHTS` 的维数无关；第五维只出现在总分构成里，别去雷达上找第五根轴。
 
 ### 4.2 盲区惩罚
 
