@@ -365,7 +365,7 @@ clone 实测），若让它阻断，`frontend` job 后面的 vitest 与 build �
 判据只统计 `git ls-files` 认得的路径 —— 工作区里的在制品不算这条分支的债，也不该由别人替你改。
 
 CI 侧有一条与守卫等价的**结构约束**：`.github/workflows/ci.yml` 里几何层是**独立 job**（`e2e`），
-不并进 `frontend` job。原因是 step 按序终止 —— `frontend` 在 `lint` 步就长期红（HEAD 全仓 113 个
+不并进 `frontend` job。原因是 step 按序终止 —— `frontend` 在 `lint` 步就长期红（10-04 前后读数 HEAD 全仓 113 个
 eslint error），并进去的防线**永远轮不到执行**，形式上"有"、实际上一行没跑。由此推出本仓通用的
 一条纪律：**新防线不得排在已知长期红的步骤之后**，要么独立成 job，要么先把那道红治理成棘轮
 （同 `tailwindClassIntegrity.test.ts` 的 `KNOWN_PROBE_DANGLING` 只减不增手法）。
