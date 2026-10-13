@@ -97,6 +97,13 @@ interface Contract {
     // 且刻意**没有** `shape_stale_notice`（单份报告看，"多一把诊断尺"不是"那份偏乐观"）。
     shape_version_current: string
     shape_desc: string
+    // 第五根轴（第五维笔 · 2026-10-13 `tv-1`，区域交通时段暴露度）：与 rc/sh **刻意相反** ——
+    // 它是第一根进复用门的解释轴（第五维乘进总分），所以行级作用面必须**非空**；
+    // 同样刻意没有 `traffic_stale_notice`（缺源的正确形态是那块读数整块不出现）。
+    traffic_version_current: string
+    traffic_desc: string
+    /** tv 的行级作用面 —— 必须**非空**（第五维进加权和，「综合评分」被它拦住） */
+    traffic_applies_to: string[]
     /** sh 的行级作用面 —— 也必须**是空数组**（不入 `scoring.WEIGHTS`，一行的读数都不改） */
     shape_applies_to: string[]
     // 措辞改为按轴子句组合后新增的两格：**有序**轴清单 + 轴→版本字段映射。
@@ -443,7 +450,7 @@ describe('第二根轴 · 评分口径版本守卫', () => {
     // ④ 词序由表归一：调用方传反序也必须得同一句（否则两个页面会拼出两种词）
     expect(gapDescFor(['cov', 'ev'])).toBe(gapDescFor(['ev', 'cov']))
     expect(gapDescFor(['cov', 'ev'])).toBe(BOTH_GAP_DESC)
-    expect(gapDescFor(['sh', 'rc', 'cov', 'ev'])).toBe(GAP.all_desc)
+    expect(gapDescFor(['sh', 'rc', 'cov', 'ev', 'tv'])).toBe(GAP.all_desc)
   })
 
   it('第四根轴 sh（S20 形状代次）：横幅有句、行级**一行都不拦**、两份都没戳时不许谎报', () => {
@@ -595,10 +602,11 @@ describe('横幅真出口 · 四根轴各一句（L0 补的这条防线）', () 
   const CUR: Record<CaliberAxis, string> = {
     ev: GAP.policy_version_current, cov: GAP.coverage_version_current,
     rc: GAP.reach_version_current, sh: GAP.shape_version_current,
+    tv: GAP.traffic_version_current,
   }
   const onlyAxis = (lc: LivingCircleReport, axis: CaliberAxis, v: string | null) => {
     const cal = { ...(lc.caliber ?? {}) } as Record<string, unknown>
-    for (const ax of ['ev', 'cov', 'rc', 'sh'] as CaliberAxis[]) {
+    for (const ax of ['ev', 'cov', 'rc', 'sh', 'tv'] as CaliberAxis[]) {
       if (ax === axis) { if (v === null) delete cal[F[ax]]; else cal[F[ax]] = v }
       else cal[F[ax]] = CUR[ax]
     }
@@ -639,7 +647,7 @@ describe('横幅真出口 · 四根轴各一句（L0 补的这条防线）', () 
     }
     const oldGen = (lc: LivingCircleReport) => {
       const cal = { ...(lc.caliber ?? {}) } as Record<string, unknown>
-      for (const ax of ['ev', 'cov', 'rc', 'sh'] as CaliberAxis[]) delete cal[F[ax]]
+      for (const ax of ['ev', 'cov', 'rc', 'sh', 'tv'] as CaliberAxis[]) delete cal[F[ax]]
       return { ...lc, caliber: cal } as LivingCircleReport
     }
     const four = compareCaliberNotices(newGen(KAILI), oldGen(JINSONG))

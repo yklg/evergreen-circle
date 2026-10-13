@@ -55,15 +55,17 @@ describe('第三根口径轴 rc 的登记与措辞', () => {
     expect(CALIBER_AXES.map((s) => s.axis)).toEqual(GAP.axes)
   })
 
-  it('rc 子句单独成句、并与其余三根拼成四段子句', () => {
+  it('rc 子句单独成句、并与其余各根拼成全轴句', () => {
     expect(gapDescFor(['rc'])).toBe(GAP.reach_desc)
-    expect(gapDescFor(['ev', 'cov', 'rc', 'sh'])).toBe(GAP.all_desc)
+    // 第五维笔（2026-10-13）后轴集是五根 ⇒ 全轴句由**每一根**各一个子句拼成。
+    // 数量从轴集推导，不写死（写死 4 的那版在加第五根时红了一次，且下次加轴还会再红一次）。
+    expect(gapDescFor(['ev', 'cov', 'rc', 'sh', 'tv'])).toBe(GAP.all_desc)
     // 传反序也得同一句：顺序由表归一，否则差异表与横幅会拼出两种词序
-    expect(gapDescFor(['sh', 'rc', 'cov', 'ev'])).toBe(GAP.all_desc)
+    expect(gapDescFor(['tv', 'sh', 'rc', 'cov', 'ev'])).toBe(GAP.all_desc)
     expect(gapDescFor([])).toBeNull()
     const clause = CALIBER_AXES.find((s) => s.axis === 'rc')?.clause ?? ''
     expect(clause).toBeTruthy()
-    expect((GAP.all_desc as string).split('、')).toHaveLength(4)
+    expect((GAP.all_desc as string).split('、')).toHaveLength(CALIBER_AXES.length)
   })
 
   it('rc 不拦差异表里的任何一行（这条空集本身就是判据）', () => {

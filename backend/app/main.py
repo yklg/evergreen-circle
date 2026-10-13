@@ -1056,6 +1056,10 @@ _GAP_CLAUSES: Tuple[Tuple[str, str], ...] = (
     # 它真正会改变屏幕形态的地方是**报告页第三屏在场与否**，那一侧由前端的
     # `shapeOfZone(...) == null` 缺键判据负责整块不出现，不靠这句提示。
     ("sh", "形状口径已升级（等时圈新增八方位诊断尺）"),
+    # 第五根轴（第五维笔 · `tv-1`）：区域交通时段暴露度。**它进门**（`_GATED_CALIBER_VERSIONS`）
+    # —— 与前两根相反的理由：第五维真的乘进了总分（`scoring.WEIGHTS` 五维），换代确实会改变
+    # 重跑后的答案；子句同样自带解释。
+    ("tv", "区域交通时段暴露度口径已升级（第五维改算，总分随之变化）"),
 )
 
 
@@ -1073,8 +1077,9 @@ _DIFF_DESC_CALIBER_GAP = _gap_desc(("ev",))
 _DIFF_DESC_COVERAGE_GAP = _gap_desc(("cov",))
 _DIFF_DESC_REACH_GAP = _gap_desc(("rc",))
 _DIFF_DESC_SHAPE_GAP = _gap_desc(("sh",))
+_DIFF_DESC_TRAFFIC_GAP = _gap_desc(("tv",))
 _DIFF_DESC_BOTH_GAP = _gap_desc(("ev", "cov"))
-_DIFF_DESC_ALL_GAP = _gap_desc(("ev", "cov", "rc", "sh"))
+_DIFF_DESC_ALL_GAP = _gap_desc(("ev", "cov", "rc", "sh", "tv"))
 # 每根轴读载荷里**哪个版本字段**（契约夹具 `gap.axis_fields` 钉同一张表）。
 # 有了这张表，`_lc_diff` 不再为每根轴多一个布尔形参 —— 加轴只改两张表，不改函数签名。
 _GAP_FIELDS: Tuple[Tuple[str, str], ...] = (
@@ -1082,6 +1087,7 @@ _GAP_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("cov", "coverage_caliber_version"),
     ("rc", "reach_caliber_version"),
     ("sh", "shape_caliber_version"),
+    ("tv", "traffic_caliber_version"),
 )
 
 
@@ -1103,7 +1109,7 @@ def _differing_axes(a: dict, b: dict) -> Tuple[str, ...]:
 # 计划 §22⑫ 与 `tmp/plan-r23h-row-axis.md`；前端 `lib/livingCircle.ts` 同形状同处置。
 _GAP_AXES: Dict[str, Tuple[str, ...]] = {
     "服务盲区": ("ev",),
-    "综合评分": ("ev", "cov"),  # 分数两把尺都吃：证据域会变、分子也会变
+    "综合评分": ("ev", "cov", "tv"),  # 分数三把尺都吃：证据域会变、分子会变、第五维直接进加权和
     # ⚠️ `rc` **刻意不在任何一行的轴清单里**（笔 3-B）。rc-1 只新增"耗时场怎么被解释"
     # （标定绕行系数 + 残差分钟），一行的读数都没改：盲区数、总分、面积、可达点数在
     # 两侧同 ev/cov 时逐位相同。把它写进去 ⇒ 那一行被一句影响不到它的话拦住，
@@ -1120,6 +1126,8 @@ _REACH_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "rc
 # 形状轴拦得住的行（契约夹具 `gap.shape_applies_to`）⇒ 与 `rc` 同一条决定：**必须是空集**。
 # 空集本身就是判据，记的是"sh-1 一行的读数都不改，只多一块诊断面板"这件事。
 _SHAPE_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "sh" in ax)
+# 交通轴拦得住的行 ⇒ 与 `ev`/`cov` 同族**非空**（它直接进加权和）—— 与 rc/sh 的空集刻意相反。
+_TRAFFIC_GAP_ROWS: Tuple[str, ...] = tuple(k for k, ax in _GAP_AXES.items() if "tv" in ax)
 
 
 def _as_num(x: Any) -> float:

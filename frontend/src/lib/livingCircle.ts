@@ -1166,7 +1166,7 @@ export const SCOPE_POLICY_VERSION = 'ev-2'
  * 「（点数 → 门槛项）」是承重的（见下方原注释 —— 判盲轴解释不了 65.4 与 68.4 之间那 3 分
  * 是分子换代产生的）。组合式若把它丢了，两轴都不同那一档就又回到"只报半句"。
  */
-export type CaliberAxis = 'ev' | 'cov' | 'rc' | 'sh'
+export type CaliberAxis = 'ev' | 'cov' | 'rc' | 'sh' | 'tv'
 
 interface CaliberAxisSpec {
   readonly axis: CaliberAxis
@@ -1187,6 +1187,10 @@ export const CALIBER_AXES: readonly CaliberAxisSpec[] = [
   // 两侧同 ev/cov 时每一行读数逐位相同，`scoring.WEIGHTS` 一行没动，这把尺只多一块诊断面板。
   // 那块面板在单份报告上的出现与否，由 `shapeOfZone(...) == null` 的缺键判据管，不归这句提示管。
   { axis: 'sh', clause: '形状口径已升级（等时圈新增八方位诊断尺）' },
+  // 第五根轴（第五维笔 · 2026-10-13 `tv-1`）：区域交通时段暴露度。与前四把的**唯一结构区别**：
+  // **它进复用门**（后端 `_GATED_CALIBER_VERSIONS`）—— 第五维真的乘进了总分，换它重跑答案会变。
+  // 子句与后端 `main.py:_GAP_CLAUSES` 逐字同源（由 `compareDiffContract.test.ts` 钉住）。
+  { axis: 'tv', clause: '区域交通时段暴露度口径已升级（第五维改算，总分随之变化）' },
 ]
 
 /** 这一对报告**有哪几根**口径轴不同（表的顺序）。加一根轴就在这里多一行 —— 线性，不是子集。 */
@@ -1199,6 +1203,7 @@ function differingAxes(
   if (coverageCaliberGap(a, b)) out.push('cov')
   if (reachCaliberGap(a, b)) out.push('rc')
   if (shapeCaliberGap(a, b)) out.push('sh')
+  if (trafficCaliberGap(a, b)) out.push('tv')
   return out
 }
 
@@ -1229,9 +1234,9 @@ export const REACH_GAP_DESC = gapDescFor(['rc']) as string
 /** 只有**形状口径**那根轴不同 ⇒ 同一格换这句（与后端 `_DIFF_DESC_SHAPE_GAP` 逐字同源）。 */
 export const SHAPE_GAP_DESC = gapDescFor(['sh']) as string
 
-/** **四根轴都**不同 ⇒ 由表拼出的最长那句（与后端 `_DIFF_DESC_ALL_GAP` 逐字同源）。
- *  这一档存在的意义是证明组合式没退化成"只报前几根"：句子必须四段子句全在、顺序恒定。 */
-export const ALL_GAP_DESC = gapDescFor(['ev', 'cov', 'rc', 'sh']) as string
+/** **五根轴都**不同 ⇒ 由表拼出的最长那句（与后端 `_DIFF_DESC_ALL_GAP` 逐字同源）。
+ *  这一档存在的意义是证明组合式没退化成"只报前几根"：句子必须五段子句全在、顺序恒定。 */
+export const ALL_GAP_DESC = gapDescFor(['ev', 'cov', 'rc', 'sh', 'tv']) as string
 
 /** 两轴对照出的结论句（null = 两轴都同 ⇒ 可比）。差异表与横幅**共用这一处判据**。 */
 export function caliberGapDesc(
@@ -1251,7 +1256,7 @@ export function caliberGapDesc(
  *  仍按「两轴合起来」说（`caliberGapDesc` 逐字不动），**行级**必须按轴分派。 */
 const GAP_AXES: Record<string, readonly CaliberAxis[]> = {
   服务盲区: ['ev'],
-  综合评分: ['ev', 'cov'],
+  综合评分: ['ev', 'cov', 'tv'],  // 第五维直接进加权和 ⇒ 综合评分行吃三把尺（与后端 _GAP_AXES 同源）
   // ⚠️ `rc` **刻意不在任何一行的轴清单里**（与后端 `_GAP_AXES` 同一条决定）：rc-1 只新增
   // 对耗时场的解释，两侧同 ev/cov 时每一行的读数逐位相同。把 rc 写进某行 ⇒ 那一行被一句
   // 影响不到它的话拦住，正是 #83 抓过的形态（那次是评分轴去拦盲区行）反过来重演。
@@ -1267,6 +1272,12 @@ export const CALIBER_GAP_ROW_KEYS: readonly string[] = Object.keys(GAP_AXES)
 /** 评分轴拦得住的行（契约 `gap.coverage_applies_to`）⇒ **盲区行不在其列**，这条就是 #83。 */
 export const COVERAGE_GAP_ROW_KEYS: readonly string[] = CALIBER_GAP_ROW_KEYS.filter((key) =>
   GAP_AXES[key]?.includes('cov'),
+)
+
+/** 交通轴拦得住的行（契约 `gap.traffic_applies_to`）⇒ 与 `rc`/`sh` 的空集刻意相反，
+ *  它是**非空**的：第五维进分，评分行必须被它拦住。 */
+export const TRAFFIC_GAP_ROW_KEYS: readonly string[] = CALIBER_GAP_ROW_KEYS.filter((key) =>
+  GAP_AXES[key]?.includes('tv'),
 )
 
 /** 可达轴拦得住的行（契约 `gap.reach_applies_to`）⇒ **今天这个集合必须是空的**。
@@ -1436,6 +1447,26 @@ export function shapeCaliberGap(
   b: Pick<LivingCircleReport, 'caliber'>,
 ): boolean {
   return shapeCaliberVersionOf(a) !== shapeCaliberVersionOf(b)
+}
+
+/**
+ * 交通口径版本号安全取值（`tv-*`）。**只读载荷自带的声明** —— 与 `sh` 同样的处置：
+ * 单份报告侧刻意**没有** `traffic_stale_notice`（缺源的正确形态是那块读数与那句话整块不
+ * 出现，不是挂一句"建议重新体检"），所以这里也不需要另存一颗"当前版本号"常量。
+ * 当前代次与契约夹具 `gap.traffic_version_current` 的一致性由后端测试钉
+ * （`caliber.TRAFFIC_CALIBER_VERSION` 才是这把尺的家）。
+ */
+export function trafficCaliberVersionOf(lc: Pick<LivingCircleReport, 'caliber'>): string | null {
+  const v = lc?.caliber?.traffic_caliber_version
+  return typeof v === 'string' && v ? v : null
+}
+
+/** 两份报告用的是不是**同一代时段暴露度口径**（含一侧根本没声明）。 */
+export function trafficCaliberGap(
+  a: Pick<LivingCircleReport, 'caliber'>,
+  b: Pick<LivingCircleReport, 'caliber'>,
+): boolean {
+  return trafficCaliberVersionOf(a) !== trafficCaliberVersionOf(b)
 }
 
 /**

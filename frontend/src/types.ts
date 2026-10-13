@@ -1270,6 +1270,9 @@ export interface LivingCircleReport {
      *  也不拦差异表任何一行（只进对比页横幅那句「不可比 · 形状口径已升级」）。
      *  缺 ⇒ 这份快照没做过形状量，那块面板整块不出现（`shapeOfZone(...) == null`）。 */
     shape_caliber_version?: string
+    /** 第五根轴（第五维笔 · `tv-1`）：区域交通时段暴露度口径的当代声明。
+     *  它是**第一根进复用门**的解释轴（第五维真的乘进了总分）—— 别按"只多一段解释"读它。 */
+    traffic_caliber_version?: string
     /** 采集证据余量 = 判定半径（由「判盲需要 1km 完整证据」导出，不是可填的名义值） */
     evidence_margin_m?: number
     /** **实测**证据边界（登记类逐类边界的最小值）；null ⇒ 本次没绑定实测证据 */
@@ -1371,6 +1374,32 @@ export interface LivingCircleReport {
       points_used: number
       excluded: { near_center: number; untimed: number; non_positive: number }
       residual_min: { p50: number; p90: number; p95: number; max: number; min: number } | null
+    }
+    /**
+     * 区域交通时段暴露度（第五维 · `tv-1`）—— **圆域口径**：中心点 + `radius_m` 米内的路况。
+     * 与可达尺、1km 直线尺并列的第三把尺（环不规则，圆比环大）⇒ 屏上必须写明是哪把尺。
+     * ⚠️ `coverage === 'absent'`（缺源）时**只有 `coverage` 与 `region`**，读数键整块不发 ——
+     * 读侧按 presence 处理：缺 `exposure_score` 就不出第五维那块，**不得回落成 0**。
+     * 倍数表为**声明值·未标定**（`calibrated: false`），屏上措辞只许说「按档位映射」。
+     */
+    traffic?: {
+      coverage: 'ok' | 'absent'
+      region: 'circle'
+      peak_window?: string | null
+      radius_m?: number
+      tier_share?: Record<string, number>
+      congested_distance_m?: number
+      sections_count?: number
+      unknown_tier_sections?: number
+      unknown_tier_codes?: Array<number | string>
+      exposure_index?: number
+      exposure_score?: number
+      multiplier_table?: Record<string, number>
+      multiplier_table_version?: string
+      calibrated?: boolean
+      basis?: string
+      fetched_at?: string
+      error?: string
     } | null
   }
   poi: {

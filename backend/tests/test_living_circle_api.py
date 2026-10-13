@@ -563,7 +563,10 @@ def test_caliber_gap_literals_match_contract_fixture():
         for other in singles:
             if other is not own:
                 assert word not in other, f"「{word}」渗进了别的单轴句 ⇒ 两把键互相顶替"
-    assert gap["all_desc"].count("、") == 3, "四轴句必须由四个子句拼成，少一个就是漏报一根"
+    # 第五维笔（2026-10-13）：轴数 4 → 5（新增 `tv`）⇒ 分隔符 3 → 4。数量只许跟着轴集走，
+    # 不能写成"≥3"那种含糊式（含糊式会在有人漏拼一根时静静放过）。
+    assert gap["all_desc"].count("、") == len(gap["axes"]) - 1, (
+        "全轴句必须由**每一根**轴各一个子句拼成，少一个就是漏报一根")
 
 
 def test_caliber_axes_are_registered_everywhere_they_must_be():
