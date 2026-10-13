@@ -130,7 +130,12 @@ async def fetch_traffic_exposure(client: Any, *, center: tuple, radius_m: float,
     }
     # 半径上界保护：实测只验到 2000m；超过就按 2000 截断并把实际请求值写进载荷（可复算）。
     req_radius = min(float(radius_m), 2000.0)
-    params = {"center": f"{center[0]:.6f},{center[1]:.6f}", "radius": f"{int(round(req_radius))}"}
+    # ⚠️ 入参 `center` 是**本仓约定的 (lng, lat)**（与 `CheckParams.center` 同序），而百度这一族
+    # 参数一律 **lat,lng** ⇒ 这里必须倒一次。少倒的后果是"坐标落在非法纬度上"，百度回一句
+    # 商务/参数错的响应，而管道里它表现为 `coverage=absent`（静默降级）—— 2026-10-13 真实体检
+    # 实测过：单元测试的假客户端只断 path 与 radius，抓不住顺序错（TC-19 已补上顺序断言）。
+    lat, lng = center[1], center[0]
+    params = {"center": f"{lat:.6f},{lng:.6f}", "radius": f"{int(round(req_radius))}"}
     try:
         body = await client._get(TRAFFIC_PATH, params)
     except Exception as exc:  # noqa: BLE001 —— 任何取数异常都归 absent，不让它冒到编排层

@@ -116,10 +116,18 @@ def test_tc19_http_boundary_fake_reaches_the_sourced_branch():
         async def _get(self, path, params):
             assert path == "/traffic/v1/around", f"取数路径变了：{path}"
             assert params["radius"].isdigit(), f"半径必须是米制整数：{params}"
+            # ⚠️ 坐标顺序的**唯一判据**（2026-10-13 真机事故）：入参 center 是本仓的 (lng,lat)，
+            # 而百度要 lat,lng ⇒ 请求里必须**倒过来**。这里传 (116.46…, 39.88…)（lng,lat），
+            # 断言请求串以纬度 39.88 开头。少了这条，顺序错会一路静默降级成 absent（真机实测过）。
+            lat_s, lng_s = params["center"].split(",")
+            assert lng_s.startswith("116.46") and lat_s.startswith("39.88"), (
+                f"center 顺序错：请求里是 {params['center']!r}，应为 lat 在前（本仓入参是 lng,lat）")
             return real_body
 
+    # ⚠️ 入参顺序照**本仓约定** (lng, lat)：首版这条判据跟着被测代码一起写成了 (lat, lng)，
+    # 于是它替错误前提背了书（顺序错的代码在它面前全绿）——真机事故 2026-10-13。
     block = asyncio.run(traffic.fetch_traffic_exposure(
-        FakeClient(), center=(39.883546, 116.464601), radius_m=934.0, caliber=None))
+        FakeClient(), center=(116.464601, 39.883546), radius_m=934.0, caliber=None))
     assert block["coverage"] == "ok", block
     assert block["sections_count"] == 1 and block["congested_distance_m"] == 3420.0
     assert abs(sum(block["tier_share"].values()) - 1.0) < 1e-6
