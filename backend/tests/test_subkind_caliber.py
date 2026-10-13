@@ -604,6 +604,8 @@ def test_second_caliber_version_gate_three_shapes():
       上有没有 `COVERAGE_CALIBER_VERSION`，而常量的真落点是 `category_rule`（`scope.py` 从那里发射）
       ⇒ 那半条会一直判"未落地"，把这条已经成立的判据永久按在 xfail 上。
     """
+
+    cl = __import__("app.living_circle.caliber", fromlist=["TRAFFIC_CALIBER_VERSION"])
     rc = __import__("app.living_circle.report_contract", fromlist=["reuse_policy"])
     ds = __import__("app.living_circle.data_source", fromlist=["CheckParams"])
     cr = __import__("app.living_circle.category_rule", fromlist=["COVERAGE_CALIBER_VERSION"])
@@ -632,12 +634,15 @@ def test_second_caliber_version_gate_three_shapes():
 
     fresh = {"data_origin": "live", "scene": dict(_SCENE_TRIPLE),
              "caliber": {**_caliber_triple(rc),
-                         "coverage_caliber_version": cr.COVERAGE_CALIBER_VERSION}}
+                         "coverage_caliber_version": cr.COVERAGE_CALIBER_VERSION,
+                         # 第三把门内戳（第五维笔）：门比三把 ⇒ "刚产出的报告"必须三把齐全
+                         "traffic_caliber_version": cl.TRAFFIC_CALIBER_VERSION}}
     ok2, why2 = gate(fresh, check)
     assert ok2 is True, f"刚产出的报告被自己的复用门拒了（{why2}）⇒ 每次体检都会重跑取证"
     # 旧档也拦得住（缺键与值不同是两种漂法，都得拒）
     stale = {"data_origin": "live", "scene": dict(_SCENE_TRIPLE),
-             "caliber": {**_caliber_triple(rc), "coverage_caliber_version": "cov-0"}}
+             "caliber": {**_caliber_triple(rc), "coverage_caliber_version": "cov-0",
+                         "traffic_caliber_version": cl.TRAFFIC_CALIBER_VERSION}}
     ok3, why3 = gate(stale, check)
     assert ok3 is False and "cov-0" in why3, f"旧评分档没被拒或理由不含实际值：{ok3} {why3!r}"
 

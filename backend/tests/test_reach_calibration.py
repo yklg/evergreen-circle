@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from app.living_circle import caliber as caliber_mod
+from app.living_circle.caliber import TRAFFIC_CALIBER_VERSION
 from app.living_circle import category_rule, scope
 from app.living_circle.geo_utils import haversine_m
 from app.living_circle.isochrone import IsochroneEngine, detour_residual
@@ -373,8 +374,11 @@ def test_rc_clause_is_composed_but_blocks_no_row():
     assert _row_gap_desc("综合评分", ("ev", "cov", "rc")) == _DIFF_DESC_BOTH_GAP
     assert _row_gap_desc("服务盲区", ("ev", "cov", "rc")) == _DIFF_DESC_CALIBER_GAP
     # 而**横幅**那一句必须四段子句都在（组合式不许退化成"只报前几根"；`sh` 是第四根，见 S20）
-    assert _gap_desc(("ev", "cov", "rc", "sh")) == _DIFF_DESC_ALL_GAP
-    assert _DIFF_DESC_ALL_GAP.count("已升级") == 4
+    # 轴集从措辞表推导（第五维笔：写死四轴的那版在加第五根 `tv` 时红了一次）
+    from app.main import _GAP_CLAUSES
+    assert _gap_desc(tuple(a for a, _ in _GAP_CLAUSES)) == _DIFF_DESC_ALL_GAP
+    # 每条轴子句都带「已升级」⇒ 计数＝轴数（写死 4 的那版在加第五根时红过一次）
+    assert _DIFF_DESC_ALL_GAP.count("已升级") == len(_GAP_CLAUSES)
 
 
 def test_fixture_pipeline_publishes_the_rc_pair():
@@ -492,6 +496,9 @@ def test_rc_key_does_not_move_the_reuse_gate():
         "residual_min": {"p50": 0.0, "p90": 3.0, "p95": 5.0, "max": 9.0, "min": -2.0},
     })
     base["caliber"]["coverage_caliber_version"] = category_rule.COVERAGE_CALIBER_VERSION
+    # 第三把门内戳（第五维笔 2026-10-13）：门现在比三把 ⇒ "本次产物"的基线必须三把齐全，
+    # 否则下面那条"只多一把 rc 声明就换判定？"的对照会退化成"基线自己就不过门"。
+    base["caliber"]["traffic_caliber_version"] = caliber_mod.TRAFFIC_CALIBER_VERSION
     base["caliber"]["travel_mode"] = "walking"
     base["caliber"]["sample_profile"] = "standard"
     without = copy.deepcopy(base)

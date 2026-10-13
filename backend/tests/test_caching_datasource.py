@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from app.living_circle.caliber import facility_merge_enabled
+from app.living_circle.caliber import TRAFFIC_CALIBER_VERSION
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.data_source import (
     CheckParams,
@@ -80,6 +81,8 @@ class CountingSource:
             "caliber": {
                 "scope_policy_version": self.policy_version,
                 "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
+                # 第三把门内戳（第五维笔 2026-10-13）：复用门现在比三把 ⇒ 替身同样要带。
+                "traffic_caliber_version": TRAFFIC_CALIBER_VERSION,
                 "travel_mode": params.travel_mode,
                 "sample_profile": params.sample_profile,
             },
@@ -544,6 +547,7 @@ def test_reuse_gate_requires_the_request_caliber_triple():
         "scene": {"name": "凯里老街", "center": [107.9758, 26.5734], "study_radius_m": 2500},
         "caliber": {"scope_policy_version": SCOPE_POLICY_VERSION,
                     "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
+                    "traffic_caliber_version": TRAFFIC_CALIBER_VERSION,
                     "travel_mode": "walking", "sample_profile": "standard"},
     }
     # `wanted` **刻意只有三把**（本次请求的三元组）：评分口径那把不来自请求、由门自己拿代码常量比。

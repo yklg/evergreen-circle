@@ -67,7 +67,11 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
-from app.living_circle.caliber import REACH_CALIBER_VERSION, get_caliber
+from app.living_circle.caliber import (
+    REACH_CALIBER_VERSION,
+    TRAFFIC_CALIBER_VERSION,
+    get_caliber,
+)
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import LngLat, haversine_m, ring_area_km2, to_local_xy
 from app.living_circle.isochrone import (
@@ -106,6 +110,7 @@ from app.living_circle.blindspot import (
 from app.living_circle.grid import grid_spec
 from app.living_circle.judgement import STAT_KEYS
 from app.living_circle.scope import BLIND_RADIUS_M, SCOPE_POLICY_VERSION, TRIAD_KEYS
+from app.living_circle.traffic import TIER_NAMES
 from app.living_circle.scoring import (
     BLINDSPOT_PENALTY_CAP,
     BLINDSPOT_PENALTY_PER_EXTRA,
@@ -756,6 +761,85 @@ def _reach_calibration_violations(lc: Dict[str, Any]) -> List[str]:
     return []
 
 
+def _traffic_caliber_violations(lc: Dict[str, Any]) -> List[str]:
+    """B18 · 区域交通时段暴露度（`tv-*`）的版本号与 ``sampling.traffic`` 键集必须同批发布。
+
+    与 B14/B16/B17 同一条纪律：**没声明这一代 ⇒ 整套跳过**（存量件零影响）；声明了却缺键 ⇒ 红。
+    这一维另有两条独有的规则：
+      · ``coverage="absent"``（缺源）是**合法态**，但那时**不许**带任何档位读数 —— 印 0 或印空
+        都会把"没量到"说成"不堵"（presence 纪律，与 `residualCaliberNote` 同族）；
+      · ``tier_share`` 的键集必须**恰为四档名**。多出来的键＝我们不认识的档位（百度换了枚举），
+        宁可拒签也不许静默丢弃 —— 违规消息**点名那个值**（`unknown_tier_codes` 随载荷发出，
+        拿到消息的人才知道该去更新哪张表）。
+    """
+    cal = lc.get("caliber") or {}
+    if cal.get("traffic_caliber_version") != TRAFFIC_CALIBER_VERSION:
+        return []
+    tr = (lc.get("sampling") or {}).get("traffic")
+    if not isinstance(tr, dict):
+        return [
+            f"声明了 traffic_caliber_version={TRAFFIC_CALIBER_VERSION} 却缺 sampling.traffic"
+            " —— 版本号与键集是同一次发布的两半"
+        ]
+    cov = tr.get("coverage")
+    reading_keys = ("tier_share", "congested_distance_m", "sections_count", "exposure_index",
+                    "exposure_score", "unknown_tier_sections")
+    if cov == "absent":
+        leaked = [k for k in reading_keys if k in tr]
+        return ([f"coverage=absent 却带档位读数 {leaked} —— 缺源时那些数不是 0 是**没量到**"
+                 "（presence 纪律：整块不发）"] if leaked else [])
+    if cov != "ok":
+        return [f"coverage={cov!r} 不是合法取值（ok | absent）—— 三态不许有第三态"]
+    missing = [k for k in ("region", "radius_m", "tier_share", "congested_distance_m",
+                           "sections_count", "exposure_index", "exposure_score",
+                           "multiplier_table", "multiplier_table_version") if k not in tr]
+    if missing:
+        return [f"coverage=ok 却缺 {missing} —— 拿不到这些键，第五维的分数就不可复算"]
+    if tr.get("region") != "circle":
+        return [f"region={tr.get('region')!r} —— 本代只发圆域口径（bound 端点有面积上限，"
+                "见 capability_manifest.traffic_service）；换尺必须换代次"]
+    # 未知档位：宁可拒签，不许静默丢弃
+    if int(tr.get("unknown_tier_sections") or 0) > 0:
+        return [f"出现我们不认识的档位 {tr.get('unknown_tier_codes')}（共 "
+                f"{tr.get('unknown_tier_sections')} 段）—— 倍数表不覆盖它，静默丢弃会低估暴露度；"
+                "先更新 traffic.MULTIPLIER_TABLE 再发这一代"]
+    share = tr.get("tier_share")
+    if not isinstance(share, dict) or set(share) != set(TIER_NAMES.values()):
+        return [f"tier_share 的键集 {sorted(share or [])} 必须恰为四档 {sorted(TIER_NAMES.values())}"
+                " —— 多一个键就是多一个看不懂的档位"]
+    vals = list(share.values())
+    if any((not isinstance(v, (int, float))) or not isfinite(float(v)) for v in vals):
+        return [f"tier_share 含非有限值 {share} —— 占比是量出来的，不是补出来的"]
+    if any(float(v) < 0 or float(v) > 1 for v in vals):
+        return [f"tier_share 有值越出 [0,1]：{share}"]
+    if abs(sum(float(v) for v in vals) - 1.0) > 1e-6:
+        return [f"tier_share 之和 {sum(float(v) for v in vals)} ≠ 1 —— 有一档被漏算或重复计入"]
+    for key in ("radius_m", "congested_distance_m", "exposure_index", "exposure_score"):
+        v = tr.get(key)
+        if (not isinstance(v, (int, float))) or not isfinite(float(v)):
+            return [f"{key}={v!r} 不是有限数 —— 非有限值一上屏就是把「没量到」伪装成读数"]
+    if not (0.0 <= float(tr["exposure_score"]) <= 100.0):
+        return [f"exposure_score={tr['exposure_score']} 越出 [0,100] —— 映射式与表不同代"]
+    win = tr.get("peak_window")
+    if win is not None and not _is_hhmm_window(str(win)):
+        return [f"peak_window={win!r} 不是 HH:MM-HH:MM —— 窗口是口径，不许是自由文本"]
+    return []
+
+
+def _is_hhmm_window(text: str) -> bool:
+    """`HH:MM-HH:MM` 的形态检查（不引 re：本模块至今不依赖它，为一条形态判据破例不值）。"""
+    parts = text.split("-")
+    if len(parts) != 2:
+        return False
+    for part in parts:
+        hh, _, mm = part.partition(":")
+        if not (hh.isdigit() and mm.isdigit() and len(hh) == 2 and len(mm) == 2):
+            return False
+        if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+            return False
+    return True
+
+
 def _interpolation_form_violations(lc: Dict[str, Any]) -> List[str]:
     """B15 · 说了场是怎么插出来的，就得说全（笔 4a 后续：IDW 的 p、k 从函数体字面量升为口径）。
 
@@ -1176,6 +1260,8 @@ def assess_geometry(lc: Dict[str, Any]) -> GeometryIssues:
     violations.extend(_iso_compare_violations(lc))
     # B17 · 形状口径（第五把尺，只诊断不入分）—— 缺席即整套跳过，存量件零影响
     violations.extend(_shape_caliber_violations(lc))
+    # B18 · 区域交通时段暴露度（第五维笔 · `tv-1`）—— 同上，未声明这一代即整套跳过
+    violations.extend(_traffic_caliber_violations(lc))
 
     if center is None:
         # 中心点不可用 ⇒ 一切「距中心」判据都判不了（不判违规）
@@ -1352,6 +1438,11 @@ _GATED_CALIBER_VERSIONS: Dict[str, str] = {
     "ev": "scope_policy_version",
     # 覆盖度**分子**变更 ⇒ 同一批点位算出不同的分（第 21 轮 P1-3：凯里那 3 分落差全来自换代）
     "cov": "coverage_caliber_version",
+    # 第五维（`tv-1`，2026-10-13）：**这是第一根进门的解释轴** —— 前两根是"改了算法"所以进门，
+    # 它进门是因为**第五维真的乘进了总分**（`scoring.WEIGHTS` 五维）：「换我重跑，答案会不会不同？」
+    # 答"会" ⇒ 旧载荷必须 miss、重跑，否则屏上出现"五维口径的报告里第五维是上一代读数"。
+    # ⚠️ 别把 `rc` 顺手一起挪进来：残差至今**没**进分，那条迁移指令的触发条件是"残差进评分"，不是"又加了一根轴"。
+    "tv": "traffic_caliber_version",
 }
 # ⚠️ `_UNGATED` 的值是**二元组 (字段名, 理由)**：理由必须是数据而不是注释 —— 注释会随下一次
 # 重构漂走，而"为什么不进门"恰恰是最需要被下一个人读到、并且由判据强制填写的东西
@@ -1518,6 +1609,12 @@ def reuse_policy(
         # 那份 88.6/68.7 当作本次答案上屏，而页面上没有任何一处能看出它是旧分子算的。
         ("评分口径", str, cal.get("coverage_caliber_version"),
          COVERAGE_CALIBER_VERSION),
+        # 第五根轴 `tv-*`（第五维笔 · 2026-10-13）：**它进来** —— 与下一段 rc 的理由正好相反：
+        # 第五维真的乘进了总分（`scoring.WEIGHTS` 五维），换它重跑答案**会变**。不拦的下场是
+        # 屏上出现「五维口径的报告里第五维是上一代的读数」，而这正是本门存在的意义。
+        # 代价与 rc-2 那一档同形：换代时旧载荷全部 miss、按新口径重跑（这一次是**该付**的）。
+        ("交通时段暴露度口径", str, cal.get("traffic_caliber_version"),
+         TRAFFIC_CALIBER_VERSION),
         # ⚠️ **第三根轴 `rc-*` 有意不进来**（归边决定与理由都写在上面 `_UNGATED_CALIBER_VERSIONS`
         # 那条数据里，不在注释里）。
         # 判据是这条门自己的问题 ——「换我重跑一次，答案会不会不同」：rc-1 不改盲区数、不改

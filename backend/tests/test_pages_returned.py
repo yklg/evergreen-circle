@@ -241,12 +241,15 @@ def test_new_key_does_not_move_the_reuse_gate():
     """
     from app.living_circle.report_contract import reuse_policy
     from app.living_circle.scope import COVERAGE_CALIBER_VERSION, SCOPE_POLICY_VERSION
+    from app.living_circle.caliber import TRAFFIC_CALIBER_VERSION
 
     base: Dict[str, Any] = {
         "data_origin": "live",
         "scene": {"name": "凯里老街", "center": [107.9758, 26.5734], "study_radius_m": 2500},
         "caliber": {"scope_policy_version": SCOPE_POLICY_VERSION,
                     "coverage_caliber_version": COVERAGE_CALIBER_VERSION,
+                    # 第三把门内戳（第五维笔）：门比三把，替身同样要带（少盖＝静默未命中）
+                    "traffic_caliber_version": TRAFFIC_CALIBER_VERSION,
                     "travel_mode": "walking", "sample_profile": "standard"},
     }
     wanted = {"travel_mode": "walking", "sample_profile": "standard", "study_radius_m": 2500.0}

@@ -20,7 +20,18 @@ import pytest  # noqa: E402
 import app.core.db as db  # noqa: E402
 import app.core.runtime_config as rc  # noqa: E402
 import app.living_circle.request_guard as request_guard  # noqa: E402
-from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
+from app.living_circle.caliber import TRAFFIC_CALIBER_VERSION
+from app.living_circle.caliber import TRAFFIC_CALIBER_VERSION  # noqa: E402
+from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION  # noqa: E402
+from app.living_circle.report_contract import _GATED_CALIBER_VERSIONS  # noqa: E402
+from app.living_circle.scope import SCOPE_POLICY_VERSION  # noqa: E402
+
+#: 门内各轴的当代取值（键 = 轴名，与 `_GATED_CALIBER_VERSIONS` 同键）。加轴时**这里必须同批补**。
+_STAMP_VALUES = {
+    "ev": SCOPE_POLICY_VERSION,
+    "cov": COVERAGE_CALIBER_VERSION,
+    "tv": TRAFFIC_CALIBER_VERSION,
+}
 from app.living_circle.scope import SCOPE_POLICY_VERSION  # noqa: E402
 
 
@@ -45,10 +56,13 @@ def live_payload(payload: dict) -> dict:
       负对照 —— 它们负责证明门真的有牙，全量套壳会把门架空。
     """
     cal = payload.setdefault("caliber", {})
-    cal.setdefault("scope_policy_version", SCOPE_POLICY_VERSION)
-    # **第二根轴也在这里盖**（10-01 片 1d）：复用门现在比两把版本键（判盲 `ev-*` + 评分 `cov-*`）。
-    # 少盖一把的后果不是"红"，而是**静默未命中** —— 正是上面那段警告的那个形态。
-    cal.setdefault("coverage_caliber_version", COVERAGE_CALIBER_VERSION)
+    # **按归边表驱动**（2026-10-13 第五维笔改造）：凡登记在 `_GATED_CALIBER_VERSIONS` 里的轴，
+    # 这里一律盖上当代值。此前是"加一把门内轴就手抄一行"——2026-10-13 加第三把 `tv` 时，
+    # 漏盖的后果正是上面 docstring 警告的那个形态：不报错、**静默未命中**（`test_t6_timestamp_formats`
+    # 当场红）。改成表驱动后，下次再加轴只要往 `_STAMP_VALUES` 补一个常量即可，
+    # 漏补会在这里 KeyError 把话说清楚（而不是让几十条缓存用例悄悄变成"未命中")。
+    for _axis, _field in _GATED_CALIBER_VERSIONS.items():
+        cal.setdefault(_field, _STAMP_VALUES[_axis])
     # 批 A③：复用门现在还要比**本次请求的口径三元组**（出行方式/采样档/研究半径）。
     # 这里盖的是 `CheckParams` 的默认档（walking / standard / 2500m），与 `test_caching_datasource`
     # 的 `_shanghai()`/`_kaili()` 两个场景逐字一致 —— 它们是"机制测试"，测的是键与命中，
