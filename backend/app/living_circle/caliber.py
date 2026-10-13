@@ -31,6 +31,24 @@ from typing import Any, Dict, List, Optional, Tuple
 REACH_CALIBER_VERSION = "rc-1"
 
 
+# ── 第五把口径版本键：区域交通时段暴露度 `tv-*`（第五维笔）───────────────────────
+#
+# 四把旧键各管一根轴（`ev-*` 判盲 / `cov-*` 评分分子 / `rc-*` 可达口径怎么解释 / `sh-*` 形状尺发不发），
+# 这一把管的是**第五维「区域交通时段暴露度」这一代怎么算**：
+#   · 峰值窗口（`traffic_peak_window`，只步行档给值）
+#   · 档位→倍数表（住所 `traffic.MULTIPLIER_TABLE`，版本 `traffic.MULTIPLIER_TABLE_VERSION`）
+#   · `sampling.traffic` 这套读数长什么样（由 `traffic.fetch_traffic_exposure` 产）
+#
+# ⚠️ 它与前四把**唯一的结构性区别**：**它进复用门**（`report_contract._GATED_CALIBER_VERSIONS["tv"]`）。
+#    理由就是四把旧键沿用的那句话的反面 ——「换它之后，重跑一次的答案会不会不同？」这里**会**：
+#    第五维真的乘进了总分（`scoring.WEIGHTS` 五维），旧载荷必须被拦在复用门外，否则屏上会出现
+#    「五维口径的报告里，第五维是上一代的读数」。`rc-*` 至今留在门外是因为残差**没**进分（见上）。
+# ⚠️ 版本号与键集是**同一次发布的两半**：声明 `tv-1` 却没有 `sampling.traffic` ⇒ `report_contract`
+#    的新契约判据（`_traffic_caliber_violations`）直接拒签；`coverage="absent"` 那一档是合法态
+#    （缺源整块不发读数，只留 coverage 位）。
+TRAFFIC_CALIBER_VERSION = "tv-1"
+
+
 @dataclass(frozen=True)
 class ApiCapability:
     """百度 API 能力描述（探针回填，非硬编码）。"""
@@ -77,6 +95,11 @@ class ReachCaliber:
     # 只有步行档给值：8min 出自「基准 80 m/min 是健康成年人、高龄有效步行窗口可能仅 5–8min」
     # 的文献，同一个数换到骑行/驾车档量的是完全不同的东西 ⇒ 那两档 `None` ⇒ 不发环、不渲染。
     iso_compare_min: Optional[float] = None
+    # 峰值窗口（第五维笔）：第五维「区域交通时段暴露度」问的是"这一片在**典型高峰**有多堵"，
+    # 而典型高峰的**定义**（几点到几点）是口径，不是实现细节 —— 换窗口就是换一把尺。
+    # 只有步行档给值：这一维的语义锚在"居民步行出门的时段"，骑行/驾车档的峰值窗口不受此声明约束
+    # ⇒ 那两档 `None` ⇒ 不发 `traffic_peak_window` 键（`scope.payload` 按 presence 发射）。
+    traffic_peak_window: Optional[str] = None
 
     @property
     def innermost_radius_m(self) -> float:
@@ -140,6 +163,8 @@ DEFAULT_CALIBERS: Dict[str, ReachCaliber] = {
         reach_full_min=20.0,
         # 口径对比档：只有步行给值（依据与措辞纪律见 `ISO_COMPARE_BASIS`）。骑行/驾车留 None。
         iso_compare_min=8.0,
+        # 峰值窗口：同上，只有步行档给值（第五维的语义锚点是居民步行出门的时段）。
+        traffic_peak_window="07:00-09:00",
         basis="商务部 2021《城市一刻钟便民生活圈建设意见》「步行约15分钟的服务半径」；"
               "《城市规划》2022.5 实测步行 15min ≈ 0.8–1.2km",
         measured=True,

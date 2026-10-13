@@ -315,6 +315,13 @@ def _populate_index() -> None:
         # 产出核对走真生产者 ⇒ 见 `tests/test_shape_caliber.py`）。
         # ⚠️ 与 `rc-*` 同属解释层代次：**不进复用门**（换代不改盲区数/分数/面积，拦它只烧配额）。
         ("shape_caliber_version", "形状口径版本声明", "living_circle.caliber.shape_caliber_version"),
+        # **第五把轴的登记**（第五维笔 · `tv-1`）：区域交通时段暴露度的代次声明。发射点同样只有
+        # `scope.payload()` 那一行；不登记 ⇒ 专家口径引用不到、prose 提到就撞词表闸。
+        # ⚠️ 它与前四把**唯一的结构区别**：**这一根进复用门**（`_GATED_CALIBER_VERSIONS["tv"]`）——
+        #    第五维乘进了总分，「换代不改答案」这条对别的轴成立、对它不成立。
+        # 属 caliber 段发射 ⇒ 进 `test_caliber_invariants` 那份按 caliber 产出核对的白名单；
+        # 它的**读数块** `sampling.traffic` 不在这儿（发在 sampling 段，核对走真生产者）。
+        ("traffic_caliber_version", "区域交通时段暴露度口径版本声明", "living_circle.caliber.traffic_caliber_version"),
         # 常态绕行标定与残差耗时（`isochrone.detour_residual` 的唯一产物）。与上面
         # `timed_count` / `in_reach_count` 同一族：**发在 `sampling` 段而不是 `caliber` 段**，
         # 所以它不在 `test_caliber_invariants` 那份按 caliber 产出核对的白名单里 ——

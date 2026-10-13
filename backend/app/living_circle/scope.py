@@ -51,7 +51,12 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from app.living_circle.baidu_client import STOP_SERVER_CAP, is_exhausted, is_server_cap
-from app.living_circle.caliber import REACH_CALIBER_VERSION, ReachCaliber, get_caliber
+from app.living_circle.caliber import (
+    REACH_CALIBER_VERSION,
+    TRAFFIC_CALIBER_VERSION,
+    ReachCaliber,
+    get_caliber,
+)
 from app.living_circle.category_rule import COVERAGE_CALIBER_VERSION
 from app.living_circle.geo_utils import (
     LngLat,
@@ -957,6 +962,19 @@ class SpatialScope:
             # ⚠️ 离线估算件**不发这一位**（`data_source.py` 那份 caliber 是自己拼的）：它把形状键
             #    摘掉了（恒等式切出来的环在数学上就是正圆），没有键集却声明版本号＝B17 打死离线件。
             "shape_caliber_version": SHAPE_CALIBER_VERSION,
+            # **第五把键**（第五维笔 · `tv-1`）：区域交通时段暴露度的代次声明。它与前四把的
+            # 唯一结构区别是**它是第一根进复用门的解释轴** —— 因为第五维真的乘进了总分
+            # （`scoring.WEIGHTS` 五维），换它重跑答案会变 ⇒ 必须拦复用，否则屏上会出现
+            # 「五维口径的报告里，第五维是上一代的读数」。归边登记在
+            # `report_contract._GATED_CALIBER_VERSIONS["tv"]`，理由写成数据。
+            # 它的另一半键集是 `sampling.traffic`（由 `traffic.fetch_traffic_exposure` 产）：
+            # 声明了却缺键 ⇒ 契约拒签；`coverage="absent"`（缺源）是合法态，整块不发读数。
+            "traffic_caliber_version": TRAFFIC_CALIBER_VERSION,
+            # 峰值窗口是**口径不是实现细节**（换窗口就是换一把尺）⇒ 与版本号同处发射。
+            # 只步行档有值；骑行/驾车档为 None ⇒ 按 presence 纪律**不发这个键**
+            # （给 None 补一个空值等于替一次没做的声明举证）。
+            **({"traffic_peak_window": caliber.traffic_peak_window}
+               if caliber.traffic_peak_window else {}),
         }
         # R23-I · 成本账（欠账出处：计划 §22⑧ —— 真跑那轮预登记了要发几次外呼，报告里却没有
         # 任何一位能核销它）。值是 `CollectionEvidence.pages_returned`：**成功返回的页数**，

@@ -198,6 +198,11 @@ def test_rev2_evidence_keys_are_both_indexed_and_real():
         # —— 删掉 `scope.py` 那行发射时 0 条报警，而每份新报告都会被自家 B17 之外的大门静默放过。
         # 它的另一半键集 `isochrones[*].shape` **不在这里**（发在等时圈段，核对走真生产者）。
         "report::shape_caliber_version",
+        # 第五根轴（第五维笔 · `tv-1`）：区域交通时段暴露度。同前几把——发射在 caliber 段 ⇒
+        # 进这份按 caliber 产出核对的白名单（只登名册不进这里＝第二十一轮 P0-1 的"登记了没人验"）。
+        # ⚠️ 它是**第一根进复用门**的轴（第五维乘进总分）⇒ 除了这条产出核对，
+        #    `report_contract` 侧还有一条 gated 登记（元判据会同时问两边）。
+        "report::traffic_caliber_version",
         "report::confidence", "report::evidence",
         # 片 4：取证回合账目。放进这份名单才有意义 —— 名册登记与产出核对是两条腿，
         # 少前者是"引用不到"，少后者是"登记了个不存在的键"。
