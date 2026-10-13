@@ -912,6 +912,37 @@ def _sec_elderly(lc: dict) -> dict:
     }
 
 
+def _sec_traffic(lc: dict) -> Optional[dict]:
+    """时段暴露章（第五维笔 · `tv-1`）。**缺源整块不出现**：`coverage != "ok"` ⇒ 返回 None、调用方跳过。
+
+    尺的声明是这段的承重句：它是**圆域**口径（中心点 + 半径内的路况聚合），**不等于可达区** ——
+    环不规则，圆比环大；且返回里没有几何，做不了"环内过滤"。与 §7.1「两把尺」并列的第三把，
+    措辞纪律见 `app/living_circle/traffic.py`（只按档位映射、不点名任何路段、不指认个体能力）。
+    """
+    tr = (lc.get("sampling") or {}).get("traffic")
+    if not isinstance(tr, dict) or tr.get("coverage") != "ok":
+        return None
+    win = tr.get("peak_window") or "未声明窗口"
+    table_ver = tr.get("multiplier_table_version") or "未声明表"
+    calib = "；倍数表为**声明值、未做双时刻标定**" if not tr.get("calibrated") else ""
+    return {
+        "id": "traffic", "title": "时段暴露与可达稳健性", "level": 2,
+        "key_takeaway": (f"区域交通时段暴露度 {tr.get('exposure_score')}/100"
+                         f"（口径：中心点 R 米**圆域**、窗口 {win}；按档位映射 · 表 {table_ver}{calib}）"),
+        "paragraphs": [
+            (f"以中心点为圆心的**圆域**（半径 {tr.get('radius_m')} m，不是可达区本身）查询典型高峰"
+             f"（{win}）的路况聚合：拥堵里程合计 {tr.get('congested_distance_m')} m、"
+             f"涉及 {tr.get('sections_count')} 个拥堵段。"),
+            (f"该读数按档位映射为 0–100 的稳健性分（100 = 畅通），作为第五维计入总分"
+             f"（`scoring.WEIGHTS`）。本段只给聚合量，**不点名任何路段**，也不据此推断任何个体的步行能力。"),
+        ],
+        "highlights": _section_highlights(lc, "traffic"),
+        "claims": [],
+        "charts": [],
+        "source_evidence_ids": [],
+    }
+
+
 def _sec_isochrone(lc: dict, ev_id: str) -> dict:
     areas = [(z["minutes"], z["area_km2"]) for z in lc.get("isochrones", [])]
     reachable, in_reach, n = sampling_counts(lc)
@@ -1256,6 +1287,13 @@ def _chapter_highlight_items(lc: dict) -> Dict[str, List[str]]:
            f"菜市场最近 {_fmt_min(mk_min)}，购物最近 {_fmt_min(sp_min)}"
            if mk_min is not None and sp_min is not None and mk_min > sp_min else None)
     # 「买菜多走 X 分钟」与「菜市场排第 N 快」讲的是同一个 7.4min ⇒ 前者在位时不再取后者。
+    # 第五维章（时段暴露）：只在有源时给一句 —— 缺源时该章整块不出现，亮点也不许挂。
+    _tr = (lc.get("sampling") or {}).get("traffic") or {}
+    if _tr.get("coverage") == "ok":
+        out["traffic"] = pick(
+            f"典型高峰（{_tr.get('peak_window') or '高峰'}）区域交通暴露度 {_tr.get('exposure_score')}/100，"
+            f"拥堵里程合计 {_tr.get('congested_distance_m')} m（圆域口径，不点名路段）")
+
     out["market"] = pick(gap, _coverage_position_sentence(lc, "market"),
                          None if gap else _time_rank_sentence(lc, "market"))
 
@@ -1606,7 +1644,7 @@ def _offline_sections(lc: dict) -> List[Dict[str, Any]]:
 #    它天然不可能移动复用门（不必再为它单立一条"不许进门"的判据）。
 # 换代规则：只有**载荷语义没变、而展示内容会变**时才升它（加正文/亮点/图件/改口径句）。
 # 载荷语义变了走的是那五把各自的代次，不是这一把。
-NARRATIVE_VERSION = "nar-5"
+NARRATIVE_VERSION = "nar-6"
 
 
 def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dict[str, Any]:
@@ -1629,6 +1667,11 @@ def assemble_report(lc: dict, report_id: str, scene_key: str, title: str) -> Dic
             _sec_blindspot(lc),
             _sec_conclusion(lc),
         ]
+        # 第五维章：**presence 门控** —— 缺源（coverage != ok）时 `_sec_traffic` 返回 None，
+        # 这一章整块不出现，而不是印一段 0 或空话（与 `residualCaliberNote` 同一条纪律）。
+        traffic_sec = _sec_traffic(lc)
+        if traffic_sec is not None:
+            sections.append(traffic_sec)
     subtitle = lc_subtitle(lc)
     
     # Phase 6：从报告数据中读取动态选中的专家团队，若无则回退到保底名单

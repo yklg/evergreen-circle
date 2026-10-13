@@ -104,6 +104,9 @@ SECTION_SEAT: Dict[str, str] = {
     "elderly": "L2-003",
     "market": "L2-004",
     "isochrone": "L2-005",
+    # 第五维章（时段暴露与可达稳健性）：归**慢行可达性**那条席位 —— 这一章问的就是
+    # "这条路这个时段走得顺不顺"，与 isochrone 章同属 L2-005 的职责面（一人可署两章）。
+    "traffic": "L2-005",
     "blindspot": "L3-002",
     "conclusion": "L3-001",
 }

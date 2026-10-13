@@ -171,9 +171,13 @@ def test_every_section_author_equals_its_declared_seat(signed_report):
     rep = signed_report
     roster = _roster()
     sec = {s["id"]: s for s in rep["sections"]}
-    missing = [k for k in SECTION_SEAT if k not in sec]
+    # 第五维章（2026-10-13）是**有源才出现**的（`_sec_traffic` 缺源返回 None ⇒ 整章不出现）：
+    # 它不参与"每个席位都必须有章"这条存在性前提，否则缺源样区会把这个判据判成缺件。
+    # ⚠️ 但它一旦出现，署名必须照核 —— 下面的 signed 循环不放过它（`sid in sec` 那道）。
+    _PRESENCE_GATED = {"traffic"}
+    missing = [k for k in SECTION_SEAT if k not in sec and k not in _PRESENCE_GATED]
     assert not missing, f"报告章节缺件，判据将静默漏检：{missing}"
-    signed = [sid for sid, seat in SECTION_SEAT.items() if sec[sid]["claims"]]
+    signed = [sid for sid, seat in SECTION_SEAT.items() if sid in sec and sec[sid]["claims"]]
     assert len(signed) >= 6, f"带署名的章只剩 {len(signed)} 个，判据接近空转：{SECTION_SEAT}"
     for sid in signed:
         seat = SECTION_SEAT[sid]

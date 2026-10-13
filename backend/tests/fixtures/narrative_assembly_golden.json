@@ -1,8 +1,8 @@
 {
   "$schema_note": "生活圈报告装配器（core/pipeline/diagnosis_templates.py::assemble_report）输出的黄金基线。期望值由当时装配器实测取基线固化，不得为了让实现通过而回填：改了装配器、专家名册或口径而产物变化 ⇒ 逐面金标红 ⇒ 要么同笔把 NARRATIVE_VERSION 升一代（读路径据此对存量行重装），要么承认这是回归并回退代码。只升戳而产物没变同样红（配对闸），因为无实质变化的升戳会让所有存量行白付一次重装、把「同代次直通」的证据打掉。",
   "schema": "evergreen.narrative-assembly-golden/v1",
-  "captured_at": "2026-10-11",
-  "narrative_version": "nar-5",
+  "captured_at": "2026-10-13",
+  "narrative_version": "nar-6",
   "assembler_args": {
     "report_id": "lc-golden",
     "scene_key": "golden-key",
