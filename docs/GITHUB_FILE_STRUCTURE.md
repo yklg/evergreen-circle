@@ -2,7 +2,7 @@
 
 > 最后更新：2026-10-14
 > 分支：`merge/travel-upgrade`
-> 最新提交：截至本日 `ff06127`（2026-10-14）。这一行天生会腐烂，核对一律以 `git log -1 --oneline` 现场为准
+> 最新提交：截至本日 `73fc8b5`（2026-10-14，含合并 Gitee 侧网页编辑那一笔）。这一行天生会腐烂，核对一律以 `git log -1 --oneline` 现场为准
 
 ---
 
@@ -325,7 +325,7 @@ deploy/
 - **测试用例**: 收集口径 4361 项(pytest 2852 ＋ vitest 1429 ＋ Playwright e2e 80);通过口径 4333 项(2825 ＋ 1428 ＋ 80;e2e 那 80 项今日只做了 `--list` 静态枚举核对项数，通过数以 CI #56 全绿读数为准)
 - **文档数量**: `docs/` 下 14 份 git 跟踪(13 份 Markdown ＋ 1 份 PDF〔作品介绍〕,截至 2026-10-14)
 - **CI Job 数量**: 4 个(backend / frontend / e2e / docker;docker 仅 main/master 触发)
-- **最新提交**: 截至 2026-10-14 为 `ff06127`(本行会腐烂,核对以 `git log -1 --oneline` 为准)
+- **最新提交**: 截至 2026-10-14 为 `73fc8b5`(本行会腐烂,核对以 `git log -1 --oneline` 为准)
 - **分支**: `merge/travel-upgrade`(远端唯一分支,亦即默认分支;已包含 `upstream/main` 的全部提交)
 
 ---
