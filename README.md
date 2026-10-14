@@ -246,8 +246,8 @@ CI（全 mock，不注入任何真实 AK）：
 - GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端 + 前端 + 排版 e2e（Playwright）+ Docker 构建（共 4 个 job；其中 Docker 那个**只在 main/master 触发**，本分支跑不到它）。
 - Gitee 侧：[.workflow/ci.yml](./.workflow/ci.yml) 是真源的**子集**（只有 backend + frontend 两个 job，
   不含 api/ 校验 step、e2e 排版回归与 docker 构建 job）。改真源时若有意不跟过去，需在那份文件里记明差异。
-  ⚠️ 现状：Gitee 镜像远端已接上并与 GitHub 同步，但 **Gitee Go 尚未在网页启用**、该文件里的分支白名单也还没
-  对上本仓唯一分支 `merge/travel-upgrade` ⇒ 这份定义当前是惰性的，**上面的 GitHub Actions 才是防线**。
+  ⚠️ 现状：Gitee 镜像远端已接上并与 GitHub 同步、分支白名单也已对上 `merge/travel-upgrade`，但 **Gitee Go
+  尚未在网页启用**（那一步只能本人在 Gitee 控制台点）⇒ 这份定义当前仍是惰性的，**上面的 GitHub Actions 才是防线**。
 
 ---
 
@@ -299,8 +299,8 @@ CI（全 mock，不注入任何真实 AK）：
 
 ### 六、在线文献
 
-26. 人文地理（RWDL）2023 年第 4 期：<https://html.rhhz.net/RWDL/html/20230409.htm>
-27. 人文地理（RWDL）2025 年第 1 期：<https://html.rhhz.net/RWDL/html/20250116.htm>
+26. 人文地理（RWDL）2023 年第 4 期：[https://html.rhhz.net/RWDL/html/20230409.htm](https://html.rhhz.net/RWDL/html/20230409.htm)
+27. 人文地理（RWDL）2025 年第 1 期：[https://html.rhhz.net/RWDL/html/20250116.htm](https://html.rhhz.net/RWDL/html/20250116.htm)
 
 
 

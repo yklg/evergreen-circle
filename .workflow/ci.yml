@@ -5,15 +5,18 @@
 # 2026-10-14 现状（先读这条再读下面的历史）：Gitee 远端**已存在**（`git remote -v` 里有 `gitee`，
 #   仓库已推至与 GitHub 同一笔、且两侧都已转公开），但 **Gitee Go 仍没在网页启用** ⇒ 本文件仍是
 #   惰性配置，惰性的原因从"没有远端"换成了"没人开流水线"。**GitHub Actions 仍是唯一防线。**
-#   ⚠️ 一条硬警告给未来真要启用 Gitee Go 的人：本文件 `triggers` 的分支白名单只有 `master`/`main`，
-#   而本仓库唯一的分支是 `merge/travel-upgrade` ⇒ 照今天这份文件启用，流水线**一次都不会触发**，
-#   形式上"有 CI"、实际一行不跑（真源 2026-09-29 那次改 `['**']` 就是因为踩过这个）。启用前先做三件事：
-#   ① 把 `triggers` 指向实际分支；② Gitee Go 的通配语法在**本机验证不了**，不要照 GitHub 的 `['**']` 抄；
-#   ③ 在一台真 Gitee Runner 上先跑通 `npx playwright install --with-deps chromium` 再考虑补 e2e job。
+#   ⚠️ 2026-10-14 已改：`triggers` 的分支白名单原先只有 `master`/`main`，而本仓库唯一的分支是
+#   `merge/travel-upgrade` ⇒ 那时照这份文件启用，流水线**一次都不会触发**（真源 2026-09-29 那次改
+#   `['**']` 就是栽在同一处）。现在白名单已含实际分支。**本机仍无法验证的一件事**：Gitee Go 对
+#   **含斜杠的分支名**是否按字面匹配（它的 include 列表文档没给斜杠分支的例子，我也跑不了它的 Runner）
+#   ⇒ 网页启用后第一次 push 若没起流水线，先按顺序试：① 在 Gitee 流水线设置页看它列出的分支名写法；
+#   ② 手动触发一次确认 stage 本身能跑；③ 仍不匹配再考虑并一个不含斜杠的分支名过去。别改回 `['**']` 猜。
+#   ④ e2e 那一档仍未跟过来：要先在一台真 Gitee Runner 上跑通 `npx playwright install --with-deps chromium`。
 # 2026-09-29 差异：真源把 push 触发改成 `branches: ['**']` + `workflow_dispatch`（分支名白名单
 #   会让名单外的分支从不被看守）；本侧仍留 master/main 白名单 —— 当时的理由是「仓库没有 Gitee 远端、
 #   此文件惰性」（该前提已于 2026-10-14 失效，见上），且 Gitee Go 的通配符支持在本机无法验证，
-#   不拿未验证的语法冒充防线。接 Gitee 时再一并改 ⇒ **接镜像这半已发生，改白名单这半仍未发生。**
+#   不拿未验证的语法冒充防线。接 Gitee 时再一并改 ⇒ **接镜像与改白名单这半都已发生，只剩"在 Gitee
+#   网页点一次启用流水线"这步——那步只能他本人做（本机没有 Gitee token，也进不去它的控制台）。**
 # 2026-10-04 差异：真源新增 `e2e` job（Playwright 排版回归，两档视口）。本侧**有意不跟** ——
 #   理由两条：① 这仍是惰性配置（Gitee Go 未在网页启用；远端本身 2026-10-14 已接上）；② Gitee Go `npmbuild@1` 的镜像能否
 #   `--with-deps` 装到 Chromium 的系统库（libnss3/fonts-noto 那一组）我在这台机器上验证不了，
@@ -34,11 +37,15 @@ triggers:
   push:
     branches:
       include:
+        # 2026-10-14：本仓唯一分支是 `merge/travel-upgrade`，只留 master/main 会让这条流水线
+        # 一次都不触发（真源 2026-09-29 踩过同一个坑）。master/main 保留是给以后并回主干时用。
+        - merge/travel-upgrade
         - master
         - main
   pr:
     branches:
       include:
+        - merge/travel-upgrade
         - master
         - main
 stages:
