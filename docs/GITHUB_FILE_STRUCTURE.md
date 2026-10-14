@@ -332,8 +332,8 @@ deploy/
 
 ## 🔗 相关链接
 
-- **GitHub 仓库**: https://github.com/yklg/evergreen-circle （**截至 2026-10-12 该仓库为私有**，匿名 `git clone` 返回 404；转公开或发放访问方式之后，这一行才能当评审入口）
-- **Gitee 镜像**: 无。仓库当前没有 Gitee 远端，`.workflow/ci.yml` 实为惰性配置（该文件头部已记明）
+- **GitHub 仓库**: https://github.com/yklg/evergreen-circle （**截至 2026-10-14 已转公开**：匿名 `api.github.com/repos/yklg/evergreen-circle` 返回 `visibility=public`，默认分支 `merge/travel-upgrade`；此前 2026-10-12 的读数是"私有、匿名 clone 404"，那一行已过期）
+- **Gitee 镜像**: https://gitee.com/a-triumphant-journey-ahead/evergreen-circle （2026-10-14 接上，与 GitHub **同一笔**：`ls-remote` 两侧 HEAD 同为 `5ee4cc8`、逐文件 blob 对账 798 条零差异、匿名 API 返回 `public=true`；`.workflow/ci.yml` 仍是**惰性配置**——远端已接但 Gitee Go 未在网页启用，GitHub Actions 为唯一防线，且该文件的分支白名单还留着 `master`/`main`，启用前必须先改，详见该文件头部警告）
 - **在线 Demo**: 尚未部署；零 Key 本地演示走 `./scripts/run-demo.sh`（自动开 http://127.0.0.1:3400）
 - **问题反馈**: https://github.com/yklg/evergreen-circle/issues
 

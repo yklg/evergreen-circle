@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![CI](https://img.shields.io/badge/CI-GitHub%20Actions%20%2B%20Gitee%20Go-blue)](./.github/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/yklg/evergreen-circle/ci.yml?branch=merge%2Ftravel-upgrade&label=CI-GitHub%20Actions)](https://github.com/yklg/evergreen-circle/actions/workflows/ci.yml)
 
 2026 上海开源软件应用创新大赛 · 百度地图命题一《基于地图开放能力的"15 分钟生活圈"智能体检与规划助手》。
 
@@ -246,6 +246,8 @@ CI（全 mock，不注入任何真实 AK）：
 - GitHub Actions（唯一真源）：[.github/workflows/ci.yml](./.github/workflows/ci.yml) —— push/PR 自动跑后端 + 前端 + 排版 e2e（Playwright）+ Docker 构建（共 4 个 job；其中 Docker 那个**只在 main/master 触发**，本分支跑不到它）。
 - Gitee 侧：[.workflow/ci.yml](./.workflow/ci.yml) 是真源的**子集**（只有 backend + frontend 两个 job，
   不含 api/ 校验 step、e2e 排版回归与 docker 构建 job）。改真源时若有意不跟过去，需在那份文件里记明差异。
+  ⚠️ 现状：Gitee 镜像远端已接上并与 GitHub 同步，但 **Gitee Go 尚未在网页启用**、该文件里的分支白名单也还没
+  对上本仓唯一分支 `merge/travel-upgrade` ⇒ 这份定义当前是惰性的，**上面的 GitHub Actions 才是防线**。
 
 ---
 

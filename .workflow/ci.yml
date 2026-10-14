@@ -2,12 +2,20 @@
 # ⚠️ 本文件是它的**子集**，不是等价镜像：只有 backend + frontend 两个 job，
 # 不含真源里的 `api/` 运行时校验 step 与 docker 构建 job（2026-09-26 实测确认）。
 # 旧注释写「保持一致的镜像」是假的 —— 改真源时若有意不跟到这里，请在本行补一句说明差异与理由。
+# 2026-10-14 现状（先读这条再读下面的历史）：Gitee 远端**已存在**（`git remote -v` 里有 `gitee`，
+#   仓库已推至与 GitHub 同一笔、且两侧都已转公开），但 **Gitee Go 仍没在网页启用** ⇒ 本文件仍是
+#   惰性配置，惰性的原因从"没有远端"换成了"没人开流水线"。**GitHub Actions 仍是唯一防线。**
+#   ⚠️ 一条硬警告给未来真要启用 Gitee Go 的人：本文件 `triggers` 的分支白名单只有 `master`/`main`，
+#   而本仓库唯一的分支是 `merge/travel-upgrade` ⇒ 照今天这份文件启用，流水线**一次都不会触发**，
+#   形式上"有 CI"、实际一行不跑（真源 2026-09-29 那次改 `['**']` 就是因为踩过这个）。启用前先做三件事：
+#   ① 把 `triggers` 指向实际分支；② Gitee Go 的通配语法在**本机验证不了**，不要照 GitHub 的 `['**']` 抄；
+#   ③ 在一台真 Gitee Runner 上先跑通 `npx playwright install --with-deps chromium` 再考虑补 e2e job。
 # 2026-09-29 差异：真源把 push 触发改成 `branches: ['**']` + `workflow_dispatch`（分支名白名单
-#   会让名单外的分支从不被看守）；本侧仍留 master/main 白名单 —— 理由：仓库当前**没有 Gitee 远端**
-#   （`git remote -v` 只有 github），此文件实为惰性配置，且 Gitee Go 的通配符支持在本机无法验证，
-#   不拿未验证的语法冒充防线。接 Gitee 时再一并改。
+#   会让名单外的分支从不被看守）；本侧仍留 master/main 白名单 —— 当时的理由是「仓库没有 Gitee 远端、
+#   此文件惰性」（该前提已于 2026-10-14 失效，见上），且 Gitee Go 的通配符支持在本机无法验证，
+#   不拿未验证的语法冒充防线。接 Gitee 时再一并改 ⇒ **接镜像这半已发生，改白名单这半仍未发生。**
 # 2026-10-04 差异：真源新增 `e2e` job（Playwright 排版回归，两档视口）。本侧**有意不跟** ——
-#   理由两条：① 这仍是惰性配置（仓库无 Gitee 远端）；② Gitee Go `npmbuild@1` 的镜像能否
+#   理由两条：① 这仍是惰性配置（Gitee Go 未在网页启用；远端本身 2026-10-14 已接上）；② Gitee Go `npmbuild@1` 的镜像能否
 #   `--with-deps` 装到 Chromium 的系统库（libnss3/fonts-noto 那一组）我在这台机器上验证不了，
 #   写一个从没跑通过的安装步骤当排版防线，等于把真源那 14 条断言换成一句"应该会绿"。
 #   接 Gitee 时先在一台真实 Gitee Runner 上跑通 `npx playwright install --with-deps chromium` 再补。
